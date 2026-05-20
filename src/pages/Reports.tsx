@@ -1,0 +1,1804 @@
+import React, { useEffect, useState, useMemo } from 'react';
+import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { useAuth } from '../hooks/useAuth';
+import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { 
+  Smile,
+  Meh,
+  Frown,
+  FileDown, 
+  FileText, 
+  Table as TableIcon,
+  ClipboardCheck,
+  Download,
+  Loader2,
+  Calendar,
+  Filter,
+  Search,
+  X,
+  ChevronDown,
+  Trash2,
+  AlertTriangle,
+  Truck,
+  Printer,
+  ListFilter,
+  TrendingUp,
+  Package,
+  Factory,
+  ShieldCheck,
+  User as UserIcon
+} from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { motion, AnimatePresence } from 'motion/react';
+import { cn, safeToDate } from '../lib/utils';
+
+import { ConfirmationModal } from '../components/ui/ConfirmationModal';
+
+const Reports: React.FC = () => {
+  const { isManager } = useAuth();
+  const [reportType, setReportType] = useState<'dds' | 'forklift' | 'wire_receiving' | 'wire_consumption' | 'quality'>('dds');
+  const [data, setData] = useState<any[]>([]);
+  const [forkliftData, setForkliftData] = useState<any[]>([]);
+  const [wireReceivingData, setWireReceivingData] = useState<any[]>([]);
+  const [wireConsumptionData, setWireConsumptionData] = useState<any[]>([]);
+  const [qualityData, setQualityData] = useState<any[]>([]);
+  const [qualityTemplates, setQualityTemplates] = useState<Record<string, any>>({});
+  const [qualitySectors, setQualitySectors] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [lines, setLines] = useState<any[]>([]);
+  const [checkItems, setCheckItems] = useState<Record<string, string>>({});
+  const [checkItemsList, setCheckItemsList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [cleaningUp, setCleaningUp] = useState(false);
+  const [orphanIds, setOrphanIds] = useState<string[]>([]);
+  const [showTypeMenu, setShowTypeMenu] = useState(false);
+  const [expandedReceivingIds, setExpandedReceivingIds] = useState<Record<string, any[]>>({});
+  const [loadingBatchCoils, setLoadingBatchCoils] = useState<Record<string, boolean>>({});
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'success'
+  });
+
+  const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
+
+  // Filters State
+  const [filterUser, setFilterUser] = useState('');
+  const [filterTheme, setFilterTheme] = useState('');
+  const [filterShift, setFilterShift] = useState('all');
+  const [filterGroup, setFilterGroup] = useState('all');
+  const [filterMood, setFilterMood] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterLine, setFilterLine] = useState('all');
+  const [filterDateStart, setFilterDateStart] = useState('');
+  const [filterDateEnd, setFilterDateEnd] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+
+  useEffect(() => {
+    resetFilters();
+  }, [reportType]);
+
+  useEffect(() => {
+    if (!isManager) {
+      setLoading(false);
+      return;
+    }
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        // Fetch DDS Data
+        const signaturesSnap = await getDocs(query(collection(db, 'dds_signatures'), orderBy('timestamp', 'desc')));
+        const sessionsSnap = await getDocs(collection(db, 'dds_sessions'));
+        
+        const sessions: Record<string, any> = {};
+        sessionsSnap.docs.forEach(doc => {
+          sessions[doc.id] = doc.data();
+        });
+
+        const currentOrphans: string[] = [];
+        const ddsResults = signaturesSnap.docs.map(doc => {
+          const sig = doc.data();
+          const session = sessions[sig.sessionId];
+          
+          if (!session) {
+            currentOrphans.push(doc.id);
+          }
+
+          return {
+            id: doc.id,
+            sessionId: sig.sessionId,
+            userName: sig.userName || 'Desconhecido',
+            sessionTitle: sig.sessionTitle || session?.title || 'Sessão Removida (Órfão)',
+            shift: session?.shift || '-',
+            group: session?.group || '-',
+            executor: session?.executor || '-',
+            mood: sig.mood || '-',
+            timestamp: safeToDate(sig.timestamp) || new Date(),
+            isOrphan: !session
+          };
+        });
+        
+        setOrphanIds(currentOrphans);
+        setData(ddsResults);
+
+        // Fetch Checklist Items Labels and Order
+        const itemsSnap = await getDocs(query(collection(db, 'forklift_check_items'), orderBy('order')));
+        const itemsMap: Record<string, string> = {};
+        const itemsOrdered: any[] = [];
+        itemsSnap.forEach(doc => {
+          const itemData = doc.data();
+          itemsMap[doc.id] = itemData.name;
+          itemsOrdered.push({ id: doc.id, ...itemData });
+        });
+        setCheckItems(itemsMap);
+        setCheckItemsList(itemsOrdered);
+
+        // Fetch Forklift Data
+        const forkliftSnap = await getDocs(query(collection(db, 'forklift_checklists'), orderBy('timestamp', 'desc')));
+        const forkliftResults = forkliftSnap.docs.map(doc => {
+          const check = doc.data();
+          return {
+            id: doc.id,
+            forkliftNumber: check.forkliftNumber,
+            conductorName: check.conductorName,
+            status: check.status,
+            shift: check.shift,
+            group: check.group,
+            timestamp: safeToDate(check.timestamp) || new Date(),
+            itemResults: check.itemResults || {},
+            notes: check.notes || '',
+            mediaUrl: check.mediaUrl || ''
+          };
+        });
+        setForkliftData(forkliftResults);
+
+        // Fetch Wire Suppliers & Lines for labels
+        const suppliersSnap = await getDocs(collection(db, 'wire_suppliers'));
+        const suppliersList = suppliersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setSuppliers(suppliersList);
+
+        const linesSnap = await getDocs(collection(db, 'production_lines'));
+        const linesList = linesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setLines(linesList);
+
+        // Fetch Wire Receiving Data (Batches)
+        const batchesSnap = await getDocs(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc')));
+        const batchesResults = batchesSnap.docs.map(doc => {
+          const batch = doc.data();
+          return {
+            id: doc.id,
+            nfNumber: batch.nfNumber,
+            supplierName: batch.supplierName,
+            supplierId: batch.supplierId,
+            date: batch.date,
+            totalWeight: batch.totalWeight,
+            coilsCount: batch.coilsCount,
+            responsibleName: batch.responsibleName || 'Sistema',
+            timestamp: safeToDate(batch.createdAt) || new Date(batch.date),
+          };
+        });
+        setWireReceivingData(batchesResults);
+
+        // Fetch Wire Consumption Data (Consumed Coils)
+        const coilsSnap = await getDocs(query(collection(db, 'wire_coils'), where('status', '==', 'consumed'), orderBy('consumedAt', 'desc')));
+        const coilsResults = coilsSnap.docs.map(doc => {
+          const coil = doc.data();
+          return {
+            id: doc.id,
+            coilNumber: coil.coilNumber,
+            diameter: coil.diameter,
+            weight: coil.weight,
+            currentLineId: coil.currentLineId,
+            consumedBy: coil.consumedBy,
+            consumedShift: coil.consumedShift,
+            timestamp: safeToDate(coil.consumedAt) || new Date(),
+            supplierId: coil.supplierId,
+            consumedByGroup: coil.consumedByGroup || '-'
+          };
+        });
+        setWireConsumptionData(coilsResults);
+        
+        // Fetch Quality Data
+        const templatesSnap = await getDocs(collection(db, 'quality_checklist_templates'));
+        const templatesMap: Record<string, any> = {};
+        templatesSnap.forEach(doc => { templatesMap[doc.id] = doc.data(); });
+        setQualityTemplates(templatesMap);
+
+        const qualitySnap = await getDocs(query(collection(db, 'quality_checklist_submissions'), orderBy('createdAt', 'desc')));
+        
+        // Fetch Quality Sectors
+        const sectorsSnap = await getDocs(collection(db, 'quality_sectors'));
+        const sectorsList = sectorsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setQualitySectors(sectorsList);
+
+        const qualityResults = qualitySnap.docs.map(doc => {
+          const sub = doc.data();
+          return {
+            id: doc.id,
+            templateId: sub.templateId,
+            templateName: templatesMap[sub.templateId]?.name || 'Modelo Excluído',
+            sectorId: sub.sectorId,
+            lineId: sub.lineId,
+            userId: sub.userId,
+            userName: sub.userName,
+            shift: sub.shift,
+            responses: sub.responses || [],
+            timestamp: safeToDate(sub.createdAt) || new Date()
+          };
+        });
+        setQualityData(qualityResults);
+
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, reportType === 'dds' ? 'dds_signatures' : 'forklift_checklists');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, [isManager]);
+
+  const handleCleanupOrphans = async () => {
+    if (orphanIds.length === 0 || !window.confirm(`Deseja realmente excluir ${orphanIds.length} registros de participação que não possuem DDS vinculado? Esta ação é irreversível.`)) {
+      return;
+    }
+
+    setCleaningUp(true);
+    try {
+      const { deleteDoc, doc } = await import('firebase/firestore');
+      for (const id of orphanIds) {
+        await deleteDoc(doc(db, 'dds_signatures', id));
+      }
+      // Refresh data
+      window.location.reload();
+    } catch (err) {
+      console.error("Error during cleanup:", err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro na Limpeza',
+        message: 'Ocorreu um erro ao realizar a limpeza dos registros órfãos.',
+        type: 'error'
+      });
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
+  const filteredData = useMemo(() => {
+    let dataSource: any[] = [];
+    if (reportType === 'dds') dataSource = data;
+    else if (reportType === 'forklift') dataSource = forkliftData;
+    else if (reportType === 'wire_receiving') dataSource = wireReceivingData;
+    else if (reportType === 'wire_consumption') dataSource = wireConsumptionData;
+    else if (reportType === 'quality') dataSource = qualityData;
+    
+    return dataSource.filter(item => {
+      let matchUser = true;
+      if (reportType === 'dds') {
+        matchUser = (!filterUser || item.userName.toLowerCase().includes(filterUser.toLowerCase()) || item.executor.toLowerCase().includes(filterUser.toLowerCase()));
+      } else if (reportType === 'forklift') {
+        matchUser = (!filterUser || item.conductorName.toLowerCase().includes(filterUser.toLowerCase()) || item.forkliftNumber.toLowerCase().includes(filterUser.toLowerCase()));
+      } else if (reportType === 'quality') {
+        matchUser = (!filterUser || item.userName.toLowerCase().includes(filterUser.toLowerCase()) || (item.templateName || '').toLowerCase().includes(filterUser.toLowerCase()));
+      } else if (reportType === 'wire_receiving') {
+        matchUser = (!filterUser || item.nfNumber.toLowerCase().includes(filterUser.toLowerCase()) || item.supplierName.toLowerCase().includes(filterUser.toLowerCase()));
+      } else if (reportType === 'wire_consumption') {
+        matchUser = (!filterUser || item.coilNumber.toLowerCase().includes(filterUser.toLowerCase()) || (item.consumedBy || '').toLowerCase().includes(filterUser.toLowerCase()));
+      }
+      
+      let matchThemeOrStatus = true;
+      if (reportType === 'dds') {
+        matchThemeOrStatus = (!filterTheme || item.sessionTitle.toLowerCase().includes(filterTheme.toLowerCase()));
+      } else if (reportType === 'forklift') {
+        matchThemeOrStatus = (filterStatus === 'all' || item.status === filterStatus);
+      }
+      
+      let matchShift = true;
+      if (reportType === 'dds' || reportType === 'forklift') {
+        matchShift = filterShift === 'all' || item.shift === filterShift;
+      } else if (reportType === 'wire_consumption') {
+        matchShift = filterShift === 'all' || item.consumedShift === filterShift;
+      }
+
+      let matchGroup = true;
+      if (reportType === 'dds' || reportType === 'forklift') {
+        matchGroup = filterGroup === 'all' || item.group === filterGroup;
+      } else if (reportType === 'wire_consumption') {
+        matchGroup = filterGroup === 'all' || item.consumedByGroup === filterGroup;
+      }
+
+      let matchLine = true;
+      if (reportType === 'wire_consumption') {
+        matchLine = filterLine === 'all' || item.currentLineId === filterLine;
+      } else if (reportType === 'quality') {
+        if (filterLine === 'all') {
+          matchLine = true;
+        } else if (filterLine === 'all_factory') {
+          matchLine = item.sectorId === 'all';
+        } else {
+          // 1. Direct match (selected filter is the item's line or the item's sector)
+          if (item.lineId === filterLine || item.sectorId === filterLine) {
+            matchLine = true;
+          } else {
+            // 2. If the user selected a sector in the filter, check if the item's line is in that sector
+            const selectedSector = qualitySectors.find(s => s.id === filterLine);
+            if (selectedSector && item.lineId) {
+              matchLine = selectedSector.lineIds.includes(item.lineId);
+            } else {
+              matchLine = false;
+            }
+          }
+        }
+      }
+
+      const matchMood = reportType === 'dds' ? (filterMood === 'all' || item.mood === filterMood) : true;
+      
+      const itemDate = item.timestamp;
+      let matchDate = true;
+      if (filterDateStart) {
+        const start = new Date(filterDateStart);
+        start.setHours(0, 0, 0, 0);
+        matchDate = matchDate && itemDate >= start;
+      }
+      if (filterDateEnd) {
+        const end = new Date(filterDateEnd);
+        end.setHours(23, 59, 59, 999);
+        matchDate = matchDate && itemDate <= end;
+      }
+
+      return matchUser && matchThemeOrStatus && matchShift && matchGroup && matchLine && matchMood && matchDate;
+    });
+  }, [data, forkliftData, wireReceivingData, wireConsumptionData, reportType, filterUser, filterTheme, filterShift, filterGroup, filterLine, filterMood, filterStatus, filterDateStart, filterDateEnd]);
+
+  const exportPDF = () => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
+    let title = '';
+    if (reportType === 'dds') title = 'RELATÓRIO DDS ONLINE';
+    else if (reportType === 'forklift') title = 'RELATÓRIO INSPEÇÃO EMPILHADEIRAS';
+    else if (reportType === 'wire_receiving') title = 'RELATÓRIO RECEBIMENTO DE ARAME';
+    else if (reportType === 'wire_consumption') title = 'RELATÓRIO CONSUMO DE ARAME';
+    else if (reportType === 'quality') title = 'RELATÓRIO QUALIDADE DE PROCESSO';
+    
+    // Header styling - Standardized Emerald Theme
+    doc.setFillColor(5, 150, 105); // emerald-600
+    doc.rect(0, 0, pageWidth, 35, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text(title, 14, 20);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(190, 242, 219); // emerald-100ish for secondary text on emerald bg
+    doc.text(`Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 14, 28);
+    doc.text(`Filtros: ${filterUser || 'Todos'} | Turno: ${filterShift} | Letra: ${filterGroup}`, pageWidth - 14, 28, { align: 'right' });
+    
+    let head: any[], tableData: any[];
+    if (reportType === 'dds') {
+      head = [['Colaborador', 'Tema', 'Turno', 'Letra', 'Executante', 'Humor', 'Data/Hora']];
+      tableData = filteredData.map(item => [
+        item.userName,
+        item.sessionTitle,
+        item.shift,
+        item.group,
+        item.executor,
+        item.mood === 'happy' ? 'Bem' : item.mood === 'neutral' ? 'Normal' : item.mood === 'sad' ? 'Cansado' : '-',
+        item.timestamp.toLocaleString('pt-BR')
+      ]);
+    } else if (reportType === 'forklift') {
+      head = [['Equipamento', 'Condutor', 'Turno', 'Letra', 'Status', 'Data/Hora']];
+      tableData = filteredData.map(item => [
+        item.forkliftNumber,
+        item.conductorName,
+        item.shift,
+        item.group,
+        item.status === 'normal' ? 'CONFORME' : 'NÃO CONFORME',
+        item.timestamp.toLocaleString('pt-BR')
+      ]);
+    } else if (reportType === 'wire_receiving') {
+      head = [['NF', 'Fornecedor', 'Bobinas', 'Peso Total (kg)', 'Responsável', 'Data']];
+      tableData = filteredData.map(item => [
+        item.nfNumber,
+        item.supplierName,
+        item.coilsCount,
+        item.totalWeight.toLocaleString('pt-BR'),
+        item.responsibleName,
+        item.timestamp.toLocaleDateString('pt-BR')
+      ]);
+    } else if (reportType === 'quality') {
+      head = [['Colaborador', 'Checklist', 'Setor/Linha', 'Escala', 'Itens', 'Data/Hora']];
+      tableData = filteredData.map(item => [
+        item.userName,
+        item.templateName,
+        lines.find(l => l.id === item.lineId)?.name || qualitySectors.find(s => s.id === item.sectorId)?.name || 'Todos',
+        item.shift,
+        item.responses.length,
+        item.timestamp.toLocaleString('pt-BR')
+      ]);
+    } else {
+      head = [['Bobina (ID)', 'Bitola (mm)', 'Peso (kg)', 'Linha', 'Turno', 'Letra', 'Usuário', 'Data/Hora']];
+      tableData = filteredData.map(item => [
+        item.coilNumber,
+        item.diameter,
+        item.weight,
+        lines.find(l => l.id === item.currentLineId)?.name || 'N/A',
+        item.consumedShift || '-',
+        item.consumedByGroup || '-',
+        item.consumedBy || 'Sistema',
+        item.timestamp.toLocaleString('pt-BR')
+      ]);
+    }
+
+    autoTable(doc, {
+      startY: 40,
+      head: head,
+      body: tableData,
+      theme: 'striped',
+      headStyles: { 
+        fillColor: [241, 245, 249], // slate-100
+        textColor: [71, 85, 105],   // slate-600
+        fontSize: 8,
+        fontStyle: 'bold'
+      },
+      styles: { fontSize: 8, cellPadding: 3 },
+      alternateRowStyles: { fillColor: [248, 250, 252] }, // slate-50
+      didParseCell: (data) => {
+        if (reportType === 'forklift' && data.section === 'body' && data.column.index === 4) {
+          if (data.cell.raw === 'NÃO CONFORME') {
+            data.cell.styles.textColor = [225, 29, 72]; // rose-600
+            data.cell.styles.fontStyle = 'bold';
+          } else {
+            data.cell.styles.textColor = [5, 150, 105]; // emerald-600
+          }
+        }
+      }
+    });
+
+    doc.save(`relatorio_${reportType}_${new Date().getTime()}.pdf`);
+  };
+
+  const toggleReceivingExpand = async (batchId: string) => {
+    if (expandedReceivingIds[batchId]) {
+      const newExpanded = { ...expandedReceivingIds };
+      delete newExpanded[batchId];
+      setExpandedReceivingIds(newExpanded);
+      return;
+    }
+
+    setLoadingBatchCoils(prev => ({ ...prev, [batchId]: true }));
+    try {
+      const q = query(collection(db, 'wire_coils'), where('batchId', '==', batchId));
+      const snap = await getDocs(q);
+      const coils = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setExpandedReceivingIds(prev => ({ ...prev, [batchId]: coils }));
+    } catch (err) {
+      console.error("Error fetching batch coils:", err);
+    } finally {
+      setLoadingBatchCoils(prev => ({ ...prev, [batchId]: false }));
+    }
+  };
+
+  const exportCSV = () => {
+    try {
+      let headers, rows;
+      if (reportType === 'dds') {
+        headers = ['Colaborador', 'Tema', 'Turno', 'Letra', 'Executante', 'Humor', 'Data/Hora'];
+        rows = filteredData.map(item => [
+          `"${item.userName}"`,
+          `"${item.sessionTitle}"`,
+          `"${item.shift}"`,
+          `"${item.group}"`,
+          `"${item.executor}"`,
+          `"${item.mood}"`,
+          `"${item.timestamp.toISOString()}"`
+        ]);
+      } else if (reportType === 'forklift') {
+        headers = ['Equipamento', 'Condutor', 'Turno', 'Letra', 'Status', 'Data/Hora'];
+        rows = filteredData.map(item => [
+          `"${item.forkliftNumber}"`,
+          `"${item.conductorName}"`,
+          `"${item.shift}"`,
+          `"${item.group}"`,
+          `"${item.status}"`,
+          `"${item.timestamp.toISOString()}"`
+        ]);
+      } else if (reportType === 'wire_receiving') {
+        headers = ['NF', 'Fornecedor', 'Bobinas', 'Peso Total (kg)', 'Responsável', 'Data'];
+        rows = filteredData.map(item => [
+          `"${item.nfNumber}"`,
+          `"${item.supplierName}"`,
+          `"${item.coilsCount}"`,
+          `"${item.totalWeight}"`,
+          `"${item.responsibleName}"`,
+          `"${item.timestamp.toISOString()}"`
+        ]);
+      } else if (reportType === 'quality') {
+        headers = ['Colaborador', 'Checklist', 'Linha', 'Setor', 'Escala', 'Itens', 'Data/Hora'];
+        rows = filteredData.map(item => [
+          `"${item.userName}"`,
+          `"${item.templateName}"`,
+          `"${lines.find(l => l.id === item.lineId)?.name || 'N/A'}"`,
+          `"${qualitySectors.find(s => s.id === item.sectorId)?.name || 'Todos'}"`,
+          `"${item.shift}"`,
+          `"${item.responses.length}"`,
+          `"${item.timestamp.toISOString()}"`
+        ]);
+      } else {
+        headers = ['Bobina (ID)', 'Bitola (mm)', 'Peso (kg)', 'Linha', 'Turno', 'Letra', 'Usuário', 'Data/Hora'];
+        rows = filteredData.map(item => [
+          `"${item.coilNumber}"`,
+          `"${item.diameter}"`,
+          `"${item.weight}"`,
+          `"${lines.find(l => l.id === item.currentLineId)?.name || 'N/A'}"`,
+          `"${item.consumedShift}"`,
+          `"${item.consumedByGroup || '-'}"`,
+          `"${item.consumedBy}"`,
+          `"${item.timestamp.toISOString()}"`
+        ]);
+      }
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute('download', `relatorio_${reportType}_${new Date().getTime()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const exportSingleChecklistPDF = (check: any) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
+
+    // Header
+    doc.setFillColor(5, 150, 105); // emerald-600
+    doc.rect(0, 0, pageWidth, 40, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`INSPEÇÃO # ${check.forkliftNumber}`, 14, 25);
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Data: ${format(check.timestamp, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 14, 33);
+
+    // Info Table
+    const infoData = [
+      ['Equipamento:', check.forkliftNumber, 'Status:', check.status === 'normal' ? 'CONFORME' : 'NÃO CONFORME'],
+      ['Condutor:', check.conductorName, 'Turno:', check.shift],
+      ['Grupo (Letra):', check.group, 'ID:', check.id]
+    ];
+
+    autoTable(doc, {
+      startY: 45,
+      body: infoData,
+      theme: 'plain',
+      styles: { fontSize: 9, cellPadding: 2 },
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 30 },
+        1: { cellWidth: 60 },
+        2: { fontStyle: 'bold', cellWidth: 30 },
+        3: { fontStyle: 'bold' }
+      }
+    });
+
+    // Checklist Items
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Itens de Verificação', 14, (doc as any).lastAutoTable.finalY + 15);
+
+    // Filter checkItemsList to only show active items OR items that have a result in this check
+    // Actually, usually we show all items that are assigned to this checklist
+    const checkItemsData = checkItemsList.map((item) => {
+      const res = check.itemResults[item.id];
+      if (!res) return null; // Skip items that don't have results in this specific check
+      
+      const label = item.name;
+      let valueStr = res.value === true ? 'SIM' : res.value === false ? 'NÃO' : String(res.value);
+      return [label, valueStr, res.status === 'normal' ? 'NORMAL' : 'ANORMAL'];
+    }).filter(Boolean);
+
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [['Item da Verificação', 'Resposta', 'Status']],
+      body: checkItemsData,
+      headStyles: { 
+        fillColor: [241, 245, 249], 
+        textColor: [71, 85, 105],
+        fontStyle: 'bold'
+      }, // slate-50, slate-500
+      styles: { fontSize: 9 },
+      columnStyles: {
+        1: { halign: 'center' },
+        2: { halign: 'center', fontStyle: 'bold' }
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 2) {
+          if (data.cell.raw === 'ANORMAL') {
+            data.cell.styles.textColor = [225, 29, 72]; // rose-600
+          } else {
+            data.cell.styles.textColor = [5, 150, 105]; // emerald-600
+          }
+        }
+      }
+    });
+
+    // Notes
+    if (check.notes) {
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Observações', 14, (doc as any).lastAutoTable.finalY + 15);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'italic');
+      doc.setTextColor(100, 116, 139); // slate-500
+      const splitNotes = doc.splitTextToSize(check.notes, pageWidth - 28);
+      doc.text(splitNotes, 14, (doc as any).lastAutoTable.finalY + 22);
+    }
+
+    doc.save(`inspecao_${check.forkliftNumber}_${format(check.timestamp, 'yyyyMMdd_HHmm')}.pdf`);
+  };
+
+  const [selectedForkliftCheck, setSelectedForkliftCheck] = useState<any | null>(null);
+  const [editingConsumption, setEditingConsumption] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState({ line: '', shift: '', group: '' });
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleEditConsumption = (item: any) => {
+    setEditingConsumption(item);
+    setEditForm({
+      line: item.currentLineId || '',
+      shift: item.consumedShift || '',
+      group: item.consumedByGroup || '-'
+    });
+  };
+
+  const saveConsumptionEdit = async () => {
+    if (!editingConsumption) return;
+    setIsSaving(true);
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      await updateDoc(doc(db, 'wire_coils', editingConsumption.id), {
+        currentLineId: editForm.line,
+        consumedShift: editForm.shift,
+        consumedByGroup: editForm.group
+      });
+      
+      // Update local state and close
+      setWireConsumptionData(prev => prev.map(c => 
+        c.id === editingConsumption.id 
+          ? { ...c, currentLineId: editForm.line, consumedShift: editForm.shift, consumedByGroup: editForm.group } 
+          : c
+      ));
+      setEditingConsumption(null);
+      setModalConfig({
+        isOpen: true,
+        title: 'Sucesso!',
+        message: 'Alterações salvas com sucesso.',
+        type: 'success'
+      });
+    } catch (err) {
+      console.error("Error updating consumption record:", err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro ao Salvar',
+        message: 'Ocorreu um erro ao salvar as alterações do registro.',
+        type: 'error'
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const resetFilters = () => {
+    setFilterUser('');
+    setFilterTheme('');
+    setFilterShift('all');
+    setFilterGroup('all');
+    setFilterMood('all');
+    setFilterStatus('all');
+    setFilterLine('all');
+    setFilterDateStart('');
+    setFilterDateEnd('');
+  };
+
+  if (!isManager) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 bg-white rounded-[2rem] border border-slate-200 shadow-sm border-dashed">
+         <FileDown className="w-16 h-16 text-slate-200 mb-4" />
+         <h2 className="text-xl font-bold text-slate-900">Acesso Restrito</h2>
+         <p className="text-slate-500">Apenas gestores podem visualizar relatórios consolidados.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8 no-print">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Painel de Relatórios</h1>
+          <p className="text-slate-500 mt-1">Gestão inteligente e exportação de participações.</p>
+        </div>
+
+        <div className="relative">
+          <button
+            onClick={() => setShowTypeMenu(!showTypeMenu)}
+            className="flex items-center gap-3 px-5 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black uppercase tracking-tight text-slate-700 shadow-sm hover:border-emerald-200 transition-all active:scale-95"
+          >
+            {reportType === 'dds' && <><ShieldCheck className="w-5 h-5 text-emerald-600" /> DDS Online</>}
+            {reportType === 'forklift' && <><Truck className="w-5 h-5 text-emerald-600" /> Empilhadeiras</>}
+            {reportType === 'wire_receiving' && <><FileText className="w-5 h-5 text-emerald-600" /> Recebimento</>}
+            {reportType === 'wire_consumption' && <><Factory className="w-5 h-5 text-emerald-600" /> Consumo</>}
+            {reportType === 'quality' && <><ClipboardCheck className="w-5 h-5 text-emerald-600" /> Qualidade</>}
+            <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTypeMenu && "rotate-180")} />
+          </button>
+
+          <AnimatePresence>
+            {showTypeMenu && (
+              <>
+                <div 
+                  className="fixed inset-0 z-10" 
+                  onClick={() => setShowTypeMenu(false)} 
+                />
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute left-0 mt-2 w-64 bg-white border border-slate-100 rounded-2xl shadow-2xl z-20 overflow-hidden p-1.5"
+                >
+                  <button
+                    onClick={() => { setReportType('dds'); setShowTypeMenu(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
+                      reportType === 'dds' ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                    )}
+                  >
+                    <ShieldCheck className="w-4 h-4" /> DDS Online
+                  </button>
+                  <button
+                    onClick={() => { setReportType('forklift'); setShowTypeMenu(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
+                      reportType === 'forklift' ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                    )}
+                  >
+                    <Truck className="w-4 h-4" /> Empilhadeiras
+                  </button>
+                  <button
+                    onClick={() => { setReportType('wire_receiving'); setShowTypeMenu(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
+                      reportType === 'wire_receiving' ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                    )}
+                  >
+                    <FileText className="w-4 h-4" /> Recebimento Arame
+                  </button>
+                  <button
+                    onClick={() => { setReportType('wire_consumption'); setShowTypeMenu(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
+                      reportType === 'wire_consumption' ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                    )}
+                  >
+                    <Factory className="w-4 h-4" /> Consumo Arame
+                  </button>
+                  <button
+                    onClick={() => { setReportType('quality'); setShowTypeMenu(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
+                      reportType === 'quality' ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                    )}
+                  >
+                    <ClipboardCheck className="w-4 h-4" /> Qualidade
+                  </button>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm border",
+              showFilters ? "bg-slate-900 border-slate-900 text-white" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+            )}
+          >
+            <Filter className="w-4 h-4" />
+            {showFilters ? 'Ocultar Filtros' : 'Filtrar Dados'}
+          </button>
+          <button
+            onClick={exportCSV}
+            className="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2.5 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+          >
+            <TableIcon className="w-4 h-4 text-emerald-600" />
+            CSV
+          </button>
+          <button
+            onClick={exportPDF}
+            className="flex items-center gap-2 bg-emerald-600 px-4 py-2.5 rounded-xl text-sm font-bold text-white hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
+          >
+            <FileText className="w-4 h-4" />
+            PDF
+          </button>
+        </div>
+      </div>
+
+      <AnimatePresence mode="wait">
+        {reportType === 'forklift' ? (
+          <motion.div
+            key="forklift-stats"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"
+          >
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">
+                <FileText className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total de Inspeções</p>
+                <p className="text-2xl font-black text-slate-900">{forkliftData.length}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Anormalidades</p>
+                <p className="text-2xl font-black text-rose-600">{forkliftData.filter(f => f.status === 'anormal').length}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-slate-100 text-slate-600 rounded-2xl flex items-center justify-center">
+                <Truck className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Equipamentos Ativos</p>
+                <p className="text-2xl font-black text-slate-900">{new Set(forkliftData.map(f => f.forkliftNumber)).size}</p>
+              </div>
+            </div>
+          </motion.div>
+        ) : reportType === 'wire_receiving' ? (
+          <motion.div
+            key="receiving-stats"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"
+          >
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
+                <FileText className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lançamentos de NF</p>
+                <p className="text-2xl font-black text-slate-900">{wireReceivingData.length}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">
+                <TrendingUp className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Peso Total Recebido</p>
+                <p className="text-2xl font-black text-slate-900">{wireReceivingData.reduce((acc, b) => acc + b.totalWeight, 0).toLocaleString('pt-BR')} kg</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-slate-100 text-slate-600 rounded-2xl flex items-center justify-center">
+                <Package className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total de Bobinas</p>
+                <p className="text-2xl font-black text-slate-900">{wireReceivingData.reduce((acc, b) => acc + b.coilsCount, 0)}</p>
+              </div>
+            </div>
+          </motion.div>
+        ) : reportType === 'wire_consumption' ? (
+          <motion.div
+            key="consumption-stats"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"
+          >
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center">
+                <Package className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bobinas Consumidas</p>
+                <p className="text-2xl font-black text-slate-900">{wireConsumptionData.length}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">
+                <TrendingUp className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Peso Total Consumido</p>
+                <p className="text-2xl font-black text-slate-900">{wireConsumptionData.reduce((acc, c) => acc + c.weight, 0).toLocaleString('pt-BR')} kg</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-slate-100 text-slate-600 rounded-2xl flex items-center justify-center">
+                <Factory className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Linhas Ativas</p>
+                <p className="text-2xl font-black text-slate-900">{new Set(wireConsumptionData.map(c => c.currentLineId)).size}</p>
+              </div>
+            </div>
+          </motion.div>
+        ) : (
+          orphanIds.length > 0 && (
+            <motion.div
+              key="dds-orphans"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="flex items-center justify-between p-4 bg-rose-50 border border-rose-200 rounded-2xl mb-8"
+            >
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-rose-500" />
+                <div>
+                  <p className="text-sm font-bold text-rose-900">Registros de participação órfãos detectados</p>
+                  <p className="text-xs text-rose-600">Existem {orphanIds.length} assinaturas vinculadas a DDS que foram excluídos incorretamente no passado.</p>
+                </div>
+              </div>
+              <button
+                onClick={handleCleanupOrphans}
+                disabled={cleaningUp}
+                className="flex items-center gap-2 bg-rose-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-rose-700 transition-all disabled:opacity-50"
+              >
+                {cleaningUp ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                Limpar Todos
+              </button>
+            </motion.div>
+          )
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showFilters && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
+              <button 
+                onClick={resetFilters}
+                className="absolute top-4 right-4 text-slate-400 hover:text-rose-500 transition-colors"
+                title="Limpar Filtros"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">
+                  {reportType === 'dds' ? 'Colaborador / Executante' : 
+                   reportType === 'forklift' ? 'Condutor / Equipamento' :
+                   reportType === 'wire_receiving' ? 'NF / Fornecedor' : 'Bobina / Usuário'}
+                </label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                  <input 
+                    type="text" 
+                    value={filterUser}
+                    onChange={(e) => setFilterUser(e.target.value)}
+                    placeholder={
+                      reportType === 'dds' ? "Buscar nome..." : 
+                      reportType === 'forklift' ? "Nome ou Nº Equipamento..." :
+                      reportType === 'wire_receiving' ? "NF ou Fornecedor..." : "ID Bobina ou Usuário..."
+                    }
+                    className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {reportType === 'dds' && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Tema (DDS)</label>
+                  <div className="relative">
+                    <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <input 
+                      type="text" 
+                      value={filterTheme}
+                      onChange={(e) => setFilterTheme(e.target.value)}
+                      placeholder="Título do DDS..."
+                      className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {reportType === 'forklift' && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Status da Inspeção</label>
+                  <div className="relative">
+                    <AlertTriangle className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <select 
+                      value={filterStatus}
+                      onChange={(e) => setFilterStatus(e.target.value)}
+                      className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                    >
+                      <option value="all">Todas Inspeções</option>
+                      <option value="normal">✅ Normal</option>
+                      <option value="anormal">❌ Anormal</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              {reportType === 'quality' && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Setor / Linha</label>
+                  <div className="relative">
+                    <ListFilter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <select 
+                      value={filterLine}
+                      onChange={(e) => setFilterLine(e.target.value)}
+                      className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                    >
+                      <option value="all">Todos Setores/Linhas</option>
+                      <option value="all_factory">Fábrica Completa</option>
+                      <optgroup label="Setores">
+                        {qualitySectors.map(s => (
+                          <option key={`sector-opt-${s.id}`} value={s.id}>{s.name}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Linhas">
+                        {lines.map(l => (
+                          <option key={`line-opt-${l.id}`} value={l.id}>{l.name}</option>
+                        ))}
+                      </optgroup>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              {reportType !== 'wire_receiving' && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Turno</label>
+                  <div className="relative">
+                    <select 
+                      value={filterShift}
+                      onChange={(e) => setFilterShift(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                    >
+                      <option value="all">Todos Turnos</option>
+                      <option value="Turno 1">Turno 1</option>
+                      <option value="Turno 2">Turno 2</option>
+                      <option value="Turno 3">Turno 3</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              {(reportType === 'dds' || reportType === 'forklift' || reportType === 'wire_consumption') && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Letra</label>
+                  <div className="relative">
+                    <select 
+                      value={filterGroup}
+                      onChange={(e) => setFilterGroup(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                    >
+                      <option value="all">Todas Letras</option>
+                      <option value="A">Letra A</option>
+                      <option value="B">Letra B</option>
+                      <option value="C">Letra C</option>
+                      <option value="D">Letra D</option>
+                      <option value="E">Letra E</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              {reportType === 'wire_consumption' && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Linha de Produção</label>
+                  <div className="relative">
+                    <Factory className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <select 
+                      value={filterLine}
+                      onChange={(e) => setFilterLine(e.target.value)}
+                      className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                    >
+                      <option value="all">Todas as Linhas</option>
+                      {lines.map(line => (
+                        <option key={line.id} value={line.id}>{line.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              {reportType === 'dds' && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Humor</label>
+                  <div className="relative">
+                    <select 
+                      value={filterMood}
+                      onChange={(e) => setFilterMood(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                    >
+                      <option value="all">Todos Humores</option>
+                      <option value="happy">Bem (Feliz)</option>
+                      <option value="neutral">Normal</option>
+                      <option value="sad">Cansado (Triste)</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Início do Período</label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                  <input 
+                    type="date" 
+                    value={filterDateStart}
+                    onChange={(e) => setFilterDateStart(e.target.value)}
+                    className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Fim do Período</label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                  <input 
+                    type="date" 
+                    value={filterDateEnd}
+                    onChange={(e) => setFilterDateEnd(e.target.value)}
+                    className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-end pb-1 ml-1">
+                <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-[0.15em]">
+                  {filteredData.length} registros encontrados
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">
+        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-white text-slate-900">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-slate-400" />
+            <span className="text-sm font-bold text-slate-500 uppercase tracking-widest text-[10px]">
+              {showFilters ? 'Filtros Personalizados Ativos' : 'Relatório Consolidado Mensal'}
+            </span>
+          </div>
+          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+            Exibindo: {filteredData.length} / {data.length}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-10 h-10 animate-spin text-emerald-600" />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                    {reportType === 'dds' ? (
+                      <>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Colaborador</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Tema / Turno</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Letra</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Humor</th>
+                      </>
+                    ) : reportType === 'forklift' ? (
+                      <>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Equipamento</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Condutor / Turno</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Letra</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                      </>
+                    ) : reportType === 'wire_receiving' ? (
+                      <>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider"></th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Nota Fiscal</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Fornecedor</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Bobinas</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Peso Total</th>
+                      </>
+                    ) : reportType === 'quality' ? (
+                      <>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Operador / Escala</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Checklist / Setor</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Respostas</th>
+                      </>
+                    ) : (
+                    <>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Bobina</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Linha / Bitola</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Peso</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">T/L</th>
+                    </>
+                  )}
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Data/Hora</th>
+                  {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality') && (
+                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Ações</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filteredData.map((item, i) => (
+                  <React.Fragment key={`${item.id}-${i}`}>
+                    <motion.tr 
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: Math.min(i * 0.05, 1) }}
+                      className={cn(
+                        "hover:bg-slate-50/50",
+                        expandedReceivingIds[item.id] && "bg-emerald-50/30"
+                      )}
+                    >
+                      {reportType === 'dds' ? (
+                        <>
+                          <td className="px-6 py-4">
+                            <p className="font-bold text-slate-900 leading-none mb-1">{item.userName}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest italic">Executante: {item.executor}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex flex-col gap-1">
+                                <span className="text-sm font-bold text-slate-700 leading-tight">{item.sessionTitle}</span>
+                                <span className="w-fit px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded uppercase tracking-tighter">
+                                  {item.shift}
+                                </span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="px-3 py-1 bg-slate-100 text-slate-600 text-[10px] font-black rounded-lg uppercase tabular-nums">
+                              LETRA {item.group}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            {item.mood === 'happy' && <Smile className="w-6 h-6 text-emerald-500" />}
+                            {item.mood === 'neutral' && <Meh className="w-6 h-6 text-amber-500" />}
+                            {item.mood === 'sad' && <Frown className="w-6 h-6 text-rose-500" />}
+                            {(!item.mood || item.mood === '-') && <span className="text-slate-300 font-bold">-</span>}
+                          </td>
+                        </>
+                      ) : reportType === 'forklift' ? (
+                        <>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                               <Truck className="w-5 h-5 text-slate-400" />
+                               <p className="font-black text-slate-900 uppercase">#{item.forkliftNumber}</p>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                             <p className="font-bold text-slate-900 leading-none mb-1">{item.conductorName}</p>
+                             <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded uppercase">
+                               {item.shift}
+                             </span>
+                          </td>
+                          <td className="px-6 py-4">
+                             <span className="px-3 py-1 bg-slate-100 text-slate-600 text-[10px] font-black rounded-lg uppercase tabular-nums">
+                               LETRA {item.group}
+                             </span>
+                          </td>
+                          <td className="px-6 py-4">
+                             <span className={cn(
+                               "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                               item.status === 'normal' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                             )}>
+                               {item.status === 'normal' ? 'Normal' : 'Anormal'}
+                             </span>
+                          </td>
+                        </>
+                      ) : reportType === 'quality' ? (
+                        <>
+                          <td className="px-6 py-4">
+                            <p className="font-black text-slate-900 leading-none mb-1">{item.userName}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{item.shift || '-'}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-bold text-slate-700">{item.templateName}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                               Linha: {lines.find(l => l.id === item.lineId)?.name || 'N/A'}
+                            </p>
+                            {item.sectorId !== item.lineId && (
+                              <p className="text-[9px] text-slate-300 font-bold uppercase tracking-tighter">
+                                Setor: {qualitySectors.find(s => s.id === item.sectorId)?.name || 'Geral'}
+                              </p>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                             <div className="flex flex-wrap gap-1 max-w-xs">
+                                {item.responses.map((res: any, idx: number) => (
+                                   <span key={idx} className={cn(
+                                     "px-2 py-0.5 rounded text-[9px] font-black uppercase",
+                                     res.value === 'ok' || res.value === true ? "bg-emerald-100 text-emerald-700" :
+                                     res.value === 'nok' || res.value === false ? "bg-rose-100 text-rose-700" :
+                                     "bg-slate-100 text-slate-600"
+                                   )}>
+                                     {res.label}{res.value !== undefined ? ': ' : ''}{res.value === true ? 'Sim' : res.value === false ? 'Não' : (res.value || '')}
+                                   </span>
+                                ))}
+                             </div>
+                          </td>
+                        </>
+                      ) : reportType === 'wire_receiving' ? (
+                        <>
+                          <td className="px-6 py-4 w-10">
+                            <button 
+                              onClick={() => toggleReceivingExpand(item.id)}
+                              disabled={loadingBatchCoils[item.id]}
+                              className="p-1.5 hover:bg-emerald-100/50 rounded-lg transition-all text-emerald-600"
+                            >
+                              {loadingBatchCoils[item.id] ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", expandedReceivingIds[item.id] && "rotate-180")} />
+                              )}
+                            </button>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="font-black text-slate-900 leading-none mb-1"># {item.nfNumber}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{item.responsibleName}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-bold text-slate-700">{item.supplierName}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="px-3 py-1 bg-blue-100 text-blue-700 text-[10px] font-black rounded-lg uppercase">
+                              {item.coilsCount} Bobinas
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-black text-emerald-600 tabular-nums">
+                              {item.totalWeight.toLocaleString('pt-BR')} kg
+                            </p>
+                          </td>
+                        </>
+                      ) : (
+                      <>
+                        <td className="px-6 py-4">
+                          <p className="font-black text-slate-900 leading-none mb-1">{item.coilNumber}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{item.consumedBy || 'Sistema'}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col gap-1">
+                            <p className="text-sm font-bold text-slate-700">
+                              Linha {lines.find(l => l.id === item.currentLineId)?.name || 'N/A'}
+                            </p>
+                            <span className="w-fit px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black rounded uppercase">
+                              {item.diameter} mm
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className="text-sm font-black text-amber-600 tabular-nums">{item.weight} kg</p>
+                        </td>
+                        <td className="px-6 py-4">
+                           <div className="flex items-center gap-3">
+                              <span className={cn(
+                                "px-2 py-0.5 text-[10px] font-black rounded uppercase tabular-nums shadow-sm",
+                                item.consumedShift === '1' ? "bg-amber-100 text-amber-700" :
+                                item.consumedShift === '2' ? "bg-blue-100 text-blue-700" :
+                                "bg-indigo-100 text-indigo-700"
+                              )}>
+                                T{item.consumedShift || '?'}
+                              </span>
+                              <div className="w-6 h-6 bg-emerald-600 text-white rounded flex items-center justify-center text-[10px] font-black uppercase shadow-sm" title="Letra">
+                                {item.consumedByGroup || '-'}
+                              </div>
+                           </div>
+                        </td>
+                      </>
+                    )}
+                    <td className="px-6 py-4 text-right tabular-nums">
+                      <p className="text-sm font-bold text-slate-900">{item.timestamp.toLocaleDateString('pt-BR')}</p>
+                      <p className="text-[10px] text-slate-400 font-medium">{item.timestamp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
+                    </td>
+                    {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality') && (
+                      <td className="px-6 py-4 text-right">
+                        {reportType === 'forklift' ? (
+                          <button 
+                            onClick={() => setSelectedForkliftCheck(item)}
+                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="Ver Detalhes"
+                          >
+                            <FileText className="w-5 h-5" />
+                          </button>
+                        ) : reportType === 'wire_consumption' ? (
+                          <button 
+                            onClick={() => handleEditConsumption(item)}
+                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="Editar Dados"
+                          >
+                            <TrendingUp className="w-5 h-5" />
+                          </button>
+                        ) : (
+                           <button 
+                             onClick={() => alert('Visualização detalhada em breve')}
+                             className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                             title="Ver Respostas"
+                           >
+                             <Search className="w-5 h-5" />
+                           </button>
+                        )}
+                      </td>
+                    )}
+                  </motion.tr>
+
+                  {/* Expansion for Wire Receiving */}
+                  {reportType === 'wire_receiving' && expandedReceivingIds[item.id] && (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-0 border-b border-emerald-100 bg-emerald-50/20">
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden py-4"
+                        >
+                          <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden mb-2">
+                             <table className="w-full text-left">
+                               <thead className="bg-slate-50 border-b border-slate-100">
+                                 <tr>
+                                   <th className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">ID Bobina</th>
+                                   <th className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Bitola (mm)</th>
+                                   <th className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Peso (kg)</th>
+                                   <th className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Status</th>
+                                 </tr>
+                               </thead>
+                               <tbody className="divide-y divide-slate-50">
+                                 {expandedReceivingIds[item.id].map(coil => (
+                                   <tr key={`${coil.id || ''}-${coil.coilNumber || ''}`} className="hover:bg-slate-50/50">
+                                     <td className="px-4 py-3 text-xs font-black text-slate-700">{coil.coilNumber}</td>
+                                     <td className="px-4 py-3 text-xs font-bold text-slate-600">{coil.diameter} mm</td>
+                                     <td className="px-4 py-3 text-xs font-black text-emerald-600 text-right tabular-nums">{coil.weight} kg</td>
+                                     <td className="px-4 py-3 text-center">
+                                       <span className={cn(
+                                         "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter",
+                                         coil.status === 'received' ? "bg-emerald-100 text-emerald-700" : 
+                                         coil.status === 'in_use' ? "bg-blue-100 text-blue-700" : 
+                                         "bg-slate-100 text-slate-500"
+                                       )}>
+                                         {coil.status === 'received' ? 'Em Estoque' : 
+                                          coil.status === 'in_use' ? 'Em Uso' : 
+                                          'Consumida'}
+                                       </span>
+                                     </td>
+                                   </tr>
+                                 ))}
+                               </tbody>
+                             </table>
+                          </div>
+                        </motion.div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+                {filteredData.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-20 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <Search className="w-10 h-10 text-slate-200" />
+                        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Nenhum registro encontrado com estes filtros</p>
+                        <button 
+                          onClick={resetFilters}
+                          className="mt-2 text-emerald-600 font-bold text-xs uppercase tracking-widest hover:underline"
+                        >
+                          Limpar todos os filtros
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {editingConsumption && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setEditingConsumption(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-sm bg-white rounded-[2rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-100">
+                    <Factory className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Corrigir Dados</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Bobina {editingConsumption.coilNumber}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setEditingConsumption(null)}
+                  className="p-2 hover:bg-slate-200/50 rounded-xl transition-colors text-slate-400"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Linha de Produção</label>
+                  <div className="relative">
+                    <Factory className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <select 
+                      value={editForm.line}
+                      onChange={(e) => setEditForm(prev => ({ ...prev, line: e.target.value }))}
+                      className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all font-bold"
+                    >
+                      {lines.map(line => (
+                        <option key={line.id} value={line.id}>{line.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Turno</label>
+                    <div className="relative">
+                      <select 
+                        value={editForm.shift}
+                        onChange={(e) => setEditForm(prev => ({ ...prev, shift: e.target.value }))}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all font-bold"
+                      >
+                        <option value="1">Turno 1</option>
+                        <option value="2">Turno 2</option>
+                        <option value="3">Turno 3</option>
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Letra (Grupo)</label>
+                    <div className="relative">
+                      <select 
+                        value={editForm.group}
+                        onChange={(e) => setEditForm(prev => ({ ...prev, group: e.target.value }))}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all font-bold"
+                      >
+                        <option value="-">-</option>
+                        <option value="A">Letra A</option>
+                        <option value="B">Letra B</option>
+                        <option value="C">Letra C</option>
+                        <option value="D">Letra D</option>
+                        <option value="E">Letra E</option>
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <p className="text-[10px] text-slate-400 text-center italic">Altere apenas se houver erro no registro original.</p>
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex gap-3">
+                <button 
+                  onClick={() => setEditingConsumption(null)}
+                  className="flex-1 py-3 bg-white border border-slate-200 text-slate-500 font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-slate-50 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={saveConsumptionEdit}
+                  disabled={isSaving}
+                  className="flex-[2] py-3 bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
+                  Salvar Alterações
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {selectedForkliftCheck && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedForkliftCheck(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] modal-print"
+            >
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-emerald-600 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200">
+                    <Truck className="w-8 h-8 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Inspeção #{selectedForkliftCheck.forkliftNumber}</h3>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">{format(selectedForkliftCheck.timestamp, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedForkliftCheck(null)}
+                  className="p-3 hover:bg-slate-200/50 rounded-2xl transition-colors text-slate-400"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-8 modal-print-content">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status Geral</p>
+                    <span className={cn(
+                      "text-xs font-black uppercase tracking-widest px-2 py-1 rounded-lg inline-block text-center w-full",
+                      selectedForkliftCheck.status === 'normal' ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
+                    )}>
+                      {selectedForkliftCheck.status === 'normal' ? 'Normal' : 'Anormal'}
+                    </span>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Turno</p>
+                    <p className="text-sm font-black text-slate-700">{selectedForkliftCheck.shift}</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Letra</p>
+                    <div className="w-6 h-6 bg-emerald-600 text-white rounded-lg flex items-center justify-center text-xs font-black mx-auto">
+                      {selectedForkliftCheck.group}
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Condutor</p>
+                    <p className="text-sm font-black text-slate-700 truncate">{selectedForkliftCheck.conductorName}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                    <ListFilter className="w-4 h-4" />
+                    Itens da Verificação (Em Ordem)
+                  </h4>
+                  <div className="grid grid-cols-1 gap-2">
+                    {checkItemsList.map((item) => {
+                      const res = selectedForkliftCheck.itemResults[item.id];
+                      if (!res) return null;
+                      
+                      return (
+                        <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                          <span className="text-sm font-bold text-slate-600">
+                            {item.name}
+                          </span>
+                          <div className="flex items-center gap-3">
+                             {res.value === true ? (
+                               <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black rounded-lg">SIM</span>
+                             ) : res.value === false ? (
+                               <span className="px-3 py-1 bg-rose-100 text-rose-700 text-[10px] font-black rounded-lg">NÃO</span>
+                             ) : (
+                               <span className="text-sm font-bold text-slate-700">{res.value}</span>
+                             )}
+                             <div className={cn(
+                               "w-2 h-2 rounded-full",
+                               res.status === 'normal' ? "bg-emerald-500" : "bg-rose-500 animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.5)]"
+                             )} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {selectedForkliftCheck.notes && (
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Observações do Condutor</h4>
+                    <div className="p-6 bg-slate-900 rounded-[2rem] text-slate-300 text-sm italic font-medium border-l-4 border-emerald-500">
+                      "{selectedForkliftCheck.notes}"
+                    </div>
+                  </div>
+                )}
+
+                {selectedForkliftCheck.mediaUrl && (
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Registro Visual</h4>
+                    <div className="rounded-[2rem] overflow-hidden border-4 border-slate-100 shadow-xl">
+                      <img 
+                        src={selectedForkliftCheck.mediaUrl} 
+                        alt="Evidência da Inspeção" 
+                        crossOrigin="anonymous"
+                        className="w-full h-auto object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-8 border-t border-slate-100 bg-slate-50/50 flex gap-4 no-print">
+                <button 
+                  onClick={() => exportSingleChecklistPDF(selectedForkliftCheck)}
+                  className="flex-1 px-8 py-4 bg-emerald-600 text-white font-black uppercase tracking-widest text-xs rounded-2xl hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-200 flex items-center justify-center gap-3"
+                >
+                  <FileText className="w-4 h-4" />
+                  Gerar PDF da Inspeção
+                </button>
+                <button 
+                  onClick={() => setSelectedForkliftCheck(null)}
+                  className="px-8 py-4 bg-white border border-slate-200 text-slate-400 font-black uppercase tracking-widest text-xs rounded-2xl hover:bg-slate-50 transition-all"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        <ConfirmationModal
+          isOpen={modalConfig.isOpen}
+          onClose={closeModal}
+          title={modalConfig.title}
+          message={modalConfig.message}
+          type={modalConfig.type}
+        />
+      </AnimatePresence>
+    </div>
+  );
+};
+
+export default Reports;

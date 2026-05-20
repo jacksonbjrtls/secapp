@@ -1,0 +1,6 @@
+{
+  "name": "EscalaSeg - Gestão de Escalas de Segurança",
+  "description": "Sistema profissional para gestão de escalas de segurança, DDS Online e Inspeção de Empilhadeiras. Inclui controle de revezamento, checklist de equipamentos com fotos, dashboard de métricas, assinaturas digitais com QR Code e exportação de relatórios em PDF.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

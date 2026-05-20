@@ -1,0 +1,424 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user with specific role and permissions.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "viewer"] },
+        "status": { "type": "string", "enum": ["approved", "pending", "blocked"] },
+        "group": { "type": "string", "enum": ["A", "B", "C", "D", "E"] },
+        "disabled": { "type": "boolean" },
+        "isEmailVerifiedOverride": { "type": "boolean" },
+        "emailVerifiedInAuth": { "type": "boolean" },
+        "mustChangePassword": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "createdAt"]
+    },
+    "AllowedDomain": {
+      "title": "Allowed Domain",
+      "description": "A domain authorized for user registration.",
+      "type": "object",
+      "properties": {
+        "domain": { "type": "string" },
+        "addedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["domain", "addedBy", "createdAt"]
+    },
+    "Metric": {
+      "title": "Performance Metric",
+      "description": "Performance data for dashboards.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "number" },
+        "category": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "value", "timestamp"]
+    },
+    "DDSSession": {
+      "title": "DDS Session",
+      "description": "Daily Safety Talk session created by admin.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "shift": { "type": "string", "enum": ["Turno 1", "Turno 2", "Turno 3"] },
+        "group": { "type": "string", "enum": ["A", "B", "C", "D", "E"] },
+        "executor": { "type": "string" },
+        "passcode": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "shift", "group", "executor", "passcode", "expiresAt", "createdAt"]
+    },
+    "DDSSignature": {
+      "title": "DDS Signature",
+      "description": "User participation record for a DDS.",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "sessionTitle": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "mood": { "type": "string", "enum": ["happy", "neutral", "sad"] }
+      },
+      "required": ["sessionId", "userId", "timestamp", "mood"]
+    },
+    "Forklift": {
+      "title": "Forklift",
+      "description": "Equipment identification and current status.",
+      "type": "object",
+      "properties": {
+        "number": { "type": "string" },
+        "sector": { "type": "string" },
+        "status": { "type": "string", "enum": ["liberada", "bloqueada"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["number", "sector", "status", "createdAt"]
+    },
+    "ForkliftCheckItem": {
+      "title": "Forklift Check Item",
+      "description": "Inspection criteria defined by admin.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["boolean", "numeric", "normal_anormal", "open_closed"] },
+        "unit": { "type": "string", "description": "Unit label like bar, psi, etc." },
+        "active": { "type": "boolean" },
+        "showStatusSelection": { "type": "boolean", "description": "For numeric items, whether to show normal/anormal selector." },
+        "order": { "type": "integer" },
+        "addedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "type", "order", "active", "createdAt"]
+    },
+    "ForkliftChecklist": {
+      "title": "Forklift Checklist",
+      "description": "Inspection record performed by operator.",
+      "type": "object",
+      "properties": {
+        "forkliftId": { "type": "string" },
+        "forkliftNumber": { "type": "string" },
+        "conductorId": { "type": "string" },
+        "conductorName": { "type": "string" },
+        "status": { "type": "string", "enum": ["normal", "anormal"] },
+        "itemResults": { 
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "value": { "type": "any" },
+              "status": { "type": "string", "enum": ["normal", "anormal"] },
+              "observation": { "type": "string" },
+              "mediaUrl": { "type": "string" }
+            }
+          }
+        },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["forkliftId", "conductorId", "status", "timestamp"]
+    },
+    "GlobalSettings": {
+      "title": "Global Settings",
+      "description": "System-wide configuration settings.",
+      "type": "object",
+      "properties": {
+        "autoNotifyNonConformity": { "type": "boolean" },
+        "autoLockOnNonConformity": { "type": "boolean" },
+        "responsiblePersons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "email": { "type": "string" }
+            },
+            "required": ["name", "email"]
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      }
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Alerts for non-conformities.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["non_conformity"] },
+        "message": { "type": "string" },
+        "forkliftNumber": { "type": "string" },
+        "checklistId": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ProductionLine": {
+      "title": "Production Line",
+      "description": "A production line letter or name.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "order": { "type": "integer" }
+      },
+      "required": ["name", "active"]
+    },
+    "WireSupplier": {
+      "title": "Wire Supplier",
+      "description": "Supplier of the wire coils (e.g., Belgo, Morlan).",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["name", "active"]
+    },
+    "WireBatch": {
+      "title": "Wire Batch",
+      "description": "A batch of wire coils receiving (Nota Fiscal load).",
+      "type": "object",
+      "properties": {
+        "nfNumber": { "type": "string" },
+        "supplierId": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "responsibleId": { "type": "string" },
+        "responsibleName": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "totalWeight": { "type": "number" },
+        "coilsCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "closed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nfNumber", "supplierId", "date", "status", "createdAt"]
+    },
+    "WireCoil": {
+      "title": "Wire Coil",
+      "description": "Individual coil of wire.",
+      "type": "object",
+      "properties": {
+        "coilNumber": { "type": "string" },
+        "batchId": { "type": "string" },
+        "supplierId": { "type": "string" },
+        "diameter": { "type": "number" },
+        "weight": { "type": "number" },
+        "status": { "type": "string", "enum": ["received", "in_use", "consumed"] },
+        "currentLineId": { "type": "string" },
+        "receivedAt": { "type": "string", "format": "date-time" },
+        "consumedAt": { "type": "string", "format": "date-time" },
+        "consumedBy": { "type": "string" },
+        "isDamaged": { "type": "boolean" }
+      },
+      "required": ["coilNumber", "batchId", "diameter", "weight", "status", "receivedAt"]
+    },
+    "MonthlyProduction": {
+      "title": "Monthly Production",
+      "description": "Manual input for monthly production tonnage.",
+      "type": "object",
+      "properties": {
+        "year": { "type": "integer" },
+        "month": { "type": "integer" },
+        "productionTons": { "type": "number", "description": "Actual production in tons." },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["year", "month", "productionTons", "updatedAt"]
+    },
+    "QualityChecklistTemplate": {
+      "title": "Quality Checklist Template",
+      "description": "Administrator-defined checklist for process quality.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "sectorId": { "type": "string" },
+        "frequencyPerShift": { "type": "integer" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "type": { "type": "string", "enum": ["condition", "number", "range", "barcode"] },
+              "required": { "type": "boolean" },
+              "min": { "type": "number" },
+              "max": { "type": "number" }
+            },
+            "required": ["id", "label", "type", "required"]
+          }
+        },
+        "active": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "sectorId", "frequencyPerShift", "items", "active", "createdAt"]
+    },
+    "QualityChecklistSubmission": {
+      "title": "Quality Checklist Submission",
+      "description": "Completed checklist by operator.",
+      "type": "object",
+      "properties": {
+        "templateId": { "type": "string" },
+        "sectorId": { "type": "string" },
+        "lineId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "shift": { "type": "string" },
+        "responses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "itemId": { "type": "string" },
+              "value": { "type": "any" }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["templateId", "sectorId", "userId", "userName", "shift", "responses", "createdAt"]
+    },
+    "QualityChecklistOmission": {
+      "title": "Quality Checklist Omission",
+      "description": "Justification for not completing a checklist.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "templateId": { "type": "string" },
+        "templateName": { "type": "string" },
+        "lineId": { "type": "string" },
+        "lineName": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "shift": { "type": "string" },
+        "justification": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "templateId", "date", "shift", "justification", "createdAt"]
+    },
+    "QualitySector": {
+      "title": "Quality Sector",
+      "description": "Groups of production lines for quality management.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "lineIds": { "type": "array", "items": { "type": "string" } },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "lineIds", "active", "createdAt"]
+    },
+    "QualityChecklistOptionSet": {
+      "title": "Quality Checklist Option Set",
+      "description": "Customizable response sets (e.g., OK/NOK, SIM/NÃO).",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "options", "active", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles."
+    },
+    "/allowed_domains/{domainId}": {
+      "schema": "AllowedDomain",
+      "description": "Domains permitted to register."
+    },
+    "/metrics/{metricId}": {
+      "schema": "Metric",
+      "description": "System metrics for reporting."
+    },
+    "/dds_sessions/{sessionId}": {
+      "schema": "DDSSession",
+      "description": "Session for daily safety talks."
+    },
+    "/dds_signatures/{signatureId}": {
+      "schema": "DDSSignature",
+      "description": "User digital signatures for DDS."
+    },
+    "/forklifts/{forkliftId}": {
+      "schema": "Forklift",
+      "description": "Forklift registration."
+    },
+    "/forklift_check_items/{itemId}": {
+      "schema": "ForkliftCheckItem",
+      "description": "Configurable checklist items."
+    },
+    "/forklift_checklists/{checklistId}": {
+      "schema": "ForkliftChecklist",
+      "description": "Completed forklift inspections."
+    },
+    "/forklift_drafts/{draftId}": {
+      "schema": "ForkliftChecklist",
+      "description": "In-progress forklift inspections."
+    },
+    "/settings/global": {
+      "schema": "GlobalSettings",
+      "description": "Global application configurations."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Alerts and messages for users."
+    },
+    "/production_lines/{lineId}": {
+      "schema": "ProductionLine",
+      "description": "Configurable production lines."
+    },
+    "/wire_suppliers/{supplierId}": {
+      "schema": "WireSupplier",
+      "description": "Wire suppliers (Belgo, Morlan)."
+    },
+    "/wire_batches/{batchId}": {
+      "schema": "WireBatch",
+      "description": "Wire batch receipts."
+    },
+    "/wire_coils/{coilId}": {
+      "schema": "WireCoil",
+      "description": "Individual wire coils data."
+    },
+    "/monthly_production/{id}": {
+      "schema": "MonthlyProduction",
+      "description": "Manual production records per month/year."
+    },
+    "/quality_checklist_templates/{templateId}": {
+      "schema": "QualityChecklistTemplate",
+      "description": "Templates for quality inspections."
+    },
+    "/quality_checklist_submissions/{submissionId}": {
+      "schema": "QualityChecklistSubmission",
+      "description": "Captured quality data."
+    },
+    "/quality_checklist_omissions/{omissionId}": {
+      "schema": "QualityChecklistOmission",
+      "description": "Justification for missed inspections."
+    },
+    "/quality_sectors/{sectorId}": {
+      "schema": "QualitySector",
+      "description": "Definition of sectors grouping multiple lines."
+    },
+    "/quality_checklist_options/{optionSetId}": {
+      "schema": "QualityChecklistOptionSet",
+      "description": "Customizable checklist response options."
+    }
+  }
+}
