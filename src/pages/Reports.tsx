@@ -1488,8 +1488,8 @@ const Reports: React.FC = () => {
                                  </tr>
                                </thead>
                                <tbody className="divide-y divide-slate-50">
-                                 {expandedReceivingIds[item.id].map(coil => (
-                                   <tr key={`${coil.id || ''}-${coil.coilNumber || ''}`} className="hover:bg-slate-50/50">
+                                 {expandedReceivingIds[item.id].map((coil, idx) => (
+                                   <tr key={`${coil.id || ''}-${coil.coilNumber || ''}-${idx}`} className="hover:bg-slate-50/50">
                                      <td className="px-4 py-3 text-xs font-black text-slate-700">{coil.coilNumber}</td>
                                      <td className="px-4 py-3 text-xs font-bold text-slate-600">{coil.diameter} mm</td>
                                      <td className="px-4 py-3 text-xs font-black text-emerald-600 text-right tabular-nums">{coil.weight} kg</td>

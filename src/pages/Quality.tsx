@@ -113,6 +113,24 @@ const Quality: React.FC = () => {
   // For Template Deletion
   const [templateToDelete, setTemplateToDelete] = useState<QualityChecklistTemplate | null>(null);
   const [sectorToDelete, setSectorToDelete] = useState<QualitySector | null>(null);
+  const [optionSetToDelete, setOptionSetToDelete] = useState<any | null>(null);
+
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+    onConfirm?: () => void;
+    showConfirmButton?: boolean;
+    confirmText?: string;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'success'
+  });
+
+  const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
   useEffect(() => {
     if (!user) return;
@@ -161,7 +179,12 @@ const Quality: React.FC = () => {
 
   const handleSaveLine = async () => {
     if (!newLine.name) {
-      alert('Preencha o nome da linha.');
+      setModalConfig({
+        isOpen: true,
+        title: 'Aviso',
+        message: 'Preencha o nome da linha.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -188,7 +211,12 @@ const Quality: React.FC = () => {
 
   const handleSaveSector = async () => {
     if (!newSector.name || !newSector.lineIds?.length) {
-      alert('Preencha o nome e selecione pelo menos uma linha.');
+      setModalConfig({
+        isOpen: true,
+        title: 'Aviso',
+        message: 'Preencha o nome e selecione pelo menos uma linha.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -215,7 +243,12 @@ const Quality: React.FC = () => {
 
   const handleSaveOptionSet = async () => {
     if (!newOptionSet.name || !newOptionSet.options?.length) {
-      alert('Preencha o nome e adicione pelo menos uma opção.');
+      setModalConfig({
+        isOpen: true,
+        title: 'Aviso',
+        message: 'Preencha o nome e adicione pelo menos uma opção.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -242,7 +275,12 @@ const Quality: React.FC = () => {
 
   const handleSaveTemplate = async () => {
     if (!newTemplate.name || !newTemplate.sectorId || !newTemplate.items?.length) {
-      alert('Preencha os campos obrigatórios e adicione pelo menos um item.');
+      setModalConfig({
+        isOpen: true,
+        title: 'Aviso',
+        message: 'Preencha os campos obrigatórios e adicione pelo menos um item.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -374,14 +412,24 @@ const Quality: React.FC = () => {
     if (!fillingTemplate || !user || !profile) return;
 
     if (!submissionLineId && (fillingTemplate.sectorId === 'all' || sectors.some(s => s.id === fillingTemplate.sectorId))) {
-      alert('Por favor, selecione qual linha está sendo inspecionada.');
+      setModalConfig({
+        isOpen: true,
+        title: 'Aviso',
+        message: 'Por favor, selecione qual linha está sendo inspecionada.',
+        type: 'warning'
+      });
       return;
     }
 
     // Validate requirements
     const missing = fillingTemplate.items.find(item => item.required && !responses[item.id]);
     if (missing) {
-      alert(`O item "${missing.label}" é obrigatório.`);
+      setModalConfig({
+        isOpen: true,
+        title: 'Item Obrigatório',
+        message: `O item "${missing.label}" é obrigatório.`,
+        type: 'warning'
+      });
       return;
     }
 
@@ -399,28 +447,55 @@ const Quality: React.FC = () => {
     );
 
     if (existingSubmissions.length >= fillingTemplate.frequencyPerShift) {
-      alert(`Este checklist já foi realizado ${fillingTemplate.frequencyPerShift} vez(es) neste turno. Limite atingido.`);
+      setModalConfig({
+        isOpen: true,
+        title: 'Limite Atingido',
+        message: `Este checklist já foi realizado ${fillingTemplate.frequencyPerShift} vez(es) neste turno. Limite atingido.`,
+        type: 'info'
+      });
       return;
     }
 
-    try {
-      await addDoc(collection(db, 'quality_checklist_submissions'), {
-        templateId: fillingTemplate.id,
-        sectorId: fillingTemplate.sectorId,
-        lineId: submissionLineId || fillingTemplate.sectorId,
-        userId: user.uid,
-        userName: profile.displayName || user.email,
-        shift: shiftIdentifier, // Format: "A - Turno 1"
-        responses: Object.entries(responses).map(([itemId, value]) => ({ itemId, value })),
-        createdAt: serverTimestamp()
-      });
-      setFillingTemplate(null);
-      setResponses({});
-      setSubmissionLineId('');
-      alert('Checklist enviado com sucesso!');
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'quality_checklist_submissions');
-    }
+    const targetLineId = submissionLineId || fillingTemplate.sectorId;
+    const lineObj = lines.find(l => l.id === targetLineId) || sectors.find(s => s.id === targetLineId);
+    const lineSuffix = lineObj ? ` para a ${lineObj.name}` : '';
+
+    setModalConfig({
+      isOpen: true,
+      title: 'Confirmar Envio?',
+      message: `Deseja realmente concluir e transmitir as respostas deste checklist de qualidade${lineSuffix}?`,
+      type: 'info',
+      showConfirmButton: true,
+      confirmText: 'Sim, Enviar',
+      onConfirm: async () => {
+        closeModal();
+        try {
+          await addDoc(collection(db, 'quality_checklist_submissions'), {
+            templateId: fillingTemplate.id,
+            sectorId: fillingTemplate.sectorId,
+            lineId: targetLineId,
+            userId: user.uid,
+            userName: profile.displayName || user.email,
+            shift: shiftIdentifier, // Format: "A - Turno 1"
+            responses: Object.entries(responses).map(([itemId, value]) => ({ itemId, value })),
+            createdAt: serverTimestamp()
+          });
+          
+          setFillingTemplate(null);
+          setResponses({});
+          setSubmissionLineId('');
+          
+          setModalConfig({
+            isOpen: true,
+            title: 'Check-list Enviado',
+            message: `O check-list de qualidade${lineSuffix} foi enviado com sucesso!`,
+            type: 'success'
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, 'quality_checklist_submissions');
+        }
+      }
+    });
   };
 
   // Omission / Justification logic
@@ -535,7 +610,12 @@ const Quality: React.FC = () => {
 
       setJustifyingOmission(null);
       setJustification('');
-      alert('Justificativa enviada!');
+      setModalConfig({
+        isOpen: true,
+        title: 'Sucesso',
+        message: 'A justificativa de omissão foi enviada com sucesso.',
+        type: 'success'
+      });
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'quality_checklist_omissions');
     }
@@ -1221,8 +1301,8 @@ const Quality: React.FC = () => {
                             </span>
                             {sector && (
                               <div className="flex flex-wrap gap-1">
-                                {sector.lineIds.map(lineId => (
-                                  <span key={lineId} className="text-[8px] font-black text-slate-300 uppercase tracking-widest px-1 bg-slate-50 rounded">
+                                {sector.lineIds.map((lineId, idx) => (
+                                  <span key={`${lineId}-${idx}`} className="text-[8px] font-black text-slate-300 uppercase tracking-widest px-1 bg-slate-50 rounded">
                                     {lines.find(l => l.id === lineId)?.name}
                                   </span>
                                 ))}
@@ -1598,10 +1678,10 @@ const Quality: React.FC = () => {
                      <div className="space-y-2">
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Linhas Integrantes:</p>
                         <div className="flex flex-wrap gap-2">
-                           {sector.lineIds.map(lineId => {
+                           {sector.lineIds.map((lineId, idx) => {
                              const line = lines.find(l => l.id === lineId);
                              return (
-                               <span key={lineId} className="px-3 py-1 bg-slate-100 rounded-lg text-xs font-bold text-slate-600">
+                               <span key={`${lineId}-${idx}`} className="px-3 py-1 bg-slate-100 rounded-lg text-xs font-bold text-slate-600">
                                  {line?.name || 'Linha Excluída'}
                                </span>
                              );
@@ -1794,11 +1874,7 @@ const Quality: React.FC = () => {
                           <Edit2 className="w-5 h-5" />
                         </button>
                         <button 
-                          onClick={async () => {
-                            if (window.confirm('Excluir este conjunto de opções?')) {
-                              await deleteDoc(doc(db, 'quality_checklist_options', set.id));
-                            }
-                          }}
+                          onClick={() => setOptionSetToDelete(set)}
                           className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
                         >
                           <Trash2 className="w-5 h-5" />
@@ -2175,6 +2251,38 @@ const Quality: React.FC = () => {
             handleFirestoreError(err, OperationType.DELETE, 'quality_sectors');
           }
         }}
+      />
+
+      {/* Option Set Deletion Confirmation */}
+      <ConfirmationModal
+        isOpen={!!optionSetToDelete}
+        onClose={() => setOptionSetToDelete(null)}
+        title="Excluir Conjunto de Opções?"
+        message={`Deseja realmente excluir o conjunto de opções "${optionSetToDelete?.name}"? Isso pode afetar os itens de modelos ativos que usam essa opção.`}
+        type="warning"
+        confirmText="Sim, Excluir"
+        showConfirmButton={true}
+        onConfirm={async () => {
+          if (!optionSetToDelete) return;
+          try {
+            await deleteDoc(doc(db, 'quality_checklist_options', optionSetToDelete.id));
+            setOptionSetToDelete(null);
+          } catch (err) {
+            handleFirestoreError(err, OperationType.DELETE, 'quality_checklist_options');
+          }
+        }}
+      />
+
+      {/* Global Alert Modal Config */}
+      <ConfirmationModal
+        isOpen={modalConfig.isOpen}
+        onClose={closeModal}
+        title={modalConfig.title}
+        message={modalConfig.message}
+        type={modalConfig.type}
+        showConfirmButton={modalConfig.showConfirmButton}
+        onConfirm={modalConfig.onConfirm}
+        confirmText={modalConfig.confirmText}
       />
 
       <AnimatePresence>
