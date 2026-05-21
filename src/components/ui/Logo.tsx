@@ -9,7 +9,7 @@ export const Logo: React.FC<LogoProps> = ({ className }) => {
   return (
     <div className={cn("flex items-center gap-2", className)}>
       <img 
-        src="/logo.svg" 
+        src="/logo_file/logo_400pixel.png" 
         alt="SecApp Logo" 
         className="h-full w-auto object-contain"
         onError={(e) => {

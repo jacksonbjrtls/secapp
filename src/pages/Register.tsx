@@ -230,7 +230,9 @@ const Register: React.FC = () => {
       </div>
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center relative z-10">
         <div className="flex justify-center flex-col items-center gap-4">
-          <Logo className="h-20" />
+          <div className="bg-white p-4 rounded-3xl shadow-2xl border border-slate-800/10 flex items-center justify-center transform hover:scale-105 transition-all duration-300">
+            <Logo className="h-16" />
+          </div>
           <p className="text-emerald-100/60 font-medium tracking-wide text-sm">Crie sua conta corporativa</p>
         </div>
       </div>
