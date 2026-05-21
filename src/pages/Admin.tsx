@@ -12,7 +12,8 @@ import {
   orderBy, 
   onSnapshot, 
   where, 
-  writeBatch 
+  writeBatch,
+  limit
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { UserProfile, AllowedDomain, UserRole, UserStatus } from '../types';
@@ -37,7 +38,8 @@ import {
   ShieldCheck,
   UserPlus,
   X,
-  AlertTriangle
+  AlertTriangle,
+  History
 } from 'lucide-react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
@@ -49,11 +51,13 @@ import { validateEmailDomain } from '../lib/domainUtils';
 const Admin: React.FC = () => {
   const { isAdmin, isMaster } = useAuth();
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [editingNameUserId, setEditingNameUserId] = useState<string | null>(null);
+  const [tempEditName, setTempEditName] = useState('');
   const [domains, setDomains] = useState<AllowedDomain[]>([]);
   const [loading, setLoading] = useState(true);
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'domains'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'domains' | 'logs'>('users');
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -62,6 +66,11 @@ const Admin: React.FC = () => {
   const [addUserLoading, setAddUserLoading] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+
+  // System Logs local states
+  const [loginLogs, setLoginLogs] = useState<any[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsSearchTerm, setLogsSearchTerm] = useState('');
 
   // Clear messages automatically after 5 seconds
   useEffect(() => {
@@ -100,6 +109,51 @@ const Admin: React.FC = () => {
       fetchData();
     }
   }, [isAdmin]);
+
+  const fetchLoginLogs = async () => {
+    if (!isMaster) return;
+    setLogsLoading(true);
+    try {
+      const logsSnap = await getDocs(
+        query(
+          collection(db, 'user_login_logs'), 
+          orderBy('timestamp', 'desc'),
+          limit(300)
+        )
+      );
+      const logsList = logsSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setLoginLogs(logsList);
+    } catch (err) {
+      console.error('Error fetching login logs:', err);
+      setError('Erro ao carregar logs de acesso ou permissão insuficiente.');
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin && activeTab === 'logs') {
+      fetchLoginLogs();
+    }
+  }, [isAdmin, activeTab]);
+
+  const formatUserAgent = (ua: string) => {
+    if (!ua) return 'Não identificado';
+    const uaLower = ua.toLowerCase();
+    if (uaLower.includes('mobile') || uaLower.includes('android') || uaLower.includes('iphone') || uaLower.includes('ipad')) {
+      if (uaLower.includes('android')) return '📱 Celular (Android)';
+      if (uaLower.includes('iphone') || uaLower.includes('ipad')) return '📱 Celular (iOS)';
+      return '📱 Dispositivo Móvel';
+    }
+    if (uaLower.includes('chrome')) return '💻 Computador (Chrome)';
+    if (uaLower.includes('firefox')) return '💻 Computador (Firefox)';
+    if (uaLower.includes('safari') && !uaLower.includes('chrome')) return '💻 Computador (Safari)';
+    if (uaLower.includes('edge')) return '💻 Computador (Edge)';
+    return '💻 Computador/Web';
+  };
 
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.displayName.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -503,6 +557,14 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
            >
              Domínios
            </button>
+           {isMaster && (
+             <button 
+               onClick={() => setActiveTab('logs')}
+               className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+             >
+               Logs de Acesso
+             </button>
+           )}
         </div>
       </div>
     </div>
@@ -582,24 +644,55 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
                   {filteredUsers.map((user) => (
                   <tr key={user.uid} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 min-w-[200px]">
                         <div className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600 font-bold shrink-0">
-                          {user.displayName.charAt(0)}
+                          {(user.displayName || 'U').charAt(0).toUpperCase()}
                         </div>
-                        <input
-                          type="text"
-                          defaultValue={user.displayName}
-                          onBlur={(e) => {
-                            if (e.target.value !== user.displayName) {
-                              handleUpdateName(user.uid, e.target.value);
-                            }
-                          }}
-                          className={cn(
-                            "font-medium text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-emerald-500 outline-none transition-all w-full max-w-[200px]",
-                            user.isMaster && !isMaster && "pointer-events-none"
-                          )}
-                          disabled={user.isMaster && !isMaster}
-                        />
+                        {editingNameUserId === user.uid ? (
+                          <input
+                            type="text"
+                            value={tempEditName}
+                            onChange={(e) => setTempEditName(e.target.value)}
+                            onBlur={() => {
+                              if (tempEditName.trim() && tempEditName.trim() !== user.displayName) {
+                                handleUpdateName(user.uid, tempEditName);
+                              }
+                              setEditingNameUserId(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                if (tempEditName.trim() && tempEditName.trim() !== user.displayName) {
+                                  handleUpdateName(user.uid, tempEditName);
+                                }
+                                setEditingNameUserId(null);
+                              } else if (e.key === 'Escape') {
+                                setEditingNameUserId(null);
+                              }
+                            }}
+                            autoFocus
+                            className="font-bold text-slate-800 bg-white border border-emerald-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-emerald-500 w-full min-w-[150px] shrink-0"
+                          />
+                        ) : (
+                          <div 
+                            onClick={() => {
+                              if (!user.isMaster || isMaster) {
+                                setEditingNameUserId(user.uid);
+                                setTempEditName(user.displayName);
+                              }
+                            }}
+                            className="group flex flex-col justify-center min-w-0 cursor-pointer select-none"
+                            title="Clique para editar o nome"
+                          >
+                            <span className="font-bold text-slate-800 text-sm truncate block">
+                              {user.displayName || 'Sem Nome'}
+                            </span>
+                            {(!user.isMaster || isMaster) && (
+                              <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                                clique para editar
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-600 font-mono">{user.email}</td>
@@ -747,7 +840,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
           </div>
         </div>
       </motion.div>
-    ) : (
+    ) : activeTab === 'domains' ? (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
            <motion.div 
              initial={{ opacity: 0, x: -20 }}
@@ -873,8 +966,130 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
                   </tbody>
                 </table>
               </div>
-           </motion.div>
-        </div>
+            </motion.div>
+         </div>
+      ) : (
+        <motion.div
+           initial={{ opacity: 0, y: 10 }}
+           animate={{ opacity: 1, y: 0 }}
+           className="space-y-6"
+        >
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                <History className="w-6 h-6 animate-pulse" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Registros Totais</span>
+                <span className="text-2xl font-black text-slate-800">{loginLogs.length}</span>
+              </div>
+            </div>
+            
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <Users className="w-6 h-6" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Usuários Ativos</span>
+                <span className="text-2xl font-black text-slate-800">
+                  {new Set(loginLogs.map(l => l.email)).size}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 font-bold">
+                PR
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Fuso Horário Supervisor</span>
+                <span className="text-sm font-black text-purple-700 leading-tight block mt-1 uppercase tracking-tight">
+                  {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+            <div className="relative w-full">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+              <input
+                type="text"
+                placeholder="Filtrar por nome ou e-mail de acesso..."
+                value={logsSearchTerm}
+                onChange={(e) => setLogsSearchTerm(e.target.value)}
+                className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 transition-all text-sm font-medium outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
+            {logsLoading ? (
+              <div className="flex flex-col items-center justify-center py-24">
+                <Loader2 className="w-10 h-10 animate-spin text-emerald-600 mb-4" />
+                <span className="text-slate-500 text-sm font-bold">Carregando logs do sistema...</span>
+              </div>
+            ) : (
+              <div className="overflow-x-auto text-[13px]">
+                <table className="w-full text-left">
+                  <thead className="bg-gray-50 border-b text-center">
+                    <tr>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-left">Usuário</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-left">E-mail</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-left">Dispositivo / Navegador</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Data/Horário Local</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Horário Servidor (UTC)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {loginLogs
+                      .filter(log => {
+                        const term = logsSearchTerm.toLowerCase();
+                        return (log.displayName?.toLowerCase().includes(term) || 
+                                log.email?.toLowerCase().includes(term));
+                      })
+                      .map((log) => {
+                        const dateObj = safeToDate(log.timestamp);
+                        return (
+                          <tr key={log.id} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="px-6 py-4 text-left">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600 font-bold shrink-0 text-xs">
+                                  {log.displayName?.charAt(0) || 'U'}
+                                </div>
+                                <span className="font-bold text-slate-800">{log.displayName}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-600 font-mono text-left">{log.email}</td>
+                            <td className="px-6 py-4 text-slate-700 font-medium text-left">
+                              {formatUserAgent(log.userAgent)}
+                            </td>
+                            <td className="px-6 py-4 text-emerald-600 font-bold text-center">
+                              {dateObj ? dateObj.toLocaleString('pt-BR') : log.localTimeStr || 'N/A'}
+                            </td>
+                            <td className="px-6 py-4 text-xs text-slate-400 font-mono text-right">
+                              {dateObj ? dateObj.toISOString() : 'Aguardando sync'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    {loginLogs.filter(log => {
+                      const term = logsSearchTerm.toLowerCase();
+                      return (log.displayName?.toLowerCase().includes(term) || 
+                              log.email?.toLowerCase().includes(term));
+                    }).length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                          Nenhum registro de acesso encontrado.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </motion.div>
       )}
 
       <AnimatePresence>

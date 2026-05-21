@@ -430,7 +430,8 @@ const Quality: React.FC = () => {
 
   useEffect(() => {
     const checkOmissions = async () => {
-      if (!profile?.group || !templates.length) return;
+      if (!templates.length) return;
+      if (!profile && !isAdmin && !isManager) return;
 
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
@@ -448,7 +449,7 @@ const Quality: React.FC = () => {
           const groupToWork = getGroupForShift(d, s);
           const shiftIdentifier = `${groupToWork} - ${s}`;
           
-          if (groupToWork === profile.group) {
+          if (groupToWork === profile?.group || isAdmin || isManager) {
             const shiftEndHours = s === 'Turno 1' ? 8 : (s === 'Turno 2' ? 16 : 24);
             const shiftEndTime = new Date(d);
             shiftEndTime.setHours(shiftEndHours, 0, 0, 0);
@@ -503,15 +504,16 @@ const Quality: React.FC = () => {
     if (activeTab === 'perform' || activeTab === 'omissions') {
       checkOmissions();
     }
-  }, [templates, submissions, omissions, lines, sectors, profile, user, activeTab]);
+  }, [templates, submissions, omissions, lines, sectors, profile, user, activeTab, isAdmin, isManager]);
 
   const handleSaveJustification = async () => {
-    if (!justifyingOmission || !justification.trim() || !user || !profile) return;
+    if (!justifyingOmission || !justification.trim() || !user) return;
 
     try {
+      const authorName = profile?.displayName || user.displayName || user.email || 'Usuário';
       await addDoc(collection(db, 'quality_checklist_omissions'), {
         userId: user.uid,
-        userName: profile.displayName || user.email,
+        userName: authorName,
         templateId: justifyingOmission.template.id,
         templateName: justifyingOmission.template.name,
         lineId: justifyingOmission.lineId || '',
@@ -522,10 +524,14 @@ const Quality: React.FC = () => {
         createdAt: serverTimestamp()
       });
       
-      await updateDoc(doc(db, 'users', user.uid), {
-        lastOmissionJustifiedAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          lastOmissionJustifiedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      } catch (updErr) {
+        console.warn("Could not update user document lastOmissionJustifiedAt:", updErr);
+      }
 
       setJustifyingOmission(null);
       setJustification('');

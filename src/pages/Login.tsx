@@ -23,6 +23,7 @@ import { ShieldCheck, Loader2, Mail, ArrowLeft, AlertTriangle } from 'lucide-rea
 import { Logo } from '../components/ui/Logo';
 
 import { MASTER_EMAILS } from '../constants';
+import { recordUserLogin } from '../lib/loginLogger';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -102,10 +103,10 @@ const Login: React.FC = () => {
 
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
+      const userDocRef = doc(db, 'users', user.uid);
 
       // Sync verification status to Firestore for Admin tracking, auto-create profile if missing
       try {
-        const userDocRef = doc(db, 'users', user.uid);
         const userDoc = await getDoc(userDocRef);
         
         const emailLower = user.email?.toLowerCase() || '';
@@ -131,6 +132,15 @@ const Login: React.FC = () => {
         }
       } catch (e) {
         console.warn('Could not sync verification status to Firestore', e);
+      }
+
+      // Record successful user login
+      try {
+        const userDoc = await getDoc(userDocRef);
+        const customName = userDoc.exists() ? (userDoc.data() as any)?.displayName : undefined;
+        await recordUserLogin(user, customName);
+      } catch (logErr) {
+        console.warn('Could not record login log:', logErr);
       }
 
       navigate('/');
@@ -204,6 +214,16 @@ const Login: React.FC = () => {
           emailVerifiedInAuth: user.emailVerified,
           updatedAt: serverTimestamp()
         });
+      }
+
+      // Record successful user login
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
+        const customName = userDoc.exists() ? (userDoc.data() as any)?.displayName : undefined;
+        await recordUserLogin(user, customName);
+      } catch (logErr) {
+        console.warn('Could not record login log:', logErr);
       }
 
       navigate('/');

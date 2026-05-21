@@ -133,6 +133,15 @@ service cloud.firestore {
       allow write: if isAdmin() && isValidId(domainId);
     }
 
+    // User Login Logs
+    match /user_login_logs/{logId} {
+      allow get, list: if isMaster();
+      allow create: if isSignedIn() && 
+                    request.resource.data.userId == request.auth.uid && 
+                    request.resource.data.timestamp == request.time;
+      allow update, delete: if false;
+    }
+
     // DDS Sessions
     match /dds_sessions/{sessionId} {
       function isValidSession(data) {

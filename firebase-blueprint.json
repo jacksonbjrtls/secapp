@@ -333,6 +333,20 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "options", "active", "createdAt"]
+    },
+    "UserLoginLog": {
+      "title": "User Login Log",
+      "description": "Log of successful user sign-ins with local details.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userAgent": { "type": "string" },
+        "localTimeStr": { "type": "string" }
+      },
+      "required": ["userId", "email", "timestamp"]
     }
   },
   "firestore": {
@@ -419,6 +433,10 @@
     "/quality_checklist_options/{optionSetId}": {
       "schema": "QualityChecklistOptionSet",
       "description": "Customizable checklist response options."
+    },
+    "/user_login_logs/{logId}": {
+      "schema": "UserLoginLog",
+      "description": "Log records of successful user sign-ins."
     }
   }
 }

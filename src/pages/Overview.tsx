@@ -4,7 +4,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { safeToDate, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
-import { getCurrentShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
+import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
 import { 
   Activity, 
   ShieldAlert, 
@@ -282,10 +282,10 @@ export const Overview: React.FC = () => {
       return created && created >= todayStart && created <= todayEnd;
     });
 
-    // Qualityomissions logged today
+    // Quality omissions for today (by actual event target date, NOT the creation date of the justification)
+    const todayYmd = todayStart.toISOString().split('T')[0];
     const omiToday = qualityOmissions.filter(om => {
-      const created = safeToDate(om.createdAt);
-      return created && created >= todayStart && created <= todayEnd;
+      return om.date === todayYmd;
     });
 
     const isResponseCompliant = (itemId: string, value: any, template: any) => {
@@ -358,8 +358,42 @@ export const Overview: React.FC = () => {
       }
     });
 
+    // Calculate done and pending checklists for today
+    let doneCalculated = 0;
+    let pendingCalculated = 0;
+    const activeTemplates = qualityTemplates.filter(t => t.active);
+    const shifts: Shift[] = ['Turno 1', 'Turno 2', 'Turno 3'];
+
+    shifts.forEach(s => {
+      const groupToWork = getGroupForShift(todayStart, s);
+      const shiftIdentifier = `${groupToWork} - ${s}`;
+
+      activeTemplates.forEach(template => {
+        const lineIds = template.sectorId === 'all'
+          ? lines.map(l => l.id)
+          : qualitySectors.find(sec => sec.id === template.sectorId)?.lineIds || [];
+
+        lineIds.forEach(lineId => {
+          const lineObj = lines.find(l => l.id === lineId);
+          if (!lineObj) return;
+
+          const reqCount = template.frequencyPerShift || 1;
+          const actualCount = subsToday.filter(sub => 
+            sub.templateId === template.id && 
+            sub.lineId === lineId && 
+            sub.shift === shiftIdentifier
+          ).length;
+
+          doneCalculated += Math.min(actualCount, reqCount);
+          pendingCalculated += Math.max(0, reqCount - actualCount);
+        });
+      });
+    });
+
     return {
       totalInspectionsToday: subsToday.length,
+      doneCount: doneCalculated,
+      pendingCount: pendingCalculated,
       omissionsCount: omiToday.length,
       nonConformitiesCount: totalNonConformities,
       recentSubmissions: subsToday.map(sub => {
@@ -727,18 +761,22 @@ export const Overview: React.FC = () => {
               </div>
             </div>
 
-            <div className="my-4 flex justify-between gap-4">
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Submissões</p>
-                <p className="text-2xl font-black text-slate-900 leading-tight">{qualityTodayStats.totalInspectionsToday}</p>
+            <div className="my-4 grid grid-cols-3 gap-1 divide-x divide-slate-100">
+              <div className="space-y-0.5">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Enviadas</p>
+                <p className="text-xl font-black text-slate-900 leading-tight">{qualityTodayStats.totalInspectionsToday}</p>
               </div>
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Não-conformidades</p>
+              <div className="pl-2 space-y-0.5">
+                <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Feitas</p>
+                <p className="text-xl font-black text-emerald-600 leading-tight">{qualityTodayStats.doneCount}</p>
+              </div>
+              <div className="pl-2 space-y-0.5 text-right">
+                <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Pendentes</p>
                 <p className={cn(
-                  "text-2xl font-black text-right leading-tight",
-                  qualityTodayStats.nonConformitiesCount > 0 ? "text-rose-600" : "text-slate-400"
+                  "text-xl font-black leading-tight",
+                  qualityTodayStats.pendingCount > 0 ? "text-amber-600" : "text-slate-400"
                 )}>
-                  {qualityTodayStats.nonConformitiesCount}
+                  {qualityTodayStats.pendingCount}
                 </p>
               </div>
             </div>
@@ -980,12 +1018,58 @@ export const Overview: React.FC = () => {
 
         {/* Quality Audit Checklist Submissions done today */}
         <div className="lg:col-span-12 xl:col-span-6 bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6 pb-4 border-b border-slate-100">
             <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
               <ClipboardCheck className="w-5 h-5 text-emerald-600" />
               Verificações de Qualidade em Linha (Hoje)
             </h3>
             <span className="text-[10px] font-bold text-slate-400">Total submetidas: {qualityTodayStats.totalInspectionsToday}</span>
+          </div>
+
+          {/* New Feitas & Pendentes Counter with Visual Progress Bar */}
+          <div className="mb-6 bg-slate-50/50 p-4 rounded-2xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="space-y-1">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Realizadas</p>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-emerald-600 tabular-nums leading-none">
+                    {qualityTodayStats.doneCount}
+                  </span>
+                  <span className="text-[9px] font-bold text-slate-400">inspeções</span>
+                </div>
+              </div>
+              
+              <div className="w-px h-8 bg-slate-200 shrink-0" />
+              
+              <div className="space-y-1">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Ainda Pendentes</p>
+                <div className="flex items-baseline gap-1">
+                  <span className={cn(
+                    "text-2xl font-black tabular-nums leading-none",
+                    qualityTodayStats.pendingCount > 0 ? "text-amber-600" : "text-slate-400"
+                  )}>
+                    {qualityTodayStats.pendingCount}
+                  </span>
+                  <span className="text-[9px] font-bold text-slate-400">pendentes hoje</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Progress Bar Visualizer */}
+            <div className="flex-1 max-w-[200px] space-y-1.5 self-stretch sm:self-auto flex flex-col justify-center">
+              <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none">
+                <span>Progresso</span>
+                <span>
+                  {Math.round((qualityTodayStats.doneCount / Math.max(1, qualityTodayStats.doneCount + qualityTodayStats.pendingCount)) * 100)}%
+                </span>
+              </div>
+              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                  style={{ width: `${(qualityTodayStats.doneCount / Math.max(1, qualityTodayStats.doneCount + qualityTodayStats.pendingCount)) * 100}%` }}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Omission alert box if any omission exists */}
