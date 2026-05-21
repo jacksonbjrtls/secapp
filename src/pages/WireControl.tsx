@@ -20,7 +20,8 @@ import {
   ProductionLine, 
   WireSupplier, 
   WireBatch, 
-  WireCoil 
+  WireCoil,
+  WireStorageBay
 } from '../types';
 import { 
   LayoutDashboard, 
@@ -47,7 +48,8 @@ import {
   Truck,
   Weight,
   FileInput,
-  History
+  History,
+  MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -101,6 +103,7 @@ const WireControl: React.FC = () => {
   const [suppliers, setSuppliers] = useState<WireSupplier[]>([]);
   const [batches, setBatches] = useState<WireBatch[]>([]);
   const [coils, setCoils] = useState<WireCoil[]>([]);
+  const [storageBays, setStorageBays] = useState<WireStorageBay[]>([]);
   const [loading, setLoading] = useState(true);
   const [productionData, setProductionData] = useState<any[]>([]);
 
@@ -115,6 +118,10 @@ const WireControl: React.FC = () => {
     const unsubSuppliers = onSnapshot(query(collection(db, 'wire_suppliers'), orderBy('name')), (snap) => {
       setSuppliers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireSupplier)));
     }, (error) => console.error("Error in wire_suppliers listener:", error));
+
+    const unsubStorageBays = onSnapshot(query(collection(db, 'wire_storage_bays'), orderBy('name')), (snap) => {
+      setStorageBays(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireStorageBay)));
+    }, (error) => console.error("Error in wire_storage_bays listener:", error));
 
     const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(50)), (snap) => {
       setBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireBatch)));
@@ -132,6 +139,7 @@ const WireControl: React.FC = () => {
     return () => {
       unsubLines();
       unsubSuppliers();
+      unsubStorageBays();
       unsubBatches();
       unsubCoils();
       unsubProd();
@@ -211,7 +219,7 @@ const WireControl: React.FC = () => {
             >
               <History className="w-4 h-4" /> Histórico
             </button>
-            {(isAdmin || isMaster) && (
+            {(isManager || isAdmin || isMaster) && (
               <button
                 onClick={() => setActiveTab('config')}
                 className={cn(
@@ -260,7 +268,7 @@ const WireControl: React.FC = () => {
                       { id: 'receiving', label: 'Recebimento', icon: PackagePlus, roles: [isManager, isAdmin, isMaster] },
                       { id: 'consumption', label: 'Registrar Consumo', icon: Barcode },
                       { id: 'history', label: 'Histórico de Lotes', icon: History, roles: [isManager, isAdmin, isMaster] },
-                      { id: 'config', label: 'Ajustes do Sistema', icon: Settings, roles: [isAdmin, isMaster] }
+                      { id: 'config', label: 'Ajustes do Sistema', icon: Settings, roles: [isManager, isAdmin, isMaster] }
                     ].map((tab: any) => {
                       if (tab.roles && !tab.roles.some(Boolean)) return null;
                       return (
@@ -340,14 +348,14 @@ const WireControl: React.FC = () => {
       )}
 
       <AnimatePresence mode="wait">
-        {activeTab === 'config' && (isAdmin || isMaster) && (
+        {activeTab === 'config' && (isManager || isAdmin || isMaster) && (
           <motion.div
             key="config"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
           >
-            <ConfigTab lines={lines} suppliers={suppliers} />
+            <ConfigTab lines={lines} suppliers={suppliers} storageBays={storageBays} />
           </motion.div>
         )}
         
@@ -358,7 +366,7 @@ const WireControl: React.FC = () => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
           >
-            <ReceivingTab suppliers={suppliers} isManager={isManager} />
+            <ReceivingTab suppliers={suppliers} isManager={isManager} storageBays={storageBays} />
           </motion.div>
         )}
 
@@ -377,6 +385,7 @@ const WireControl: React.FC = () => {
                 isManager={isManager}
                 startDate={startDate}
                 endDate={endDate}
+                storageBays={storageBays}
             />
           </motion.div>
         )}
@@ -414,10 +423,13 @@ const WireControl: React.FC = () => {
 };
 
 // Sub-component for Config
-const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[] }> = ({ lines, suppliers }) => {
+const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], storageBays: WireStorageBay[] }> = ({ lines, suppliers, storageBays }) => {
   const { profile } = useAuth();
   const [newLine, setNewLine] = useState('');
   const [newSupplier, setNewSupplier] = useState('');
+  const [newStorageBay, setNewStorageBay] = useState('');
+  const [editingBayId, setEditingBayId] = useState<string | null>(null);
+  const [editingBayName, setEditingBayName] = useState('');
   const [productionHistory, setProductionHistory] = useState<any[]>([]);
   
   // Production Entry Form
@@ -502,6 +514,34 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[] }
 
   const deleteSupplier = async (id: string) => {
     await deleteDoc(doc(db, 'wire_suppliers', id));
+  };
+
+  const handleAddStorageBay = async () => {
+    if (!newStorageBay.trim()) return;
+    await addDoc(collection(db, 'wire_storage_bays'), {
+      name: newStorageBay.trim().toUpperCase(),
+      active: true
+    });
+    setNewStorageBay('');
+  };
+
+  const toggleStorageBay = async (id: string, active: boolean) => {
+    await updateDoc(doc(db, 'wire_storage_bays', id), { active });
+  };
+
+  const deleteStorageBay = async (id: string) => {
+    if (confirm('Tem certeza que deseja excluir esta baia de armazenamento?')) {
+      await deleteDoc(doc(db, 'wire_storage_bays', id));
+    }
+  };
+
+  const handleUpdateStorageBay = async (id: string) => {
+    if (!editingBayName.trim()) return;
+    await updateDoc(doc(db, 'wire_storage_bays', id), {
+      name: editingBayName.trim().toUpperCase()
+    });
+    setEditingBayId(null);
+    setEditingBayName('');
   };
 
   return (
@@ -605,8 +645,8 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[] }
         </div>
       </div>
 
-      {/* Side-by-side Configuration Lists */}
-      <div className="lg:col-span-12 xl:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+      {/* Stacked Configuration Lists */}
+      <div className="lg:col-span-12 xl:col-span-8 flex flex-col gap-8">
         {/* Production Lines */}
         <div className="bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center justify-between mb-6">
@@ -623,7 +663,7 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[] }
               value={newLine}
               onChange={(e) => setNewLine(e.target.value)}
               placeholder="Nome da linha (Ex: A, B...)"
-              className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold shadow-sm transition-all"
+              className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold shadow-sm transition-all animate-none text-base"
             />
             <button
               onClick={handleAddLine}
@@ -633,7 +673,7 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[] }
             </button>
           </div>
 
-          <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="space-y-2 max-h-[440px] overflow-y-auto pr-2 custom-scrollbar">
             {lines.map(line => (
               <div key={line.id} className="flex items-center justify-between p-4 bg-slate-50/50 rounded-2xl group border border-transparent hover:border-emerald-100 hover:bg-white transition-all shadow-sm">
                 <div className="flex items-center gap-3">
@@ -680,7 +720,7 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[] }
               value={newSupplier}
               onChange={(e) => setNewSupplier(e.target.value)}
               placeholder="Ex: Belgo, Morlan..."
-              className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold shadow-sm transition-all"
+              className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold shadow-sm transition-all text-base"
             />
             <button
               onClick={handleAddSupplier}
@@ -692,11 +732,11 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[] }
           <div className="px-3 py-2 bg-amber-50 border border-amber-100 rounded-xl mb-6">
             <p className="text-[9px] text-amber-700 font-bold leading-tight uppercase flex items-center gap-2">
               <Info className="w-3 h-3" />
-              Use nomes exatos (Belgo/Morlan) para reconhecimento via scanner.
+              Use nomes exatos (Belgo/Morlan) para scanner.
             </p>
           </div>
 
-          <div className="space-y-2 max-h-[440px] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="space-y-2 max-h-[380px] overflow-y-auto pr-2 custom-scrollbar">
             {suppliers.map(s => (
               <div key={s.id} className="flex items-center justify-between p-4 bg-slate-50/50 rounded-2xl group border border-transparent hover:border-emerald-100 hover:bg-white transition-all shadow-sm">
                 <span className={cn("font-black tracking-tight text-lg", !s.active && "text-slate-400 line-through decoration-2")}>{s.name}</span>
@@ -711,6 +751,110 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[] }
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Storage Bays */}
+        <div className="bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+              <MapPin className="w-5 h-5 text-emerald-600" />
+              Baias (Armazém)
+            </h3>
+            <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-3 py-1 rounded-full uppercase tracking-widest">{storageBays.length} Baias</span>
+          </div>
+          
+          <div className="flex gap-2 mb-2">
+            <input
+              type="text"
+              value={newStorageBay}
+              onChange={(e) => setNewStorageBay(e.target.value)}
+              placeholder="Ex: B2, C4, D4..."
+              className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold shadow-sm transition-all text-base"
+            />
+            <button
+              onClick={handleAddStorageBay}
+              className="p-3.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all font-bold shadow-lg shadow-emerald-100 flex items-center justify-center active:scale-95"
+            >
+              <Plus className="w-6 h-6" />
+            </button>
+          </div>
+          <div className="px-3 py-2 bg-emerald-50 border border-emerald-100 rounded-xl mb-6">
+            <p className="text-[9px] text-emerald-700 font-bold leading-tight uppercase flex items-center gap-2">
+              <Info className="w-3 h-3" />
+              Cadastre as baias onde os lotes serão estocados.
+            </p>
+          </div>
+
+          <div className="space-y-2 max-h-[380px] overflow-y-auto pr-2 custom-scrollbar">
+            {storageBays.map(bay => (
+              <div key={bay.id} className="flex items-center justify-between p-4 bg-slate-50/50 rounded-2xl group border border-transparent hover:border-emerald-100 hover:bg-white transition-all shadow-sm">
+                {editingBayId === bay.id ? (
+                  <div className="flex items-center gap-2 flex-1">
+                    <input
+                      type="text"
+                      value={editingBayName}
+                      onChange={(e) => setEditingBayName(e.target.value)}
+                      className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <button
+                      onClick={() => handleUpdateStorageBay(bay.id)}
+                      className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                      title="Salvar"
+                    >
+                      <Save className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => { setEditingBayId(null); setEditingBayName(''); }}
+                      className="p-2 text-slate-400 hover:bg-slate-100 rounded-lg transition-all"
+                      title="Cancelar"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <div className={cn("w-2 h-2 rounded-full", bay.active ? "bg-emerald-500" : "bg-slate-300")} />
+                      <span className={cn("font-black tracking-tight text-lg", !bay.active && "text-slate-400 line-through decoration-2")}>
+                        {bay.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all select-none">
+                      <button
+                        onClick={() => { setEditingBayId(bay.id); setEditingBayName(bay.name); }}
+                        className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                        title="Editar Nome"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => toggleStorageBay(bay.id, !bay.active)}
+                        className={cn(
+                          "p-2 rounded-lg transition-all", 
+                          bay.active ? "text-amber-500 hover:bg-amber-50" : "text-emerald-500 hover:bg-emerald-50"
+                        )}
+                        title={bay.active ? "Desativar" : "Ativar"}
+                      >
+                        <Save className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteStorageBay(bay.id)}
+                        className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                        title="Excluir Permanentemente"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+            {storageBays.length === 0 && (
+              <div className="py-12 text-center text-slate-400">
+                <p className="text-xs font-bold italic">Nenhuma baia cadastrada.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

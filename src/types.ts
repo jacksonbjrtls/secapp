@@ -48,6 +48,12 @@ export interface WireSupplier {
   active: boolean;
 }
 
+export interface WireStorageBay {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
 export interface WireBatch {
   id: string;
   nfNumber: string;
@@ -60,6 +66,8 @@ export interface WireBatch {
   coilsCount: number;
   status: 'open' | 'closed';
   createdAt: any;
+  storageBayId?: string;
+  storageBayName?: string;
 }
 
 export interface WireCoil {
@@ -78,6 +86,8 @@ export interface WireCoil {
   updatedBy?: string;
   updatedAt?: any;
   isDamaged?: boolean;
+  storageBayId?: string;
+  storageBayName?: string;
 }
 
 export interface QualitySector {

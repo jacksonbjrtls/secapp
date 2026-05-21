@@ -11,7 +11,7 @@ import {
   limit
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { WireBatch, WireCoil, WireSupplier, ProductionLine } from '../../types';
+import { WireBatch, WireCoil, WireSupplier, ProductionLine, WireStorageBay } from '../../types';
 import { 
   History, 
   Search, 
@@ -30,7 +30,8 @@ import {
   User,
   Barcode,
   Clock,
-  Factory
+  Factory,
+  MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../../lib/utils';
@@ -44,6 +45,7 @@ interface HistoryTabProps {
   isManager: boolean;
   startDate: string;
   endDate: string;
+  storageBays: WireStorageBay[];
 }
 
 export const HistoryTab: React.FC<HistoryTabProps> = ({ 
@@ -53,7 +55,8 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
   isAdmin,
   isManager,
   startDate,
-  endDate
+  endDate,
+  storageBays
 }) => {
   const [viewMode, setViewMode] = useState<'batches' | 'consumptions'>('batches');
   const [searchTerm, setSearchTerm] = useState('');
@@ -158,8 +161,22 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
         nfNumber: editingBatch.nfNumber,
         date: editingBatch.date,
         supplierId: editingBatch.supplierId,
-        supplierName
+        supplierName,
+        storageBayId: editingBatch.storageBayId || '',
+        storageBayName: editingBatch.storageBayName || ''
       });
+
+      // Also update storage location in all associated coils
+      const q = query(collection(db, 'wire_coils'), where('batchId', '==', editingBatch.id));
+      const coilsSnap = await getDocs(q);
+      const updatePromises = coilsSnap.docs.map(coilDoc => 
+        updateDoc(doc(db, 'wire_coils', coilDoc.id), {
+          storageBayId: editingBatch.storageBayId || '',
+          storageBayName: editingBatch.storageBayName || ''
+        })
+      );
+      await Promise.all(updatePromises);
+
       setEditingBatch(null);
       setModalConfig({
         isOpen: true,
@@ -418,7 +435,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                     <div className="space-y-1.5 p-4 bg-slate-50/50 rounded-2xl border border-slate-100">
                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                         <Truck className="w-3 h-3" /> Fornecedor
@@ -431,6 +448,13 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                         <Calendar className="w-3 h-3" /> Data Carga
                       </p>
                       <p className="text-lg font-black text-slate-800">{new Date(batch.date).toLocaleDateString('pt-BR')}</p>
+                    </div>
+
+                    <div className="space-y-1.5 p-4 bg-slate-50/50 rounded-2xl border border-slate-100">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <MapPin className="w-3 h-3 text-emerald-600" /> Baia / Local
+                      </p>
+                      <p className="text-lg font-black text-slate-800">{batch.storageBayName || 'Geral'}</p>
                     </div>
 
                     <div className="space-y-1.5 p-4 bg-blue-50/30 rounded-2xl border border-blue-100/50">
@@ -761,6 +785,29 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                     >
                       {suppliers.map(s => (
                         <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Local de Armazenamento (Baia)</label>
+                    <select
+                      required
+                      value={editingBatch.storageBayId || ''}
+                      onChange={(e) => {
+                        const bayId = e.target.value;
+                        const bayName = storageBays.find(b => b.id === bayId)?.name || '';
+                        setEditingBatch({
+                          ...editingBatch,
+                          storageBayId: bayId,
+                          storageBayName: bayName
+                        });
+                      }}
+                      className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-amber-500 outline-none font-bold text-lg appearance-none"
+                    >
+                      <option value="">Selecione a baia...</option>
+                      {storageBays.map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
                       ))}
                     </select>
                   </div>

@@ -5,7 +5,7 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { WireBatch, WireCoil, WireSupplier } from '../../types';
+import { WireBatch, WireCoil, WireSupplier, WireStorageBay } from '../../types';
 import { 
   PackagePlus, 
   X, 
@@ -21,7 +21,8 @@ import {
   Keyboard,
   CheckCircle2,
   ShieldAlert,
-  ChevronDown
+  ChevronDown,
+  MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
@@ -34,9 +35,10 @@ import { useAuth } from '../../hooks/useAuth';
 interface ReceivingTabProps {
   suppliers: WireSupplier[];
   isManager: boolean;
+  storageBays: WireStorageBay[];
 }
 
-export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager }) => {
+export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager, storageBays }) => {
   const { profile } = useAuth();
   const [currentBatch, setCurrentBatch] = useState<Partial<WireBatch> | null>(null);
   const [scannedCoils, setScannedCoils] = useState<Partial<WireCoil>[]>([]);
@@ -57,7 +59,9 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       date: new Date().toISOString().split('T')[0],
       status: 'open',
       totalWeight: 0,
-      coilsCount: 0
+      coilsCount: 0,
+      storageBayId: '',
+      storageBayName: ''
     });
     setScannedCoils([]);
   };
@@ -154,6 +158,11 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       return;
     }
 
+    if (!currentBatch?.storageBayId) {
+      setError('Selecione o local de armazenamento (baia) para as bobinas.');
+      return;
+    }
+
     const unweightedCoils = scannedCoils.filter(c => !c.weight || c.weight <= 0);
     if (unweightedCoils.length > 0) {
       setError('Existem bobinas com peso zero. Verifique as bobinas manuais/danificadas.');
@@ -179,7 +188,9 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         await addDoc(collection(db, 'wire_coils'), {
           ...coil,
           batchId: batchRef.id,
-          supplierId: currentBatch.supplierId
+          supplierId: currentBatch.supplierId,
+          storageBayId: currentBatch.storageBayId,
+          storageBayName: currentBatch.storageBayName
         });
       }
 
@@ -359,6 +370,32 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                   {scannedCoils.length > 0 && (
                     <p className="text-[9px] font-bold text-amber-600 mt-2 ml-1 uppercase bg-amber-50 px-2 py-1 rounded inline-block">Fornecedor bloqueado (bobinas já registradas)</p>
                   )}
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Local de Armazenamento (Baia)</label>
+                  <div className="relative">
+                    <select
+                      value={currentBatch.storageBayId || ''}
+                      onChange={(e) => {
+                        const bayId = e.target.value;
+                        const bayName = storageBays.find(b => b.id === bayId)?.name || '';
+                        setCurrentBatch({
+                          ...currentBatch,
+                          storageBayId: bayId,
+                          storageBayName: bayName
+                        });
+                      }}
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg appearance-none shadow-sm text-slate-900"
+                    >
+                      <option value="">Selecione a Baia...</option>
+                      {storageBays.filter(b => b.active).map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                    <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none">
+                       <ChevronDown className="w-5 h-5 text-slate-400" />
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Data do Recebimento</label>

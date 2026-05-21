@@ -181,7 +181,8 @@ service cloud.firestore {
     match /forklifts/{forkliftId} {
       allow get: if isApproved() && isValidId(forkliftId);
       allow list: if isApproved();
-      allow write: if isManager() && isValidId(forkliftId);
+      allow create, delete: if isManager() && isValidId(forkliftId);
+      allow update: if isApproved();
     }
 
     // Forklift Check Items
@@ -230,6 +231,12 @@ service cloud.firestore {
     match /production_lines/{lineId} {
       allow get, list: if isApproved();
       allow write: if isManager() && isValidId(lineId);
+    }
+
+    // Wire Storage Bays
+    match /wire_storage_bays/{bayId} {
+      allow get, list: if isApproved();
+      allow write: if isManager() && isValidId(bayId);
     }
 
     // Wire Suppliers

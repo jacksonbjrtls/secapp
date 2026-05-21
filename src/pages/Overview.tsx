@@ -3,6 +3,7 @@ import { collection, onSnapshot, query, where, Timestamp } from 'firebase/firest
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { safeToDate, cn } from '../lib/utils';
+import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { getCurrentShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
 import { 
   Activity, 
@@ -63,58 +64,86 @@ export const Overview: React.FC = () => {
 
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
       setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'users');
     });
 
     const unsubSessions = onSnapshot(collection(db, 'dds_sessions'), (snap) => {
       setDdsSessions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
     });
 
     const unsubSignatures = onSnapshot(collection(db, 'dds_signatures'), (snap) => {
       setDdsSignatures(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
     });
 
     const unsubForklifts = onSnapshot(collection(db, 'forklifts'), (snap) => {
       setForklifts(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'forklifts');
     });
 
     const unsubForkChecklists = onSnapshot(collection(db, 'forklift_checklists'), (snap) => {
       setForkliftChecklists(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'forklift_checklists');
     });
 
     const unsubForkCheckItems = onSnapshot(collection(db, 'forklift_check_items'), (snap) => {
       setForkliftCheckItems(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'forklift_check_items');
     });
 
     const unsubQualSub = onSnapshot(collection(db, 'quality_checklist_submissions'), (snap) => {
       setQualitySubmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'quality_checklist_submissions');
     });
 
     const unsubOm = onSnapshot(collection(db, 'quality_checklist_omissions'), (snap) => {
       setQualityOmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'quality_checklist_omissions');
     });
 
     const unsubQualTemplates = onSnapshot(collection(db, 'quality_checklist_templates'), (snap) => {
       setQualityTemplates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'quality_checklist_templates');
     });
 
     const unsubQualSecs = onSnapshot(collection(db, 'quality_sectors'), (snap) => {
       setQualitySectors(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'quality_sectors');
     });
 
-    const unsubOptionSets = onSnapshot(collection(db, 'quality_option_sets'), (snap) => {
+    const unsubOptionSets = onSnapshot(collection(db, 'quality_checklist_options'), (snap) => {
       setQualityOptionSets(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'quality_checklist_options');
     });
 
     const unsubBatches = onSnapshot(collection(db, 'wire_batches'), (snap) => {
       setWireBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'wire_batches');
     });
 
     const unsubCoils = onSnapshot(collection(db, 'wire_coils'), (snap) => {
       setWireCoils(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'wire_coils');
     });
 
     const unsubLines = onSnapshot(collection(db, 'production_lines'), (snap) => {
       setLines(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'production_lines');
     });
 
     setLoading(false);

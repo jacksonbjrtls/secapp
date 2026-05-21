@@ -503,7 +503,7 @@ const Forklifts: React.FC = () => {
 
   const handleSubmitChecklist = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!showCheckModal || !auth.currentUser) return;
+    if (submitting || !showCheckModal || !auth.currentUser) return;
     
     const currentShift = getCurrentShift();
     const groupOnScale = getGroupForShift(new Date(), currentShift);
@@ -515,6 +515,7 @@ const Forklifts: React.FC = () => {
     }
 
     setSubmitting(true);
+    const savedForkliftNumber = showCheckModal.number;
     try {
       const hasAnormal = Object.values(checklistResults).some((r: any) => r.status === 'anormal');
       const overallStatus = hasAnormal ? 'anormal' : 'normal';
@@ -534,10 +535,14 @@ const Forklifts: React.FC = () => {
 
       if (overallStatus === 'anormal') {
         if (settings.autoLockOnNonConformity) {
-          await updateDoc(doc(db, 'forklifts', showCheckModal.id), {
-            status: 'bloqueada',
-            updatedAt: serverTimestamp()
-          });
+          try {
+            await updateDoc(doc(db, 'forklifts', showCheckModal.id), {
+              status: 'bloqueada',
+              updatedAt: serverTimestamp()
+            });
+          } catch (lockErr) {
+            console.error("Erro ao bloquear empilhadeira automaticamente:", lockErr);
+          }
         }
         
         if (settings.autoNotifyNonConformity) {
@@ -598,11 +603,19 @@ const Forklifts: React.FC = () => {
             type: 'warning'
           });
         }
+      } else {
+        setModalConfig({
+          isOpen: true,
+          title: 'Check-list Enviado',
+          message: `O check-list do equipamento ${savedForkliftNumber} foi enviado com sucesso. Equipamento LIBERADO!`,
+          type: 'success'
+        });
       }
 
       setShowCheckModal(null);
       setChecklistResults({});
       setChecklistNotes('');
+      setActiveTab('history');
 
       if (draftDocId) {
         await deleteDoc(doc(db, 'forklift_drafts', draftDocId));
