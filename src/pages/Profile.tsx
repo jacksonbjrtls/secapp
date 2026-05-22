@@ -20,7 +20,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 
 const Profile: React.FC = () => {
-  const { profile, user } = useAuth();
+  const { profile, user, isAdmin } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [displayName, setDisplayName] = useState(profile?.displayName || '');
   const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
@@ -99,6 +99,11 @@ const Profile: React.FC = () => {
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!auth.currentUser) return;
+
+    if (!isAdmin) {
+      setError('Apenas usuários Master ou Admin têm permissão de alterar dados do perfil.');
+      return;
+    }
 
     setLoading(true);
     setError('');
@@ -205,6 +210,13 @@ const Profile: React.FC = () => {
             </div>
           </div>
 
+          {!isAdmin && (
+            <div className="mb-6 p-4 bg-amber-50 rounded-2xl border border-amber-200 text-amber-800 text-xs font-semibold flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-amber-650 shrink-0" />
+              <span>Apenas usuários com nível Master ou Admin podem alterar as informações de perfil e escala.</span>
+            </div>
+          )}
+
           <form onSubmit={handleUpdateProfile} className="space-y-6">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Nome de Exibição</label>
@@ -214,7 +226,8 @@ const Profile: React.FC = () => {
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none"
+                  disabled={!isAdmin}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none disabled:opacity-60 disabled:bg-slate-100/40"
                   placeholder="Seu nome"
                   required
                 />
@@ -228,8 +241,9 @@ const Profile: React.FC = () => {
                 <select
                   value={group}
                   onChange={(e) => setGroup(e.target.value as any)}
+                  disabled={!isAdmin}
                   className={cn(
-                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none",
+                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
                     group ? "text-emerald-600" : "text-slate-400"
                   )}
                 >
@@ -271,7 +285,8 @@ const Profile: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-100 transition-all shadow-sm"
+                      disabled={!isAdmin}
+                      className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-100 transition-all shadow-sm disabled:opacity-50"
                     >
                       <Upload className="w-4 h-4" />
                       Escolher Foto
@@ -287,7 +302,8 @@ const Profile: React.FC = () => {
                           setTimeout(() => input.removeAttribute('capture'), 1000);
                         }
                       }}
-                      className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-100 transition-all shadow-sm"
+                      disabled={!isAdmin}
+                      className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-100 transition-all shadow-sm disabled:opacity-50"
                     >
                       <Camera className="w-4 h-4" />
                       Tirar Foto
@@ -303,7 +319,8 @@ const Profile: React.FC = () => {
                   type="url"
                   value={photoURL}
                   onChange={(e) => setPhotoURL(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none"
+                  disabled={!isAdmin}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none disabled:opacity-60 disabled:bg-slate-100/40"
                   placeholder="Ou cole a URL da imagem..."
                 />
               </div>
@@ -311,7 +328,7 @@ const Profile: React.FC = () => {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !isAdmin}
               className="w-full bg-slate-900 text-white rounded-2xl py-4 font-black uppercase tracking-widest text-sm hover:bg-slate-800 transition-all disabled:opacity-50 flex items-center justify-center gap-2 group shadow-xl"
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5 group-hover:scale-110 transition-transform" />}

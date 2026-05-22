@@ -250,18 +250,8 @@ const SafetyObservations: React.FC = () => {
     type: 'success'
   });
 
-  // Pre-filled quick selection operator names
-  const defaultOperators = useMemo(() => [
-    "Carlos Silva",
-    "Douglas Santos",
-    "Felipe Oliveira",
-    "Gustavo Souza",
-    "Jackson Barreto",
-    "Juliana Lima",
-    "Marcos Pereira",
-    "Ricardo Costa",
-    "Rodrigo Almeida"
-  ], []);
+  // Pre-filled quick selection operator names (Real operators configured under settings can be used)
+  const defaultOperators = useMemo<string[]>(() => [], []);
 
   // Memoized dynamic Plant Areas mapped from Firestore settings
   const activePlantAreas = useMemo(() => {
@@ -285,16 +275,25 @@ const SafetyObservations: React.FC = () => {
 
   // Merge current users with default operators
   const combinedOperators = useMemo(() => {
-    const list = [...dbOperators];
-    defaultOperators.forEach(op => {
-      if (!list.includes(op)) list.push(op);
+    const uniqueNames = new Set<string>();
+    
+    dbOperators.forEach(op => {
+      const trimmed = op.trim();
+      if (trimmed) uniqueNames.add(trimmed);
     });
+
+    defaultOperators.forEach(op => {
+      const trimmed = op.trim();
+      if (trimmed) uniqueNames.add(trimmed);
+    });
+
     // Add current user
-    const currentName = profile?.displayName || user?.displayName || "";
-    if (currentName && !list.includes(currentName)) {
-      list.unshift(currentName);
+    const currentName = (profile?.displayName || user?.displayName || "").trim();
+    if (currentName) {
+      uniqueNames.add(currentName);
     }
-    return list.sort();
+
+    return Array.from(uniqueNames).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }, [dbOperators, defaultOperators, profile, user]);
 
   // Set default inspector name to current user if available
@@ -399,17 +398,31 @@ const SafetyObservations: React.FC = () => {
     return () => unsub();
   }, [isManager, isAdmin]);
 
-  // Subscribe to operators list for autocomplete
+  // Subscribe to registered users list as operators for autocomplete
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'operators'), (snap) => {
-      const ops = snap.docs.map(doc => ({
-        id: doc.id,
-        name: doc.data().name || doc.data().nome || ''
-      })).filter(o => o.name);
+    const unsub = onSnapshot(collection(db, 'users'), (snap) => {
+      const uniqueUsersMap = new Map<string, { id: string; name: string }>();
+
+      snap.docs.forEach(doc => {
+        const u = doc.data();
+        const rawName = (u.displayName || u.name || u.nome || u.email || '').trim();
+        if (rawName && !uniqueUsersMap.has(rawName)) {
+          uniqueUsersMap.set(rawName, {
+            id: doc.id,
+            name: rawName
+          });
+        }
+      });
+
+      const ops = Array.from(uniqueUsersMap.values());
+
+      // Sort alphabetically
+      ops.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+
       setOperatorsState(ops);
       setDbOperators(ops.map(o => o.name));
     }, (err) => {
-      console.error("Error loading operators:", err);
+      console.error("Error loading registered users as operators:", err);
     });
     return () => unsub();
   }, []);
@@ -648,7 +661,7 @@ const SafetyObservations: React.FC = () => {
     e.preventDefault();
 
     // Field Validations
-    const activeObserverName = checklistForm.observerName === 'outro' ? otherObserverName.trim() : checklistForm.observerName;
+    const activeObserverName = checklistForm.observerName ? checklistForm.observerName.trim() : '';
     if (!activeObserverName) {
       setModalConfig({
         isOpen: true,
@@ -1295,37 +1308,24 @@ const SafetyObservations: React.FC = () => {
                     </h3>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Name of Inspector */}
+                      {/* Name of Inspector with direct input & Autocomplete datalist */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">NOME DO OBSERVADOR *</label>
-                        <select
+                        <input
+                          type="text"
                           required
+                          list="observer-operators-datalist"
+                          placeholder="Digite ou selecione o nome do observador..."
                           value={checklistForm.observerName}
                           onChange={(e) => setChecklistForm(prev => ({ ...prev, observerName: e.target.value }))}
-                          className="w-full text-xs font-semibold px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        >
-                          <option value="">Selecionar...</option>
+                          className="w-full text-xs font-semibold px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-sans"
+                        />
+                        <datalist id="observer-operators-datalist">
                           {combinedOperators.map(op => (
-                            <option key={op} value={op}>{op}</option>
+                            <option key={op} value={op} />
                           ))}
-                          <option value="outro">Outro Operador (Digitar Manualmente...)</option>
-                        </select>
+                        </datalist>
                       </div>
-
-                      {/* Manual Entry Name if "outro" selected */}
-                      {checklistForm.observerName === 'outro' && (
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">DIGITE O NOME COMPLETO *</label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="Insira o nome completo do observador..."
-                            value={otherObserverName}
-                            onChange={(e) => setOtherObserverName(e.target.value)}
-                            className="w-full text-xs font-semibold px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                          />
-                        </div>
-                      )}
 
                       {/* Number of Matricula */}
                       <div className="space-y-1.5">
@@ -1625,20 +1625,26 @@ const SafetyObservations: React.FC = () => {
               <p className="text-xs text-slate-400 mt-1 font-medium">Configure e padronize as opções de área, colaboradores cadastrados e categorias de análise de desvios.</p>
             </div>
             
-            <button
-              onClick={() => {
-                setConfigModal({
-                  isOpen: true,
-                  type: configSubTab,
-                  id: undefined,
-                  value: ''
-                });
-              }}
-              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all self-start md:self-auto"
-            >
-              <Plus className="w-4 h-4 text-emerald-500 font-bold" /> 
-              {configSubTab === 'categories' ? 'Adicionar Categoria' : configSubTab === 'areas' ? 'Adicionar Área' : 'Cadastrar Operador'}
-            </button>
+            {configSubTab !== 'operators' ? (
+              <button
+                onClick={() => {
+                  setConfigModal({
+                    isOpen: true,
+                    type: configSubTab,
+                    id: undefined,
+                    value: ''
+                  });
+                }}
+                className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all self-start md:self-auto"
+              >
+                <Plus className="w-4 h-4 text-emerald-500 font-bold" /> 
+                {configSubTab === 'categories' ? 'Adicionar Categoria' : 'Adicionar Área'}
+              </button>
+            ) : (
+              <div className="px-3 py-2 bg-slate-100 rounded-xl text-[10px] font-bold text-slate-500 uppercase tracking-wider border border-slate-200">
+                Sincronizado com Contas de Usuários
+              </div>
+            )}
           </div>
 
           {/* Sub-tabs selection */}
@@ -1763,26 +1769,15 @@ const SafetyObservations: React.FC = () => {
                       </div>
 
                       <div className="flex gap-1 shrink-0">
-                        <button
-                          onClick={() => setConfigModal({ isOpen: true, type: 'operator', id: op.id, value: op.name })}
-                          className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-all"
-                          title="Editar"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteOptionSetting('operator', op.id, op.name)}
-                          className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
-                          title="Apagar"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <span className="text-[9px] uppercase font-black text-emerald-600 bg-emerald-55 bg-emerald-50 px-2.5 py-1 border border-emerald-100 rounded-lg">
+                          Usuário Ativo no Sistema
+                        </span>
                       </div>
                     </div>
                   ))}
                   {operatorsState.length === 0 && (
                     <div className="p-8 text-center text-slate-400 font-bold">
-                      Nenhum operador customizado cadastrado na base de autocomplete.
+                      Nenhum usuário cadastrado no sistema.
                     </div>
                   )}
                 </>

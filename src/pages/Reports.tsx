@@ -39,8 +39,8 @@ import { cn, safeToDate } from '../lib/utils';
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 
 const Reports: React.FC = () => {
-  const { isManager } = useAuth();
-  const [reportType, setReportType] = useState<'dds' | 'forklift' | 'wire_receiving' | 'wire_consumption' | 'quality'>('dds');
+  const { isManager, isAdmin, isMaster } = useAuth();
+  const [reportType, setReportType] = useState<'dds' | 'forklift' | 'wire_receiving' | 'wire_consumption' | 'quality' | 'user_ray_x'>('dds');
   const [data, setData] = useState<any[]>([]);
   const [forkliftData, setForkliftData] = useState<any[]>([]);
   const [wireReceivingData, setWireReceivingData] = useState<any[]>([]);
@@ -58,6 +58,12 @@ const Reports: React.FC = () => {
   const [showTypeMenu, setShowTypeMenu] = useState(false);
   const [expandedReceivingIds, setExpandedReceivingIds] = useState<Record<string, any[]>>({});
   const [loadingBatchCoils, setLoadingBatchCoils] = useState<Record<string, boolean>>({});
+
+  // Ray-X User Performance Report states
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [routeSubmissionsData, setRouteSubmissionsData] = useState<any[]>([]);
+  const [safetyObservationsData, setSafetyObservationsData] = useState<any[]>([]);
+  const [selectedRayXUser, setSelectedRayXUser] = useState<string>('');
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -238,6 +244,21 @@ const Reports: React.FC = () => {
         });
         setQualityData(qualityResults);
 
+        // Fetch user ray-x evaluation analytical data conditionally
+        if (isAdmin || isMaster) {
+          const routesSnap = await getDocs(collection(db, 'route_submissions'));
+          const routesList = routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setRouteSubmissionsData(routesList);
+
+          const safetySnap = await getDocs(collection(db, 'safety_observations'));
+          const safetyList = safetySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setSafetyObservationsData(safetyList);
+
+          const usersSnap = await getDocs(collection(db, 'users'));
+          const usersList = usersSnap.docs.map(doc => ({ uid: doc.id, id: doc.id, ...doc.data() }));
+          setAllUsers(usersList);
+        }
+
       } catch (err) {
         handleFirestoreError(err, OperationType.LIST, reportType === 'dds' ? 'dds_signatures' : 'forklift_checklists');
       } finally {
@@ -245,7 +266,7 @@ const Reports: React.FC = () => {
       }
     };
     fetchData();
-  }, [isManager]);
+  }, [isManager, isAdmin, isMaster]);
 
   const handleCleanupOrphans = async () => {
     if (orphanIds.length === 0 || !window.confirm(`Deseja realmente excluir ${orphanIds.length} registros de participação que não possuem DDS vinculado? Esta ação é irreversível.`)) {
@@ -358,6 +379,89 @@ const Reports: React.FC = () => {
       return matchUser && matchThemeOrStatus && matchShift && matchGroup && matchLine && matchMood && matchDate;
     });
   }, [data, forkliftData, wireReceivingData, wireConsumptionData, reportType, filterUser, filterTheme, filterShift, filterGroup, filterLine, filterMood, filterStatus, filterDateStart, filterDateEnd]);
+
+  const selectedUserData = useMemo(() => {
+    if (!selectedRayXUser) return null;
+    const matchedUser = allUsers.find(u => u.uid === selectedRayXUser || u.id === selectedRayXUser);
+    if (!matchedUser) return null;
+
+    const uName = matchedUser.displayName || matchedUser.name || '';
+    const uEmail = matchedUser.email || '';
+
+    // Filter DDS signatures where the name matches
+    const userDds = data.filter(sig => 
+      (sig.userName && sig.userName.toLowerCase().trim() === uName.toLowerCase().trim()) ||
+      (sig.email && sig.email.toLowerCase().trim() === uEmail.toLowerCase().trim())
+    );
+
+    // Filter forklift checklists where conductor fits
+    const userForklift = forkliftData.filter(chk => 
+      chk.conductorName && chk.conductorName.toLowerCase().trim() === uName.toLowerCase().trim()
+    );
+
+    // Filter wire batches received where responsibleName fits
+    const userWireReceiving = wireReceivingData.filter(bat => 
+      bat.responsibleName && bat.responsibleName.toLowerCase().trim() === uName.toLowerCase().trim()
+    );
+
+    // Filter wire consumption where consumedBy fits
+    const userWireConsumption = wireConsumptionData.filter(coi => 
+      coi.consumedBy && coi.consumedBy.toLowerCase().trim() === uName.toLowerCase().trim()
+    );
+
+    // Filter quality submissions where userName fits
+    const userQuality = qualityData.filter(qlt => 
+      qlt.userName && qlt.userName.toLowerCase().trim() === uName.toLowerCase().trim()
+    );
+
+    // Filter route submissions where operator fits
+    const userRoutes = routeSubmissionsData.filter(rut => 
+      (rut.operatorName && rut.operatorName.toLowerCase().trim() === uName.toLowerCase().trim()) ||
+      rut.operatorId === matchedUser.uid
+    );
+
+    // Filter safety hazard observations where reportedBy fits
+    const userSafetyObs = safetyObservationsData.filter(obs => 
+      (obs.reportedById && obs.reportedById === matchedUser.uid) ||
+      (obs.reportedBy && obs.reportedBy.toLowerCase().trim() === uName.toLowerCase().trim()) ||
+      (obs.observerName && obs.observerName.toLowerCase().trim() === uName.toLowerCase().trim())
+    );
+
+    // Mood distribution in DDS
+    const ddsMoods = userDds.reduce((acc: any, cur: any) => {
+      acc[cur.mood] = (acc[cur.mood] || 0) + 1;
+      return acc;
+    }, {});
+
+    // Forklift conformity rate
+    const forkliftTotal = userForklift.length;
+    const forkliftConforme = userForklift.filter(c => c.status === 'conforme').length;
+    const forkliftCompliancePercent = forkliftTotal > 0 ? Math.round((forkliftConforme / forkliftTotal) * 100) : 100;
+
+    // Total metric points for score
+    const totalActions = userDds.length + userForklift.length + userWireReceiving.length + userWireConsumption.length + userQuality.length + userRoutes.length + userSafetyObs.length;
+
+    return {
+      profile: matchedUser,
+      ddsCount: userDds.length,
+      ddsList: userDds,
+      ddsMoods,
+      forkliftCount: forkliftTotal,
+      forkliftCompliancePercent,
+      forkliftList: userForklift,
+      wireReceivingCount: userWireReceiving.length,
+      wireReceivingList: userWireReceiving,
+      wireConsumptionCount: userWireConsumption.length,
+      wireConsumptionList: userWireConsumption,
+      qualityCount: userQuality.length,
+      qualityList: userQuality,
+      routesCount: userRoutes.length,
+      routesList: userRoutes,
+      safetyObsCount: userSafetyObs.length,
+      safetyObsList: userSafetyObs,
+      totalActions
+    };
+  }, [selectedRayXUser, allUsers, data, forkliftData, wireReceivingData, wireConsumptionData, qualityData, routeSubmissionsData, safetyObservationsData]);
 
   const exportPDF = () => {
     const doc = new jsPDF();
@@ -751,6 +855,7 @@ const Reports: React.FC = () => {
             {reportType === 'wire_receiving' && <><FileText className="w-5 h-5 text-emerald-600" /> Recebimento</>}
             {reportType === 'wire_consumption' && <><Factory className="w-5 h-5 text-emerald-600" /> Consumo</>}
             {reportType === 'quality' && <><ClipboardCheck className="w-5 h-5 text-emerald-600" /> Qualidade</>}
+            {reportType === 'user_ray_x' && <><UserIcon className="w-5 h-5 text-emerald-600" /> Raio-X Colaborador</>}
             <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTypeMenu && "rotate-180")} />
           </button>
 
@@ -812,38 +917,52 @@ const Reports: React.FC = () => {
                   >
                     <ClipboardCheck className="w-4 h-4" /> Qualidade
                   </button>
+                  {(isAdmin || isMaster) && (
+                    <button
+                      onClick={() => { setReportType('user_ray_x'); setShowTypeMenu(false); }}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all border-t border-slate-100 mt-1 pt-2",
+                        reportType === 'user_ray_x' ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                      )}
+                    >
+                      <UserIcon className="w-4 h-4 text-emerald-600" /> Raio-X Colaborador
+                    </button>
+                  )}
                 </motion.div>
               </>
             )}
           </AnimatePresence>
         </div>
 
-        <div className="flex flex-wrap gap-3">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm border",
-              showFilters ? "bg-slate-900 border-slate-900 text-white" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-            )}
-          >
-            <Filter className="w-4 h-4" />
-            {showFilters ? 'Ocultar Filtros' : 'Filtrar Dados'}
-          </button>
-          <button
-            onClick={exportCSV}
-            className="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2.5 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
-          >
-            <TableIcon className="w-4 h-4 text-emerald-600" />
-            CSV
-          </button>
-          <button
-            onClick={exportPDF}
-            className="flex items-center gap-2 bg-emerald-600 px-4 py-2.5 rounded-xl text-sm font-bold text-white hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
-          >
-            <FileText className="w-4 h-4" />
-            PDF
-          </button>
-        </div>
+        {reportType !== 'user_ray_x' && (
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm border",
+                showFilters ? "bg-slate-900 border-slate-900 text-white" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+              )}
+            >
+              <Filter className="w-4 h-4" />
+              {showFilters ? 'Ocultar Filtros' : 'Filtrar Dados'}
+            </button>
+            <button
+              onClick={exportCSV}
+              className="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2.5 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+              title="Exportar dados carregados para planilha Excel/CSV"
+            >
+              <TableIcon className="w-4 h-4 text-emerald-600" />
+              CSV
+            </button>
+            <button
+              onClick={exportPDF}
+              className="flex items-center gap-2 bg-emerald-600 px-4 py-2.5 rounded-xl text-sm font-bold text-white hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
+            >
+              <FileText className="w-4 h-4" />
+              PDF
+            </button>
+          </div>
+        )}
       </div>
 
       <AnimatePresence mode="wait">
@@ -1071,13 +1190,13 @@ const Reports: React.FC = () => {
                       <option value="all">Todos Setores/Linhas</option>
                       <option value="all_factory">Fábrica Completa</option>
                       <optgroup label="Setores">
-                        {qualitySectors.map(s => (
-                          <option key={`sector-opt-${s.id}`} value={s.id}>{s.name}</option>
+                        {qualitySectors.map((s, sIdx) => (
+                          <option key={`sector-opt-${s.id || sIdx}`} value={s.id}>{s.name}</option>
                         ))}
                       </optgroup>
                       <optgroup label="Linhas">
-                        {lines.map(l => (
-                          <option key={`line-opt-${l.id}`} value={l.id}>{l.name}</option>
+                        {lines.map((l, lIdx) => (
+                          <option key={`line-opt-${l.id || lIdx}`} value={l.id}>{l.name}</option>
                         ))}
                       </optgroup>
                     </select>
@@ -1137,8 +1256,8 @@ const Reports: React.FC = () => {
                       className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
                     >
                       <option value="all">Todas as Linhas</option>
-                      {lines.map(line => (
-                        <option key={line.id} value={line.id}>{line.name}</option>
+                      {lines.map((line, lIdx) => (
+                        <option key={`line-opt-cons-${line.id || lIdx}`} value={line.id}>{line.name}</option>
                       ))}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -1201,7 +1320,254 @@ const Reports: React.FC = () => {
         )}
       </AnimatePresence>
 
-      <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">
+      {reportType === 'user_ray_x' ? (
+        <div className="bg-white rounded-[2rem] p-8 border border-slate-200/80 shadow-sm space-y-8">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-slate-100">
+            <div>
+              <h2 className="text-xl font-black text-slate-900 tracking-tight">Avaliação de Desempenho Administrativo (Raio-X de Trabalho)</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Visão Geral Analítica de contribuições, conformidades e atividades coletadas em todo o sistema.
+              </p>
+            </div>
+            <div className="w-full lg:w-72">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1.5">Selecionar Colaborador</label>
+              <div className="relative">
+                <UserIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-600" />
+                <select
+                  value={selectedRayXUser}
+                  onChange={(e) => setSelectedRayXUser(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-emerald-500 appearance-none text-slate-800"
+                >
+                  <option value="">-- Escolha um colaborador --</option>
+                  {allUsers.map((u, uIdx) => (
+                    <option key={`usr-ray-${u.uid || u.id || uIdx}`} value={u.uid || u.id}>
+                      {u.displayName || u.name || 'Sem nome'} ({u.email})
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+          </div>
+
+          {!selectedUserData ? (
+            <div className="text-center py-20 px-6 border border-slate-100 rounded-2xl bg-slate-50/50 flex flex-col items-center justify-center">
+              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center mb-3">
+                <UserIcon className="w-6 h-6" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-800">Selecione um Colaborador</h3>
+              <p className="text-slate-400 text-xs max-w-sm mt-1">
+                Escolha um usuário no menu acima para cruzar todas as informações dele registradas no sistema (DDS, Empilhadeiras, Arames, Rondas e Desvios de Segurança) e gerar um dossiê completo.
+              </p>
+            </div>
+          ) : (
+            <motion.div 
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
+                <div className="md:col-span-5 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-600 text-white rounded-xl flex items-center justify-center font-black text-sm">
+                      {(selectedUserData.profile.displayName || selectedUserData.profile.name || '?')[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 leading-tight">{selectedUserData.profile.displayName || selectedUserData.profile.name}</h4>
+                      <p className="text-[10px] text-slate-400 font-bold">{selectedUserData.profile.email}</p>
+                    </div>
+                  </div>
+                  <div className="pt-3 grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-slate-400 uppercase font-black tracking-widest text-[8px]">Função</span>
+                      <p className="font-bold text-slate-700 capitalize text-xs">{selectedUserData.profile.role || 'viewer'}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 uppercase font-black tracking-widest text-[8px]">Grupo / Escala</span>
+                      <p className="font-bold text-slate-700 text-xs">{selectedUserData.profile.group || '-'}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 uppercase font-black tracking-widest text-[8px]">Status</span>
+                      <p className="font-bold text-emerald-600 capitalize text-xs">{selectedUserData.profile.status || 'Ativo'}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 uppercase font-black tracking-widest text-[8px]">Cadastro</span>
+                      <p className="font-bold text-slate-700 text-xs">
+                        {selectedUserData.profile.createdAt 
+                          ? safeToDate(selectedUserData.profile.createdAt)?.toLocaleDateString('pt-BR') 
+                          : 'Início'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="md:col-span-7 flex flex-col justify-between p-4 bg-white rounded-xl border border-slate-100 shadow-sm">
+                  <div>
+                    <span className="text-slate-400 uppercase font-black tracking-widest text-[8px] block">Score de Engajamento e Segurança</span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-3xl font-black text-emerald-600 tracking-tight">{selectedUserData.totalActions * 10}</span>
+                      <span className="text-xs font-bold text-slate-400">pontos acumulados</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 leading-normal">
+                      Métrica de segurança ativa que cruza sua frequência em DDSs, rondas realizadas, desvios apontados e checklists de qualidade.
+                    </p>
+                  </div>
+
+                  <div className="mt-3 pt-3 border-t border-slate-50 flex items-center justify-between text-[11px] font-bold">
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="text-slate-600">DDS: {selectedUserData.ddsCount}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-blue-500" />
+                      <span className="text-slate-600">Rondas: {selectedUserData.routesCount}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-500" />
+                      <span className="text-slate-600">Desvios: {selectedUserData.safetyObsCount}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-slate-400" />
+                      <span className="text-slate-600">Consumo: {selectedUserData.wireConsumptionCount}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="bg-slate-50/30 p-5 rounded-2xl border border-slate-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" /> Diálogos Diários (DDS)
+                    </h5>
+                    <span className="px-2 py-0.5 bg-white text-emerald-700 text-[10px] font-black rounded-lg border border-emerald-50">
+                      {selectedUserData.ddsCount} Sessões
+                    </span>
+                  </div>
+                  {selectedUserData.ddsCount === 0 ? (
+                    <p className="text-[11px] text-slate-400 italic">Sem participações registradas.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      {selectedUserData.ddsList.slice(0, 4).map((d: any, idx: number) => (
+                        <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-100 flex items-center justify-between text-[11px]">
+                          <div className="truncate pr-2">
+                            <p className="font-bold text-slate-800 truncate">{d.sessionTitle}</p>
+                            <p className="text-[9px] text-slate-400">Facilitador: {d.executor}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-white tracking-widest",
+                              d.mood === 'happy' ? "bg-emerald-500" : d.mood === 'neutral' ? "bg-blue-500" : "bg-amber-500"
+                            )}>
+                              {d.mood === 'happy' ? 'BEM' : d.mood === 'neutral' ? 'NORMAL' : 'CANSADO'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-50/30 p-5 rounded-2xl border border-slate-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-500" /> Desvios de Segurança Relatados
+                    </h5>
+                    <span className="px-2 py-0.5 bg-white text-amber-700 text-[10px] font-black rounded-lg border border-amber-50">
+                      {selectedUserData.safetyObsCount} Casos
+                    </span>
+                  </div>
+                  {selectedUserData.safetyObsCount === 0 ? (
+                    <p className="text-[11px] text-slate-400 italic">Nenhum desvio relatado por este colaborador.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      {selectedUserData.safetyObsList.slice(0, 3).map((o: any, idx: number) => (
+                        <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-100 text-[11px] space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
+                              o.severity === 'high' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
+                            )}>
+                              {o.severity || 'médio'}
+                            </span>
+                            <span className="text-[9px] text-slate-400">{o.createdAt ? safeToDate(o.createdAt)?.toLocaleDateString('pt-BR') : '-'}</span>
+                          </div>
+                          <p className="text-slate-600 font-medium line-clamp-1">{o.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-50/30 p-5 rounded-2xl border border-slate-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <ClipboardCheck className="w-4 h-4 text-blue-500" /> Rondas Operacionais Realizadas
+                    </h5>
+                    <span className="px-2 py-0.5 bg-white text-blue-700 text-[10px] font-black rounded-lg border border-blue-50">
+                      {selectedUserData.routesCount} Rondas
+                    </span>
+                  </div>
+                  {selectedUserData.routesCount === 0 ? (
+                    <p className="text-[11px] text-slate-400 italic">Sem registros de rondas.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      {selectedUserData.routesList.slice(0, 3).map((r: any, idx: number) => (
+                        <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-100 flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-slate-800 truncate max-w-[180px]">{r.templateName}</span>
+                          <span className="text-[9px] text-slate-400 shrink-0">{r.createdAt ? safeToDate(r.createdAt)?.toLocaleDateString('pt-BR') : '-'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-50/30 p-5 rounded-2xl border border-slate-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Truck className="w-4 h-4 text-emerald-600" /> Checklists e Bobinas de Arame
+                    </h5>
+                    <span className="px-2 py-0.5 bg-white text-emerald-700 text-[10px] font-black rounded-lg border border-emerald-50">
+                      {selectedUserData.forkliftCount + selectedUserData.wireReceivingCount + selectedUserData.wireConsumptionCount} Itens
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 pb-2 text-center text-xs font-bold text-slate-700">
+                    <div className="bg-white p-2 rounded-xl border border-slate-100">
+                      <p className="text-[8px] text-slate-400 font-extrabold uppercase">Empilhadeiras</p>
+                      <p className="text-sm font-black text-slate-800 mt-1">{selectedUserData.forkliftCount}</p>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-slate-100">
+                      <p className="text-[8px] text-slate-400 font-extrabold uppercase">Recebimento</p>
+                      <p className="text-sm font-black text-slate-800 mt-1">{selectedUserData.wireReceivingCount}</p>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-slate-100">
+                      <p className="text-[8px] text-slate-400 font-extrabold uppercase">Consumo</p>
+                      <p className="text-sm font-black text-slate-800 mt-1">{selectedUserData.wireConsumptionCount}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Promo recommendation */}
+              <div className="bg-emerald-50/40 p-5 rounded-2xl border border-emerald-100 flex gap-3">
+                <div className="w-8 h-8 bg-emerald-100 rounded-xl flex items-center justify-center text-emerald-600 shrink-0">
+                  <Smile className="w-4 h-4" />
+                </div>
+                <div>
+                  <h6 className="text-[11px] font-black text-emerald-950 uppercase tracking-widest mb-1">Avaliação e Dossiê para Promoção Administrativa</h6>
+                  <p className="text-[11px] text-emerald-800 leading-normal">
+                    Este colaborador possui **{selectedUserData.totalActions} interações ativas** no sistema. 
+                    {selectedUserData.totalActions > 25 && ' Seu altíssimo volume de interações indica engajamento exemplar, liderança ativa e conformidade excepcional de dados, tornando-o altamente elegível para futuras promoções e posições de liderança.'}
+                    {selectedUserData.totalActions <= 25 && selectedUserData.totalActions > 8 && ' Perfil dinâmico e participativo com boa consistência de registros cotidianos na fábrica. Ótimo desempenho global.'}
+                    {selectedUserData.totalActions <= 8 && ' Volume inicial ou moderado de interações operacionais no sistema. Recomenda-se incentivar maior participação ativa nos Diálogos de Segurança e Rondas.'}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">
         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-white text-slate-900">
           <div className="flex items-center gap-2">
             <Filter className="w-4 h-4 text-slate-400" />
@@ -1537,6 +1903,7 @@ const Reports: React.FC = () => {
           </div>
         )}
       </div>
+      )}
 
       <AnimatePresence>
         {editingConsumption && (
@@ -1582,8 +1949,8 @@ const Reports: React.FC = () => {
                       onChange={(e) => setEditForm(prev => ({ ...prev, line: e.target.value }))}
                       className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all font-bold"
                     >
-                      {lines.map(line => (
-                        <option key={line.id} value={line.id}>{line.name}</option>
+                      {lines.map((line, idx) => (
+                        <option key={`edit-line-${line.id || idx}`} value={line.id}>{line.name}</option>
                       ))}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -1718,12 +2085,12 @@ const Reports: React.FC = () => {
                     Itens da Verificação (Em Ordem)
                   </h4>
                   <div className="grid grid-cols-1 gap-2">
-                    {checkItemsList.map((item) => {
+                    {checkItemsList.map((item, idx) => {
                       const res = selectedForkliftCheck.itemResults[item.id];
                       if (!res) return null;
                       
                       return (
-                        <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div key={`checkitem-ord-${item.id || idx}`} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                           <span className="text-sm font-bold text-slate-600">
                             {item.name}
                           </span>
