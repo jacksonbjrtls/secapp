@@ -57,7 +57,16 @@ const Admin: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'domains' | 'logs'>('users');
+  const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules'>('users');
+  const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
+    dds: true,
+    forklifts: true,
+    wires: true,
+    quality: true,
+    schedule: true,
+    operational_routes: true,
+    safety_observations: true,
+  });
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -139,6 +148,38 @@ const Admin: React.FC = () => {
       fetchLoginLogs();
     }
   }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const unsub = onSnapshot(doc(db, 'system_config', 'modules'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setActiveModules(prev => ({
+          ...prev,
+          ...data
+        }));
+      }
+    }, (error) => {
+      console.error('Error listening to modules configuration:', error);
+    });
+    return () => unsub();
+  }, [isAdmin]);
+
+  const handleToggleModule = async (moduleId: string) => {
+    try {
+      const updatedValue = !activeModules[moduleId];
+      const updated = {
+        ...activeModules,
+        [moduleId]: updatedValue
+      };
+      setActiveModules(updated);
+      await setDoc(doc(db, 'system_config', 'modules'), updated);
+      setSuccess('Módulo atualizado com sucesso!');
+    } catch (err) {
+      console.error('Erro ao salvar módulo:', err);
+      setError('Erro ao salvar configuração do módulo.');
+    }
+  };
 
   const formatUserAgent = (ua: string) => {
     if (!ua) return 'Não identificado';
@@ -557,6 +598,12 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
            >
              Domínios
            </button>
+           <button 
+             onClick={() => setActiveTab('modules')}
+             className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'modules' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+           >
+             Módulos
+           </button>
            {isMaster && (
              <button 
                onClick={() => setActiveTab('logs')}
@@ -968,6 +1015,62 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
               </div>
             </motion.div>
          </div>
+      ) : activeTab === 'modules' ? (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm"
+        >
+          <div className="mb-6">
+            <h2 className="text-xl font-bold text-slate-900 tracking-tight">Módulos Ativos do Sistema</h2>
+            <p className="text-sm text-slate-500 mt-1 font-semibold">Habilite ou desabilite os módulos do aplicativo. Módulos desabilitados não aparecerão no menu principal de navegação para nenhum usuário.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {[
+              { id: 'dds', label: 'DDS Online', desc: 'Módulo de Diálogo Diário de Segurança com assinaturas e confirmação de presença.', icon: 'ShieldCheck' },
+              { id: 'forklifts', label: 'Empilhadeiras', desc: 'Controle de checklists e inspeções de segurança de empilhadeiras em tempo real.', icon: 'Truck' },
+              { id: 'wires', label: 'Módulo de Arames', desc: 'Controle de estoque, recebimento de bobinas e consumo de arames no processo.', icon: 'Factory' },
+              { id: 'quality', label: 'Qualidade de Processo', desc: 'Checklists de conformidade de processo, controle de não conformidades e rejeitos.', icon: 'ClipboardCheck' },
+              { id: 'schedule', label: 'Escala de Turno', desc: 'Gestão de escalas de folgas e times operacionais.', icon: 'CalendarDays' },
+              { id: 'operational_routes', label: 'Rotas Operacionais', desc: 'Criação de modelos de rota, inspeção de equipamentos com anexo de fotos e geração de observações.', icon: 'Activity' },
+              { id: 'safety_observations', label: 'Observação de Segurança', desc: 'Mecanismo para que operadores possam reportar desvios de segurança e condições inseguras.', icon: 'ShieldAlert' },
+            ].map((mod) => {
+              const isEnabled = activeModules[mod.id] !== false;
+              return (
+                <div 
+                  key={mod.id} 
+                  className={cn(
+                    "p-6 rounded-md bg-white border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm",
+                    isEnabled 
+                      ? "bg-slate-50 border-emerald-100 hover:border-emerald-200" 
+                      : "bg-slate-50 border-slate-100 hover:border-slate-200"
+                  )}
+                >
+                  <div className="space-y-1 max-w-md">
+                    <div className="flex items-center gap-2">
+                      <div className={cn("w-2 h-2 rounded-full", isEnabled ? "bg-emerald-500 animate-pulse" : "bg-slate-300")} />
+                      <h3 className="font-bold text-slate-800 text-base">{mod.label}</h3>
+                    </div>
+                    <p className="text-xs text-slate-500 leading-relaxed font-semibold">{mod.desc}</p>
+                  </div>
+
+                  <button
+                    onClick={() => handleToggleModule(mod.id)}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap",
+                      isEnabled
+                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                        : "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                    )}
+                  >
+                    {isEnabled ? 'Habilitado' : 'Desabilitado'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
       ) : (
         <motion.div
            initial={{ opacity: 0, y: 10 }}

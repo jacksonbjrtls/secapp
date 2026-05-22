@@ -45,6 +45,8 @@ export const Overview: React.FC = () => {
   const [wireCoils, setWireCoils] = useState<any[]>([]);
   const [lines, setLines] = useState<any[]>([]);
   const [qualityOmissions, setQualityOmissions] = useState<any[]>([]);
+  const [routeSubmissions, setRouteSubmissions] = useState<any[]>([]);
+  const [safetyObservations, setSafetyObservations] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
@@ -146,6 +148,18 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'production_lines');
     });
 
+    const unsubRoutes = onSnapshot(collection(db, 'route_submissions'), (snap) => {
+      setRouteSubmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'route_submissions');
+    });
+
+    const unsubSafetyObs = onSnapshot(collection(db, 'safety_observations'), (snap) => {
+      setSafetyObservations(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'safety_observations');
+    });
+
     setLoading(false);
     setLastUpdated(new Date());
 
@@ -164,6 +178,8 @@ export const Overview: React.FC = () => {
       unsubBatches();
       unsubCoils();
       unsubLines();
+      unsubRoutes();
+      unsubSafetyObs();
     };
   }, []);
 
@@ -465,6 +481,73 @@ export const Overview: React.FC = () => {
     };
   }, [forklifts, forkliftChecklists, forkliftCheckItems, todayStart, todayEnd]);
 
+  // 4. Operational Routes Summary (Rotas de Hoje)
+  const routeTodayStats = useMemo(() => {
+    const todayRoutes = routeSubmissions.filter(sub => {
+      const created = safeToDate(sub.createdAt);
+      return created && created >= todayStart && created <= todayEnd;
+    });
+
+    const anomaliesCount = todayRoutes.reduce((acc, sub) => {
+      const fails = sub.responses.filter((r: any) => r.status === 'not_ok').length;
+      return acc + fails;
+    }, 0);
+
+    return {
+      totalSubmissionsToday: todayRoutes.length,
+      anomaliesCount,
+      recentRoutesToday: todayRoutes.map(r => {
+        const timestamp = safeToDate(r.createdAt);
+        return {
+          id: r.id,
+          name: r.templateName,
+          operator: r.operatorName,
+          time: timestamp ? timestamp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '---',
+          fails: r.responses.filter((resp: any) => resp.status === 'not_ok').length
+        };
+      })
+    };
+  }, [routeSubmissions, todayStart, todayEnd]);
+
+  // 5. Safety Overview Stats (Observações de Hoje)
+  const safetyOverviewStats = useMemo(() => {
+    // Today's observations
+    const todayObs = safetyObservations.filter(obs => {
+      const created = safeToDate(obs.createdAt);
+      return created && created >= todayStart && created <= todayEnd;
+    });
+
+    const totalToday = todayObs.length;
+    const safeToday = todayObs.filter(obs => obs.isSafe === 'seguro').length;
+    const riskToday = todayObs.filter(obs => obs.isSafe !== 'seguro').length;
+
+    // Month observations
+    const startOfMonth = new Date(currentTime.getFullYear(), currentTime.getMonth(), 1);
+    const monthObs = safetyObservations.filter(obs => {
+      const created = safeToDate(obs.createdAt);
+      return created && created >= startOfMonth;
+    });
+
+    const totalMonth = monthObs.length;
+    const pendingMonth = monthObs.filter(obs => obs.status === 'pending').length;
+    const resolvedMonth = monthObs.filter(obs => obs.status === 'resolved').length;
+    const safeMonth = monthObs.filter(obs => obs.isSafe === 'seguro').length;
+    const riskMonth = monthObs.filter(obs => obs.isSafe !== 'seguro').length;
+
+    return {
+      totalToday,
+      safeToday,
+      riskToday,
+      totalMonth,
+      pendingMonth,
+      resolvedMonth,
+      safeMonth,
+      riskMonth,
+      todayObservations: todayObs,
+      monthObservations: monthObs
+    };
+  }, [safetyObservations, currentTime, todayStart, todayEnd]);
+
   // Overall Operations Health Score Index (Daily KPIs consolidated)
   const healthIndex = useMemo(() => {
     let score = 100;
@@ -497,8 +580,12 @@ export const Overview: React.FC = () => {
     // -10 per blocked layout due to safety danger
     score -= (forkliftTodayStats.blockedCount * 10);
 
+    // 5. Safety observation risk factor
+    // -5 per risk/desvio reported today
+    score -= (safetyOverviewStats.riskToday * 5);
+
     return Math.max(0, Math.min(100, score));
-  }, [activeShift, ddsTodayStats, qualityTodayStats, forkliftTodayStats]);
+  }, [activeShift, ddsTodayStats, qualityTodayStats, forkliftTodayStats, safetyOverviewStats]);
 
   // Combined Non-Conformities list (Quality failing checklist submissions + Forklift checklists failing/anormal)
   const combinedNonConformities = useMemo(() => {
@@ -823,6 +910,79 @@ export const Overview: React.FC = () => {
               <span className="font-bold text-slate-500 text-center text-[10px]">
                 {forkliftTodayStats.warningAnomaliesCount === 1 ? '1 falha relatada em inspeção' : `${forkliftTodayStats.warningAnomaliesCount} falhas relatadas em inspeção`}
               </span>
+            </div>
+          </div>
+
+          {/* Card 5: Operational Routes status checklist */}
+          <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-100 group">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Rota Operacional</span>
+                <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Vistorias de Ativos</h3>
+              </div>
+              <div className="w-10 h-10 bg-emerald-50/50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                <Activity className="w-5 h-5 text-emerald-600 animate-pulse" />
+              </div>
+            </div>
+
+            <div className="my-4 flex justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Rotas de Hoje</p>
+                <p className="text-2xl font-black text-slate-900 leading-tight">
+                  {routeTodayStats.totalSubmissionsToday} <span className="text-xs text-slate-400 font-bold">concluídas</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Anomalias de Rota</p>
+                <p className={cn(
+                  "text-2xl font-black text-right leading-tight",
+                  routeTodayStats.anomaliesCount > 0 ? "text-rose-600" : "text-slate-400"
+                )}>
+                  {routeTodayStats.anomaliesCount}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center pt-3 border-t border-slate-100 justify-center font-bold">
+              <span className="font-bold text-slate-500 text-center text-[10px]">
+                {routeTodayStats.anomaliesCount === 1 ? '1 falha necessitando observação' : `${routeTodayStats.anomaliesCount} falhas necessitando observação`}
+              </span>
+            </div>
+          </div>
+
+          {/* Card 6: Safety Observations checklist */}
+          <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-rose-100 group">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-2 py-0.5 rounded-md">Observação de Segurança</span>
+                <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Segurança Comportamental</h3>
+              </div>
+              <div className="w-10 h-10 bg-rose-50/50 text-rose-500 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                <ShieldAlert className="w-5 h-5 text-rose-500" />
+              </div>
+            </div>
+
+            <div className="my-4 flex justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sinalizações Hoje</p>
+                <p className="text-2xl font-black text-slate-900 leading-tight">
+                  {safetyOverviewStats.totalToday} <span className="text-xs text-slate-400 font-bold">registros</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Desvios de Risco</p>
+                <p className={cn(
+                  "text-2xl font-black text-right leading-tight",
+                  safetyOverviewStats.riskToday > 0 ? "text-rose-600" : "text-slate-400"
+                )}>
+                  {safetyOverviewStats.riskToday}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
+              <span>Mês: <strong className="text-slate-700">{safetyOverviewStats.totalMonth} total</strong></span>
+              <span className="text-slate-500 font-bold">{safetyOverviewStats.pendingMonth} pendentes</span>
             </div>
           </div>
 

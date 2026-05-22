@@ -22,8 +22,8 @@ service cloud.firestore {
 
     function isMaster() {
       return isSignedIn() && (
-        request.auth.token.email.lower() in getMasterEmails() ||
-        request.auth.uid in getMasterUids()
+        request.auth.uid in getMasterUids() ||
+        ('email' in request.auth.token && string(request.auth.token.email).lower() in getMasterEmails())
       );
     }
 
@@ -34,8 +34,9 @@ service cloud.firestore {
     function isDomainAllowed() {
       return isSignedIn() && (
         isMaster() || (
-          request.auth.token.get('email', '') != '' &&
-          exists(/databases/$(database)/documents/allowed_domains/$( '@' + request.auth.token.email.lower().split('@')[1] ))
+          'email' in request.auth.token &&
+          string(request.auth.token.email) != '' &&
+          exists(/databases/$(database)/documents/allowed_domains/$( '@' + string(request.auth.token.email).lower().split('@')[1] ))
         )
       );
     }
@@ -228,6 +229,12 @@ service cloud.firestore {
       allow write: if isManager();
     }
 
+    // System Config Modules Settings
+    match /system_config/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isValidId(configId);
+    }
+
     // Notifications
     match /notifications/{notificationId} {
       allow get: if isApproved() && isValidId(notificationId);
@@ -320,6 +327,50 @@ service cloud.firestore {
     match /quality_checklist_options/{optionSetId} {
       allow read: if isApproved();
       allow write: if isManager() && isValidId(optionSetId);
+    }
+
+    // Route Templates
+    match /route_templates/{templateId} {
+      allow get, list: if isApproved();
+      allow write: if isManager() && isValidId(templateId);
+    }
+
+    // Route Submissions
+    match /route_submissions/{submissionId} {
+      allow get, list: if isApproved();
+      allow create: if isApproved() && isNotDisabled() && isValidId(submissionId) &&
+                      request.resource.data.operatorId == request.auth.uid &&
+                      request.resource.data.createdAt == request.time;
+      allow update, delete: if isManager();
+    }
+
+    // Safety Observations
+    match /safety_observations/{observationId} {
+      allow get, list: if isApproved();
+      allow create: if isApproved() && isNotDisabled() && isValidId(observationId) &&
+                      request.resource.data.reportedById == request.auth.uid &&
+                      request.resource.data.createdAt == request.time;
+      allow update: if isApproved() && isNotDisabled() && isValidId(observationId) && 
+                      (isManager() || resource.data.reportedById == request.auth.uid);
+      allow delete: if isManager() && isValidId(observationId);
+    }
+
+    // Safety Categories (O Que Observar)
+    match /safety_categories/{categoryId} {
+      allow get, list: if isApproved();
+      allow write: if isManager() && isValidId(categoryId);
+    }
+
+    // Safety Areas (Areas)
+    match /safety_areas/{areaId} {
+      allow get, list: if isApproved();
+      allow write: if isManager() && isValidId(areaId);
+    }
+
+    // Operators Autocomplete List
+    match /operators/{operatorId} {
+      allow get, list: if isApproved();
+      allow write: if isManager() && isValidId(operatorId);
     }
   }
 }

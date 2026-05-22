@@ -42,7 +42,8 @@ import {
   CheckCircle2,
   Box,
   Scale,
-  Clock
+  Clock,
+  ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -51,7 +52,10 @@ import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from 
 
 const Dashboard: React.FC = () => {
   const { isManager } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dds' | 'forklifts' | 'quality' | 'wire'>('dds');
+  const [activeTab, setActiveTab] = useState<'dds' | 'forklifts' | 'quality' | 'wire' | 'operational_routes' | 'safety_observations'>('dds');
+  const [routesSubmissions, setRoutesSubmissions] = useState<any[]>([]);
+  const [routesTemplates, setRoutesTemplates] = useState<any[]>([]);
+  const [safetyObservations, setSafetyObservations] = useState<any[]>([]);
   const [showTabMenu, setShowTabMenu] = useState(false);
   const [stats, setStats] = useState({
     totalUsers: 0,
@@ -211,6 +215,18 @@ const Dashboard: React.FC = () => {
       setLines(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'production_lines'));
 
+    const unsubRoutesSub = onSnapshot(collection(db, 'route_submissions'), (snapshot) => {
+      setRoutesSubmissions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'route_submissions'));
+
+    const unsubRoutesTmpl = onSnapshot(collection(db, 'route_templates'), (snapshot) => {
+      setRoutesTemplates(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'route_templates'));
+
+    const unsubSafetyObs = onSnapshot(collection(db, 'safety_observations'), (snapshot) => {
+      setSafetyObservations(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'safety_observations'));
+
     return () => {
       unsubscribe();
       unsubForklifts();
@@ -222,6 +238,9 @@ const Dashboard: React.FC = () => {
       unsubWireBatches();
       unsubWireCoils();
       unsubLines();
+      unsubRoutesSub();
+      unsubRoutesTmpl();
+      unsubSafetyObs();
     };
   }, [isManager, filterYear, filterMonth]);
 
@@ -241,6 +260,154 @@ const Dashboard: React.FC = () => {
       abnormalCount: abnormal
     };
   }, [forkliftHistory, filterMonth, filterYear]);
+
+  // Derived routes metrics for the selected period
+  const routeMetrics = useMemo(() => {
+    const history = routesSubmissions.filter(h => {
+      const d = safeToDate(h.createdAt);
+      return d && d.getMonth() === filterMonth && d.getFullYear() === filterYear;
+    });
+
+    let totalChecked = 0;
+    let okChecked = 0;
+    const eqFails: Record<string, number> = {};
+
+    history.forEach(h => {
+      h.responses?.forEach((r: any) => {
+        totalChecked++;
+        if (r.status === 'ok') {
+          okChecked++;
+        } else {
+          eqFails[r.equipmentName] = (eqFails[r.equipmentName] || 0) + 1;
+        }
+      });
+    });
+
+    const complianceRate = totalChecked > 0 ? Math.round((okChecked / totalChecked) * 100) : 100;
+
+    // Daily trends
+    const daysInMonth = new Date(filterYear, filterMonth + 1, 0).getDate();
+    const dailyTrend = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const daySubs = history.filter(h => {
+        const d = safeToDate(h.createdAt);
+        return d && d.getDate() === day;
+      });
+
+      if (daySubs.length === 0) {
+        continue;
+      }
+
+      let dChecked = 0;
+      let dOk = 0;
+      daySubs.forEach(h => {
+        h.responses?.forEach((r: any) => {
+          dChecked++;
+          if (r.status === 'ok') dOk++;
+        });
+      });
+
+      const rate = dChecked > 0 ? Math.round((dOk / dChecked) * 100) : 100;
+      dailyTrend.push({ Day: `${day}`, Conformidade: rate });
+    }
+
+    const failedEquipmentList = Object.entries(eqFails)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    return {
+      totalSubmissions: history.length,
+      complianceRate,
+      failedEquipmentList,
+      dailyTrend,
+      latestSubmissions: history.slice(0, 5)
+    };
+  }, [routesSubmissions, filterMonth, filterYear]);
+
+  // Derived Safety Observations metrics
+  const safetyMetrics = useMemo(() => {
+    const history = safetyObservations.filter(h => {
+      const d = safeToDate(h.createdAt);
+      return d && d.getMonth() === filterMonth && d.getFullYear() === filterYear;
+    });
+
+    const total = history.length;
+    const pending = history.filter(h => h.status === 'pending').length;
+    const resolved = history.filter(h => h.status === 'resolved').length;
+    const working = history.filter(h => h.status === 'working').length;
+
+    const safeCount = history.filter(h => h.isSafe === 'seguro').length;
+    const riskCount = history.filter(h => h.isSafe !== 'seguro').length;
+
+    const highSeverity = history.filter(h => h.severity === 'high').length;
+    const mediumSeverity = history.filter(h => h.severity === 'medium').length;
+    const lowSeverity = history.filter(h => h.severity === 'low').length;
+
+    // Severity list helper
+    const severityDist = [
+      { name: 'Crítica / Alta (Desvio)', value: highSeverity, color: '#f43f5e' },
+      { name: 'Média (Atenção)', value: mediumSeverity, color: '#f59e0b' },
+      { name: 'Baixa (Acompanhar)', value: lowSeverity, color: '#3b82f6' }
+    ].filter(s => s.value > 0);
+
+    // Group by plant area (observerArea or observedArea)
+    const areaMap: Record<string, number> = {};
+    history.forEach(h => {
+      const area = h.observedArea || h.observerArea || 'Área Geral / Operacional';
+      areaMap[area] = (areaMap[area] || 0) + 1;
+    });
+
+    const areaList = Object.entries(areaMap).map(([name, count]) => ({
+      name,
+      count
+    })).sort((a, b) => b.count - a.count);
+
+    const topAreas = areaList.slice(0, 5);
+    const safetyCompliance = total > 0 ? Math.round((safeCount / total) * 100) : 100;
+
+    // Daily trends
+    const daysInMonth = new Date(filterYear, filterMonth + 1, 0).getDate();
+    const dailyTrend = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const daySubs = history.filter(h => {
+        const d = safeToDate(h.createdAt);
+        return d && d.getDate() === day;
+      });
+
+      if (daySubs.length === 0) {
+        continue;
+      }
+
+      const safeInDay = daySubs.filter(h => h.isSafe === 'seguro').length;
+      const desvioInDay = daySubs.filter(h => h.isSafe !== 'seguro').length;
+
+      dailyTrend.push({
+        Day: `${day}`,
+        'Registros': daySubs.length,
+        'Seguro': safeInDay,
+        'Desvios': desvioInDay
+      });
+    }
+
+    return {
+      total,
+      pending,
+      resolved,
+      working,
+      safeCount,
+      riskCount,
+      highSeverity,
+      mediumSeverity,
+      lowSeverity,
+      severityDist,
+      areaList,
+      topAreas,
+      safetyCompliance,
+      dailyTrend,
+      latestObservations: history.slice(0, 10)
+    };
+  }, [safetyObservations, filterMonth, filterYear]);
 
   // Derived Statistics based on filters
   const complianceData = useMemo(() => {
@@ -538,6 +705,8 @@ const Dashboard: React.FC = () => {
             {activeTab === 'forklifts' && <><Truck className="w-5 h-5 text-emerald-600" /> Empilhadeiras</>}
             {activeTab === 'quality' && <><ClipboardCheck className="w-5 h-5 text-emerald-600" /> Qualidade</>}
             {activeTab === 'wire' && <><LayersIcon className="w-5 h-5 text-emerald-600" /> Arames</>}
+            {activeTab === 'operational_routes' && <><Activity className="w-5 h-5 text-emerald-600" /> Rota Operacional</>}
+            {activeTab === 'safety_observations' && <><ShieldAlert className="w-5 h-5 text-rose-600" /> Obs. Segurança</>}
             <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTabMenu && "rotate-180")} />
           </button>
 
@@ -558,7 +727,9 @@ const Dashboard: React.FC = () => {
                     { id: 'dds', label: 'DDS Online', icon: Shield },
                     { id: 'forklifts', label: 'Empilhadeiras', icon: Truck },
                     { id: 'quality', label: 'Qualidade', icon: ClipboardCheck },
-                    { id: 'wire', label: 'Arames', icon: LayersIcon }
+                    { id: 'wire', label: 'Arames', icon: LayersIcon },
+                    { id: 'operational_routes', label: 'Rota Operacional', icon: Activity },
+                    { id: 'safety_observations', label: 'Observações de Segurança', icon: ShieldAlert }
                   ].map((tab) => (
                     <button
                       key={tab.id}
@@ -1427,7 +1598,7 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
           </motion.div>
-        ) : (
+        ) : activeTab === 'wire' ? (
           <motion.div
             key="wire"
             initial={{ opacity: 0, y: 10 }}
@@ -1553,6 +1724,533 @@ const Dashboard: React.FC = () => {
                       <Bar dataKey="value" fill="#6366f1" radius={[8, 8, 8, 8]} barSize={40} />
                     </BarChart>
                   </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        ) : activeTab === 'operational_routes' ? (
+          <motion.div
+            key="operational_routes"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-8"
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight uppercase">Dashboard de Rota Operacional</h2>
+                <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">Análise de vistorias de equipamentos e conformidade fabril</p>
+              </div>
+
+              <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm">
+                <Calendar className="w-4 h-4 text-slate-400" />
+                <select 
+                  value={filterMonth} 
+                  onChange={(e) => setFilterMonth(parseInt(e.target.value))}
+                  className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
+                >
+                  {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                </select>
+                <input 
+                  type="number" 
+                  value={filterYear}
+                  onChange={(e) => setFilterYear(parseInt(e.target.value))}
+                  className="w-16 bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            {/* Three top stats cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <ClipboardCheck className="w-6 h-6 text-slate-400" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rotas Efetuadas</span>
+                </div>
+                <p className="text-4xl font-black text-slate-900">{routeMetrics.totalSubmissions}</p>
+                <p className="text-xs text-slate-400 mt-1 font-medium">No período selecionado</p>
+              </div>
+
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <Activity className="w-6 h-6 text-emerald-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Taxa de Conformidade</span>
+                </div>
+                <p className="text-4xl font-black text-emerald-600">{routeMetrics.complianceRate}%</p>
+                <p className="text-xs text-emerald-400 mt-1 font-medium italic">Componentes classificados como OK</p>
+              </div>
+
+              <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-sm text-white">
+                <div className="flex items-center justify-between mb-4">
+                  <AlertTriangle className="w-6 h-6 text-amber-400" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Incidentes / Desvios</span>
+                </div>
+                <p className="text-4xl font-black text-white">
+                  {routeMetrics.failedEquipmentList.reduce((acc, curr) => acc + curr.count, 0)}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 font-medium italic">Anomalias identificadas</p>
+              </div>
+            </div>
+
+            {/* Charts & Failures list */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
+                <div className="mb-6">
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight">Taxa de Conformidade no Período (%)</h3>
+                  <p className="text-xs text-slate-400">Evolução diária da conformidade de rota</p>
+                </div>
+                <div className="h-[300px] w-full">
+                  {routeMetrics.dailyTrend.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={routeMetrics.dailyTrend}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="Day" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 700}} 
+                        />
+                        <YAxis 
+                          domain={[0, 100]} 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 700}} 
+                        />
+                        <Tooltip 
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              return (
+                                <div className="bg-slate-900 text-white p-4 rounded-xl shadow-2xl border border-slate-800">
+                                  <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Dia {payload[0].payload.Day}</p>
+                                  <p className="text-xl font-black">{payload[0].value}% Conformidade</p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="Conformidade" 
+                          stroke="#10b981" 
+                          strokeWidth={4} 
+                          dot={{ r: 4, fill: '#10b981', strokeWidth: 0 }}
+                          activeDot={{ r: 6, strokeWidth: 0 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-40">
+                      <History className="w-12 h-12 mb-4 text-slate-300" />
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-400">Nenhuma vistoria no período selecionado</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
+                <div className="mb-6">
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight">Equipamentos Críticos</h3>
+                  <p className="text-xs text-slate-400 font-medium">Top componentes com mais não conformidades</p>
+                </div>
+                <div className="space-y-4 flex-1 overflow-y-auto w-full">
+                  {routeMetrics.failedEquipmentList.length > 0 ? (
+                    routeMetrics.failedEquipmentList.map((item, idx) => (
+                      <div key={idx} className="space-y-2">
+                        <div className="flex justify-between text-xs font-black uppercase tracking-widest">
+                          <span className="text-slate-600 truncate max-w-[200px]">{item.name}</span>
+                          <span className="text-rose-500">{item.count} falhas</span>
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${(item.count / routeMetrics.failedEquipmentList[0].count) * 100}%` }}
+                            className="h-full bg-rose-400 rounded-full"
+                          />
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="h-[250px] flex flex-col items-center justify-center text-center opacity-40 py-12">
+                      <CheckCircle2 className="w-12 h-12 mb-4 text-emerald-400" />
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-400">Tudo OK! Sem falhas relatadas</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Audit Logs section */}
+            <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+              <div className="mb-6">
+                <h3 className="font-black text-xl text-slate-900 tracking-tight">Histórico Recente de Inspeções</h3>
+                <p className="text-xs text-slate-400">Últimas rotas operacionais submetidas neste período</p>
+              </div>
+
+              <div className="overflow-x-auto">
+                {routeMetrics.latestSubmissions.length > 0 ? (
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        <th className="pb-4">Data/Hora</th>
+                        <th className="pb-4">Modelo de Rota</th>
+                        <th className="pb-4">Operador</th>
+                        <th className="pb-4 text-center">Itens OK</th>
+                        <th className="pb-4 text-center">Itens NC</th>
+                        <th className="pb-4 text-right">Status Geral</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50 text-sm">
+                      {routeMetrics.latestSubmissions.map((sub) => {
+                        const date = safeToDate(sub.createdAt);
+                        const totalResponses = sub.responses?.length || 0;
+                        const notOkCount = sub.responses?.filter((r: any) => r.status === 'not_ok').length || 0;
+                        const okCount = totalResponses - notOkCount;
+                        return (
+                          <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="py-4 font-semibold text-slate-700">
+                              {date ? date.toLocaleString('pt-BR') : '---'}
+                            </td>
+                            <td className="py-4 font-black text-slate-900 truncate max-w-[200px]">{sub.templateName}</td>
+                            <td className="py-4 font-semibold text-slate-600">{sub.operatorName}</td>
+                            <td className="py-4 text-center font-bold text-emerald-600">{okCount}</td>
+                            <td className="py-4 text-center font-bold text-rose-500">{notOkCount}</td>
+                            <td className="py-4 text-right">
+                              <span className={cn(
+                                "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
+                                notOkCount > 0 ? "bg-rose-100 text-rose-800" : "bg-emerald-100 text-emerald-800"
+                              )}>
+                                {notOkCount > 0 ? 'Com Desvios' : 'Conforme'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="text-center py-12 opacity-40">
+                    <History className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Nenhum registro encontrado no período</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="safety_observations"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-8"
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight uppercase">Dashboard de Observações de Segurança</h2>
+                <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">Análise de desvios comportamentais, condições inseguras e frentes de segurança fabril</p>
+              </div>
+
+              <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm">
+                <Calendar className="w-4 h-4 text-slate-400" />
+                <select 
+                  value={filterMonth} 
+                  onChange={(e) => setFilterMonth(parseInt(e.target.value))}
+                  className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
+                >
+                  {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                </select>
+                <input 
+                  type="number" 
+                  value={filterYear}
+                  onChange={(e) => setFilterYear(parseInt(e.target.value))}
+                  className="w-16 bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            {/* Top Stat Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <ShieldAlert className="w-6 h-6 text-indigo-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Registrado</span>
+                </div>
+                <p className="text-3xl font-black text-slate-900">{safetyMetrics.total}</p>
+                <p className="text-xs text-slate-400 mt-1 font-medium">Observações no período</p>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                  <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Comportamentos Seguros</span>
+                </div>
+                <p className="text-3xl font-black text-emerald-600">{safetyMetrics.safeCount}</p>
+                <p className="text-xs text-emerald-400 mt-1 font-medium">{safetyMetrics.safetyCompliance}% de conformidade</p>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <AlertTriangle className="w-6 h-6 text-rose-500" />
+                  <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Desvios Registrados</span>
+                </div>
+                <p className="text-3xl font-black text-rose-600">{safetyMetrics.riskCount}</p>
+                <p className="text-xs text-slate-400 mt-1 font-medium">Condições inseguras / desvios</p>
+              </div>
+
+              <div className="bg-slate-900 p-6 rounded-[2rem] border border-slate-800 shadow-sm text-white">
+                <div className="flex items-center justify-between mb-3">
+                  <Clock className="w-6 h-6 text-sky-400" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Pendentes de Tratativa</span>
+                </div>
+                <p className="text-3xl font-black text-sky-450">{safetyMetrics.pending}</p>
+                <p className="text-xs text-slate-400 mt-1 font-medium italic">{safetyMetrics.resolved} resolvidas, {safetyMetrics.working} em andamento</p>
+              </div>
+            </div>
+
+            {/* Charts Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Daily Trend Chart */}
+              <div className="lg:col-span-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
+                <div className="mb-6">
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight">Evolução de Atividades de Segurança</h3>
+                  <p className="text-xs text-slate-400 font-medium">Registros e desvios ao longo dos dias do mês</p>
+                </div>
+                <div className="h-[300px] w-full">
+                  {safetyMetrics.dailyTrend.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={safetyMetrics.dailyTrend}>
+                        <defs>
+                          <linearGradient id="colorRegistros" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
+                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                          </linearGradient>
+                          <linearGradient id="colorDesvios" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2}/>
+                            <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="Day" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 700}} 
+                        />
+                        <YAxis 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 700}} 
+                        />
+                        <Tooltip 
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              return (
+                                <div className="bg-slate-900 text-white p-4 rounded-xl shadow-2xl border border-slate-800 space-y-1">
+                                  <p className="text-[10px] font-black uppercase text-slate-400">Dia {payload[0].payload.Day}</p>
+                                  {payload.map((p: any, idx: number) => (
+                                    <p key={idx} className="text-xs font-bold text-slate-200">
+                                      {p.name}: {p.value}
+                                    </p>
+                                  ))}
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Area 
+                          type="monotone" 
+                          dataKey="Registros" 
+                          stroke="#6366f1" 
+                          strokeWidth={3}
+                          fillOpacity={1} 
+                          fill="url(#colorRegistros)" 
+                        />
+                        <Area 
+                          type="monotone" 
+                          dataKey="Desvios" 
+                          stroke="#f43f5e" 
+                          strokeWidth={3}
+                          fillOpacity={1} 
+                          fill="url(#colorDesvios)" 
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-40">
+                      <History className="w-12 h-12 mb-4 text-slate-300" />
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-400">Nenhum registro de segurança no período selecionado</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Severity distribution */}
+              <div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
+                <div className="mb-6">
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight">Distribuição de Gravidade</h3>
+                  <p className="text-xs text-slate-400 font-medium font-semibold">Níveis de perigo identificados em desvios</p>
+                </div>
+                
+                {safetyMetrics.severityDist.length > 0 ? (
+                  <div className="flex flex-col items-center justify-center flex-1">
+                    <div className="h-[150px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={safetyMetrics.severityDist}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={45}
+                            outerRadius={65}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            {safetyMetrics.severityDist.map((entry: any, index: number) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="w-full space-y-2 mt-4 text-xs font-bold text-slate-700">
+                      {safetyMetrics.severityDist.map((s, idx) => (
+                        <div key={idx} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />
+                            <span>{s.name}</span>
+                          </div>
+                          <span>{s.value} ({Math.round((s.value / safetyMetrics.riskCount) * 100)}%)</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center opacity-40 py-8">
+                    <CheckCircle2 className="w-12 h-12 mb-4 text-emerald-400" />
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Excelente! Sem desvios reportados hoje</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Plant Areas and Recent Records */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Plant Areas */}
+              <div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
+                <div className="mb-6">
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight">Desvios por Área</h3>
+                  <p className="text-xs text-slate-400 font-medium">As frentes industriais com maior número de alertas</p>
+                </div>
+
+                <div className="space-y-4 flex-1 overflow-y-auto">
+                  {safetyMetrics.topAreas.length > 0 ? (
+                    safetyMetrics.topAreas.map((item, idx) => (
+                      <div key={idx} className="space-y-2">
+                        <div className="flex justify-between text-xs font-black uppercase tracking-widest">
+                          <span className="text-slate-600 truncate max-w-[200px]">{item.name}</span>
+                          <span className="text-slate-800">{item.count} observações</span>
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${(item.count / safetyMetrics.topAreas[0].count) * 100}%` }}
+                            className="h-full bg-indigo-500 rounded-full"
+                          />
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="h-[200px] flex flex-col items-center justify-center text-center opacity-40">
+                      <ShieldAlert className="w-12 h-12 mb-4 text-slate-300" />
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-400 font-semibold">Sem áreas reportadas</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Recent Records Log */}
+              <div className="lg:col-span-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                <div className="mb-6">
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight">Histórico Recente de Segurança</h3>
+                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-widest">Últimas avaliações e desvios comportamentais catalogados</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  {safetyMetrics.latestObservations.length > 0 ? (
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">
+                          <th className="pb-4">Data/Hora</th>
+                          <th className="pb-4">Observador / Colaborador</th>
+                          <th className="pb-4">Área Relatada</th>
+                          <th className="pb-4">Avaliação</th>
+                          <th className="pb-4">Gravidade</th>
+                          <th className="pb-4 text-right">Fase / Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50 text-xs text-slate-600 font-semibold">
+                        {safetyMetrics.latestObservations.map((obs) => {
+                          const date = safeToDate(obs.createdAt);
+                          return (
+                            <tr key={obs.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-4 whitespace-nowrap text-slate-500">
+                                {date ? date.toLocaleString('pt-BR') : '---'}
+                              </td>
+                              <td className="py-4">
+                                <div className="font-bold text-slate-900 truncate max-w-[150px]">
+                                  {obs.observerName || obs.reportedBy || 'Anônimo'}
+                                </div>
+                                <span className="text-[10px] text-slate-400">{obs.observerMatricula ? `Mat: ${obs.observerMatricula}` : 'Auto-registro'}</span>
+                              </td>
+                              <td className="py-4 font-bold text-slate-800">
+                                {obs.observedArea || obs.observerArea || 'N/A'}
+                              </td>
+                              <td className="py-4">
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded text-[10px] uppercase font-black",
+                                  obs.isSafe === 'seguro' ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+                                )}>
+                                  {obs.isSafe === 'seguro' ? 'Seguro' : 'Desvio'}
+                                </span>
+                              </td>
+                              <td className="py-4">
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded text-[10px] uppercase font-black",
+                                  obs.severity === 'high' ? "bg-rose-100 text-rose-800" :
+                                  obs.severity === 'medium' ? "bg-amber-100 text-amber-800" :
+                                  "bg-sky-100 text-sky-800"
+                                )}>
+                                  {obs.severity === 'high' ? 'Alta' :
+                                   obs.severity === 'medium' ? 'Média' :
+                                   'Baixa'}
+                                </span>
+                              </td>
+                              <td className="py-4 text-right">
+                                <span className={cn(
+                                  "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
+                                  obs.status === 'resolved' ? "bg-emerald-100 text-emerald-800" :
+                                  obs.status === 'working' ? "bg-indigo-100 text-indigo-800" :
+                                  "bg-amber-100 text-amber-800"
+                                )}>
+                                  {obs.status === 'resolved' ? 'Resolvido' :
+                                   obs.status === 'working' ? 'Em Acompanhamento' :
+                                   'Pendente'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="text-center py-12 opacity-40">
+                      <History className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-400 font-bold">Nenhuma observação de segurança listada</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

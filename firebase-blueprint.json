@@ -347,6 +347,114 @@
         "localTimeStr": { "type": "string" }
       },
       "required": ["userId", "email", "timestamp"]
+    },
+    "RouteTemplate": {
+      "title": "Route Template",
+      "description": "Template configuration for operational active routes.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "equipments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "checkMethod": { "type": "string", "enum": ["ok_notok", "good_average_bad"] },
+              "required": { "type": "boolean" }
+            },
+            "required": ["id", "name", "checkMethod"]
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "equipments", "active"]
+    },
+    "RouteSubmission": {
+      "title": "Route Submission",
+      "description": "Inspection record performed by operator for an active route.",
+      "type": "object",
+      "properties": {
+        "templateId": { "type": "string" },
+        "templateName": { "type": "string" },
+        "operatorName": { "type": "string" },
+        "operatorId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "responses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "equipmentId": { "type": "string" },
+              "equipmentName": { "type": "string" },
+              "status": { "type": "string", "enum": ["ok", "not_ok"] },
+              "notes": { "type": "string" },
+              "photoUrl": { "type": "string" },
+              "observationGenerated": { "type": "boolean" },
+              "observationText": { "type": "string" }
+            },
+            "required": ["equipmentId", "equipmentName", "status"]
+          }
+        }
+      },
+      "required": ["templateId", "templateName", "operatorId", "operatorName", "responses", "createdAt"]
+    },
+    "SafetyObservation": {
+      "title": "Safety Observation",
+      "description": "Reported safety hazard or non-conformity.",
+      "type": "object",
+      "properties": {
+        "equipmentId": { "type": "string" },
+        "equipmentName": { "type": "string" },
+        "routeTemplateId": { "type": "string" },
+        "routeName": { "type": "string" },
+        "reportedBy": { "type": "string" },
+        "reportedById": { "type": "string" },
+        "description": { "type": "string" },
+        "severity": { "type": "string", "enum": ["low", "medium", "high"] },
+        "status": { "type": "string", "enum": ["pending", "working", "resolved"] },
+        "photoUrl": { "type": "string" },
+        "resolutionNotes": { "type": "string" },
+        "resolvedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "resolvedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reportedBy", "reportedById", "description", "status", "createdAt"]
+    },
+    "SafetyCategory": {
+      "title": "Safety Category",
+      "description": "Category item under What to Observe for safety audit checklist.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "index": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "SafetyArea": {
+      "title": "Safety Area",
+      "description": "Plant area options for safety observations.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "index": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "Operator": {
+      "title": "Operator",
+      "description": "Plant operator for safety observation autocomplete list.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
     }
   },
   "firestore": {
@@ -437,6 +545,30 @@
     "/user_login_logs/{logId}": {
       "schema": "UserLoginLog",
       "description": "Log records of successful user sign-ins."
+    },
+    "/route_templates/{templateId}": {
+      "schema": "RouteTemplate",
+      "description": "Templates for asset inspection routes."
+    },
+    "/route_submissions/{submissionId}": {
+      "schema": "RouteSubmission",
+      "description": "Completed asset inspection routes submissions."
+    },
+    "/safety_observations/{observationId}": {
+      "schema": "SafetyObservation",
+      "description": "Reported safety observations and risk notifications."
+    },
+    "/safety_categories/{categoryId}": {
+      "schema": "SafetyCategory",
+      "description": "Available categories in safety observations checklist."
+    },
+    "/safety_areas/{areaId}": {
+      "schema": "SafetyArea",
+      "description": "Plant areas list for dropdown choices."
+    },
+    "/operators/{operatorId}": {
+      "schema": "Operator",
+      "description": "Registered operators list for autocomplete options."
     }
   }
 }

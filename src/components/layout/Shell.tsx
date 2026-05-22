@@ -14,11 +14,12 @@ import {
   GripVertical,
   Factory,
   ClipboardCheck,
-  Activity
+  Activity,
+  ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from '../ui/Logo';
@@ -105,23 +106,46 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const defaultNavigation = [
-    { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, show: !!isManager || !!isAdmin },
-    { id: 'overview', name: 'Overview', href: '/overview', icon: Activity, show: !!isManager || !!isAdmin },
-    { id: 'forklifts', name: 'Empilhadeira', href: '/forklifts', icon: Truck, show: true },
-    { id: 'wires', name: 'Arames', href: '/wires', icon: Factory, show: true },
-    { id: 'quality', name: 'Qualidade', href: '/quality', icon: ClipboardCheck, show: true },
-    { id: 'dds', name: 'DDS Online', href: '/dds', icon: ShieldCheck, show: true },
-    { id: 'schedule', name: 'Escala', href: '/schedule', icon: CalendarDays, show: true },
-    { id: 'admin', name: 'Gerenciar Usuários', href: '/admin', icon: Users, show: !!isAdmin },
-    { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
-  ];
-
-  const [navigation, setNavigation] = useState(defaultNavigation);
+  const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
+    dds: true,
+    forklifts: true,
+    wires: true,
+    quality: true,
+    schedule: true,
+    operational_routes: true,
+    safety_observations: true,
+  });
 
   useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'system_config', 'modules'), (snap) => {
+      if (snap.exists()) {
+        setActiveModules(snap.data() as Record<string, boolean>);
+      }
+    }, (error) => {
+      console.warn('Could not load system_config/modules:', error);
+    });
+    return () => unsub();
+  }, []);
+
+  const [navigation, setNavigation] = useState<any[]>([]);
+
+  useEffect(() => {
+    const defaultNav = [
+      { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, show: !!isManager || !!isAdmin },
+      { id: 'overview', name: 'Overview', href: '/overview', icon: Activity, show: !!isManager || !!isAdmin },
+      { id: 'forklifts', name: 'Empilhadeiras', href: '/forklifts', icon: Truck, show: activeModules.forklifts !== false },
+      { id: 'wires', name: 'Arames', href: '/wires', icon: Factory, show: activeModules.wires !== false },
+      { id: 'quality', name: 'Qualidade', href: '/quality', icon: ClipboardCheck, show: activeModules.quality !== false },
+      { id: 'dds', name: 'DDS Online', href: '/dds', icon: ShieldCheck, show: activeModules.dds !== false },
+      { id: 'operational_routes', name: 'Rota Operacional', href: '/operational-routes', icon: Activity, show: activeModules.operational_routes !== false },
+      { id: 'safety_observations', name: 'Obs. Segurança', href: '/safety-observations', icon: ShieldAlert, show: activeModules.safety_observations !== false },
+      { id: 'schedule', name: 'Escala', href: '/schedule', icon: CalendarDays, show: activeModules.schedule !== false },
+      { id: 'admin', name: 'Gerenciar Usuários', href: '/admin', icon: Users, show: !!isAdmin },
+      { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
+    ];
+
     if (profile?.menuOrder && profile.menuOrder.length > 0) {
-      const ordered = [...defaultNavigation].sort((a, b) => {
+      const ordered = [...defaultNav].sort((a, b) => {
         const indexA = profile.menuOrder!.indexOf(a.id);
         const indexB = profile.menuOrder!.indexOf(b.id);
         if (indexA === -1) return 1;
@@ -130,9 +154,9 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       });
       setNavigation(ordered);
     } else {
-      setNavigation(defaultNavigation);
+      setNavigation(defaultNav);
     }
-  }, [profile?.menuOrder, isAdmin, isManager]);
+  }, [profile?.menuOrder, isAdmin, isManager, activeModules]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {

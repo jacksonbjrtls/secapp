@@ -18,6 +18,8 @@ import Forklifts from './pages/Forklifts';
 import WireControl from './pages/WireControl';
 import Quality from './pages/Quality';
 import Overview from './pages/Overview';
+import OperationalRoutes from './pages/OperationalRoutes';
+import SafetyObservations from './pages/SafetyObservations';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean; requireManager?: boolean }> = ({ 
@@ -383,6 +385,24 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <Quality />
+              </ProtectedRoute>
+            } 
+          />
+
+          <Route 
+            path="/operational-routes" 
+            element={
+              <ProtectedRoute>
+                <OperationalRoutes />
+              </ProtectedRoute>
+            } 
+          />
+
+          <Route 
+            path="/safety-observations" 
+            element={
+              <ProtectedRoute>
+                <SafetyObservations />
               </ProtectedRoute>
             } 
           />
