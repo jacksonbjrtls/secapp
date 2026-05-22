@@ -174,8 +174,10 @@ const DDS: React.FC = () => {
 
   useEffect(() => {
     const urlPasscode = searchParams.get('passcode');
-    if (urlPasscode) {
-      setPasscode(urlPasscode);
+    const directUrl = new URL(window.location.href);
+    const directPasscode = urlPasscode || directUrl.searchParams.get('passcode') || new URLSearchParams(directUrl.hash.split('?')[1] || '').get('passcode');
+    if (directPasscode) {
+      setPasscode(directPasscode);
     }
   }, [searchParams]);
 
@@ -616,7 +618,7 @@ const DDS: React.FC = () => {
               try {
                 if (decodedText.includes('passcode=')) {
                   const url = new URL(decodedText);
-                  const code = url.searchParams.get('passcode');
+                  const code = url.searchParams.get('passcode') || new URLSearchParams(url.hash.split('?')[1] || '').get('passcode');
                   if (code) {
                     setPasscode(code);
                     setIsScanning(false);
@@ -688,7 +690,7 @@ const DDS: React.FC = () => {
 
             <div className="bg-white p-8 rounded-[3rem] shadow-2xl mb-12">
               <QRCodeSVG 
-                value={`${window.location.origin}/dds?passcode=${activeSession?.passcode}`} 
+                value={`${window.location.origin}/#/dds?passcode=${activeSession?.passcode}`} 
                 size={300}
                 level="H"
                 includeMargin={false}
@@ -968,7 +970,7 @@ const DDS: React.FC = () => {
                       )}
 
                       <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                         <QRCodeSVG value={`${window.location.origin}/dds?passcode=${activeSession.passcode}`} size={64} />
+                         <QRCodeSVG value={`${window.location.origin}/#/dds?passcode=${activeSession.passcode}`} size={64} />
                       </div>
                   </div>
                 ) : (
