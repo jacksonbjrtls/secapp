@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import { Resend } from "resend";
 import nodemailer from "nodemailer";
@@ -386,6 +387,22 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+
+    // Dynamic SPA catch-all router for development mode to resolve potential 404s on subroute updates/refreshes
+    app.use("*", async (req, res, next) => {
+      const url = req.originalUrl;
+      // Skip API, assets, or chunks/HMR/modules requests which must be handled on fallback or next()
+      if (url.startsWith("/api") || url.includes(".") || url.startsWith("/@") || url.includes("node_modules")) {
+        return next();
+      }
+      try {
+        const htmlTemplate = fs.readFileSync(path.resolve(process.cwd(), "index.html"), "utf-8");
+        const transformedHtml = await vite.transformIndexHtml(url, htmlTemplate);
+        res.status(200).set({ "Content-Type": "text/html" }).end(transformedHtml);
+      } catch (err) {
+        next(err);
+      }
+    });
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
