@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { 
   collection, 
   getDocs, 
@@ -42,7 +42,9 @@ import {
   History,
   Palette,
   Upload,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ChevronDown,
+  Sliders
 } from 'lucide-react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
@@ -61,6 +63,18 @@ const Admin: React.FC = () => {
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
   const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding'>('users');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
   const [resetLoading, setResetLoading] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetProgress, setResetProgress] = useState('');
@@ -676,6 +690,19 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
     );
   }
 
+  const menuOptions = [
+    { id: 'users' as const, label: 'Usuários', icon: Users, color: 'text-emerald-500' },
+    { id: 'domains' as const, label: 'Domínios', icon: Globe, color: 'text-indigo-500' },
+    { id: 'modules' as const, label: 'Módulos', icon: Sliders, color: 'text-amber-500' },
+    ...(isMaster ? [
+      { id: 'branding' as const, label: 'Identidade Visual', icon: Palette, color: 'text-blue-500' },
+      { id: 'logs' as const, label: 'Logs de Acesso', icon: History, color: 'text-purple-500' },
+      { id: 'reset' as const, label: 'Reset Sistema', icon: ShieldAlert, color: 'text-rose-600' }
+    ] : [])
+  ];
+
+  const currentOption = menuOptions.find(opt => opt.id === activeTab) || menuOptions[0];
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -693,57 +720,63 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
             Novo Usuário
           </button>
 
-          <div className="flex bg-gray-100 p-1 rounded-xl">
-           <button 
-             onClick={() => setActiveTab('users')}
-             className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'users' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
-           >
-             Usuários
-           </button>
-           <button 
-             onClick={() => setActiveTab('domains')}
-             className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'domains' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
-           >
-             Domínios
-           </button>
-           <button 
-             onClick={() => setActiveTab('modules')}
-             className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'modules' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
-           >
-             Módulos
-           </button>
-           {isMaster && (
-              <>
-                <button 
-                  onClick={() => setActiveTab('branding')}
-                  className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'branding' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+          {/* Custom Dropdown for Submenu Selection */}
+          <div ref={dropdownRef} className="relative z-30">
+            <button
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              className="flex items-center gap-2.5 bg-white border border-slate-205 hover:border-slate-300 hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-all focus:outline-none min-w-[210px] justify-between cursor-pointer active:scale-98"
+            >
+              <div className="flex items-center gap-2 text-slate-700">
+                {React.createElement(currentOption.icon, { className: `w-4 h-4 ${currentOption.color}` })}
+                <span className="font-bold">{currentOption.label}</span>
+              </div>
+              <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform duration-200", isDropdownOpen && "rotate-180")} />
+            </button>
+
+            <AnimatePresence>
+              {isDropdownOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute right-0 mt-2 w-56 bg-white border border-slate-150 rounded-2xl shadow-xl overflow-hidden py-1.5 focus:outline-none"
                 >
-                  Identidade Visual
-                </button>
-                <button 
-                  onClick={() => setActiveTab('logs')}
-                  className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
-                >
-                  Logs de Acesso
-                </button>
-                <button 
-                  onClick={() => setActiveTab('reset')}
-                  className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all text-rose-600 font-bold", activeTab === 'reset' ? "bg-rose-100/50 text-rose-700 shadow-sm" : "text-rose-500 hover:text-rose-700")}
-                >
-                  Reset Sistema
-                </button>
-              </>
-            )} {false && (
-             <button 
-               onClick={() => setActiveTab('logs')}
-               className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
-             >
-               Logs de Acesso
-             </button>
-           )}
+                  <div className="px-3 py-1 mb-1 border-b border-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    Selecione a Aba
+                  </div>
+                  {menuOptions.map((opt) => {
+                    const isSelected = opt.id === activeTab;
+                    const IconComponent = opt.icon;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveTab(opt.id);
+                          setIsDropdownOpen(false);
+                        }}
+                        className={cn(
+                          "w-full px-4 py-2.5 text-left text-xs font-semibold flex items-center gap-2.5 transition-all cursor-pointer",
+                          isSelected
+                            ? "bg-slate-50 text-emerald-700 font-bold border-l-4 border-emerald-500"
+                            : "text-slate-600 hover:text-slate-900 hover:bg-slate-50/70 border-l-4 border-transparent"
+                        )}
+                      >
+                        <IconComponent className={`w-4 h-4 ${opt.color}`} />
+                        <span className="flex-grow">{opt.label}</span>
+                        {isSelected && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
-    </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-20">

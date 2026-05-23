@@ -231,7 +231,7 @@ service cloud.firestore {
 
     // System Config Modules Settings
     match /system_config/{configId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() || (configId == 'branding');
       allow write: if isAdmin() && isValidId(configId);
     }
 
