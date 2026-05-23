@@ -455,6 +455,42 @@
         "name": { "type": "string" }
       },
       "required": ["name"]
+    },
+    "ConsumableItem": {
+      "title": "Consumable Item",
+      "description": "Registered consumable stock item like inks, tape, etc.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "unit": { "type": "string", "enum": ["kg", "L", "un", "m"] },
+        "currentStock": { "type": "number" },
+        "minStock": { "type": "number" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "unit", "currentStock", "minStock", "active", "createdAt"]
+    },
+    "ConsumableLog": {
+      "title": "Consumable Log",
+      "description": "Log of additions (entries) and consumption (outputs) of consumables.",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "quantity": { "type": "number" },
+        "type": { "type": "string", "enum": ["entry", "consumption"] },
+        "lineId": { "type": "string" },
+        "lineName": { "type": "string" },
+        "usedByUid": { "type": "string" },
+        "usedByName": { "type": "string" },
+        "processedByUid": { "type": "string" },
+        "processedByName": { "type": "string" },
+        "shift": { "type": "string", "enum": ["Turno 1", "Turno 2", "Turno 3", "Geral"] },
+        "notes": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["itemId", "itemName", "quantity", "type", "processedByUid", "processedByName", "timestamp"]
     }
   },
   "firestore": {
@@ -569,6 +605,14 @@
     "/operators/{operatorId}": {
       "schema": "Operator",
       "description": "Registered operators list for autocomplete options."
+    },
+    "/consumable_items/{itemId}": {
+      "schema": "ConsumableItem",
+      "description": "Stock of consumable products like inks, solvent, tape, etc."
+    },
+    "/consumable_logs/{logId}": {
+      "schema": "ConsumableLog",
+      "description": "List of entries and consumption logs of consumables."
     }
   }
 }

@@ -16,6 +16,7 @@ import DDS from './pages/DDS';
 import Schedule from './pages/Schedule';
 import Forklifts from './pages/Forklifts';
 import WireControl from './pages/WireControl';
+import ConsumablesControl from './pages/ConsumablesControl';
 import Quality from './pages/Quality';
 import Overview from './pages/Overview';
 import OperationalRoutes from './pages/OperationalRoutes';
@@ -376,6 +377,15 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <WireControl />
+              </ProtectedRoute>
+            } 
+          />
+
+          <Route 
+            path="/consumables" 
+            element={
+              <ProtectedRoute>
+                <ConsumablesControl />
               </ProtectedRoute>
             } 
           />

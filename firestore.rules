@@ -372,6 +372,23 @@ service cloud.firestore {
       allow get, list: if isApproved();
       allow write: if isManager() && isValidId(operatorId);
     }
+
+    // Consumable Items
+    match /consumable_items/{itemId} {
+      allow get, list: if isApproved();
+      allow create: if isApproved() && isValidId(itemId);
+      allow update: if isApproved() && isValidId(itemId);
+      allow delete: if isManager() && isValidId(itemId);
+    }
+
+    // Consumable Logs
+    match /consumable_logs/{logId} {
+      allow get, list: if isApproved();
+      allow create: if isApproved() && isValidId(logId) &&
+                      request.resource.data.processedByUid == request.auth.uid &&
+                      request.resource.data.timestamp == request.time;
+      allow update, delete: if isManager() && isValidId(logId);
+    }
   }
 }
 

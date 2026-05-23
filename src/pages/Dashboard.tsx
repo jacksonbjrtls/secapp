@@ -52,10 +52,12 @@ import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from 
 
 const Dashboard: React.FC = () => {
   const { isManager } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dds' | 'forklifts' | 'quality' | 'wire' | 'operational_routes' | 'safety_observations'>('dds');
-  const [routesSubmissions, setRoutesSubmissions] = useState<any[]>([]);
-  const [routesTemplates, setRoutesTemplates] = useState<any[]>([]);
+  const [activeTab, setActiveTab ] = useState<'dds' | 'forklifts' | 'quality' | 'wire' | 'operational_routes' | 'safety_observations' | 'consumables'>('dds');
+  const [routesSubmissions, setRoutesSubmissions ] = useState<any[]>([]);
+  const [routesTemplates, setRoutesTemplates ] = useState<any[]>([]);
   const [safetyObservations, setSafetyObservations] = useState<any[]>([]);
+  const [consumableItems, setConsumableItems] = useState<any[]>([]);
+  const [consumableLogs, setConsumableLogs] = useState<any[]>([]);
   const [showTabMenu, setShowTabMenu] = useState(false);
   const [stats, setStats] = useState({
     totalUsers: 0,
@@ -227,6 +229,14 @@ const Dashboard: React.FC = () => {
       setSafetyObservations(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'safety_observations'));
 
+    const unsubConsumableItems = onSnapshot(collection(db, 'consumable_items'), (snapshot) => {
+      setConsumableItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_items'));
+
+    const unsubConsumableLogs = onSnapshot(collection(db, 'consumable_logs'), (snapshot) => {
+      setConsumableLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_logs'));
+
     return () => {
       unsubscribe();
       unsubForklifts();
@@ -241,6 +251,8 @@ const Dashboard: React.FC = () => {
       unsubRoutesSub();
       unsubRoutesTmpl();
       unsubSafetyObs();
+      unsubConsumableItems();
+      unsubConsumableLogs();
     };
   }, [isManager, filterYear, filterMonth]);
 
@@ -707,6 +719,7 @@ const Dashboard: React.FC = () => {
             {activeTab === 'wire' && <><LayersIcon className="w-5 h-5 text-emerald-600" /> Arames</>}
             {activeTab === 'operational_routes' && <><Activity className="w-5 h-5 text-emerald-600" /> Rota Operacional</>}
             {activeTab === 'safety_observations' && <><ShieldAlert className="w-5 h-5 text-rose-600" /> Obs. Segurança</>}
+            {activeTab === 'consumables' && <><Box className="w-5 h-5 text-emerald-600" /> Insumos</>}
             <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTabMenu && "rotate-180")} />
           </button>
 
@@ -729,7 +742,8 @@ const Dashboard: React.FC = () => {
                     { id: 'quality', label: 'Qualidade', icon: ClipboardCheck },
                     { id: 'wire', label: 'Arames', icon: LayersIcon },
                     { id: 'operational_routes', label: 'Rota Operacional', icon: Activity },
-                    { id: 'safety_observations', label: 'Observações de Segurança', icon: ShieldAlert }
+                    { id: 'safety_observations', label: 'Observações de Segurança', icon: ShieldAlert },
+                    { id: 'consumables', label: 'Controle de Insumos', icon: Box }
                   ].map((tab) => (
                     <button
                       key={tab.id}
@@ -1937,7 +1951,7 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
           </motion.div>
-        ) : (
+        ) : activeTab === 'safety_observations' ? (
           <motion.div
             key="safety_observations"
             initial={{ opacity: 0, y: 10 }}
@@ -2251,6 +2265,131 @@ const Dashboard: React.FC = () => {
                       <p className="text-xs font-black uppercase tracking-widest text-slate-400 font-bold">Nenhuma observação de segurança listada</p>
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="consumables"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-8"
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight uppercase">Dashboard de Controle de Insumos</h2>
+                <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">Métricas de consumo de tintas, pesos e balanços em estoque</p>
+              </div>
+
+              <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm">
+                <Calendar className="w-4 h-4 text-slate-400" />
+                <span className="text-xs font-black text-slate-700">Visão Geral Setorizada</span>
+              </div>
+            </div>
+
+            {/* Top Stat Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <Box className="w-6 h-6 text-emerald-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Insumos Registrados</span>
+                </div>
+                <p className="text-3xl font-black text-slate-900">{consumableItems.length}</p>
+                <p className="text-xs text-slate-400 mt-1 font-medium">Cadastrados ativos e inativos</p>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <AlertTriangle className="w-6 h-6 text-amber-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-amber-700">Abaixo do Mínimo</span>
+                </div>
+                <p className="text-3xl font-black text-slate-900">
+                  {consumableItems.filter(i => i.active && i.currentStock < (i.minStock || 0)).length}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 font-medium">Necessitam de reabastecimento</p>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <TrendingUp className="w-6 h-6 text-emerald-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Entradas Registradas</span>
+                </div>
+                <p className="text-3xl font-black text-emerald-600">
+                  {consumableLogs.filter(l => l.type === 'entry').length}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 font-medium">Lotes de abastecimento total</p>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <Activity className="w-6 h-6 text-rose-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-rose-700">Consumos Totais</span>
+                </div>
+                <p className="text-3xl font-black text-rose-600">
+                  {consumableLogs.filter(l => l.type === 'consumption').length}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 font-medium">Deduções de estoque registradas</p>
+              </div>
+            </div>
+
+            {/* Detailed tables and visuals for dashboard */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left visual graph of inputs volume */}
+              <div className="lg:col-span-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                <div className="mb-6">
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight">Gráfico Geral de Insumos</h3>
+                  <p className="text-xs text-slate-400 font-medium">Diferencial entre estoque estipulado mínimo e estoque atual</p>
+                </div>
+                <div className="h-80 w-full text-xs">
+                  {consumableItems.length === 0 ? (
+                    <div className="h-full flex items-center justify-center opacity-40 font-bold">Nenhum insumo para gerar gráfico</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart 
+                        data={consumableItems.filter(i => i.active).slice(0, 15).map(item => ({
+                          name: item.name,
+                          Estoque: item.currentStock || 0,
+                          Mínimo: item.minStock || 0
+                        }))}
+                        margin={{ top: 10, right: 10, left: 0, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} />
+                        <YAxis stroke="#64748b" fontSize={10} tickLine={false} />
+                        <Tooltip contentStyle={{ borderRadius: '1rem' }} />
+                        <Bar dataKey="Estoque" fill="#10b981" radius={[4, 4, 0, 0]} barSize={26} />
+                        <Bar dataKey="Mínimo" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={26} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              {/* Right panel: low items alerts */}
+              <div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div>
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight mb-4">Críticos & Alertas</h3>
+                  <div className="space-y-3">
+                    {consumableItems.filter(i => i.active && i.currentStock < i.minStock).slice(0, 5).map(item => (
+                      <div key={item.id} className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between text-xs font-semibold">
+                        <div>
+                          <p className="font-extrabold text-slate-950">{item.name}</p>
+                          <p className="text-[10px] text-amber-700">Mínimo: {item.minStock} {item.unit}</p>
+                        </div>
+                        <span className="font-black bg-white px-2 py-1 rounded-lg border border-amber-200 text-amber-800">
+                          {item.currentStock} {item.unit}
+                        </span>
+                      </div>
+                    ))}
+                    {consumableItems.filter(i => i.active && i.currentStock < (i.minStock || 0)).length === 0 && (
+                      <div className="text-center py-10 opacity-40">
+                        <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                        <p className="text-[11px] font-black uppercase text-slate-500">Tudo sob controle!</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

@@ -47,6 +47,8 @@ export const Overview: React.FC = () => {
   const [qualityOmissions, setQualityOmissions] = useState<any[]>([]);
   const [routeSubmissions, setRouteSubmissions] = useState<any[]>([]);
   const [safetyObservations, setSafetyObservations] = useState<any[]>([]);
+  const [consumableItems, setConsumableItems] = useState<any[]>([]);
+  const [consumableLogs, setConsumableLogs] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
@@ -160,6 +162,18 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'safety_observations');
     });
 
+    const unsubConsumableItems = onSnapshot(collection(db, 'consumable_items'), (snap) => {
+      setConsumableItems(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'consumable_items');
+    });
+
+    const unsubConsumableLogs = onSnapshot(collection(db, 'consumable_logs'), (snap) => {
+      setConsumableLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'consumable_logs');
+    });
+
     setLoading(false);
     setLastUpdated(new Date());
 
@@ -180,6 +194,8 @@ export const Overview: React.FC = () => {
       unsubLines();
       unsubRoutes();
       unsubSafetyObs();
+      unsubConsumableItems();
+      unsubConsumableLogs();
     };
   }, []);
 
@@ -289,6 +305,33 @@ export const Overview: React.FC = () => {
       batchesToday: newBatchesToday
     };
   }, [wireCoils, wireBatches, lines, todayStart, todayEnd]);
+
+  // Consumables Stats
+  const consumablesStats = useMemo(() => {
+    const activeList = consumableItems.filter(i => i.active !== false);
+    const lowStockList = activeList.filter(i => i.currentStock < (i.minStock || 0));
+    
+    // Logs processed today
+    const logsToday = consumableLogs.filter(log => {
+      let tDate: Date | null = null;
+      if (log.timestamp) {
+        tDate = log.timestamp.toDate ? log.timestamp.toDate() : new Date(log.timestamp);
+      }
+      return tDate && tDate >= todayStart && tDate <= todayEnd;
+    });
+
+    const totalEntriesCount = logsToday.filter(l => l.type === 'entry').length;
+    const totalConsumptionsCount = logsToday.filter(l => l.type === 'consumption').length;
+
+    return {
+      activeCount: activeList.length,
+      lowStockCount: lowStockList.length,
+      lowStockItems: lowStockList.slice(0, 3),
+      totalEntriesCount,
+      totalConsumptionsCount,
+      logsTodayCount: logsToday.length
+    };
+  }, [consumableItems, consumableLogs, todayStart, todayEnd]);
 
   // 3. Quality Inspections Summary today
   const qualityTodayStats = useMemo(() => {
@@ -983,6 +1026,42 @@ export const Overview: React.FC = () => {
             <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
               <span>Mês: <strong className="text-slate-700">{safetyOverviewStats.totalMonth} total</strong></span>
               <span className="text-slate-500 font-bold">{safetyOverviewStats.pendingMonth} pendentes</span>
+            </div>
+          </div>
+
+          {/* Card 7: Consumables & Stock Status */}
+          <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-100 group">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Controle de Insumos</span>
+                <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Níveis de Estoque</h3>
+              </div>
+              <div className="w-10 h-10 bg-emerald-50/50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                <Database className="w-5 h-5 text-emerald-600" />
+              </div>
+            </div>
+
+            <div className="my-4 flex justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Insumos Críticos</p>
+                <p className={cn(
+                  "text-2xl font-black leading-tight",
+                  consumablesStats.lowStockCount > 0 ? "text-amber-600" : "text-emerald-700"
+                )}>
+                  {consumablesStats.lowStockCount} <span className="text-xs text-slate-400 font-bold">/ {consumablesStats.activeCount} ativos</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Lançamentos Hoje</p>
+                <p className="text-2xl font-black text-right leading-tight text-slate-900">
+                  {consumablesStats.logsTodayCount}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
+              <span>Entradas: <strong className="text-slate-700">{consumablesStats.totalEntriesCount} hoje</strong></span>
+              <span className="text-slate-500 font-bold">{consumablesStats.totalConsumptionsCount} saídas</span>
             </div>
           </div>
 

@@ -159,3 +159,34 @@ export interface QualityChecklistOmission {
   justification: string;
   createdAt: any;
 }
+
+export type ConsumableUnit = 'kg' | 'L' | 'un' | 'm';
+
+export interface ConsumableItem {
+  id: string;
+  name: string;
+  unit: ConsumableUnit;
+  currentStock: number;
+  minStock: number;
+  active: boolean;
+  createdAt: any;
+  updatedAt?: any;
+}
+
+export interface ConsumableLog {
+  id: string;
+  itemId: string;
+  itemName: string;
+  quantity: number;
+  type: 'entry' | 'consumption';
+  lineId?: string;
+  lineName?: string;
+  usedByUid?: string;
+  usedByName?: string;
+  processedByUid: string;
+  processedByName: string;
+  shift?: 'Turno 1' | 'Turno 2' | 'Turno 3' | 'Geral';
+  notes?: string;
+  timestamp: any;
+}
+

@@ -22,7 +22,8 @@ import {
   Share2,
   Sparkles,
   Link2,
-  Check
+  Check,
+  PackagePlus
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
@@ -141,6 +142,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     schedule: true,
     operational_routes: true,
     safety_observations: true,
+    consumables: true,
   });
 
   useEffect(() => {
@@ -162,6 +164,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'overview', name: 'Overview', href: '/overview', icon: Activity, show: !!isManager || !!isAdmin },
       { id: 'forklifts', name: 'Empilhadeiras', href: '/forklifts', icon: Truck, show: activeModules.forklifts !== false },
       { id: 'wires', name: 'Arames', href: '/wires', icon: Factory, show: activeModules.wires !== false },
+      { id: 'consumables', name: 'Insumos', href: '/consumables', icon: PackagePlus, show: activeModules.consumables !== false },
       { id: 'quality', name: 'Qualidade', href: '/quality', icon: ClipboardCheck, show: activeModules.quality !== false },
       { id: 'dds', name: 'DDS Online', href: '/dds', icon: ShieldCheck, show: activeModules.dds !== false },
       { id: 'operational_routes', name: 'Rota Operacional', href: '/operational-routes', icon: Activity, show: activeModules.operational_routes !== false },
