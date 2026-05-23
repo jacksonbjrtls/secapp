@@ -96,6 +96,8 @@ const Admin: React.FC = () => {
   }, [success, error]);
 
 
+
+
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -704,7 +706,22 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
            >
              Módulos
            </button>
-           {isMaster && ( <><button onClick={() => setActiveTab('logs')} className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}>Logs de Acesso</button><button onClick={() => setActiveTab('reset')} className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all text-rose-600 font-bold", activeTab === 'reset' ? "bg-rose-100/50 text-rose-700 shadow-sm" : "text-rose-500 hover:text-rose-700")}>Reset Sistema</button></> )} {isMaster && false && (
+           {isMaster && (
+              <>
+                <button 
+                  onClick={() => setActiveTab('logs')}
+                  className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+                >
+                  Logs de Acesso
+                </button>
+                <button 
+                  onClick={() => setActiveTab('reset')}
+                  className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all text-rose-600 font-bold", activeTab === 'reset' ? "bg-rose-100/50 text-rose-700 shadow-sm" : "text-rose-500 hover:text-rose-700")}
+                >
+                  Reset Sistema
+                </button>
+              </>
+            )} {false && (
              <button 
                onClick={() => setActiveTab('logs')}
                className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
