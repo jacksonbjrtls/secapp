@@ -57,7 +57,10 @@ const Admin: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
-  const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules'>('users');
+  const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules' | 'reset'>('users');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetProgress, setResetProgress] = useState('');
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
     dds: true,
     forklifts: true,
@@ -409,6 +412,103 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
     }
   };
 
+  const deleteCollectionDocs = async (collectionName: string, filterFn?: (docSnap: any) => boolean) => {
+    try {
+      setResetProgress(`Lendo coleção "${collectionName}"...`);
+      const snap = await getDocs(collection(db, collectionName));
+      if (snap.empty) return;
+
+      const docsToDelete = filterFn ? snap.docs.filter(filterFn) : snap.docs;
+      if (docsToDelete.length === 0) return;
+
+      setResetProgress(`Apagando ${docsToDelete.length} itens da coleção "${collectionName}"...`);
+      
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const d of docsToDelete) {
+        batch.delete(doc(db, collectionName, d.id));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) {
+        await batch.commit();
+      }
+    } catch (err) {
+      console.error(`Error resetting collection ${collectionName}:`, err);
+    }
+  };
+
+  const handleMasterReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isMaster) return;
+
+    if (resetConfirmText.trim().toUpperCase() !== 'CONFIRMO APAGAR TUDO') {
+      setError('Por favor, digite exatamente "CONFIRMO APAGAR TUDO" para prosseguir.');
+      return;
+    }
+
+    setResetLoading(true);
+    setError('');
+    setSuccess('');
+    setResetProgress('Iniciando...');
+
+    try {
+      const collectionsToClear = [
+        'user_login_logs',
+        'dds_sessions',
+        'dds_signatures',
+        'safety_observations',
+        'safety_categories',
+        'safety_areas',
+        'operators',
+        'quality_checklist_templates',
+        'production_lines',
+        'quality_sectors',
+        'quality_checklist_options',
+        'quality_checklist_submissions',
+        'quality_checklist_omissions',
+        'forklift_drafts',
+        'forklifts',
+        'forklift_check_items',
+        'forklift_checklists',
+        'notifications',
+        'wire_suppliers',
+        'wire_batches',
+        'wire_coils',
+        'wire_storage_bays',
+        'monthly_production',
+        'route_submissions',
+        'route_templates'
+      ];
+
+      for (const collName of collectionsToClear) {
+        await deleteCollectionDocs(collName);
+      }
+
+      await deleteCollectionDocs('users', (docSnap) => {
+        const data = docSnap.data();
+        const email = (data.email || '').toLowerCase().trim();
+        return !MASTER_EMAILS.includes(email);
+      });
+
+      setResetProgress('Finalizando restauração...');
+      setSuccess('Todo o sistema de banco de dados foi resetado com sucesso!');
+      setResetConfirmText('');
+      setActiveTab('users');
+      await fetchData();
+    } catch (err: any) {
+      console.error('[Admin Reset] Error:', err);
+      setError('Ocorreu um erro ao tentar resetar o sistema.');
+    } finally {
+      setResetLoading(false);
+      setResetProgress('');
+    }
+  };
+
 
   const handleDeleteUser = async (userId: string, userEmail: string) => {
     if (userEmail === 'jacksonbjr@gmail.com') {
@@ -604,7 +704,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
            >
              Módulos
            </button>
-           {isMaster && (
+           {isMaster && ( <><button onClick={() => setActiveTab('logs')} className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}>Logs de Acesso</button><button onClick={() => setActiveTab('reset')} className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all text-rose-600 font-bold", activeTab === 'reset' ? "bg-rose-100/50 text-rose-700 shadow-sm" : "text-rose-500 hover:text-rose-700")}>Reset Sistema</button></> )} {isMaster && false && (
              <button 
                onClick={() => setActiveTab('logs')}
                className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
@@ -1070,6 +1170,95 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
               );
             })}
           </div>
+        </motion.div>
+      ) : activeTab === 'reset' ? (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white p-8 rounded-[2.5rem] border border-red-200 shadow-xl shadow-red-50"
+        >
+          <div className="mb-8">
+            <h2 className="text-2xl font-black text-rose-700 tracking-tight flex items-center gap-3">
+              <ShieldAlert className="w-8 h-8 text-rose-600 animate-bounce" />
+              Zona Master: Restaurar Banco de Dados
+            </h2>
+            <p className="text-sm text-slate-500 mt-2 font-semibold">
+              Esta é uma ferramenta administrativa de alta segurança que permite limpar completamente todas as informações do banco de dados e recomeçar do zero.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+            <div className="bg-rose-50/50 p-6 rounded-3xl border border-rose-100 space-y-4">
+              <h3 className="font-bold text-rose-800 text-base flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+                Coleções que serão apagadas:
+              </h3>
+              <ul className="text-xs text-slate-600 space-y-2 list-disc pl-5 font-semibold leading-relaxed">
+                <li><strong className="text-slate-800">Módulo de Usuários:</strong> Todos os perfis e permissões dos usuários (exceto usuários Master).</li>
+                <li><strong className="text-slate-800">Módulo de DDS:</strong> Todas as reuniões criadas, assinaturas digitais e listas de presença.</li>
+                <li><strong className="text-slate-800">Módulo de Arames:</strong> Todo o histórico de recebimento de bobinas, lotes, fornecedores e consumo.</li>
+                <li><strong className="text-slate-800">Módulo de Qualidade:</strong> Checklists preenchidos, não conformidades, relatórios de desvios e templates.</li>
+                <li><strong className="text-slate-800">Módulo de Empilhadeiras:</strong> Todos os checklists de inspeção de segurança e empilhadeiras.</li>
+                <li><strong className="text-slate-800">Módulo de Rotas:</strong> Inspeções de rotas operacionais, fotos e anomalias de equipamentos.</li>
+                <li><strong className="text-slate-800">Módulo de Observações:</strong> Todos os desvios de segurança reportados por operadores.</li>
+                <li><strong className="text-slate-800">Logs de Sistema:</strong> Todos os históricos de acessos e logins.</li>
+              </ul>
+            </div>
+
+            <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 space-y-4 flex flex-col justify-between">
+              <div>
+                <h3 className="font-bold text-slate-800 text-base">O que NÃO será alterado?</h3>
+                <ul className="text-xs text-slate-600 space-y-2 list-disc pl-5 font-semibold mt-3 leading-relaxed">
+                  <li>O seu acesso como <strong className="text-emerald-600">usuário Master principal</strong> é mantido intacto. Você não será desconectado.</li>
+                  <li>As credenciais de login no Firebase Auth não serão excluídas para evitar quebras de autenticação na API.</li>
+                  <li>Os domínios cadastrados serão preservados para manter as regras de liberação de e-mail institucionais.</li>
+                </ul>
+              </div>
+
+              <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 text-[11px] font-bold text-amber-700 leading-normal">
+                ⚠️ CUIDADO: Esta ação é definitiva e 100% irreversível. Uma vez confirmada, todos os dados no Firestore serão permanente excluídos e não poderão ser recuperados.
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={handleMasterReset} className="max-w-md mx-auto bg-slate-50 p-6 rounded-[2rem] border border-slate-200 space-y-4">
+            <div>
+              <label className="block text-xs font-black text-rose-700 uppercase tracking-widest text-center mb-3">
+                Para confirmar, digite exatamente a frase abaixo:
+              </label>
+              <div className="text-center font-bold text-sm bg-rose-50 text-rose-700 py-2.5 px-4 rounded-xl border border-rose-100 mb-4 select-none">
+                CONFIRMO APAGAR TUDO
+              </div>
+              <input
+                type="text"
+                required
+                disabled={resetLoading}
+                placeholder="Digite a frase para autorizar..."
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                className="w-full text-center px-4 py-3 bg-white border border-slate-300 rounded-2xl focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none font-bold placeholder-slate-400 transition-all text-sm uppercase"
+              />
+            </div>
+
+            {resetLoading ? (
+              <div className="flex flex-col items-center justify-center py-4 bg-white rounded-2xl border border-slate-100 shadow-inner">
+                <Loader2 className="w-8 h-8 text-rose-600 animate-spin mb-3" />
+                <span className="text-xs font-bold text-rose-700 uppercase tracking-widest animate-pulse">
+                  {resetProgress || 'Processando Exclusão...'}
+                </span>
+                <span className="text-[10px] text-slate-400 mt-1">Por favor, não feche ou recarregue o aplicativo</span>
+              </div>
+            ) : (
+              <button
+                type="submit"
+                disabled={resetConfirmText.trim().toUpperCase() !== 'CONFIRMO APAGAR TUDO'}
+                className="w-full py-4 bg-rose-600 text-white font-black rounded-2xl hover:bg-rose-700 shadow-xl shadow-rose-200 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none uppercase tracking-wider text-xs"
+              >
+                <Trash2 className="w-4 h-4" />
+                Executar Limpeza Geral do Sistema
+              </button>
+            )}
+          </form>
         </motion.div>
       ) : (
         <motion.div
