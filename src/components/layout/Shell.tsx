@@ -20,7 +20,9 @@ import {
   Smartphone,
   PlusSquare,
   Share2,
-  Sparkles
+  Sparkles,
+  Link2,
+  Check
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
@@ -111,6 +113,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [showInstallModal, setShowInstallModal] = useState(false);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
   const [activeInstallTab, setActiveInstallTab] = useState<'ios' | 'android' | 'desktop'>('android');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
@@ -383,17 +386,20 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       {/* PWA Installation Instructions Modal */}
       <AnimatePresence>
         {showInstallModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-              className="bg-white w-full max-w-md rounded-[2.5rem] border border-slate-200 shadow-2xl p-6 md:p-8 space-y-6 relative overflow-hidden"
+              className="bg-white w-full max-w-md rounded-[2.5rem] border border-slate-200 shadow-2xl p-6 md:p-8 space-y-5 relative my-8"
             >
               {/* Close Button */}
               <button 
-                onClick={() => setShowInstallModal(false)}
+                onClick={() => {
+                  setShowInstallModal(false);
+                  setCopied(false);
+                }}
                 className="absolute top-4 right-4 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-all cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -404,11 +410,56 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   <Smartphone className="w-6 h-6" />
                 </div>
                 <h3 className="text-xl font-black text-slate-850 tracking-tight">Instalar SecApp no Celular</h3>
-                <p className="text-xs text-slate-500 font-semibold mt-1">Siga as instruções rápidas para o seu aparelho</p>
+                <p className="text-xs text-slate-500 font-semibold mt-1">Siga as instruções para ter o app real em tela cheia</p>
+              </div>
+
+              {/* QR Code and Direct URL Instructions Box */}
+              <div className="bg-amber-50 border border-amber-200/60 rounded-3xl p-4 space-y-2">
+                <span className="text-[11px] font-black text-amber-850 uppercase tracking-widest block">⚠️ ATENÇÃO: Se estiver no painel do computador</span>
+                <p className="text-[10px] text-slate-600 font-semibold leading-relaxed">
+                  Os navegadores bloqueiam a instalação direta de PWAs quando eles estão rodando <strong>dentro de painéis (iframe)</strong>.
+                </p>
+                <p className="text-[10px] text-slate-600 font-semibold leading-relaxed">
+                  Para instalar, escaneie o QR Code abaixo com a câmera do seu celular para abrir o site limpo diretamente no seu navegador móvel (Safari ou Chrome), ou clique no botão para copiar o link e acessá-lo externamente.
+                </p>
+
+                <div className="flex flex-col items-center gap-2 pt-3 bg-white/70 rounded-2xl p-3 border border-amber-100/45">
+                  <div className="p-1.5 bg-white rounded-xl border border-slate-150 inline-block shadow-inner">
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=${encodeURIComponent(window.location.href.replace('ais-dev-', 'ais-pre-'))}`}
+                      alt="PWA QR Code"
+                      className="w-24 h-24 object-contain"
+                    />
+                  </div>
+                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Escaneie com a Câmera do seu Celular</span>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const shareUrl = window.location.href.replace('ais-dev-', 'ais-pre-');
+                      navigator.clipboard.writeText(shareUrl);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className="mt-1 flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 text-[10px] font-bold rounded-xl transition-all border border-slate-200/85 cursor-pointer max-w-full truncate"
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="w-3.0 h-3.0 text-emerald-600 animate-ping-once mr-0.5" />
+                        <span className="text-emerald-700 font-black">Link Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Link2 className="w-3 h-3 text-slate-500" />
+                        <span>Copiar link para enviar ao celular</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* Tabs */}
-              <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1.5 rounded-2xl text-xs font-bold text-slate-600">
+              <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1.5 rounded-2xl text-[10px] sm:text-xs font-bold text-slate-600">
                 <button
                   type="button"
                   onClick={() => setActiveInstallTab('android')}
@@ -442,7 +493,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               </div>
 
               {/* Tab Content */}
-              <div className="space-y-4 pt-2 text-slate-700 text-sm">
+              <div className="space-y-4 pt-1 text-slate-700 text-sm">
                 {activeInstallTab === 'android' && (
                   <div className="space-y-3 font-semibold text-slate-600">
                     <p className="text-[11px] text-slate-500 italic pb-0.5">Para navegadores como Google Chrome, Samsung Internet ou Opera:</p>
