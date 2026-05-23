@@ -54,6 +54,19 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// Register Service Worker for PWA (Progressive Web App) capabilities
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then((reg) => {
+        console.log('[SW] Service Worker registrado com sucesso:', reg.scope);
+      })
+      .catch((err) => {
+        console.error('[SW] Falha ao registrar Service Worker:', err);
+      });
+  });
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

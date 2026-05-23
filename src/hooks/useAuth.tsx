@@ -22,6 +22,8 @@ interface AuthContextType {
   isDomainAllowed: boolean;
   logoUrl: string | null;
   updateCompanyLogo: (base64Logo: string | null) => Promise<void>;
+  isInstallable: boolean;
+  installApp: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -40,6 +42,8 @@ const AuthContext = createContext<AuthContextType>({
   isDomainAllowed: true,
   logoUrl: null,
   updateCompanyLogo: async () => {},
+  isInstallable: false,
+  installApp: async () => false,
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -49,6 +53,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [allowedDomains, setAllowedDomains] = useState<string[]>([]);
   const [domainsLoading, setDomainsLoading] = useState(true);
   const [logoUrl, setLogoUrlState] = useState<string | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
 
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
@@ -182,6 +200,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const installApp = async (): Promise<boolean> => {
+    if (!deferredPrompt) {
+      console.warn('[PWA] Prompt de instalação não está disponível.');
+      return false;
+    }
+    try {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`[PWA] Escolha do usuário ao instalar: ${outcome}`);
+      setDeferredPrompt(null);
+      return outcome === 'accepted';
+    } catch (err) {
+      console.error('[PWA] Erro ao acionar o prompt de instalação:', err);
+      return false;
+    }
+  };
+
   const isMaster = user?.email ? MASTER_EMAILS.includes(user.email.toLowerCase()) : false;
   
   const currentDomainAllowed = React.useMemo(() => {
@@ -221,7 +256,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isMaster,
       isDomainAllowed: currentDomainAllowed,
       logoUrl,
-      updateCompanyLogo
+      updateCompanyLogo,
+      isInstallable: !!deferredPrompt,
+      installApp
     }}>
       {children}
     </AuthContext.Provider>
