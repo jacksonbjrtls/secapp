@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, onSnapshot, collection } from 'firebase/firestore';
+import { doc, onSnapshot, collection, setDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { UserProfile } from '../types';
 import { MASTER_EMAILS } from '../constants';
@@ -20,6 +20,8 @@ interface AuthContextType {
   mustChangePassword: boolean;
   isMaster: boolean;
   isDomainAllowed: boolean;
+  logoUrl: string | null;
+  updateCompanyLogo: (base64Logo: string | null) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -36,6 +38,8 @@ const AuthContext = createContext<AuthContextType>({
   mustChangePassword: false,
   isMaster: false,
   isDomainAllowed: true,
+  logoUrl: null,
+  updateCompanyLogo: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -44,6 +48,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [allowedDomains, setAllowedDomains] = useState<string[]>([]);
   const [domainsLoading, setDomainsLoading] = useState(true);
+  const [logoUrl, setLogoUrlState] = useState<string | null>(null);
 
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
@@ -55,6 +60,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, (err) => {
       console.error('Error monitoring domains:', err);
       setDomainsLoading(false);
+    });
+
+    // Monitor company branding in real-time
+    const unsubBranding = onSnapshot(doc(db, 'system_config', 'branding'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setLogoUrlState(data.logoUrl || null);
+      } else {
+        setLogoUrlState(null);
+      }
+    }, (error) => {
+      console.error('[Branding] Snapshot error:', error);
     });
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -94,9 +111,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       unsubscribe();
       unsubDomains();
+      unsubBranding();
       if (unsubProfile) unsubProfile();
     };
   }, []);
+
+  // Sync favicon and manifest modifications with custom logo
+  useEffect(() => {
+    const currentFavicon = logoUrl || "/logo_file/logo_32x32pixel.png";
+    const currentLogo = logoUrl || "/logo_file/logo_400pixel.png";
+
+    // 1. Update favicon link
+    const faviconLink = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+    if (faviconLink) {
+      faviconLink.href = currentFavicon;
+    }
+
+    // 2. Update apple touch icon link
+    const appleLink = document.querySelector("link[rel='apple-touch-icon']") as HTMLLinkElement;
+    if (appleLink) {
+      appleLink.href = currentLogo;
+    }
+
+    // 3. Dynamically update local install manifest using Blob URL
+    const manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
+    if (manifestLink) {
+      const myManifest = {
+        name: "SecApp - Gestão Segura",
+        short_name: "SecApp",
+        description: "Sistema de Gestão Segura de Operações",
+        start_url: "/",
+        display: "standalone",
+        background_color: "#ffffff",
+        theme_color: "#059669",
+        icons: [
+          {
+            src: currentFavicon,
+            sizes: "32x32",
+            type: "image/png"
+          },
+          {
+            src: currentLogo,
+            sizes: "192x192",
+            type: "image/png"
+          },
+          {
+            src: currentLogo,
+            sizes: "512x512",
+            type: "image/png"
+          }
+        ]
+      };
+      
+      const stringManifest = JSON.stringify(myManifest);
+      const blob = new Blob([stringManifest], { type: 'application/json' });
+      const manifestUrl = URL.createObjectURL(blob);
+      manifestLink.href = manifestUrl;
+    }
+  }, [logoUrl]);
+
+  const updateCompanyLogo = async (base64Logo: string | null) => {
+    try {
+      await setDoc(doc(db, 'system_config', 'branding'), {
+        logoUrl: base64Logo,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (error) {
+      console.error('[BrandingRef] failed to update company logo:', error);
+      throw error;
+    }
+  };
 
   const isMaster = user?.email ? MASTER_EMAILS.includes(user.email.toLowerCase()) : false;
   
@@ -135,7 +219,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isEmailVerified,
       mustChangePassword,
       isMaster,
-      isDomainAllowed: currentDomainAllowed
+      isDomainAllowed: currentDomainAllowed,
+      logoUrl,
+      updateCompanyLogo
     }}>
       {children}
     </AuthContext.Provider>

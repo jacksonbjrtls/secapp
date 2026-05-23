@@ -39,7 +39,10 @@ import {
   UserPlus,
   X,
   AlertTriangle,
-  History
+  History,
+  Palette,
+  Upload,
+  Image as ImageIcon
 } from 'lucide-react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
@@ -49,7 +52,7 @@ import { cn, safeToDate } from '../lib/utils';
 import { validateEmailDomain } from '../lib/domainUtils';
 
 const Admin: React.FC = () => {
-  const { isAdmin, isMaster } = useAuth();
+  const { isAdmin, isMaster, logoUrl, updateCompanyLogo } = useAuth();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [editingNameUserId, setEditingNameUserId] = useState<string | null>(null);
   const [tempEditName, setTempEditName] = useState('');
@@ -57,10 +60,13 @@ const Admin: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
-  const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules' | 'reset'>('users');
+  const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding'>('users');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetProgress, setResetProgress] = useState('');
+  const [customLogoBase64, setCustomLogoBase64] = useState<string | null>(null);
+  const [saveBrandingLoading, setSaveBrandingLoading] = useState(false);
+  const [brandingDragActive, setBrandingDragActive] = useState(false);
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
     dds: true,
     forklifts: true,
@@ -709,6 +715,12 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
            {isMaster && (
               <>
                 <button 
+                  onClick={() => setActiveTab('branding')}
+                  className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'branding' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+                >
+                  Identidade Visual
+                </button>
+                <button 
                   onClick={() => setActiveTab('logs')}
                   className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all", activeTab === 'logs' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
                 >
@@ -1186,6 +1198,244 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
                 </div>
               );
             })}
+          </div>
+        </motion.div>
+      ) : activeTab === 'branding' ? (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-50 space-y-8"
+        >
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-6">
+            <div>
+              <h2 className="text-2xl font-black text-emerald-800 tracking-tight flex items-center gap-3">
+                <Palette className="w-8 h-8 text-emerald-600" />
+                Identidade Visual da Empresa
+              </h2>
+              <p className="text-sm text-slate-500 mt-2 font-semibold max-w-2xl">
+                Altere o logotipo oficial do sistema em tempo real sem precisar mexer em códigos. As alterações afetam todas as telas do aplicativo, a barra de navegação/abas e o ícone de instalação em celulares (PWA).
+              </p>
+            </div>
+            {customLogoBase64 && (
+              <button
+                onClick={() => {
+                  setCustomLogoBase64(null);
+                  setSuccess('Ajustes descartados. Mostrando logotipo atual.');
+                }}
+                className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100/80 hover:bg-slate-200/80 rounded-xl transition-all"
+              >
+                Descartar rascunho
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Lado Esquerdo: Área de Upload */}
+            <div className="space-y-6">
+              <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                <Upload className="w-5 h-5 text-emerald-600" />
+                Fazer Upload do Novo Logotipo
+              </h3>
+
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setBrandingDragActive(true);
+                }}
+                onDragLeave={() => setBrandingDragActive(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setBrandingDragActive(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      const img = new Image();
+                      img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const MAX_SIZE = 400;
+                        let width = img.width;
+                        let height = img.height;
+                        if (width > height) {
+                          if (width > MAX_SIZE) {
+                            height *= MAX_SIZE / width;
+                            width = MAX_SIZE;
+                          }
+                        } else {
+                          if (height > MAX_SIZE) {
+                            width *= MAX_SIZE / height;
+                            height = MAX_SIZE;
+                          }
+                        }
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        if (ctx) {
+                          ctx.drawImage(img, 0, 0, width, height);
+                          const base64Str = canvas.toDataURL('image/png', 0.9);
+                          setCustomLogoBase64(base64Str);
+                          setSuccess('Pré-visualização do novo logotipo carregada!');
+                        }
+                      };
+                      img.src = event.target?.result as string;
+                    };
+                    reader.readAsDataURL(file);
+                  }
+                }}
+                className={cn(
+                  "border-2 border-dashed rounded-[2rem] p-8 text-center flex flex-col items-center justify-center transition-all cursor-pointer min-h-[200px]",
+                  brandingDragActive 
+                    ? "border-emerald-500 bg-emerald-50/50" 
+                    : "border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-slate-50"
+                )}
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'image/*';
+                  input.onchange = (e: any) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        const img = new Image();
+                        img.onload = () => {
+                          const canvas = document.createElement('canvas');
+                          const MAX_SIZE = 400;
+                          let width = img.width;
+                          let height = img.height;
+                          if (width > height) {
+                            if (width > MAX_SIZE) {
+                              height *= MAX_SIZE / width;
+                              width = MAX_SIZE;
+                            }
+                          } else {
+                            if (height > MAX_SIZE) {
+                              width *= MAX_SIZE / height;
+                              height = MAX_SIZE;
+                            }
+                          }
+                          canvas.width = width;
+                          canvas.height = height;
+                          const ctx = canvas.getContext('2d');
+                          if (ctx) {
+                            ctx.drawImage(img, 0, 0, width, height);
+                            const base64Str = canvas.toDataURL('image/png', 0.9);
+                            setCustomLogoBase64(base64Str);
+                            setSuccess('Pré-visualização do novo logotipo carregada!');
+                          }
+                        };
+                        img.src = event.target?.result as string;
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  };
+                  input.click();
+                }}
+              >
+                <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-slate-100 shadow-sm text-slate-400 mb-4">
+                  <Upload className="w-6 h-6 text-slate-500" />
+                </div>
+                <p className="font-bold text-slate-700 text-sm">Arraste a imagem ou clique para selecionar</p>
+                <p className="text-slate-400 text-xs mt-1 font-semibold">Formatos recomendados: PNG ou JPEG (máximo 5MB)</p>
+                <p className="text-slate-400 text-[10px] mt-1 italic font-semibold">A imagem será otimizada automaticamente pela plataforma para um tamanho super leve.</p>
+              </div>
+
+              <div className="flex gap-4">
+                <button
+                  onClick={async () => {
+                    if (!customLogoBase64) return;
+                    setSaveBrandingLoading(true);
+                    try {
+                      await updateCompanyLogo(customLogoBase64);
+                      setSuccess('Logotipo atualizado e sincronizado com sucesso!');
+                      setCustomLogoBase64(null);
+                    } catch (err) {
+                      setError('Falha ao gravar novo logotipo.');
+                    } finally {
+                      setSaveBrandingLoading(false);
+                    }
+                  }}
+                  disabled={!customLogoBase64 || saveBrandingLoading}
+                  className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl transition-all shadow-lg shadow-emerald-100 disabled:opacity-45 disabled:shadow-none flex items-center justify-center gap-2 cursor-pointer text-xs uppercase"
+                >
+                  {saveBrandingLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Confirmar e Sincronizar Novo Logotipo
+                </button>
+
+                {logoUrl && (
+                  <button
+                    onClick={async () => {
+                      if (confirm('Tem certeza de que deseja restaurar o logotipo original padrão do sistema?')) {
+                        setSaveBrandingLoading(true);
+                        try {
+                          await updateCompanyLogo(null);
+                          setSuccess('Logotipo do sistema restaurado para o padrão original!');
+                          setCustomLogoBase64(null);
+                        } catch (err) {
+                          setError('Falha ao restaurar logotipo.');
+                        } finally {
+                          setSaveBrandingLoading(false);
+                        }
+                      }
+                    }}
+                    disabled={saveBrandingLoading}
+                    className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl transition-all flex items-center justify-center gap-2 border border-slate-200 cursor-pointer text-xs uppercase"
+                  >
+                    Restaurar Padrão
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Lado Direito: Pré-visualizações */}
+            <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-200 space-y-6">
+              <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                <ImageIcon className="w-5 h-5 text-emerald-600" />
+                Painel Comparativo de Pré-visualização
+              </h3>
+
+              <div className="space-y-4">
+                {/* 1. Tamanho Tela Login / Cadastro */}
+                <div>
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Visualização no Login / Registro</span>
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 flex items-center justify-center shadow-inner min-h-[140px]">
+                    <img
+                      src={customLogoBase64 || logoUrl || "/logo_file/logo_400pixel.png"}
+                      className="h-16 w-auto object-contain max-w-full"
+                      alt="Logo Login Preview"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* 2. Tamanho Menu de Navegação / Shell */}
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Visualização no Menu / Barra</span>
+                    <div className="bg-slate-900 p-4 rounded-2xl flex items-center justify-center min-h-[80px]">
+                      <img
+                        src={customLogoBase64 || logoUrl || "/logo_file/logo_400pixel.png"}
+                        className="h-8 w-auto object-contain max-w-full"
+                        alt="Logo Menu Preview"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 3. Tamanho Ícone de Instalação no Celular / Favicon */}
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Visualização no Ícone App (PWA / Celular)</span>
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-center min-h-[80px]">
+                      <div className="w-12 h-12 bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden flex items-center justify-center p-1">
+                        <img
+                          src={customLogoBase64 || logoUrl || "/logo_file/logo_400pixel.png"}
+                          className="w-full h-full object-contain"
+                          alt="Logo PWA Preview"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </motion.div>
       ) : activeTab === 'reset' ? (
