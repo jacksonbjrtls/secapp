@@ -134,57 +134,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  // Sync favicon and manifest modifications with custom logo
+  // Sync favicon and apple-touch-icon with custom logo (keeping manifest static to ensure PWA installability)
   useEffect(() => {
     const currentFavicon = logoUrl || "/logo_file/logo_32x32pixel.png";
     const currentLogo = logoUrl || "/logo_file/logo_400pixel.png";
 
-    // 1. Update favicon link
+    // 1. Update favicon link (browser tab)
     const faviconLink = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
     if (faviconLink) {
       faviconLink.href = currentFavicon;
     }
 
-    // 2. Update apple touch icon link
+    // 2. Update apple touch icon link (mobile icon shortcut)
     const appleLink = document.querySelector("link[rel='apple-touch-icon']") as HTMLLinkElement;
     if (appleLink) {
       appleLink.href = currentLogo;
-    }
-
-    // 3. Dynamically update local install manifest using Blob URL
-    const manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
-    if (manifestLink) {
-      const myManifest = {
-        name: "SecApp - Gestão Segura",
-        short_name: "SecApp",
-        description: "Sistema de Gestão Segura de Operações",
-        start_url: "/",
-        display: "standalone",
-        background_color: "#ffffff",
-        theme_color: "#059669",
-        icons: [
-          {
-            src: currentFavicon,
-            sizes: "32x32",
-            type: "image/png"
-          },
-          {
-            src: currentLogo,
-            sizes: "192x192",
-            type: "image/png"
-          },
-          {
-            src: currentLogo,
-            sizes: "512x512",
-            type: "image/png"
-          }
-        ]
-      };
-      
-      const stringManifest = JSON.stringify(myManifest);
-      const blob = new Blob([stringManifest], { type: 'application/json' });
-      const manifestUrl = URL.createObjectURL(blob);
-      manifestLink.href = manifestUrl;
     }
   }, [logoUrl]);
 
