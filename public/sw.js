@@ -4,7 +4,8 @@ const ASSETS = [
   '/index.html',
   '/manifest.json',
   '/logo_file/logo_32x32pixel.png',
-  '/logo_file/logo_400pixel.png'
+  '/logo_file/logo_400pixel.png',
+  '/logo_file/logo_512pixel.png'
 ];
 
 self.addEventListener('install', (e) => {
