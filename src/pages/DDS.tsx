@@ -1230,7 +1230,7 @@ const DDS: React.FC = () => {
                   </h3>
                </div>
                
-               {!editingSession && (
+               {!editingSession && (isManager || isAdmin) && (
                  <button
                    type="button"
                    onClick={() => setShowAIModal(true)}
@@ -1330,18 +1330,20 @@ const DDS: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Total Previsto no Turno (Colaboradores)</label>
-                <input
-                  type="number"
-                  min={1}
-                  className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
-                  placeholder="ex: 15"
-                  value={newTotalPrevisto}
-                  onChange={(e) => setNewTotalPrevisto(Math.max(1, parseInt(e.target.value) || 1))}
-                  required
-                />
-              </div>
+              {(isManager || isAdmin) && (
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Total Previsto no Turno (Colaboradores)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
+                    placeholder="ex: 15"
+                    value={newTotalPrevisto}
+                    onChange={(e) => setNewTotalPrevisto(Math.max(1, parseInt(e.target.value) || 1))}
+                    required
+                  />
+                </div>
+              )}
 
               <div className="bg-emerald-800/50 p-4 rounded-xl border border-emerald-700/50 flex items-start gap-3">
                  <Key className="w-5 h-5 text-emerald-300 flex-shrink-0" />
