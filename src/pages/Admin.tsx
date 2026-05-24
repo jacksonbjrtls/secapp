@@ -44,7 +44,10 @@ import {
   Upload,
   Image as ImageIcon,
   ChevronDown,
-  Sliders
+  Sliders,
+  Download,
+  Info,
+  Check
 } from 'lucide-react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
@@ -62,9 +65,17 @@ const Admin: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
-  const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding'>('users');
+  const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding' | 'import'>('users');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // CSV Importer States
+  const [selectedImportTable, setSelectedImportTable] = useState<string>('users');
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0, successes: 0, errors: [] as string[] });
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
@@ -103,6 +114,359 @@ const Admin: React.FC = () => {
   const [loginLogs, setLoginLogs] = useState<any[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsSearchTerm, setLogsSearchTerm] = useState('');
+
+  // CSV Importer Configurations & Handlers
+  const CSV_TABLES = [
+    {
+      id: 'users',
+      name: 'Perfil de Usuários / Colaboradores',
+      collection: 'users',
+      description: 'Cadastre usuários em massa no banco de dados para identificação e controle de acesso.',
+      headers: ['displayName', 'email', 'role', 'status'],
+      examples: [
+        ['José de Souza', 'jose.souza@empresa.com', 'viewer', 'active'],
+        ['Mariana Silva', 'mariana.silva@empresa.com', 'manager', 'active'],
+        ['Roberto Antunes', 'roberto.antunes@empresa.com', 'admin', 'active']
+      ],
+      notes: 'O campo "role" suporta apenas: "viewer", "manager", "admin". Os domínios de e-mail devem estar cadastrados na aba correspondente.',
+      processRow: (row: Record<string, string>) => ({
+        displayName: row.displayName?.trim() || 'Usuário Sem Nome',
+        email: row.email?.toLowerCase().trim() || '',
+        role: ['viewer', 'manager', 'admin'].includes(row.role?.toLowerCase().trim()) ? row.role.toLowerCase().trim() : 'viewer',
+        status: ['active', 'blocked'].includes(row.status?.toLowerCase().trim()) ? row.status.toLowerCase().trim() : 'active',
+        createdAt: serverTimestamp(),
+      }),
+      getKey: (row: Record<string, string>) => row.email?.toLowerCase().trim()
+    },
+    {
+      id: 'allowed_domains',
+      name: 'Domínios Institucionais de E-mail',
+      collection: 'allowed_domains',
+      description: 'Defina quais domínios de e-mail (@empresa.com, etc) são permitidos para novos cadastros de login.',
+      headers: ['domain'],
+      examples: [
+        ['empresa.com'],
+        ['grupoindustrial.com.br']
+      ],
+      notes: 'Informe apenas a terminação do e-mail pós arroba, sem espaços ou símbolos adicionais.',
+      processRow: (row: Record<string, string>) => ({
+        domain: row.domain?.replace('@', '').toLowerCase().trim() || '',
+        createdAt: serverTimestamp(),
+      }),
+      getKey: (row: Record<string, string>) => row.domain?.replace('@', '').toLowerCase().trim()
+    },
+    {
+      id: 'production_lines',
+      name: 'Linhas de Produção',
+      collection: 'production_lines',
+      description: 'Crie ou atualize as linhas produtivas integradas aos checklists de Qualidade, Arames e Consumo.',
+      headers: ['name', 'active'],
+      examples: [
+        ['Linha de Laminação 01', 'true'],
+        ['Linha de Revestimento 3B', 'true'],
+        ['Setor de Preparação Auxiliar', 'false']
+      ],
+      notes: 'O campo "active" aceita apenas "true" (habilitado) ou "false" (desativado).',
+      processRow: (row: Record<string, string>) => ({
+        name: row.name?.trim() || '',
+        active: row.active?.toLowerCase().trim() === 'true',
+        createdAt: serverTimestamp(),
+      }),
+      getKey: (row: Record<string, string>) => row.name?.toLowerCase().replace(/[^a-z0-9]/g, '')
+    },
+    {
+      id: 'wire_suppliers',
+      name: 'Fornecedores de Bobinas (Arames)',
+      collection: 'wire_suppliers',
+      description: 'Cadastre os fornecedores para controle de matéria prima no estoque e rastreabilidade.',
+      headers: ['name'],
+      examples: [
+        ['Gerdau Metálicos S/A'],
+        ['Siderúrgica Belgo Bekaert'],
+        ['ArcelorMittal Arame e Fios']
+      ],
+      notes: 'Nome por extenso amigável do fornecedor de bobinas.',
+      processRow: (row: Record<string, string>) => ({
+        name: row.name?.trim() || '',
+      }),
+      getKey: (row: Record<string, string>) => row.name?.toLowerCase().replace(/[^a-z0-9]/g, '')
+    },
+    {
+      id: 'wire_storage_bays',
+      name: 'Boxes de Estocagem (Arames)',
+      collection: 'wire_storage_bays',
+      description: 'Localizações operacionais (boxes, galpões, baias) para estocagem e movimentação de bobinas.',
+      headers: ['name'],
+      examples: [
+        ['Baia A-01'],
+        ['Doca de Recebimento Norte'],
+        ['Galpão Auxiliar de Arame']
+      ],
+      notes: 'Identificador do box. Evita que o operador digite localizações inexistentes.',
+      processRow: (row: Record<string, string>) => ({
+        name: row.name?.trim() || '',
+      }),
+      getKey: (row: Record<string, string>) => row.name?.toLowerCase().replace(/[^a-z0-9]/g, '')
+    },
+    {
+      id: 'forklifts',
+      name: 'Frota de Empilhadeiras',
+      collection: 'forklifts',
+      description: 'Cadastre as empilhadeiras e veículos industriais que passarão por vistorias diárias.',
+      headers: ['number', 'name', 'model', 'serial', 'sector'],
+      examples: [
+        ['101', 'Hyster 2.5T', 'H80FT', 'ABC1234567', 'Armazém de Acabados'],
+        ['204', 'Toyota Elétrica', '8FBE15', 'XYZ7890123', 'Expedição Geral']
+      ],
+      notes: 'O "number" deve ser numérico e único para facilitar buscas por código de máquina.',
+      processRow: (row: Record<string, string>) => ({
+        number: row.number?.trim() || '',
+        name: row.name?.trim() || '',
+        model: row.model?.trim() || '',
+        serial: row.serial?.trim() || '',
+        sector: row.sector?.trim() || '',
+        createdAt: serverTimestamp(),
+      }),
+      getKey: (row: Record<string, string>) => row.number?.trim()
+    },
+    {
+      id: 'operators',
+      name: 'Operadores e Inspetores',
+      collection: 'operators',
+      description: 'Insira a lista de operadores habilitados a realizar inspeções e verificações de rota.',
+      headers: ['name', 'department', 'employeeId'],
+      examples: [
+        ['Carlos de Souza', 'Produção Mecânica', 'OP9912'],
+        ['Mariana Antunes de Lima', 'Qualidade de Bobinas', 'OP1293']
+      ],
+      notes: 'Ideal para centralizar a lista com matrícula/employeeId único do colaborador.',
+      processRow: (row: Record<string, string>) => ({
+        name: row.name?.trim() || '',
+        department: row.department?.trim() || '',
+        employeeId: row.employeeId?.trim() || '',
+        createdAt: serverTimestamp(),
+      }),
+      getKey: (row: Record<string, string>) => row.employeeId?.trim() || row.name?.toLowerCase().replace(/[^a-z0-9]/g, '')
+    },
+    {
+      id: 'quality_sectors',
+      name: 'Setores de Qualidade',
+      collection: 'quality_sectors',
+      description: 'Setores / Áreas departamentais que participam dos checklists de auditoria de qualidade.',
+      headers: ['name', 'index'],
+      examples: [
+        ['Derrumbe e Trefilação', '1'],
+        ['Pátio de Carregamento', '2'],
+        ['Área de Expedição', '3']
+      ],
+      notes: 'O campo index determina a ordem de ordenação visual nos filtros.',
+      processRow: (row: Record<string, string>) => ({
+        name: row.name?.trim() || '',
+        index: parseInt(row.index) || 0,
+        createdAt: serverTimestamp(),
+      }),
+      getKey: (row: Record<string, string>) => row.name?.toLowerCase().replace(/[^a-z0-9]/g, '')
+    },
+    {
+      id: 'consumable_items',
+      name: 'Estoque de Insumos',
+      collection: 'consumable_items',
+      description: 'Itens, tintas, solventes e descartáveis gerenciados pelo módulo de consumables/insumos.',
+      headers: ['name', 'description', 'unit', 'quantityInStock', 'minimumQuantity'],
+      examples: [
+        ['Tinta Epóxi Demarcação Amarela', 'Balde de 18L de alta densidade', 'L', '150', '30'],
+        ['Diluente Químico Especial', 'Galão de solvente ecológico', 'GL', '45', '10']
+      ],
+      notes: 'As colunas quantityInStock e minimumQuantity precisam ser números válidos.',
+      processRow: (row: Record<string, string>) => ({
+        name: row.name?.trim() || '',
+        description: row.description?.trim() || '',
+        unit: row.unit?.trim() || 'UN',
+        quantityInStock: parseFloat(row.quantityInStock) || 0,
+        minimumQuantity: parseFloat(row.minimumQuantity) || 0,
+        createdAt: serverTimestamp(),
+      }),
+      getKey: (row: Record<string, string>) => row.name?.toLowerCase().replace(/[^a-z0-9]/g, '')
+    }
+  ];
+
+  const downloadImportTemplate = (tableId: string) => {
+    const table = CSV_TABLES.find(t => t.id === tableId);
+    if (!table) return;
+    
+    const headerRow = table.headers.join(';');
+    const sampleRows = table.examples.map(ex => ex.join(';')).join('\n');
+    const csvContent = `${headerRow}\n${sampleRows}`;
+    
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `modelo_importacao_${table.id}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const parseCSVContent = (text: string) => {
+    const lines: string[][] = [];
+    let row: string[] = [""];
+    let inQuotes = false;
+    
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      const nextChar = text[i + 1];
+      
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          row[row.length - 1] += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' || char === ';') {
+        if (inQuotes) {
+          row[row.length - 1] += char;
+        } else {
+          row.push("");
+        }
+      } else if (char === '\r' || char === '\n') {
+        if (inQuotes) {
+          row[row.length - 1] += char;
+        } else {
+          if (char === '\r' && nextChar === '\n') {
+            i++;
+          }
+          lines.push(row);
+          row = [""];
+        }
+      } else {
+        row[row.length - 1] += char;
+      }
+    }
+    if (row.length > 1 || row[0] !== "") {
+      lines.push(row);
+    }
+    return lines;
+  };
+
+  const handleCSVImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!csvFile) return;
+    
+    const tableDef = CSV_TABLES.find(t => t.id === selectedImportTable);
+    if (!tableDef) {
+      setError('Tabela de importação não identificada.');
+      return;
+    }
+    
+    setImporting(true);
+    setImportProgress({ current: 0, total: 0, successes: 0, errors: [] });
+    
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text) {
+          setError('O arquivo está vazio.');
+          setImporting(false);
+          return;
+        }
+        
+        const rawLines = parseCSVContent(text);
+        if (rawLines.length === 0) {
+          setError('Nenhuma linha detectada no arquivo CSV.');
+          setImporting(false);
+          return;
+        }
+        
+        const headers = rawLines[0].map(h => h.trim().replace(/^"|"$/g, ''));
+        const missingHeaders = tableDef.headers.filter(h => !headers.includes(h));
+        if (missingHeaders.length > 0) {
+          setError(`Cabeçalhos inválidos. Faltando colunas cruciais: ${missingHeaders.join(', ')}`);
+          setImporting(false);
+          return;
+        }
+        
+        const dataRows = rawLines.slice(1).filter(r => r.length > 0 && r.some(cell => cell.trim() !== ''));
+        if (dataRows.length === 0) {
+          setError('Nenhum registro de dados encontrado nas linhas subsequentes.');
+          setImporting(false);
+          return;
+        }
+        
+        setImportProgress({
+          current: 0,
+          total: dataRows.length,
+          successes: 0,
+          errors: []
+        });
+        
+        let successCount = 0;
+        const errorLogs: string[] = [];
+        
+        for (let idx = 0; idx < dataRows.length; idx++) {
+          const cells = dataRows[idx];
+          const mappedRow: Record<string, string> = {};
+          
+          tableDef.headers.forEach(header => {
+            const fileHeaderIdx = headers.indexOf(header);
+            if (fileHeaderIdx !== -1) {
+              mappedRow[header] = cells[fileHeaderIdx]?.trim().replace(/^"|"$/g, '') || '';
+            } else {
+              mappedRow[header] = '';
+            }
+          });
+          
+          try {
+            const dataToInsert = tableDef.processRow(mappedRow);
+            const key = tableDef.getKey(mappedRow);
+            
+            if (tableDef.id === 'users' && !mappedRow.email) {
+              throw new Error('E-mail do colaborador é obrigatório.');
+            }
+            if (tableDef.id === 'allowed_domains' && !mappedRow.domain) {
+              throw new Error('Domínio de e-mail não pode ser vazio.');
+            }
+            if (tableDef.id === 'production_lines' && !mappedRow.name) {
+              throw new Error('Nome da Linha de Produção é obrigatório.');
+            }
+            if (tableDef.id === 'forklifts' && !mappedRow.number) {
+              throw new Error('Número identificador da empilhadeira é obrigatório.');
+            }
+            
+            if (key) {
+              await setDoc(doc(db, tableDef.collection, key), dataToInsert);
+            } else {
+              await addDoc(collection(db, tableDef.collection), dataToInsert);
+            }
+            
+            successCount++;
+          } catch (itemErr: any) {
+            console.error('Import line error:', itemErr);
+            errorLogs.push(`Linha ${idx + 2}: ${itemErr.message || 'Erro desconhecido ao salvar'}`);
+          }
+          
+          setImportProgress(prev => ({
+            ...prev,
+            current: idx + 1,
+            successes: successCount,
+            errors: [...errorLogs]
+          }));
+        }
+        
+        setSuccess(`Processo concluído com sucesso! ${successCount} registros importados de ${dataRows.length}.`);
+        setCsvFile(null);
+        if (csvInputRef.current) csvInputRef.current.value = '';
+      } catch (err: any) {
+        console.error('Global CSV upload failure:', err);
+        setError(`Falha ao ler o arquivo selecionado: ${err.message}`);
+      } finally {
+        setImporting(false);
+      }
+    };
+    reader.readAsText(csvFile);
+  };
 
   // Clear messages automatically after 5 seconds
   useEffect(() => {
@@ -697,6 +1061,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
     ...(isMaster ? [
       { id: 'branding' as const, label: 'Identidade Visual', icon: Palette, color: 'text-blue-500' },
       { id: 'logs' as const, label: 'Logs de Acesso', icon: History, color: 'text-purple-500' },
+      { id: 'import' as const, label: 'Importação de Dados (CSV)', icon: Upload, color: 'text-teal-500' },
       { id: 'reset' as const, label: 'Reset Sistema', icon: ShieldAlert, color: 'text-rose-600' }
     ] : [])
   ];
@@ -1560,6 +1925,261 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
               </button>
             )}
           </form>
+        </motion.div>
+      ) : activeTab === 'import' ? (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="space-y-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-50"
+        >
+          {/* Header section describing the importer */}
+          <div className="border-b border-slate-100 pb-6">
+            <h2 className="text-2xl font-black text-teal-800 tracking-tight flex items-center gap-3">
+              <Upload className="w-8 h-8 text-teal-600" />
+              Importador de Dados (CSV)
+            </h2>
+            <p className="text-sm text-slate-500 mt-2 font-semibold max-w-2xl">
+              Área Exclusiva Master: Realize a migração ou carga inicial de dados em massa para qualquer tabela do SecAPP utilizando planilhas do Microsoft Excel ou arquivos padrão .CSV.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Left selector/information panel */}
+            <div className="lg:col-span-1 space-y-6">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 ml-1">
+                  1. Selecione a Tabela de Destino
+                </label>
+                <div className="space-y-2">
+                  {CSV_TABLES.map((t) => {
+                    const isSelected = selectedImportTable === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedImportTable(t.id);
+                          setCsvFile(null);
+                          if (csvInputRef.current) csvInputRef.current.value = '';
+                        }}
+                        className={cn(
+                          "w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer",
+                          isSelected
+                            ? "bg-teal-50 border-teal-300 text-teal-950 font-bold shadow-sm"
+                            : "bg-slate-50 border-slate-100 hover:bg-slate-100/50 hover:border-slate-200 text-slate-700 font-medium"
+                        )}
+                      >
+                        <div className="flex flex-col text-left min-w-0">
+                          <span className="text-xs truncate">{t.name}</span>
+                          <span className="text-[10px] text-slate-400 font-normal truncate mt-0.5">
+                            Coleção: {t.collection}
+                          </span>
+                        </div>
+                        {isSelected && <Check className="w-4 h-4 text-teal-600 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Middle and Right Panel (Import Rules + Upload Zone) */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Selected table specification rules */}
+              {(() => {
+                const currentTable = CSV_TABLES.find(t => t.id === selectedImportTable);
+                if (!currentTable) return null;
+                return (
+                  <div className="bg-slate-50 border border-slate-200 rounded-[2rem] p-6 space-y-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center text-teal-700 shrink-0">
+                        <Info className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-black text-slate-800">{currentTable.name}</h4>
+                        <p className="text-xs text-slate-500 leading-relaxed font-semibold">
+                          {currentTable.description}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-white border border-slate-100 rounded-2xl space-y-3">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-teal-600 block mb-1">
+                          Cabeçalhos Obrigatórios no CSV:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {currentTable.headers.map((hdr) => (
+                            <code 
+                              key={hdr} 
+                              className="px-2.5 py-1 bg-slate-100 text-slate-705 rounded-md text-[11px] font-mono font-bold border border-slate-200"
+                            >
+                              {hdr}
+                            </code>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] leading-relaxed text-slate-600 space-y-1 mt-2">
+                        <p className="font-bold flex items-center gap-1.5 text-slate-800">
+                          <span>⚠️ Regras da Coleção:</span>
+                        </p>
+                        <p className="ml-1 pl-1 border-l-2 border-teal-500 font-semibold">{currentTable.notes}</p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => downloadImportTemplate(currentTable.id)}
+                      className="flex items-center justify-center gap-2 w-full bg-white hover:bg-slate-100 border border-slate-300 hover:border-slate-400 text-slate-705 px-4 py-3 rounded-2xl text-xs font-bold shadow-sm transition-all active:scale-98 cursor-pointer"
+                    >
+                      <Download className="w-4 h-4 text-emerald-600" />
+                      Baixar Modelo Oficial Excel / CSV
+                    </button>
+                  </div>
+                );
+              })()}
+
+              <div className="space-y-4">
+                {/* Drag & Drop Zone */}
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragActive(true);
+                  }}
+                  onDragLeave={() => setDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragActive(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                      setCsvFile(e.dataTransfer.files[0]);
+                    }
+                  }}
+                  className={cn(
+                    "border-2 border-dashed rounded-[2rem] p-8 text-center flex flex-col items-center justify-center transition-all min-h-[160px]",
+                    dragActive 
+                      ? "border-teal-500 bg-teal-50/50" 
+                      : "border-slate-300 hover:border-slate-400 bg-slate-50/20"
+                  )}
+                >
+                  <Upload className="w-10 h-10 text-slate-400 mb-3" />
+                  <span className="text-sm font-bold text-slate-700 block mb-1">
+                    Arraste seu arquivo CSV para cá ou
+                  </span>
+                  
+                  <input
+                    type="file"
+                    ref={csvInputRef}
+                    accept=".csv"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setCsvFile(e.target.files[0]);
+                      }
+                    }}
+                    className="hidden"
+                    id="csv-file-importer"
+                  />
+                  <label
+                    htmlFor="csv-file-importer"
+                    className="text-xs text-teal-600 hover:text-teal-700 font-bold underline cursor-pointer hover:font-black transition-all"
+                  >
+                    Navegue nas pastas do seu computador
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-semibold block mt-2">
+                    Suporta os separadores vírgula (,) e ponto-e-vírgula (;) com codificação UTF-8
+                  </span>
+                </div>
+
+                {/* Selected File State */}
+                {csvFile && (
+                  <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl flex items-center justify-between gap-3 animate-fade-in text-[13px]">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center text-teal-600 shrink-0 font-bold text-xs">
+                        CSV
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-slate-800 block truncate">{csvFile.name}</span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">
+                          {(csvFile.size / 1024).toFixed(1)} KB • Pronto para Importação
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCsvFile(null);
+                        if (csvInputRef.current) csvInputRef.current.value = '';
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-slate-100 transition-all cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Import Status Panel */}
+                {importing && (
+                  <div className="bg-slate-50 border border-slate-200 p-6 rounded-[2rem] space-y-4">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="font-bold text-teal-700 animate-pulse uppercase tracking-wider">
+                        Processando Importação: {importProgress.current} de {importProgress.total} registros
+                      </span>
+                      <span className="font-black text-slate-600">
+                        {importProgress.total > 0 ? Math.round((importProgress.current / importProgress.total) * 100) : 0}%
+                      </span>
+                    </div>
+
+                    {/* Progress bar container */}
+                    <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-teal-600 transition-all duration-150"
+                        style={{ width: `${importProgress.total > 0 ? (importProgress.current / importProgress.total) * 100 : 0}%` }}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 text-center">
+                      <div className="p-3 bg-white border border-slate-100 rounded-xl">
+                        <span className="text-[10px] font-black uppercase text-slate-400 block">Importações com Sucesso</span>
+                        <span className="text-lg font-black text-emerald-600 mt-1 block">{importProgress.successes}</span>
+                      </div>
+                      <div className="p-3 bg-white border border-slate-100 rounded-xl">
+                        <span className="text-[10px] font-black uppercase text-slate-400 block font-mono">Falhas de Linha</span>
+                        <span className="text-lg font-black text-red-500 mt-1 block">{importProgress.errors.length}</span>
+                      </div>
+                    </div>
+
+                    {/* Log details wrapper */}
+                    {importProgress.errors.length > 0 && (
+                      <div className="bg-red-50 border border-red-100 p-4 rounded-2xl space-y-2">
+                        <h5 className="text-[10px] font-black text-red-700 uppercase tracking-widest flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 shrink-0" /> Detalhes dos Erros Encontrados:
+                        </h5>
+                        <div className="max-h-[150px] overflow-y-auto text-[11px] font-mono text-slate-600 space-y-1.5 font-semibold scrollbar-sin">
+                          {importProgress.errors.map((err, errIdx) => (
+                            <div key={errIdx} className="p-1 hover:bg-red-50/50 rounded flex items-start gap-1">
+                              <span className="text-red-500 shrink-0">•</span>
+                              <span>{err}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!importing && csvFile && (
+                  <button
+                    type="button"
+                    onClick={handleCSVImport}
+                    className="w-full py-4 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-2xl shadow-xl shadow-teal-100 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider text-xs"
+                  >
+                    <Upload className="w-4 h-4" />
+                    Iniciar Importação para o Banco de Dados
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </motion.div>
       ) : (
         <motion.div
