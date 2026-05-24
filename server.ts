@@ -9,6 +9,7 @@ import dotenv from "dotenv";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import firebaseConfig from "./firebase-applet-config.json";
+import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
 
@@ -68,6 +69,16 @@ async function startServer() {
   const expressFunc = (typeof express === "function" ? express : (express as any).default) as any;
   const app = expressFunc();
   const PORT = 3000;
+  
+  const apiKey = process.env.GEMINI_API_KEY;
+  const ai = apiKey ? new GoogleGenAI({
+    apiKey: apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  }) : null;
   
   // Resolve json middleware safely
   const jsonParser = (expressFunc.json ? expressFunc.json() : (express as any).json?.() || express.json?.());
@@ -377,6 +388,119 @@ async function startServer() {
         return res.json({ success: false, code: 'auth/user-not-found', error: "Usuário não encontrado no Authentication." });
       }
       return res.json({ success: false, error: error.message || "Erro interno ao buscar usuário" });
+    }
+  });
+
+  // API Route to process DDS raw data using Gemini API
+  app.post("/api/gemini/process-dds", async (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text) {
+        return res.status(400).json({ success: false, error: "Texto do relatório não informado." });
+      }
+
+      if (!ai) {
+        return res.status(200).json({ 
+          success: false, 
+          error: "O serviço de Inteligência Artificial não está disponível porque a chave de API (GEMINI_API_KEY) não foi fornecida nas configurações." 
+        });
+      }
+
+      const prompt = `Você é o motor de inteligência e processamento de dados de um aplicativo de gerenciamento de Segurança do Trabalho. Sua função é receber dados brutos (seja em texto, relatórios, transcrições ou planilhas) sobre a realização do Diálogo Diário de Segurança (DDS) e transformá-los em uma estrutura de dados padronizada (JSON) seguindo a lógica exata de uma planilha de controle de participação.
+
+DADOS BRUTOS RECEBIDOS:
+"""
+${text}
+"""
+
+DIRETRIZES DE PROCESSAMENTO E LÓGICA:
+1. Extração de Metadados:
+   - Identifique e isole as seguintes informações do DDS:
+     - executante: Nome de quem conduziu (ex: Danilo, Danilo Souza).
+     - turno: Letra do turno ou identificador (ex: Turno C, Turno 1, Turno 2, Turno 3).
+     - assunto: Tema abordado (ex: Movimentação de Carga, Prevenção de Quedas).
+     - data: Data do evento (DD/MM/AAAA).
+     - horario: Hora realizada (HH:MM). Se não informado, deixe em branco ou calcule um provável com base no turno.
+     - area: Local aplicável (ex: Secagem / Enfardamento, Qualidade).
+
+2. Processamento de Participantes e Avaliação:
+   - Para cada colaborador listado, verifique o status da sua "Avaliação de Reação":
+     - Marque o status correspondente: 'Bom', 'Regular', 'Ruim' ou 'Ausente'.
+     - Contabilize os totais de cada avaliação para gerar o indicador de reação da equipe.
+
+3. Lógica de Cálculo dos Indicadores (KPIs):
+   - Acompanhe rigorosamente as fórmulas da planilha original para preencher os indicadores:
+     - total_participantes: Soma de colaboradores presentes (que receberam avaliação Bom, Regular ou Ruim).
+     - total_previsto: Quantidade total de funcionários que deveriam estar presentes no turno naquele dia (ex: contagem de presentes + ausentes, ou um número estipulado se mencionado).
+     - idds_do_dia:
+       - Se realizado conforme o esperado: 1.0 (100%).
+       - Se não realizado ou abaixo da meta: Calcular a razão proporcional com base na meta estabelecida (Meta padrão de assiduidade/realização: 0.75).
+       - Dias identificados como "F" (Folga/Feriado) na escala não devem penalizar o IDDS geral.
+
+Retorne rigorosamente no formato de JSON schema especificado.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              metadados: {
+                type: Type.OBJECT,
+                properties: {
+                  executante: { type: Type.STRING },
+                  turno: { type: Type.STRING },
+                  assunto: { type: Type.STRING },
+                  data: { type: Type.STRING },
+                  horario: { type: Type.STRING },
+                  area: { type: Type.STRING },
+                },
+                required: ["executante", "turno", "assunto", "data"],
+              },
+              participantes: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    nome: { type: Type.STRING },
+                    avaliacao: { type: Type.STRING },
+                  },
+                  required: ["nome", "avaliacao"],
+                },
+              },
+              indicadores_diarios: {
+                type: Type.OBJECT,
+                properties: {
+                  total_participantes: { type: Type.INTEGER },
+                  total_previsto: { type: Type.INTEGER },
+                  idds_do_dia: { type: Type.NUMBER },
+                },
+                required: ["total_participantes", "total_previsto", "idds_do_dia"],
+              },
+              controle_mensal_referencia: {
+                type: Type.OBJECT,
+                properties: {
+                  mes_ano: { type: Type.STRING },
+                  status_dia_na_escala: { type: Type.STRING },
+                },
+              },
+            },
+            required: ["metadados", "participantes", "indicadores_diarios"],
+          },
+        },
+      });
+
+      if (!response.text) {
+        return res.status(200).json({ success: false, error: "A Inteligência Artificial não gerou um resultado legível." });
+      }
+
+      const resultObj = JSON.parse(response.text.trim());
+      return res.json({ success: true, result: resultObj });
+    } catch (err: any) {
+      console.error("[API Gemini Tool] Error processing DDS:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro de processamento com a IA." });
     }
   });
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -58,6 +58,9 @@ import {
   ResponsiveContainer, 
   BarChart, 
   Bar, 
+  AreaChart,
+  Area,
+  ReferenceLine,
   XAxis, 
   YAxis, 
   Tooltip as RechartsTooltip, 
@@ -128,7 +131,10 @@ const DDS: React.FC = () => {
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   
   // Stats and Filters
-  const [monthlyData, setMonthlyData] = useState<any[]>([]);
+  const [allSessionsList, setAllSessionsList] = useState<any[]>([]);
+  const [allSignaturesList, setAllSignaturesList] = useState<any[]>([]);
+  const [chartMode, setChartMode] = useState<'presence' | 'idds'>('presence');
+  const [chartGroupFilter, setChartGroupFilter] = useState<string>('all');
   const [globalCompliance, setGlobalCompliance] = useState(0);
   const [totalSignaturesMonth, setTotalSignaturesMonth] = useState(0);
   const [participationRate, setParticipationRate] = useState(0);
@@ -141,6 +147,14 @@ const DDS: React.FC = () => {
   const [newShift, setNewShift] = useState('Turno 1');
   const [newGroup, setNewGroup] = useState('A');
   const [newExecutor, setNewExecutor] = useState('');
+  const [newTotalPrevisto, setNewTotalPrevisto] = useState<number>(9);
+
+  // AI DDS Processor state
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiText, setAiText] = useState('');
+  const [aiProcessing, setAiProcessing] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiResult, setAiResult] = useState<any>(null);
 
   // Mood selector state
   const [showMoodModal, setShowMoodModal] = useState(false);
@@ -233,17 +247,7 @@ const DDS: React.FC = () => {
 
     const unsubSessions = onSnapshot(qSessions, (snapshot) => {
       const allDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // Calculate monthly data for chart (Sessions)
-      const dayMap: { [key: string]: { sessions: number, signatures: number } } = {};
-      allDocs.forEach((s: any) => {
-        const d = safeToDate(s.createdAt);
-        const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
-        if (date) {
-          if (!dayMap[date]) dayMap[date] = { sessions: 0, signatures: 0 };
-          dayMap[date].sessions += 1;
-        }
-      });
+      setAllSessionsList(allDocs);
       
       // Global Compliance: (Completed Slots / Total Possible Slots)
       // We group by day and shift to avoid double counting same shift sessions
@@ -258,47 +262,16 @@ const DDS: React.FC = () => {
       const expectedTotal = dayOfMonth * 3;
       const compliance = Math.min(100, Math.round((uniqueSessions.size / expectedTotal) * 100));
       setGlobalCompliance(compliance);
-
-      // Finalize chart data merging signatures later
-      setMonthlyData(prev => {
-        const newData = Object.keys(dayMap).sort().map(day => ({
-          name: day,
-          sessions: dayMap[day].sessions,
-          signatures: prev.find(p => p.name === day)?.signatures || 0
-        }));
-        return newData;
-      });
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
     });
 
     const unsubSignatures = onSnapshot(qSignatures, (snapshot) => {
       const allSigs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllSignaturesList(allSigs);
       setTotalSignaturesMonth(allSigs.length);
       
-      // Update chart data with signature counts
-      const sigDayMap: { [key: string]: number } = {};
-      allSigs.forEach((sig: any) => {
-        const d = safeToDate(sig.timestamp);
-        const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
-        if (date) sigDayMap[date] = (sigDayMap[date] || 0) + 1;
-      });
-
-      setMonthlyData(prev => {
-        const updated = [...prev];
-        Object.keys(sigDayMap).forEach(day => {
-          const index = updated.findIndex(p => p.name === day);
-          if (index >= 0) {
-            updated[index] = { ...updated[index], signatures: sigDayMap[day] };
-          } else {
-            updated.push({ name: day, sessions: 0, signatures: sigDayMap[day] });
-          }
-        });
-        return updated.sort((a, b) => a.name.localeCompare(b.name));
-      });
-
-      // Participation rate (Estimated target of 20 people per DDS * sessions)
-      // Since we don't have total employees, we use a simple trend or just show the total
+      // Participation rate
       setParticipationRate(allSigs.length); 
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
@@ -309,6 +282,148 @@ const DDS: React.FC = () => {
       unsubSignatures();
     };
   }, []);
+
+  const monthlyData = useMemo(() => {
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    
+    // Initialize day map for the entire month dynamically to show full tracking visual rhythm
+    const dayMap: { [key: string]: { name: string; sessions: number; signatures: number; idds: number } } = {};
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dayStr = i < 10 ? `0${i}` : `${i}`;
+      dayMap[dayStr] = { name: dayStr, sessions: 0, signatures: 0, idds: 0 };
+    }
+
+    // Populate sessions
+    allSessionsList.forEach((s: any) => {
+      const d = safeToDate(s.createdAt);
+      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
+      if (date && dayMap[date]) {
+        dayMap[date].sessions += 1;
+      }
+    });
+
+    // Populate signatures
+    allSignaturesList.forEach((sig: any) => {
+      const d = safeToDate(sig.timestamp);
+      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
+      if (date && dayMap[date]) {
+        dayMap[date].signatures += 1;
+      }
+    });
+
+    // Calculate IDDS logic for each day (Ratio proportional with base target 0.75)
+    const sessionsByDay: { [key: string]: any[] } = {};
+    allSessionsList.forEach((s: any) => {
+      const d = safeToDate(s.createdAt);
+      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
+      if (date) {
+        if (!sessionsByDay[date]) sessionsByDay[date] = [];
+        sessionsByDay[date].push(s);
+      }
+    });
+
+    Object.keys(dayMap).forEach((dayStr) => {
+      const sessions = sessionsByDay[dayStr] || [];
+      if (sessions.length === 0) {
+        dayMap[dayStr].idds = 0;
+      } else {
+        let iddsSum = 0;
+        sessions.forEach((s: any) => {
+          const sessionSigs = allSignaturesList.filter((sig: any) => sig.sessionId === s.id);
+          const total_participantes = sessionSigs.length;
+          const total_previsto = s.totalPrevisto || 9;
+          const shiftCompliance = total_participantes / total_previsto;
+
+          // Se realizado conforme o esperado (meta de 75%), IDDS é 1.0 (100%)
+          // Se abaixo da meta, razão proporcional com base na meta de 0.75
+          const idds = shiftCompliance >= 0.75 ? 1.0 : (shiftCompliance / 0.75);
+          iddsSum += idds;
+        });
+        
+        const dayAvgIdds = iddsSum / sessions.length;
+        dayMap[dayStr].idds = Math.round(dayAvgIdds * 100);
+      }
+    });
+
+    return Object.values(dayMap).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allSessionsList, allSignaturesList]);
+
+  const filteredMonthlyData = useMemo(() => {
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    
+    // Initialize day map for the entire month dynamically to show full tracking visual rhythm
+    const dayMap: { [key: string]: { name: string; sessions: number; signatures: number; idds: number } } = {};
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dayStr = i < 10 ? `0${i}` : `${i}`;
+      dayMap[dayStr] = { name: dayStr, sessions: 0, signatures: 0, idds: 0 };
+    }
+
+    // Filter sessions by selected group letter
+    const filteredSessions = allSessionsList.filter((s: any) => {
+      if (chartGroupFilter === 'all') return true;
+      return s.group?.toUpperCase() === chartGroupFilter.toUpperCase();
+    });
+
+    // Populate sessions
+    filteredSessions.forEach((s: any) => {
+      const d = safeToDate(s.createdAt);
+      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
+      if (date && dayMap[date]) {
+        dayMap[date].sessions += 1;
+      }
+    });
+
+    // Filter signatures belonging to the filtered sessions
+    const sessionIds = new Set(filteredSessions.map((s: any) => s.id));
+    const filteredSignatures = allSignaturesList.filter((sig: any) => sessionIds.has(sig.sessionId));
+
+    // Populate signatures
+    filteredSignatures.forEach((sig: any) => {
+      const d = safeToDate(sig.timestamp);
+      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
+      if (date && dayMap[date]) {
+        dayMap[date].signatures += 1;
+      }
+    });
+
+    // Calculate IDDS logic for each day (Ratio proportional with base target 0.75) for the filtered sessions
+    const sessionsByDay: { [key: string]: any[] } = {};
+    filteredSessions.forEach((s: any) => {
+      const d = safeToDate(s.createdAt);
+      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
+      if (date) {
+        if (!sessionsByDay[date]) sessionsByDay[date] = [];
+        sessionsByDay[date].push(s);
+      }
+    });
+
+    Object.keys(dayMap).forEach((dayStr) => {
+      const sessions = sessionsByDay[dayStr] || [];
+      if (sessions.length === 0) {
+        dayMap[dayStr].idds = 0;
+      } else {
+        let iddsSum = 0;
+        sessions.forEach((s: any) => {
+          const sessionSigs = filteredSignatures.filter((sig: any) => sig.sessionId === s.id);
+          const total_participantes = sessionSigs.length;
+          const total_previsto = s.totalPrevisto || 9;
+          const shiftCompliance = total_participantes / total_previsto;
+
+          // Se realizado conforme o esperado (meta de 75%), IDDS é 1.0 (100%)
+          // Se abaixo da meta, razão proporcional com base na meta de 0.75
+          const idds = shiftCompliance >= 0.75 ? 1.0 : (shiftCompliance / 0.75);
+          iddsSum += idds;
+        });
+        
+        const dayAvgIdds = iddsSum / sessions.length;
+        dayMap[dayStr].idds = Math.round(dayAvgIdds * 100);
+      }
+    });
+
+    return Object.values(dayMap).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allSessionsList, allSignaturesList, chartGroupFilter]);
 
   useEffect(() => {
     if (!activeSession || !auth.currentUser) {
@@ -408,6 +523,7 @@ const DDS: React.FC = () => {
           shift: newShift,
           group: newGroup,
           executor: newExecutor,
+          totalPrevisto: newTotalPrevisto,
           updatedAt: serverTimestamp()
         });
         setEditingSession(null);
@@ -441,6 +557,7 @@ const DDS: React.FC = () => {
           shift: newShift,
           group: newGroup,
           executor: newExecutor,
+          totalPrevisto: newTotalPrevisto,
           passcode: generatedPasscode,
           expiresAt: Timestamp.fromDate(expiresAt),
           createdAt: serverTimestamp(),
@@ -451,6 +568,7 @@ const DDS: React.FC = () => {
       setNewTitle('');
       setNewDescription('');
       setNewExecutor(profile?.displayName || '');
+      setNewTotalPrevisto(9);
       setSuccessMessage(editingSession ? 'Sessão atualizada com sucesso!' : 'Novo DDS criado com sucesso!');
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
@@ -476,6 +594,7 @@ const DDS: React.FC = () => {
     setNewShift(session.shift);
     setNewGroup(session.group);
     setNewExecutor(session.executor);
+    setNewTotalPrevisto(session.totalPrevisto || 9);
     
     // Scroll to form
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -530,6 +649,124 @@ const DDS: React.FC = () => {
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `dds_sessions/${sessionId}`);
+    }
+  };
+
+  const handleAIProcess = async () => {
+    if (!aiText) return;
+    setAiProcessing(true);
+    setAiError('');
+    setAiResult(null);
+
+    try {
+      const response = await fetch('/api/gemini/process-dds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: aiText })
+      });
+      const data = await response.json();
+      if (!data.success) {
+        setAiError(data.error || 'Erro desconhecido ao processar com a IA.');
+      } else {
+        setAiResult(data.result);
+        
+        // Match turn and group to prefill fields
+        const parsed = data.result;
+        if (parsed.metadados) {
+          setNewTitle(parsed.metadados.assunto || '');
+          setNewExecutor(parsed.metadados.executante || '');
+          
+          const rawTurno = parsed.metadados.turno || '';
+          if (rawTurno.toLowerCase().includes('1') || rawTurno.toLowerCase().includes('a')) {
+            setNewShift('Turno 1');
+          } else if (rawTurno.toLowerCase().includes('2') || rawTurno.toLowerCase().includes('b')) {
+            setNewShift('Turno 2');
+          } else if (rawTurno.toLowerCase().includes('3') || rawTurno.toLowerCase().includes('c')) {
+            setNewShift('Turno 3');
+          }
+
+          const letterMatch = rawTurno.match(/[A-E]/i);
+          if (letterMatch) {
+            setNewGroup(letterMatch[0].toUpperCase());
+          }
+        }
+        if (parsed.indicadores_diarios) {
+          setNewTotalPrevisto(parsed.indicadores_diarios.total_previsto || 9);
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setAiError('Falha na comunicação com o servidor de Inteligência Artificial.');
+    } finally {
+      setAiProcessing(false);
+    }
+  };
+
+  const handleAIConfirmAndSave = async () => {
+    if (!aiResult) return;
+    setLoading(true);
+    setError('');
+
+    try {
+      const parsed = aiResult;
+      const meta = parsed.metadados || {};
+      const generatedPasscode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date();
+      expiresAt.setHours(expiresAt.getHours() + 4);
+
+      // Create DDS session
+      const sessionDocRef = await addDoc(collection(db, 'dds_sessions'), {
+        title: meta.assunto || 'DDS Importado via IA',
+        description: `DDS processado via Inteligência Artificial. Área: ${meta.area || 'Qualidade / Enfardamento'}.`,
+        shift: newShift,
+        group: newGroup,
+        executor: meta.executante || 'Responsável',
+        totalPrevisto: parsed.indicadores_diarios?.total_previsto || 9,
+        passcode: generatedPasscode,
+        expiresAt: Timestamp.fromDate(expiresAt),
+        createdAt: serverTimestamp(),
+        createdBy: auth.currentUser?.uid
+      });
+
+      // Save imported signatures
+      const participants = parsed.participantes || [];
+      const batchPromises = participants.map(async (p: any, idx: number) => {
+        const sigDocId = `imported_${sessionDocRef.id}_${idx}_${Date.now()}`;
+        const ratingMap: Record<string, string> = {
+          'Bom': 'happy',
+          'Regular': 'neutral',
+          'Ruim': 'sad',
+          'Ausente': ''
+        };
+        const mappedMood = ratingMap[p.avaliacao] || 'happy';
+
+        if (p.avaliacao !== 'Ausente') {
+          return setDoc(doc(db, 'dds_signatures', sigDocId), {
+            sessionId: sessionDocRef.id,
+            sessionTitle: meta.assunto || 'DDS Importado via IA',
+            userId: `imported_user_${idx}`,
+            userName: p.nome || 'Colaborador',
+            timestamp: serverTimestamp(),
+            passcode: generatedPasscode,
+            mood: mappedMood,
+            evaluation: p.avaliacao || 'Bom'
+          });
+        }
+      });
+
+      await Promise.all(batchPromises);
+
+      setShowAIModal(false);
+      setAiText('');
+      setAiResult(null);
+      setSuccessMessage('DDS e participantes importados com sucesso via Inteligência Artificial!');
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3500);
+    } catch (err: any) {
+      console.error(err);
+      setError('Erro ao salvar o DDS e assinaturas processados.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -791,6 +1028,182 @@ const DDS: React.FC = () => {
             </motion.div>
           </motion.div>
         )}
+
+        {showAIModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 overflow-y-auto"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              className="bg-white rounded-[2rem] p-8 max-w-2xl w-full shadow-2xl relative border border-slate-100 my-8"
+            >
+              <button 
+                onClick={() => {
+                  setShowAIModal(false);
+                  setAiText('');
+                  setAiResult(null);
+                  setAiError('');
+                }}
+                className="absolute top-6 right-6 p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full hover:text-slate-700 transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3.5 mb-6">
+                <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 flex-shrink-0">
+                  <span className="text-xl">✨</span>
+                </div>
+                <div>
+                  <h3 className="text-xl font-extrabold text-slate-800 tracking-tight">Importação de DDS por Inteligência Artificial</h3>
+                  <p className="text-slate-400 text-xs font-semibold">Cole o relatório bruto ou anotações para análise instantânea</p>
+                </div>
+              </div>
+
+              {!aiResult ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Relatório ou Transcrição do DDS</label>
+                    <textarea
+                      rows={8}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3.5 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm leading-relaxed"
+                      placeholder="Cole informações brutas aqui... Exemplo:&#10;DDS realizado pelo Danillo Souza no turno B dia 25/08/2025. Assunto abordado foi sobre Cintos de Segurança e Movimentação de Cargas.&#10;Presentes e avaliação:&#10;- João Silva - Reação: Bom&#10;- Maria Oliveira - Reação: Regular&#10;- Pedro Santos - Ausente"
+                      value={aiText}
+                      onChange={(e) => setAiText(e.target.value)}
+                    />
+                  </div>
+
+                  {aiError && (
+                    <div className="p-4 bg-rose-50 rounded-xl border border-rose-100 text-rose-600 text-xs font-semibold">
+                      {aiError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3 mt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowAIModal(false)}
+                      className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold uppercase tracking-widest rounded-xl transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={aiProcessing || !aiText}
+                      onClick={handleAIProcess}
+                      className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold uppercase tracking-widest rounded-xl transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-emerald-100 cursor-pointer"
+                    >
+                      {aiProcessing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Processando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Analisar com IA</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="p-4 bg-emerald-50/60 rounded-2xl border border-emerald-100/50">
+                    <h4 className="text-emerald-800 font-bold text-xs uppercase tracking-wider mb-3">Informações Extraídas por IA</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs">
+                      <div>
+                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Tema / Assunto</span>
+                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.assunto || 'Não identificado'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Executante</span>
+                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.executante || 'Não identificado'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Turno / Escala</span>
+                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.turno || 'Não identificado'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Data</span>
+                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.data || 'Não identificado'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Área</span>
+                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.area || 'Não previsto'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Total Estimado</span>
+                        <span className="font-bold text-slate-800 block">{aiResult.indicadores_diarios?.total_previsto || 9} colaboradores</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                     <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
+                       <h4 className="text-slate-700 font-bold text-xs uppercase tracking-wider">Participantes e Reação</h4>
+                       <span className="bg-emerald-600/10 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
+                         {aiResult.participantes?.length || 0} Colaboradores
+                       </span>
+                     </div>
+                     
+                     <div className="max-h-48 overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-50">
+                       {aiResult.participantes && aiResult.participantes.map((p: any, idx: number) => {
+                         const colorMap: Record<string, string> = {
+                           'Bom': 'bg-emerald-50 text-emerald-700',
+                           'Regular': 'bg-amber-50 text-amber-700',
+                           'Ruim': 'bg-rose-50 text-rose-700',
+                           'Ausente': 'bg-slate-50 text-slate-500'
+                         };
+                         return (
+                           <div key={idx} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                             <span className="text-xs font-bold text-slate-700">{p.nome}</span>
+                             <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg ${colorMap[p.avaliacao] || 'bg-slate-100 text-slate-600'}`}>
+                               {p.avaliacao}
+                             </span>
+                           </div>
+                         );
+                       })}
+                     </div>
+                  </div>
+
+                  <div className="flex bg-slate-50 p-4 rounded-xl border border-slate-100 items-start justify-between">
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px]">IDDS do Dia Calculado</span>
+                      <span className="text-lg font-black text-emerald-600">
+                        {aiResult.indicadores_diarios ? Math.round(aiResult.indicadores_diarios.idds_do_dia * 100) : 100}%
+                      </span>
+                    </div>
+                    <div className="text-right text-xs">
+                       <span className="text-slate-400 font-semibold block uppercase tracking-wider text-[9px]">Aderência Mínima</span>
+                       <span className="font-extrabold text-slate-600 block">Meta: 75% da Equipe</span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-3 mt-4">
+                    <button
+                      type="button"
+                      onClick={() => setAiResult(null)}
+                      className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold uppercase tracking-widest rounded-xl transition-all cursor-pointer"
+                    >
+                      Voltar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAIConfirmAndSave}
+                      className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-emerald-100 cursor-pointer"
+                    >
+                      <span>Confirmar e Salvar DDS</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       <div>
@@ -807,13 +1220,25 @@ const DDS: React.FC = () => {
             animate={{ opacity: 1, x: 0 }}
             className="bg-slate-900 rounded-[2rem] p-8 text-white shadow-2xl h-full"
           >
-            <div className="flex items-center gap-3 mb-8">
-               <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center">
-                 <ShieldCheck className="w-6 h-6 text-white" />
+            <div className="flex items-center justify-between gap-2 mb-8">
+               <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <ShieldCheck className="w-6 h-6 text-white" />
+                  </div>
+                  <h3 className="text-xl font-bold tracking-tight">
+                    {editingSession ? 'Editar DDS' : 'Gestão de DDS'}
+                  </h3>
                </div>
-               <h3 className="text-xl font-bold tracking-tight">
-                 {editingSession ? 'Editar DDS' : 'Gestão de DDS'}
-               </h3>
+               
+               {!editingSession && (
+                 <button
+                   type="button"
+                   onClick={() => setShowAIModal(true)}
+                   className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl transition-all shadow-md shadow-emerald-900/30 active:scale-95 cursor-pointer flex-shrink-0"
+                 >
+                   <span>Mágico de IA ✨</span>
+                 </button>
+               )}
             </div>
 
             {editingSession && (
@@ -902,6 +1327,19 @@ const DDS: React.FC = () => {
                   placeholder="Tópicos abordados..."
                   value={newDescription || ''}
                   onChange={(e) => setNewDescription(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Total Previsto no Turno (Colaboradores)</label>
+                <input
+                  type="number"
+                  min={1}
+                  className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
+                  placeholder="ex: 15"
+                  value={newTotalPrevisto}
+                  onChange={(e) => setNewTotalPrevisto(Math.max(1, parseInt(e.target.value) || 1))}
+                  required
                 />
               </div>
 
@@ -1145,25 +1583,158 @@ const DDS: React.FC = () => {
               animate={{ opacity: 1, y: 0 }}
               className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm"
             >
-              <div className="flex items-center justify-between mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                  <div>
-                   <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Métrica Mensal (DDS vs Assinaturas)</h3>
-                   <p className="text-[9px] text-slate-400 font-medium">Histórico diário de realização e engajamento</p>
+                   <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Acompanhamento de Realização e KPIs</h3>
+                   <p className="text-[15px] font-extrabold text-slate-800">Métrica Mensal (DDS vs Assinaturas)</p>
                  </div>
-                 <div className="flex items-center gap-4">
-                   <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-emerald-600"></div>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">DDS</span>
-                   </div>
-                   <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-emerald-300"></div>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Assinaturas</span>
-                   </div>
+                 
+                 <div className="flex bg-slate-100 p-1 rounded-xl gap-1 self-start sm:self-auto">
+                   <button
+                     onClick={() => setChartMode('presence')}
+                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                       chartMode === 'presence'
+                         ? 'bg-white text-slate-900 shadow-sm'
+                         : 'text-slate-500 hover:text-slate-800'
+                     }`}
+                   >
+                     Presenças (Absoluto)
+                   </button>
+                   <button
+                     onClick={() => setChartMode('idds')}
+                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                       chartMode === 'idds'
+                         ? 'bg-emerald-600 text-white shadow-sm'
+                         : 'text-slate-500 hover:text-slate-800'
+                     }`}
+                   >
+                     IDDS (Índice de Desenvolvimento)
+                   </button>
                  </div>
               </div>
-              <div className="h-56 w-full">
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={224}>
-                  <BarChart data={monthlyData}>
+
+              {chartMode === 'presence' && (
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-600"></div>
+                    <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Sessões DDS</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-300"></div>
+                    <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Assinaturas/Presenças</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={256}>
+                  {chartMode === 'presence' ? (
+                    <BarChart data={monthlyData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis 
+                        dataKey="name" 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                      />
+                      <YAxis 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                      />
+                      <RechartsTooltip 
+                        cursor={{ fill: '#f8fafc' }}
+                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' }}
+                        itemStyle={{ fontWeight: 800, fontSize: '10px', textTransform: 'uppercase' }}
+                      />
+                      <Bar dataKey="sessions" fill="#059669" radius={[4, 4, 0, 0]} barSize={12} name="Sessões" />
+                      <Bar dataKey="signatures" fill="#34d399" radius={[4, 4, 0, 0]} barSize={12} name="Presenças" opacity={0.6} />
+                    </BarChart>
+                  ) : (
+                    <AreaChart data={monthlyData}>
+                      <defs>
+                        <linearGradient id="colorIdds" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#059669" stopOpacity={0.25}/>
+                          <stop offset="95%" stopColor="#059669" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis 
+                        dataKey="name" 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                      />
+                      <YAxis 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                        domain={[0, 100]}
+                        tickFormatter={(v) => `${v}%`}
+                      />
+                      <RechartsTooltip 
+                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' }}
+                        itemStyle={{ fontWeight: 800, fontSize: '10px', textTransform: 'uppercase' }}
+                        formatter={(value: any) => [`${value}%`, 'IDDS Diário']}
+                      />
+                      <ReferenceLine y={75} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: 'Meta: 75%', fill: '#d97706', fontSize: 10, position: 'top', fontWeight: 800 }} />
+                      <ReferenceLine y={100} stroke="#059669" strokeDasharray="4 4" label={{ value: 'Alvo: 100%', fill: '#047857', fontSize: 10, position: 'bottom', fontWeight: 800 }} />
+                      <Area type="monotone" dataKey="idds" stroke="#059669" strokeWidth={3} fillOpacity={1} fill="url(#colorIdds)" name="IDDS" />
+                    </AreaChart>
+                  )}
+                </ResponsiveContainer>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Replicated Chart: IDDS Filtering by Turn Letters */}
+          {isManager && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm mt-6"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                 <div>
+                   <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Filtro Setorizado (IDDS)</h3>
+                   <p className="text-[15px] font-extrabold text-slate-800">IDDS por Letra de Turno (Grupo)</p>
+                 </div>
+                 
+                 <div className="flex bg-slate-100 p-1 rounded-xl gap-1 self-start sm:self-auto flex-wrap">
+                   {['all', 'A', 'B', 'C', 'D', 'E'].map((letter) => (
+                     <button
+                       key={letter}
+                       onClick={() => setChartGroupFilter(letter)}
+                       className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                         chartGroupFilter === letter
+                           ? 'bg-emerald-600 text-white shadow-sm font-black'
+                           : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
+                       }`}
+                     >
+                       {letter === 'all' ? 'Todas' : `Letra ${letter}`}
+                     </button>
+                   ))}
+                 </div>
+              </div>
+
+              <div className="flex items-center gap-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-600"></div>
+                  <span className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
+                    Análise do Grupo: {chartGroupFilter === 'all' ? 'Todas as Letras' : `Letra ${chartGroupFilter}`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={256}>
+                  <AreaChart data={filteredMonthlyData}>
+                    <defs>
+                      <linearGradient id="colorFilteredIdds" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#059669" stopOpacity={0.25}/>
+                        <stop offset="95%" stopColor="#059669" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis 
                       dataKey="name" 
@@ -1171,15 +1742,22 @@ const DDS: React.FC = () => {
                       tickLine={false} 
                       tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
                     />
-                    <YAxis hide />
+                    <YAxis 
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                      domain={[0, 100]}
+                      tickFormatter={(v) => `${v}%`}
+                    />
                     <RechartsTooltip 
-                      cursor={{ fill: '#f8fafc' }}
                       contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' }}
                       itemStyle={{ fontWeight: 800, fontSize: '10px', textTransform: 'uppercase' }}
+                      formatter={(value: any) => [`${value}%`, `IDDS - ${chartGroupFilter === 'all' ? 'Geral' : `Letra ${chartGroupFilter}`}`]}
                     />
-                    <Bar dataKey="sessions" fill="#10b981" radius={[4, 4, 0, 0]} barSize={15} name="DDS" />
-                    <Bar dataKey="signatures" fill="#34d399" radius={[4, 4, 0, 0]} barSize={15} name="Presenças" opacity={0.6} />
-                  </BarChart>
+                    <ReferenceLine y={75} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: 'Meta: 75%', fill: '#d97706', fontSize: 10, position: 'top', fontWeight: 800 }} />
+                    <ReferenceLine y={100} stroke="#059669" strokeDasharray="4 4" label={{ value: 'Alvo: 100%', fill: '#047857', fontSize: 10, position: 'bottom', fontWeight: 800 }} />
+                    <Area type="monotone" dataKey="idds" stroke="#059669" strokeWidth={3} fillOpacity={1} fill="url(#colorFilteredIdds)" name="IDDS" />
+                  </AreaChart>
                 </ResponsiveContainer>
               </div>
             </motion.div>
