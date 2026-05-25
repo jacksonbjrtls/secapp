@@ -67,6 +67,78 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+
+  // Available coils in stock for real-time manual search autocomplete suggestions
+  const [availableCoils, setAvailableCoils] = useState<WireCoil[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionContainerRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (suggestionContainerRef.current && !suggestionContainerRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  useEffect(() => {
+    // Listen for unconsumed in-stock coils
+    const q = query(
+      collection(db, 'wire_coils'),
+      where('status', '==', 'received')
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const coils = snap.docs.map(d => ({ id: d.id, ...d.data() } as WireCoil));
+      setAvailableCoils(coils);
+    }, (err) => {
+      console.error("Error listening to available coils:", err);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const suggestions = useMemo(() => {
+    const term = qrInput.trim().toLowerCase();
+    if (!term) return [];
+    return availableCoils.filter(coil => 
+      coil.coilNumber.toLowerCase().includes(term)
+    ).slice(0, 8); // Display up to 8 matching recommendations
+  }, [qrInput, availableCoils]);
+
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [qrInput]);
+
+  const selectCoil = (coilNum: string) => {
+    searchCoil(coilNum);
+    setQrInput('');
+    setShowSuggestions(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (suggestions.length === 0) return;
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex(prev => (prev + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex(prev => (prev - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter') {
+      if (activeIndex >= 0 && activeIndex < suggestions.length) {
+        e.preventDefault();
+        const selected = suggestions[activeIndex];
+        selectCoil(selected.coilNumber);
+      }
+    } else if (e.key === 'Escape') {
+      setActiveIndex(-1);
+      setShowSuggestions(false);
+    }
+  };
   
   // History State
   const [recentConsumptions, setRecentConsumptions] = useState<WireCoil[]>([]);
@@ -319,9 +391,12 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
         
         {/* Left column: Scanner and Search (The Focus) */}
         <div className="xl:col-span-12">
-          <div className="bg-white p-8 md:p-12 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden transition-all hover:shadow-md">
-            <div className="absolute top-0 right-0 p-10 opacity-[0.03] pointer-events-none rotate-12 scale-150">
-               <Barcode className="w-64 h-64" />
+          <div className="bg-white p-8 md:p-12 rounded-3xl border border-slate-200 shadow-sm relative transition-all hover:shadow-md">
+            {/* Background pattern container to safely mask the rotate barcode icon without blocking overflow-visible for autocomplete */}
+            <div className="absolute inset-0 rounded-3xl overflow-hidden pointer-events-none z-0">
+              <div className="absolute top-0 right-0 p-10 opacity-[0.03] rotate-12 scale-150">
+                <Barcode className="w-64 h-64" />
+              </div>
             </div>
 
             <div className="relative z-10 max-w-4xl mx-auto">
@@ -345,17 +420,92 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
               </div>
 
               <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-4 relative group">
-                <div className="absolute left-6 top-1/2 -translate-y-1/2 opacity-30 group-focus-within:text-emerald-600 group-focus-within:opacity-100 transition-all">
-                  <Search className="w-8 h-8" />
+                <div ref={suggestionContainerRef} className="flex-1 relative">
+                  <div className="absolute left-6 top-1/2 -translate-y-1/2 opacity-30 group-focus-within:text-emerald-600 group-focus-within:opacity-100 transition-all z-10">
+                    <Search className="w-8 h-8" />
+                  </div>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={qrInput}
+                    onChange={(e) => {
+                      setQrInput(e.target.value);
+                      setShowSuggestions(true);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="ID da Bobina..."
+                    className="w-full pl-16 pr-8 py-7 bg-slate-50 border-2 border-transparent focus:border-emerald-500 focus:bg-white rounded-[2rem] text-3xl font-black font-mono outline-none transition-all shadow-inner text-slate-900"
+                  />
+                  
+                  {/* Suggestions Dropdown for matching unconsumed coils */}
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-3 bg-white border-2 border-emerald-500 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.25)] rounded-3xl z-50 overflow-hidden py-0 max-h-80 overflow-y-auto divide-y divide-slate-100 animate-fade-in ring-4 ring-emerald-50">
+                      <div className="sticky top-0 bg-slate-50 px-6 py-3 border-b border-slate-100 text-[11px] font-black uppercase tracking-wider text-slate-400 flex items-center justify-between z-10">
+                        <span className="flex items-center gap-1.5 text-emerald-800">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          Bobinas Em Estoque Disponíveis
+                        </span>
+                        <span>{suggestions.length} encontrada{suggestions.length > 1 ? 's' : ''}</span>
+                      </div>
+                      
+                      {suggestions.map((coil, idx) => {
+                        const isSelected = idx === activeIndex;
+                        return (
+                          <button
+                            key={coil.id}
+                            type="button"
+                            onClick={() => selectCoil(coil.coilNumber)}
+                            onMouseEnter={() => setActiveIndex(idx)}
+                            className={cn(
+                              "w-full text-left px-6 py-5 transition-all flex items-center justify-between gap-3 cursor-pointer",
+                              isSelected 
+                                ? "bg-emerald-50/90 text-slate-900 border-l-4 border-emerald-600 pl-5" 
+                                : "hover:bg-slate-50 text-slate-700"
+                            )}
+                          >
+                            <div className="flex items-center gap-4 min-w-0">
+                              <div className={cn(
+                                "w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors",
+                                isSelected 
+                                  ? "bg-emerald-600 text-white" 
+                                  : "bg-slate-100 text-slate-500"
+                              )}>
+                                <Barcode className="w-6 h-6" />
+                              </div>
+                              <div className="min-w-0">
+                                <span className={cn(
+                                  "font-mono text-2xl font-black block truncate leading-none",
+                                  isSelected ? "text-emerald-950" : "text-slate-900"
+                                )}>
+                                  {coil.coilNumber}
+                                </span>
+                                <span className="text-xs text-slate-400 font-semibold block mt-1.5">
+                                  Bitola: <span className="text-slate-700 font-extrabold">{coil.diameter?.toFixed(2)}mm</span> • Peso: <span className="text-slate-700 font-extrabold">{coil.weight?.toLocaleString()} kg</span>
+                                </span>
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-3 shrink-0">
+                              {coil.storageBayName && (
+                                <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-1.5 rounded-full uppercase tracking-wider">
+                                  {coil.storageBayName}
+                                </span>
+                              )}
+                              {isSelected ? (
+                                <span className="hidden sm:inline-block text-[10px] font-black text-emerald-600 bg-emerald-100 px-3 py-1.5 rounded-lg border border-emerald-200 uppercase tracking-widest animate-pulse">
+                                  Aperte Enter
+                                </span>
+                              ) : (
+                                <ChevronRight className="w-5 h-5 text-slate-300" />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                <input
-                  autoFocus
-                  type="text"
-                  value={qrInput}
-                  onChange={(e) => setQrInput(e.target.value)}
-                  placeholder="ID da Bobina..."
-                  className="flex-1 pl-16 pr-8 py-7 bg-slate-50 border-2 border-transparent focus:border-emerald-500 focus:bg-white rounded-[2rem] text-3xl font-black font-mono outline-none transition-all shadow-inner text-slate-900"
-                />
                 <button
                   type="submit"
                   disabled={loading}
