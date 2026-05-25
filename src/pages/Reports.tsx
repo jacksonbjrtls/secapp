@@ -1554,13 +1554,85 @@ const Reports: React.FC = () => {
                   <Smile className="w-4 h-4" />
                 </div>
                 <div>
-                  <h6 className="text-[11px] font-black text-emerald-950 uppercase tracking-widest mb-1">Avaliação e Dossiê para Promoção Administrativa</h6>
+                  <h6 className="text-[11px] font-black text-emerald-950 uppercase tracking-widest mb-1">AVALIAÇÃO DE COMPROMETIMENTO E DESEMPENHO</h6>
                   <p className="text-[11px] text-emerald-800 leading-normal">
                     Este colaborador possui **{selectedUserData.totalActions} interações ativas** no sistema. 
                     {selectedUserData.totalActions > 25 && ' Seu altíssimo volume de interações indica engajamento exemplar, liderança ativa e conformidade excepcional de dados, tornando-o altamente elegível para futuras promoções e posições de liderança.'}
                     {selectedUserData.totalActions <= 25 && selectedUserData.totalActions > 8 && ' Perfil dinâmico e participativo com boa consistência de registros cotidianos na fábrica. Ótimo desempenho global.'}
                     {selectedUserData.totalActions <= 8 && ' Volume inicial ou moderado de interações operacionais no sistema. Recomenda-se incentivar maior participação ativa nos Diálogos de Segurança e Rondas.'}
                   </p>
+                </div>
+              </div>
+
+              {/* Score Legend Explanation */}
+              <div className="bg-slate-50/55 border border-slate-200/60 p-5 rounded-2xl space-y-4">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  <div>
+                    <h6 className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Como Funciona a Pontuação de Comprometimento?</h6>
+                    <p className="text-[10px] text-slate-400 font-bold">Entenda como os pontos de engajamento são computados</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Regras de Pontuação */}
+                  <div className="space-y-2">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Distribuição de Pontos (+10 Pontos cada)</span>
+                    <ul className="space-y-2 text-xs font-semibold text-slate-600">
+                      <li className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                        <span><strong>Presença em DDS:</strong> Assinatura de Diálogo de Segurança</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                        <span><strong>Rondas Operacionais:</strong> Rondas de ativos finalizadas</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                        <span><strong>Relato de Desvios:</strong> Observações de segurança coletadas</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                        <span><strong>Checklist de Frota:</strong> Inspeções pré-operacionais</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
+                        <span><strong>Recebimento / Consumo:</strong> Lançamentos de bobina/peso</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shrink-0" />
+                        <span><strong>Auditoria de Qualidade:</strong> Checklists de linha realizados</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  {/* Níveis de Classificação */}
+                  <div className="space-y-2">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Níveis de Desempenho</span>
+                    <div className="space-y-2">
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-start gap-2">
+                        <span className="text-emerald-600 shrink-0 font-black">★</span>
+                        <div>
+                          <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Destaque Excepcional (&gt; 250 pontos)</p>
+                          <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Altíssimo engajamento, consistência e exemplaridade na segurança e operação.</p>
+                        </div>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-start gap-2">
+                        <span className="text-blue-500 shrink-0 font-black">✔</span>
+                        <div>
+                          <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Consistente e Ativo (90 - 250 pontos)</p>
+                          <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Participação regular e ativa nos processos rotineiros de conformidade.</p>
+                        </div>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-start gap-2">
+                        <span className="text-orange-400 shrink-0 font-black">▲</span>
+                        <div>
+                          <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Inserção / Moderado (&lt; 90 pontos)</p>
+                          <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Volume inicial de interações. Sugere-se maior envolvimento nos DDS e rondas.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </motion.div>

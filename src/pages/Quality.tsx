@@ -114,6 +114,7 @@ const Quality: React.FC = () => {
   const [templateToDelete, setTemplateToDelete] = useState<QualityChecklistTemplate | null>(null);
   const [sectorToDelete, setSectorToDelete] = useState<QualitySector | null>(null);
   const [optionSetToDelete, setOptionSetToDelete] = useState<any | null>(null);
+  const [lineToDelete, setLineToDelete] = useState<ProductionLine | null>(null);
 
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
@@ -140,11 +141,17 @@ const Quality: React.FC = () => {
     }, (error) => console.error("Error in quality_checklist_templates listener:", error));
 
     const unsubLines = onSnapshot(collection(db, 'production_lines'), (snapshot) => {
-      setLines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductionLine)).filter(l => l.active));
+      const activeLines = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as ProductionLine))
+        .filter(l => l.active);
+      activeLines.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      setLines(activeLines);
     }, (error) => console.error("Error in production_lines listener (quality):", error));
 
     const unsubSectors = onSnapshot(collection(db, 'quality_sectors'), (snapshot) => {
-      setSectors(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualitySector)));
+      const activeSectors = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualitySector));
+      activeSectors.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      setSectors(activeSectors);
     }, (error) => console.error("Error in quality_sectors listener:", error));
 
     const unsubOptionSets = onSnapshot(collection(db, 'quality_checklist_options'), (snapshot) => {
@@ -1613,16 +1620,24 @@ const Quality: React.FC = () => {
                       <h3 className="font-black text-slate-900">{line.name}</h3>
                       <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded">Ativa</span>
                     </div>
-                    <button 
-                      onClick={() => {
-                        setEditingLine(line);
-                        setNewLine(line);
-                        setIsAddingLine(true);
-                      }}
-                      className="p-2 text-slate-300 hover:text-emerald-600 transition-all opacity-0 group-hover:opacity-100"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex gap-1">
+                      <button 
+                        onClick={() => {
+                          setEditingLine(line);
+                          setNewLine(line);
+                          setIsAddingLine(true);
+                        }}
+                        className="p-2 text-slate-300 hover:text-emerald-600 transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => setLineToDelete(line)}
+                        className="p-2 text-slate-300 hover:text-rose-600 transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2249,6 +2264,26 @@ const Quality: React.FC = () => {
             setSectorToDelete(null);
           } catch (err) {
             handleFirestoreError(err, OperationType.DELETE, 'quality_sectors');
+          }
+        }}
+      />
+
+      {/* Line Deletion Confirmation */}
+      <ConfirmationModal
+        isOpen={!!lineToDelete}
+        onClose={() => setLineToDelete(null)}
+        title="Excluir Linha?"
+        message={`Deseja realmente excluir permanentemente a linha de produção "${lineToDelete?.name}"? Isso pode remover a linha das visualizações ativas.`}
+        type="warning"
+        confirmText="Sim, Excluir"
+        showConfirmButton={true}
+        onConfirm={async () => {
+          if (!lineToDelete) return;
+          try {
+            await deleteDoc(doc(db, 'production_lines', lineToDelete.id));
+            setLineToDelete(null);
+          } catch (err) {
+            handleFirestoreError(err, OperationType.DELETE, 'production_lines');
           }
         }}
       />

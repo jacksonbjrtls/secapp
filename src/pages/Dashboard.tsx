@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, query, limit, getDocs, orderBy, onSnapshot, where, Timestamp } from 'firebase/firestore';
+import { collection, query, limit, getDocs, orderBy, onSnapshot, where, Timestamp, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -52,6 +52,27 @@ import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from 
 
 const Dashboard: React.FC = () => {
   const { isManager } = useAuth();
+  const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
+    dds: true,
+    forklifts: true,
+    wires: true,
+    quality: true,
+    schedule: true,
+    operational_routes: true,
+    safety_observations: true,
+    consumables: true,
+  });
+
+  const tabsList = useMemo(() => [
+    { id: 'dds', moduleKey: 'dds', label: 'DDS Online', icon: Shield },
+    { id: 'forklifts', moduleKey: 'forklifts', label: 'Empilhadeiras', icon: Truck },
+    { id: 'quality', moduleKey: 'quality', label: 'Qualidade', icon: ClipboardCheck },
+    { id: 'wire', moduleKey: 'wires', label: 'Arames', icon: LayersIcon },
+    { id: 'operational_routes', moduleKey: 'operational_routes', label: 'Rota Operacional', icon: Activity },
+    { id: 'safety_observations', moduleKey: 'safety_observations', label: 'Observações de Segurança', icon: ShieldAlert },
+    { id: 'consumables', moduleKey: 'consumables', label: 'Controle de Insumos', icon: Box }
+  ] as const, []);
+
   const [activeTab, setActiveTab ] = useState<'dds' | 'forklifts' | 'quality' | 'wire' | 'operational_routes' | 'safety_observations' | 'consumables'>('dds');
   const [routesSubmissions, setRoutesSubmissions ] = useState<any[]>([]);
   const [routesTemplates, setRoutesTemplates ] = useState<any[]>([]);
@@ -99,6 +120,31 @@ const Dashboard: React.FC = () => {
 
   const [ddsStatus, setDdsStatus] = useState<Record<string, boolean>>({});
   const [expectedDuty, setExpectedDuty] = useState<{ shift: Shift, group: Group } | null>(null);
+
+  useEffect(() => {
+    const unsubModules = onSnapshot(doc(db, 'system_config', 'modules'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setActiveModules(prev => ({
+          ...prev,
+          ...data
+        }));
+      }
+    }, (error) => {
+      console.error('Error listening to modules configuration in Dashboard:', error);
+    });
+    return () => unsubModules();
+  }, []);
+
+  useEffect(() => {
+    const currentTabMap = tabsList.find(t => t.id === activeTab);
+    if (currentTabMap && activeModules[currentTabMap.moduleKey] === false) {
+      const firstEnabled = tabsList.find(t => activeModules[t.moduleKey] !== false);
+      if (firstEnabled) {
+        setActiveTab(firstEnabled.id);
+      }
+    }
+  }, [activeModules, activeTab, tabsList]);
 
   useEffect(() => {
     if (!isManager) {
@@ -713,13 +759,19 @@ const Dashboard: React.FC = () => {
             onClick={() => setShowTabMenu(!showTabMenu)}
             className="flex items-center gap-3 px-5 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black uppercase tracking-tight text-slate-700 shadow-sm hover:border-emerald-200 transition-all active:scale-95"
           >
-            {activeTab === 'dds' && <><Shield className="w-5 h-5 text-emerald-600" /> DDS Online</>}
-            {activeTab === 'forklifts' && <><Truck className="w-5 h-5 text-emerald-600" /> Empilhadeiras</>}
-            {activeTab === 'quality' && <><ClipboardCheck className="w-5 h-5 text-emerald-600" /> Qualidade</>}
-            {activeTab === 'wire' && <><LayersIcon className="w-5 h-5 text-emerald-600" /> Arames</>}
-            {activeTab === 'operational_routes' && <><Activity className="w-5 h-5 text-emerald-600" /> Rota Operacional</>}
-            {activeTab === 'safety_observations' && <><ShieldAlert className="w-5 h-5 text-rose-600" /> Obs. Segurança</>}
-            {activeTab === 'consumables' && <><Box className="w-5 h-5 text-emerald-600" /> Insumos</>}
+            {(() => {
+              const currentTabInfo = tabsList.find(t => t.id === activeTab);
+              if (currentTabInfo) {
+                const IconComponent = currentTabInfo.icon;
+                return (
+                  <>
+                    <IconComponent className={cn("w-5 h-5", activeTab === 'safety_observations' ? "text-rose-600" : "text-emerald-600")} /> 
+                    {currentTabInfo.label}
+                  </>
+                );
+              }
+              return 'Selecione';
+            })()}
             <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTabMenu && "rotate-180")} />
           </button>
 
@@ -736,26 +788,20 @@ const Dashboard: React.FC = () => {
                   exit={{ opacity: 0, y: 10, scale: 0.95 }}
                   className="absolute left-0 mt-2 w-64 bg-white border border-slate-100 rounded-2xl shadow-2xl z-20 overflow-hidden p-1.5"
                 >
-                  {[
-                    { id: 'dds', label: 'DDS Online', icon: Shield },
-                    { id: 'forklifts', label: 'Empilhadeiras', icon: Truck },
-                    { id: 'quality', label: 'Qualidade', icon: ClipboardCheck },
-                    { id: 'wire', label: 'Arames', icon: LayersIcon },
-                    { id: 'operational_routes', label: 'Rota Operacional', icon: Activity },
-                    { id: 'safety_observations', label: 'Observações de Segurança', icon: ShieldAlert },
-                    { id: 'consumables', label: 'Controle de Insumos', icon: Box }
-                  ].map((tab) => (
-                    <button
-                      key={tab.id}
-                      onClick={() => { setActiveTab(tab.id as any); setShowTabMenu(false); }}
-                      className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
-                        activeTab === tab.id ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
-                      )}
-                    >
-                      <tab.icon className="w-4 h-4" /> {tab.label}
-                    </button>
-                  ))}
+                  {tabsList
+                    .filter(tab => activeModules[tab.moduleKey] !== false)
+                    .map((tab) => (
+                      <button
+                        key={tab.id}
+                        onClick={() => { setActiveTab(tab.id as any); setShowTabMenu(false); }}
+                        className={cn(
+                          "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
+                          activeTab === tab.id ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                        )}
+                      >
+                        <tab.icon className="w-4 h-4" /> {tab.label}
+                      </button>
+                    ))}
                 </motion.div>
               </>
             )}
