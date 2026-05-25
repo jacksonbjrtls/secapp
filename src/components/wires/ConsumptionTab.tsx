@@ -421,8 +421,8 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
 
               <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-4 relative group">
                 <div ref={suggestionContainerRef} className="flex-1 relative">
-                  <div className="absolute left-6 top-1/2 -translate-y-1/2 opacity-30 group-focus-within:text-emerald-600 group-focus-within:opacity-100 transition-all z-10">
-                    <Search className="w-8 h-8" />
+                  <div className="absolute left-4 md:left-6 top-1/2 -translate-y-1/2 opacity-30 group-focus-within:text-emerald-600 group-focus-within:opacity-100 transition-all z-10">
+                    <Search className="w-5 h-5 md:w-8 h-8" />
                   </div>
                   <input
                     autoFocus
@@ -435,13 +435,13 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                     onFocus={() => setShowSuggestions(true)}
                     onKeyDown={handleKeyDown}
                     placeholder="ID da Bobina..."
-                    className="w-full pl-16 pr-8 py-7 bg-slate-50 border-2 border-transparent focus:border-emerald-500 focus:bg-white rounded-[2rem] text-3xl font-black font-mono outline-none transition-all shadow-inner text-slate-900"
+                    className="w-full pl-12 md:pl-16 pr-6 md:pr-8 py-4 md:py-7 bg-slate-50 border-2 border-transparent focus:border-emerald-500 focus:bg-white rounded-2xl md:rounded-[2rem] text-lg sm:text-2xl md:text-3xl font-black font-mono outline-none transition-all shadow-inner text-slate-900"
                   />
                   
                   {/* Suggestions Dropdown for matching unconsumed coils */}
                   {showSuggestions && suggestions.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-3 bg-white border-2 border-emerald-500 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.25)] rounded-3xl z-50 overflow-hidden py-0 max-h-80 overflow-y-auto divide-y divide-slate-100 animate-fade-in ring-4 ring-emerald-50">
-                      <div className="sticky top-0 bg-slate-50 px-6 py-3 border-b border-slate-100 text-[11px] font-black uppercase tracking-wider text-slate-400 flex items-center justify-between z-10">
+                    <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-emerald-500 shadow-[0_15px_40px_-10px_rgba(0,0,0,0.2)] rounded-2xl md:rounded-3xl z-50 overflow-hidden py-0 max-h-64 md:max-h-80 overflow-y-auto divide-y divide-slate-100 animate-fade-in ring-4 ring-emerald-50">
+                      <div className="sticky top-0 bg-slate-50 px-4 md:px-6 py-2.5 md:py-3 border-b border-slate-100 text-[10px] md:text-[11px] font-black uppercase tracking-wider text-slate-400 flex items-center justify-between z-10">
                         <span className="flex items-center gap-1.5 text-emerald-800">
                           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                           Bobinas Em Estoque Disponíveis
@@ -458,37 +458,37 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                             onClick={() => selectCoil(coil.coilNumber)}
                             onMouseEnter={() => setActiveIndex(idx)}
                             className={cn(
-                              "w-full text-left px-6 py-5 transition-all flex items-center justify-between gap-3 cursor-pointer",
+                              "w-full text-left px-4 md:px-6 py-3.5 md:py-5 transition-all flex items-center justify-between gap-3 cursor-pointer",
                               isSelected 
-                                ? "bg-emerald-50/90 text-slate-900 border-l-4 border-emerald-600 pl-5" 
+                                ? "bg-emerald-50/90 text-slate-900 border-l-4 border-emerald-600 pl-3 md:pl-5" 
                                 : "hover:bg-slate-50 text-slate-700"
                             )}
                           >
-                            <div className="flex items-center gap-4 min-w-0">
+                            <div className="flex items-center gap-3 md:gap-4 min-w-0">
                               <div className={cn(
-                                "w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors",
+                                "w-8 h-8 md:w-11 md:h-11 rounded-lg md:rounded-xl flex items-center justify-center shrink-0 transition-colors",
                                 isSelected 
                                   ? "bg-emerald-600 text-white" 
                                   : "bg-slate-100 text-slate-500"
                               )}>
-                                <Barcode className="w-6 h-6" />
+                                <Barcode className="w-4 h-4 md:w-6 h-6" />
                               </div>
                               <div className="min-w-0">
                                 <span className={cn(
-                                  "font-mono text-2xl font-black block truncate leading-none",
+                                  "font-mono text-base sm:text-xl md:text-2xl font-black block truncate leading-none",
                                   isSelected ? "text-emerald-950" : "text-slate-900"
                                 )}>
                                   {coil.coilNumber}
                                 </span>
-                                <span className="text-xs text-slate-400 font-semibold block mt-1.5">
+                                <span className="text-[10px] sm:text-xs text-slate-500 font-semibold block mt-1 md:mt-1.5">
                                   Bitola: <span className="text-slate-700 font-extrabold">{coil.diameter?.toFixed(2)}mm</span> • Peso: <span className="text-slate-700 font-extrabold">{coil.weight?.toLocaleString()} kg</span>
                                 </span>
                               </div>
                             </div>
                             
-                            <div className="flex items-center gap-3 shrink-0">
+                            <div className="flex items-center gap-2 md:gap-3 shrink-0">
                               {coil.storageBayName && (
-                                <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-1.5 rounded-full uppercase tracking-wider">
+                                <span className="text-[8px] sm:text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 md:px-3 py-1 md:py-1.5 rounded-full uppercase tracking-wider">
                                   {coil.storageBayName}
                                 </span>
                               )}
@@ -497,7 +497,7 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                                   Aperte Enter
                                 </span>
                               ) : (
-                                <ChevronRight className="w-5 h-5 text-slate-300" />
+                                <ChevronRight className="w-4 h-4 md:w-5 h-5 text-slate-300" />
                               )}
                             </div>
                           </button>
@@ -509,12 +509,12 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-10 py-6 sm:py-0 bg-slate-900 text-white rounded-[2rem] font-black text-xl shadow-xl hover:shadow-2xl transition-all disabled:opacity-50 active:scale-95 flex items-center justify-center gap-3"
+                  className="px-6 md:px-10 py-4 sm:py-0 bg-slate-900 text-white rounded-2xl md:rounded-[2rem] font-black text-sm sm:text-lg md:text-xl shadow-xl hover:shadow-2xl transition-all disabled:opacity-50 active:scale-95 flex items-center justify-center gap-2 md:gap-3 shrink-0"
                 >
-                  {loading ? <Loader2 className="w-7 h-7 animate-spin" /> : (
+                  {loading ? <Loader2 className="w-5 h-5 md:w-7 h-7 animate-spin" /> : (
                     <>
                       Confirmar
-                      <ChevronRight className="w-6 h-6" />
+                      <ChevronRight className="w-4 h-4 md:w-6 h-6" />
                     </>
                   )}
                 </button>
