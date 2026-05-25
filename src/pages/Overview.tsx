@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, Timestamp, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { safeToDate, cn } from '../lib/utils';
@@ -53,6 +53,33 @@ export const Overview: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
+
+  // Active modules state
+  const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
+    dds: true,
+    forklifts: true,
+    wires: true,
+    quality: true,
+    schedule: true,
+    operational_routes: true,
+    safety_observations: true,
+    consumables: true,
+  });
+
+  useEffect(() => {
+    const unsubModules = onSnapshot(doc(db, 'system_config', 'modules'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setActiveModules(prev => ({
+          ...prev,
+          ...data
+        }));
+      }
+    }, (error) => {
+      console.error('Error listening to modules configuration in Overview:', error);
+    });
+    return () => unsubModules();
+  }, []);
 
   // Clock tick to keep current shift real-time
   useEffect(() => {
@@ -597,84 +624,96 @@ export const Overview: React.FC = () => {
 
     // 1. DDS factor (30 pts weight)
     // -10 pts per missing shift talk so far
-    const currentShiftIndex = ['Turno 1', 'Turno 2', 'Turno 3'].indexOf(activeShift);
-    const shiftsToCount = ['Turno 1', 'Turno 2', 'Turno 3'].slice(0, currentShiftIndex + 1);
-    let missingDds = 0;
-    shiftsToCount.forEach(shift => {
-      const matchStatus = ddsTodayStats.shiftStatus.find(s => s.shift === shift);
-      if (matchStatus && !matchStatus.applied) {
-        missingDds++;
-        score -= 10;
-      }
-    });
+    if (activeModules.dds !== false) {
+      const currentShiftIndex = ['Turno 1', 'Turno 2', 'Turno 3'].indexOf(activeShift);
+      const shiftsToCount = ['Turno 1', 'Turno 2', 'Turno 3'].slice(0, currentShiftIndex + 1);
+      let missingDds = 0;
+      shiftsToCount.forEach(shift => {
+        const matchStatus = ddsTodayStats.shiftStatus.find(s => s.shift === shift);
+        if (matchStatus && !matchStatus.applied) {
+          missingDds++;
+          score -= 10;
+        }
+      });
+    }
 
-    // 2. Quality Omissions factor (25 pts weight)
-    // -5 per omitted checklist
-    score -= (qualityTodayStats.omissionsCount * 5);
+    if (activeModules.quality !== false) {
+      // 2. Quality Omissions factor (25 pts weight)
+      // -5 per omitted checklist
+      score -= (qualityTodayStats.omissionsCount * 5);
 
-    // 3. Quality Non Conformities factor (15 pts weight)
-    // -3 per failure detected
-    score -= (qualityTodayStats.nonConformitiesCount * 2);
+      // 3. Quality Non Conformities factor (15 pts weight)
+      // -3 per failure detected
+      score -= (qualityTodayStats.nonConformitiesCount * 2);
+    }
 
-    // 4. Forklift Blockages / Non Inspections factor (30 pts weight)
-    // -5 per uninspected forklift in active model
-    const missingForkInspections = forkliftTodayStats.reports.filter(r => !r.inspected).length;
-    score -= (missingForkInspections * 3);
-    // -10 per blocked layout due to safety danger
-    score -= (forkliftTodayStats.blockedCount * 10);
+    if (activeModules.forklifts !== false) {
+      // 4. Forklift Blockages / Non Inspections factor (30 pts weight)
+      // -5 per uninspected forklift in active model
+      const missingForkInspections = forkliftTodayStats.reports.filter(r => !r.inspected).length;
+      score -= (missingForkInspections * 3);
+      // -10 per blocked layout due to safety danger
+      score -= (forkliftTodayStats.blockedCount * 10);
+    }
 
-    // 5. Safety observation risk factor
-    // -5 per risk/desvio reported today
-    score -= (safetyOverviewStats.riskToday * 5);
+    if (activeModules.safety_observations !== false) {
+      // 5. Safety observation risk factor
+      // -5 per risk/desvio reported today
+      score -= (safetyOverviewStats.riskToday * 5);
+    }
 
     return Math.max(0, Math.min(100, score));
-  }, [activeShift, ddsTodayStats, qualityTodayStats, forkliftTodayStats, safetyOverviewStats]);
+  }, [activeShift, activeModules, ddsTodayStats, qualityTodayStats, forkliftTodayStats, safetyOverviewStats]);
 
   // Combined Non-Conformities list (Quality failing checklist submissions + Forklift checklists failing/anormal)
   const combinedNonConformities = useMemo(() => {
     const list: any[] = [];
 
-    // 1. Quality non-conformities
-    qualityTodayStats.failingSubmissions.forEach(sub => {
-      list.push({ ...sub, type: 'quality' });
-    });
+    // 1. Quality non-conformities - ONLY IF quality is enabled
+    if (activeModules.quality !== false) {
+      qualityTodayStats.failingSubmissions.forEach(sub => {
+        list.push({ ...sub, type: 'quality' });
+      });
+    }
 
-    // 2. Forklift non-conformities
-    forkliftChecklists.forEach(c => {
-      const created = safeToDate(c.timestamp);
-      if (created && created >= todayStart && created <= todayEnd && c.status === 'anormal') {
-        let subFails = 0;
-        const anomalies: string[] = [];
-        if (c.itemResults) {
-          Object.entries(c.itemResults).forEach(([itemId, res]: [string, any]) => {
-            if (res && res.status === 'anormal') {
-              subFails++;
-              const item = forkliftCheckItems.find(i => i.id === itemId);
-              anomalies.push(item?.name || 'Não conformidade');
-            }
-          });
-        }
+    // 2. Forklift non-conformities - ONLY IF forklifts is enabled
+    if (activeModules.forklifts !== false) {
+      forkliftChecklists.forEach(c => {
+        const created = safeToDate(c.timestamp);
+        if (created && created >= todayStart && created <= todayEnd && c.status === 'anormal') {
+          let subFails = 0;
+          const anomalies: string[] = [];
+          if (c.itemResults) {
+            Object.entries(c.itemResults).forEach(([itemId, res]: [string, any]) => {
+              if (res && res.status === 'anormal') {
+                subFails++;
+                const item = forkliftCheckItems.find(i => i.id === itemId);
+                anomalies.push(item?.name || 'Não conformidade');
+              }
+            });
+          }
 
-        if (subFails > 0) {
-          list.push({
-            id: c.id,
-            type: 'forklift',
-            templateName: `Empilhadeira #${c.forkliftNumber}`,
-            sector: 'Frota',
-            lineName: 'Pátio / Logística',
-            operator: c.conductorName || 'Operador',
-            shift: c.shift || '---',
-            time: created.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'}),
-            failuresCount: subFails,
-            anomalies: anomalies
-          });
+          if (subFails > 0) {
+            list.push({
+              id: c.id,
+              type: 'forklift',
+              templateName: `Empilhadeira #${c.forkliftNumber}`,
+              sector: 'Frota',
+              lineName: 'Pátio / Logística',
+              operator: c.conductorName || 'Operador',
+              shift: c.shift || '---',
+              time: created.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'}),
+              failuresCount: subFails,
+              anomalies: anomalies
+            });
+          }
         }
-      }
-    });
+      });
+    }
 
     // Sort by time descending
     return list.sort((a, b) => b.time.localeCompare(a.time));
-  }, [qualityTodayStats.failingSubmissions, forkliftChecklists, forkliftCheckItems, todayStart, todayEnd]);
+  }, [activeModules.quality, activeModules.forklifts, qualityTodayStats.failingSubmissions, forkliftChecklists, forkliftCheckItems, todayStart, todayEnd]);
 
   if (loading) {
     return (
@@ -822,545 +861,578 @@ export const Overview: React.FC = () => {
         <div className="xl:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-6">
 
           {/* Card 1: DDS Status Check */}
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-blue-100 group">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-md">Módulo DDS</span>
-                <h3 className="text-lg font-black text-slate-900 mt-2">DDS Online hoje</h3>
+          {activeModules.dds !== false && (
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-blue-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-md">Módulo DDS</span>
+                  <h3 className="text-lg font-black text-slate-900 mt-2">DDS Online hoje</h3>
+                </div>
+                <div className="w-12 h-12 bg-blue-50/50 text-blue-600 rounded-2xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
               </div>
-              <div className="w-12 h-12 bg-blue-50/50 text-blue-600 rounded-2xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
-                <ShieldAlert className="w-6 h-6" />
+
+              <div className="my-5 flex items-baseline gap-2">
+                <span className="text-4xl font-black text-slate-900 tracking-tight">{ddsTodayStats.totalApplied}</span>
+                <span className="text-slate-400 font-bold text-sm">/ {ddsTodayStats.totalExpected} turnos aplicados</span>
+              </div>
+
+              <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-100 text-slate-400">
+                <span className="font-bold flex items-center gap-1.5 transition-colors">
+                  <User className="w-3.5 h-3.5 text-blue-500" />
+                  {ddsTodayStats.totalSignaturesToday} assinaturas registradas hoje
+                </span>
               </div>
             </div>
-
-            <div className="my-5 flex items-baseline gap-2">
-              <span className="text-4xl font-black text-slate-900 tracking-tight">{ddsTodayStats.totalApplied}</span>
-              <span className="text-slate-400 font-bold text-sm">/ {ddsTodayStats.totalExpected} turnos aplicados</span>
-            </div>
-
-            <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-100 text-slate-400">
-              <span className="font-bold flex items-center gap-1.5 transition-colors">
-                <User className="w-3.5 h-3.5 text-blue-500" />
-                {ddsTodayStats.totalSignaturesToday} assinaturas registradas hoje
-              </span>
-            </div>
-          </div>
+          )}
 
           {/* Card 2: Wire movements status */}
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-indigo-100 group">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded-md">Módulo Arames</span>
-                <h3 className="text-lg font-black text-slate-900 mt-2">Recebidos & Consumos</h3>
+          {activeModules.wires !== false && (
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-indigo-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded-md">Módulo Arames</span>
+                  <h3 className="text-lg font-black text-slate-900 mt-2">Recebidos & Consumos</h3>
+                </div>
+                <div className="w-12 h-12 bg-indigo-50/50 text-indigo-600 rounded-2xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <Barcode className="w-6 h-6" />
+                </div>
               </div>
-              <div className="w-12 h-12 bg-indigo-50/50 text-indigo-600 rounded-2xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
-                <Barcode className="w-6 h-6" />
-              </div>
-            </div>
 
-            <div className="my-5 grid grid-cols-2 gap-2 divide-x divide-slate-100">
-              <div className="space-y-1">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recebido</p>
-                <p className="text-xl font-black text-slate-950 truncate leading-none">{wireTodayStats.receivedWeight.toLocaleString()} <span className="text-[10px] text-slate-400 font-bold uppercase">kg</span></p>
-                <p className="text-xs text-slate-400 font-bold">{wireTodayStats.receivedCount} bobinas</p>
+              <div className="my-5 grid grid-cols-2 gap-2 divide-x divide-slate-100">
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recebido</p>
+                  <p className="text-xl font-black text-slate-950 truncate leading-none">{wireTodayStats.receivedWeight.toLocaleString()} <span className="text-[10px] text-slate-400 font-bold uppercase">kg</span></p>
+                  <p className="text-xs text-slate-400 font-bold">{wireTodayStats.receivedCount} bobinas</p>
+                </div>
+                <div className="pl-4 space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Consumido</p>
+                  <p className="text-xl font-black text-slate-950 text-right truncate leading-none">{wireTodayStats.consumedWeight.toLocaleString()} <span className="text-[10px] text-slate-400 font-bold uppercase">kg</span></p>
+                  <p className="text-xs text-slate-400 font-bold text-right">{wireTodayStats.consumedCount} bobinas dadas baixa</p>
+                </div>
               </div>
-              <div className="pl-4 space-y-1">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Consumido</p>
-                <p className="text-xl font-black text-slate-950 text-right truncate leading-none">{wireTodayStats.consumedWeight.toLocaleString()} <span className="text-[10px] text-slate-400 font-bold uppercase">kg</span></p>
-                <p className="text-xs text-slate-400 font-bold text-right">{wireTodayStats.consumedCount} bobinas dadas baixa</p>
-              </div>
-            </div>
 
-            <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-100 text-slate-400">
-              <span className="font-bold flex items-center gap-1.5">
-                <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
-                {wireTodayStats.batchesToday.length} Notas Fiscais processadas hoje
-              </span>
+              <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-100 text-slate-400">
+                <span className="font-bold flex items-center gap-1.5">
+                  <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
+                  {wireTodayStats.batchesToday.length} Notas Fiscais processadas hoje
+                </span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Card 3: Quality status check */}
-          <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-100 group">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Qualidade</span>
-                <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Auditorias de Linha</h3>
+          {activeModules.quality !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Qualidade</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Auditorias de Linha</h3>
+                </div>
+                <div className="w-10 h-10 bg-emerald-50/50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <ClipboardCheck className="w-5 h-5" />
+                </div>
               </div>
-              <div className="w-10 h-10 bg-emerald-50/50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
-                <ClipboardCheck className="w-5 h-5" />
-              </div>
-            </div>
 
-            <div className="my-4 grid grid-cols-3 gap-1 divide-x divide-slate-100">
-              <div className="space-y-0.5">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Enviadas</p>
-                <p className="text-xl font-black text-slate-900 leading-tight">{qualityTodayStats.totalInspectionsToday}</p>
+              <div className="my-4 grid grid-cols-3 gap-1 divide-x divide-slate-100">
+                <div className="space-y-0.5">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Enviadas</p>
+                  <p className="text-xl font-black text-slate-900 leading-tight">{qualityTodayStats.totalInspectionsToday}</p>
+                </div>
+                <div className="pl-2 space-y-0.5">
+                  <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Feitas</p>
+                  <p className="text-xl font-black text-emerald-600 leading-tight">{qualityTodayStats.doneCount}</p>
+                </div>
+                <div className="pl-2 space-y-0.5 text-right">
+                  <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Pendentes</p>
+                  <p className={cn(
+                    "text-xl font-black leading-tight",
+                    qualityTodayStats.pendingCount > 0 ? "text-amber-600" : "text-slate-400"
+                  )}>
+                    {qualityTodayStats.pendingCount}
+                  </p>
+                </div>
               </div>
-              <div className="pl-2 space-y-0.5">
-                <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Feitas</p>
-                <p className="text-xl font-black text-emerald-600 leading-tight">{qualityTodayStats.doneCount}</p>
-              </div>
-              <div className="pl-2 space-y-0.5 text-right">
-                <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Pendentes</p>
-                <p className={cn(
-                  "text-xl font-black leading-tight",
-                  qualityTodayStats.pendingCount > 0 ? "text-amber-600" : "text-slate-400"
-                )}>
-                  {qualityTodayStats.pendingCount}
-                </p>
-              </div>
-            </div>
 
-            <div className="flex items-center pt-3 border-t border-slate-100">
-              <span className="w-full text-center font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg flex items-center justify-center gap-1 text-[10px]">
-                <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                {qualityTodayStats.omissionsCount} {qualityTodayStats.omissionsCount === 1 ? 'omissão registrada' : 'omissões registradas'} hoje
-              </span>
+              <div className="flex items-center pt-3 border-t border-slate-100">
+                <span className="w-full text-center font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg flex items-center justify-center gap-1 text-[10px]">
+                  <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                  {qualityTodayStats.omissionsCount} {qualityTodayStats.omissionsCount === 1 ? 'omissão registrada' : 'omissões registradas'} hoje
+                </span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Card 4: Forklift status checklist */}
-          <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-amber-100 group">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-0.5 rounded-md">Frota Empilhadeira</span>
-                <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Checklists mecânicos</h3>
+          {activeModules.forklifts !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-amber-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-0.5 rounded-md">Frota Empilhadeira</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Checklists mecânicos</h3>
+                </div>
+                <div className="w-10 h-10 bg-amber-50/50 text-amber-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <Truck className="w-5 h-5" />
+                </div>
               </div>
-              <div className="w-10 h-10 bg-amber-50/50 text-amber-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
-                <Truck className="w-5 h-5" />
-              </div>
-            </div>
 
-            <div className="my-4 flex justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Inspecionadas</p>
-                <p className="text-2xl font-black text-slate-900 leading-tight">
-                  {forkliftTodayStats.inspectedCount} <span className="text-xs text-slate-400 font-bold">/ {forkliftTodayStats.totalForklifts}</span>
-                </p>
+              <div className="my-4 flex justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Inspecionadas</p>
+                  <p className="text-2xl font-black text-slate-900 leading-tight">
+                    {forkliftTodayStats.inspectedCount} <span className="text-xs text-slate-400 font-bold">/ {forkliftTodayStats.totalForklifts}</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Bloqueadas</p>
+                  <p className={cn(
+                    "text-2xl font-black text-right leading-tight",
+                    forkliftTodayStats.blockedCount > 0 ? "text-rose-600" : "text-slate-400"
+                  )}>
+                    {forkliftTodayStats.blockedCount}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Bloqueadas</p>
-                <p className={cn(
-                  "text-2xl font-black text-right leading-tight",
-                  forkliftTodayStats.blockedCount > 0 ? "text-rose-600" : "text-slate-400"
-                )}>
-                  {forkliftTodayStats.blockedCount}
-                </p>
-              </div>
-            </div>
 
-            <div className="flex items-center pt-3 border-t border-slate-100 justify-center">
-              <span className="font-bold text-slate-500 text-center text-[10px]">
-                {forkliftTodayStats.warningAnomaliesCount === 1 ? '1 falha relatada em inspeção' : `${forkliftTodayStats.warningAnomaliesCount} falhas relatadas em inspeção`}
-              </span>
+              <div className="flex items-center pt-3 border-t border-slate-100 justify-center">
+                <span className="font-bold text-slate-500 text-center text-[10px]">
+                  {forkliftTodayStats.warningAnomaliesCount === 1 ? '1 falha relatada em inspeção' : `${forkliftTodayStats.warningAnomaliesCount} falhas relatadas em inspeção`}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Card 5: Operational Routes status checklist */}
-          <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-100 group">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Rota Operacional</span>
-                <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Vistorias de Ativos</h3>
+          {activeModules.operational_routes !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Rota Operacional</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Vistorias de Ativos</h3>
+                </div>
+                <div className="w-10 h-10 bg-emerald-50/50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <Activity className="w-5 h-5 text-emerald-600 animate-pulse" />
+                </div>
               </div>
-              <div className="w-10 h-10 bg-emerald-50/50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
-                <Activity className="w-5 h-5 text-emerald-600 animate-pulse" />
-              </div>
-            </div>
 
-            <div className="my-4 flex justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Rotas de Hoje</p>
-                <p className="text-2xl font-black text-slate-900 leading-tight">
-                  {routeTodayStats.totalSubmissionsToday} <span className="text-xs text-slate-400 font-bold">concluídas</span>
-                </p>
+              <div className="my-4 flex justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Rotas de Hoje</p>
+                  <p className="text-2xl font-black text-slate-900 leading-tight">
+                    {routeTodayStats.totalSubmissionsToday} <span className="text-xs text-slate-400 font-bold">concluídas</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Anomalias de Rota</p>
+                  <p className={cn(
+                    "text-2xl font-black text-right leading-tight",
+                    routeTodayStats.anomaliesCount > 0 ? "text-rose-600" : "text-slate-400"
+                  )}>
+                    {routeTodayStats.anomaliesCount}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Anomalias de Rota</p>
-                <p className={cn(
-                  "text-2xl font-black text-right leading-tight",
-                  routeTodayStats.anomaliesCount > 0 ? "text-rose-600" : "text-slate-400"
-                )}>
-                  {routeTodayStats.anomaliesCount}
-                </p>
-              </div>
-            </div>
 
-            <div className="flex items-center pt-3 border-t border-slate-100 justify-center font-bold">
-              <span className="font-bold text-slate-500 text-center text-[10px]">
-                {routeTodayStats.anomaliesCount === 1 ? '1 falha necessitando observação' : `${routeTodayStats.anomaliesCount} falhas necessitando observação`}
-              </span>
+              <div className="flex items-center pt-3 border-t border-slate-100 justify-center font-bold">
+                <span className="font-bold text-slate-500 text-center text-[10px]">
+                  {routeTodayStats.anomaliesCount === 1 ? '1 falha necessitando observação' : `${routeTodayStats.anomaliesCount} falhas necessitando observação`}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Card 6: Safety Observations checklist */}
-          <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-rose-100 group">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-2 py-0.5 rounded-md">Observação de Segurança</span>
-                <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Segurança Comportamental</h3>
+          {activeModules.safety_observations !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-rose-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-2 py-0.5 rounded-md">Observação de Segurança</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Segurança Comportamental</h3>
+                </div>
+                <div className="w-10 h-10 bg-rose-50/50 text-rose-500 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <ShieldAlert className="w-5 h-5 text-rose-500" />
+                </div>
               </div>
-              <div className="w-10 h-10 bg-rose-50/50 text-rose-500 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
-                <ShieldAlert className="w-5 h-5 text-rose-500" />
-              </div>
-            </div>
 
-            <div className="my-4 flex justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sinalizações Hoje</p>
-                <p className="text-2xl font-black text-slate-900 leading-tight">
-                  {safetyOverviewStats.totalToday} <span className="text-xs text-slate-400 font-bold">registros</span>
-                </p>
+              <div className="my-4 flex justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sinalizações Hoje</p>
+                  <p className="text-2xl font-black text-slate-900 leading-tight">
+                    {safetyOverviewStats.totalToday} <span className="text-xs text-slate-400 font-bold">registros</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Desvios de Risco</p>
+                  <p className={cn(
+                    "text-2xl font-black text-right leading-tight",
+                    safetyOverviewStats.riskToday > 0 ? "text-rose-600" : "text-slate-400"
+                  )}>
+                    {safetyOverviewStats.riskToday}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Desvios de Risco</p>
-                <p className={cn(
-                  "text-2xl font-black text-right leading-tight",
-                  safetyOverviewStats.riskToday > 0 ? "text-rose-600" : "text-slate-400"
-                )}>
-                  {safetyOverviewStats.riskToday}
-                </p>
-              </div>
-            </div>
 
-            <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
-              <span>Mês: <strong className="text-slate-700">{safetyOverviewStats.totalMonth} total</strong></span>
-              <span className="text-slate-500 font-bold">{safetyOverviewStats.pendingMonth} pendentes</span>
+              <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
+                <span>Mês: <strong className="text-slate-700">{safetyOverviewStats.totalMonth} total</strong></span>
+                <span className="text-slate-500 font-bold">{safetyOverviewStats.pendingMonth} pendentes</span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Card 7: Consumables & Stock Status */}
-          <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-100 group">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Controle de Insumos</span>
-                <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Níveis de Estoque</h3>
+          {activeModules.consumables !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Controle de Insumos</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Níveis de Estoque</h3>
+                </div>
+                <div className="w-10 h-10 bg-emerald-50/50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <Database className="w-5 h-5 text-emerald-600" />
+                </div>
               </div>
-              <div className="w-10 h-10 bg-emerald-50/50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
-                <Database className="w-5 h-5 text-emerald-600" />
-              </div>
-            </div>
 
-            <div className="my-4 flex justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Insumos Críticos</p>
-                <p className={cn(
-                  "text-2xl font-black leading-tight",
-                  consumablesStats.lowStockCount > 0 ? "text-amber-600" : "text-emerald-700"
-                )}>
-                  {consumablesStats.lowStockCount} <span className="text-xs text-slate-400 font-bold">/ {consumablesStats.activeCount} ativos</span>
-                </p>
+              <div className="my-4 flex justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Insumos Críticos</p>
+                  <p className={cn(
+                    "text-2xl font-black leading-tight",
+                    consumablesStats.lowStockCount > 0 ? "text-amber-600" : "text-emerald-700"
+                  )}>
+                    {consumablesStats.lowStockCount} <span className="text-xs text-slate-400 font-bold">/ {consumablesStats.activeCount} ativos</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Lançamentos Hoje</p>
+                  <p className="text-2xl font-black text-right leading-tight text-slate-900">
+                    {consumablesStats.logsTodayCount}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Lançamentos Hoje</p>
-                <p className="text-2xl font-black text-right leading-tight text-slate-900">
-                  {consumablesStats.logsTodayCount}
-                </p>
-              </div>
-            </div>
 
-            <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
-              <span>Entradas: <strong className="text-slate-700">{consumablesStats.totalEntriesCount} hoje</strong></span>
-              <span className="text-slate-500 font-bold">{consumablesStats.totalConsumptionsCount} saídas</span>
+              <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
+                <span>Entradas: <strong className="text-slate-700">{consumablesStats.totalEntriesCount} hoje</strong></span>
+                <span className="text-slate-500 font-bold">{consumablesStats.totalConsumptionsCount} saídas</span>
+              </div>
             </div>
-          </div>
+          )}
 
         </div>
       </div>
 
       {/* Grid: Secondary Visual Area - Detailed Live Event Feeds */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        {/* DDS Shift Compliance Board Details - Grid col span 6 */}
-        <div className="lg:col-span-12 xl:col-span-6 bg-white p-4 md:p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
-            <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-blue-600" />
-              Acompanhamento de DDS por Turno
-            </h3>
-            <span className="text-[10px] text-slate-400 font-bold italic">Meta: 100% de Diálogo</span>
-          </div>
+      {(activeModules.dds !== false || activeModules.forklifts !== false) && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          
+          {/* DDS Shift Compliance Board Details - Grid col span 6 */}
+          {activeModules.dds !== false && (
+            <div className={cn("lg:col-span-12 bg-white p-4 md:p-6 rounded-[2rem] border border-slate-200 shadow-sm",
+              activeModules.forklifts !== false ? "xl:col-span-6" : "xl:col-span-12"
+            )}>
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-blue-600" />
+                  Acompanhamento de DDS por Turno
+                </h3>
+                <span className="text-[10px] text-slate-400 font-bold italic">Meta: 100% de Diálogo</span>
+              </div>
 
-          <div className="space-y-3">
-            {ddsTodayStats.shiftStatus.map((s, idx) => (
-              <div 
-                key={`dds-shift-row-${idx}`}
-                className={cn(
-                  "p-3.5 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3",
-                  s.applied 
-                    ? "bg-slate-50/50 border-slate-100" 
-                    : s.shift === activeShift 
-                    ? "bg-amber-50/30 border-amber-300 ring-2 ring-amber-100" 
-                    : "bg-slate-50/30 border-dashed border-slate-200"
-                )}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-inner",
-                    s.applied ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
-                  )}>
-                    {s.applied ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5 animate-pulse" />}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-black text-slate-800 text-xs md:text-sm leading-none">{s.shift}</p>
-                      <span className="text-[9px] font-black bg-slate-900 text-white px-2 py-0.5 rounded-full uppercase">Letra {s.group}</span>
-                    </div>
-                    <p className="text-xs font-bold text-slate-400 mt-1 truncate max-w-[200px] sm:max-w-xs md:max-w-[220px]">
-                      {s.applied ? `Tópico: ${s.theme}` : "Diálogo pendente de aplicação"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 pt-2.5 md:pt-0 border-slate-100">
-                  <div className="md:text-right">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Status</p>
-                    {s.applied ? (
-                      <span className="inline-block mt-0.5 text-[10px] font-black text-emerald-600 bg-emerald-100/60 px-2 py-0.5 rounded-full uppercase">Aplicado</span>
-                    ) : (
-                      <span className={cn(
-                        "inline-block mt-0.5 text-[10px] font-black px-2 py-0.5 rounded-full uppercase animate-pulse",
-                        s.shift === activeShift ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-400"
+              <div className="space-y-3">
+                {ddsTodayStats.shiftStatus.map((s, idx) => (
+                  <div 
+                    key={`dds-shift-row-${idx}`}
+                    className={cn(
+                      "p-3.5 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3",
+                      s.applied 
+                        ? "bg-slate-50/50 border-slate-100" 
+                        : s.shift === activeShift 
+                        ? "bg-amber-50/30 border-amber-300 ring-2 ring-amber-100" 
+                        : "bg-slate-50/30 border-dashed border-slate-200"
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-inner",
+                        s.applied ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
                       )}>
-                        {s.shift === activeShift ? "Aguardando" : "Pendente"}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="md:text-right min-w-[65px]">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Presenças</p>
-                    <p className="text-sm md:text-base font-black text-slate-800 tracking-tight mt-0.5">{s.signatures} <span className="text-[9px] text-slate-500 font-bold">colabs</span></p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Forklifts Fleet Inspections Detailed Board */}
-        <div className="lg:col-span-12 xl:col-span-6 bg-white p-4 md:p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
-            <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
-              <Truck className="w-5 h-5 text-amber-500" />
-              Inspeção Diária da Frota (Checklists)
-            </h3>
-            <span className="text-[10px] text-slate-400 font-bold italic">Total: {forkliftTodayStats.totalForklifts} Ativas</span>
-          </div>
-
-          <div className="space-y-3">
-            {forkliftTodayStats.reports.map((f, idx) => (
-              <div 
-                key={`forklift-row-status-${idx}`}
-                className="p-3.5 bg-slate-50/50 rounded-xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
-              >
-                <div className="flex items-start md:items-center gap-3">
-                  <div className={cn(
-                    "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-inner mt-0.5 md:mt-0",
-                    f.status === 'liberada' ? "bg-emerald-50 text-emerald-600" : 
-                    f.status === 'bloqueada' ? "bg-rose-50 text-rose-600" :
-                    "bg-slate-100 text-slate-400"
-                  )}>
-                    <Truck className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-black text-slate-800 text-xs md:text-sm leading-none">Empilhadeira #{f.number}</p>
-                      <span className="text-[9px] font-bold text-slate-400">{f.model} • {f.plate}</span>
-                    </div>
-                    
-                    <p className="text-[11px] font-bold text-slate-400 mt-1 truncate">
-                      {f.inspected ? `Insp: ${f.operator} (${f.time})` : "Aguardando checklist pré-operacional"}
-                    </p>
-
-                    {f.anomalies.length > 0 && (
-                      <div className="mt-1.5 bg-rose-50 text-rose-600 px-2.5 py-1 rounded-lg border border-rose-100 inline-flex flex-wrap items-center gap-1 max-w-[240px] sm:max-w-md">
-                        <span className="text-[8px] font-black uppercase tracking-tight shrink-0">Danos:</span>
-                        <span className="text-[10px] font-bold truncate max-w-[150px] sm:max-w-xs">{f.anomalies.join(', ')}</span>
+                        {s.applied ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5 animate-pulse" />}
                       </div>
-                    )}
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-black text-slate-800 text-xs md:text-sm leading-none">{s.shift}</p>
+                          <span className="text-[9px] font-black bg-slate-900 text-white px-2 py-0.5 rounded-full uppercase">Letra {s.group}</span>
+                        </div>
+                        <p className="text-xs font-bold text-slate-400 mt-1 truncate max-w-[200px] sm:max-w-xs md:max-w-[220px]">
+                          {s.applied ? `Tópico: ${s.theme}` : "Diálogo pendente de aplicação"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 pt-2.5 md:pt-0 border-slate-100">
+                      <div className="md:text-right">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Status</p>
+                        {s.applied ? (
+                          <span className="inline-block mt-0.5 text-[10px] font-black text-emerald-600 bg-emerald-100/60 px-2 py-0.5 rounded-full uppercase">Aplicado</span>
+                        ) : (
+                          <span className={cn(
+                            "inline-block mt-0.5 text-[10px] font-black px-2 py-0.5 rounded-full uppercase animate-pulse",
+                            s.shift === activeShift ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-400"
+                          )}>
+                            {s.shift === activeShift ? "Aguardando" : "Pendente"}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="md:text-right min-w-[65px]">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Presenças</p>
+                        <p className="text-sm md:text-base font-black text-slate-800 tracking-tight mt-0.5">{s.signatures} <span className="text-[9px] text-slate-500 font-bold">colabs</span></p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-
-                <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 pt-2.5 md:pt-0 border-slate-100 shrink-0">
-                  <div className="md:text-right">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Status</p>
-                    <span className={cn(
-                      "inline-block mt-1 text-[10px] font-black px-2.5 py-0.5 rounded-md uppercase",
-                      f.status === 'liberada' ? "bg-emerald-100 text-emerald-800" : 
-                      f.status === 'bloqueada' ? "bg-rose-100 text-rose-800 ring-2 ring-rose-200" : 
-                      "bg-slate-100 text-slate-400"
-                    )}>
-                      {f.status === 'liberada' ? 'Liberada' : f.status === 'bloqueada' ? 'Bloqueada' : 'Não Inspecionada'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-      </div>
-
-      {/* Wire Control Consumptions live feed vs Quality detailed checklist list */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        {/* Real-Time Wire Consumptions Feed */}
-        <div className="lg:col-span-12 xl:col-span-6 bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
-            <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
-              <Barcode className="w-5 h-5 text-indigo-600" />
-              Consumos Recentes de Bobinas (Hoje)
-            </h3>
-            <span className="text-[10px] font-black bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase animate-pulse">Real-time feed</span>
-          </div>
-
-          <div className="overflow-x-auto">
-             <table className="w-full text-left">
-               <thead>
-                 <tr className="border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                   <th className="py-3 px-2">Bobina ID</th>
-                   <th className="py-3 px-2">Linha</th>
-                   <th className="py-3 px-2">Bitola / Peso</th>
-                   <th className="py-3 px-2 text-center">Turno</th>
-                   <th className="py-3 px-2 text-right">Horário</th>
-                 </tr>
-               </thead>
-               <tbody className="divide-y divide-slate-100">
-                 {wireTodayStats.recentConsumptions.map((c, idx) => (
-                   <tr key={`coil-cons-row-${idx}`} className="text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
-                     <td className="py-4 px-2 font-black text-slate-900 flex items-center gap-2">
-                       <div className="w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
-                       {c.coilNumber}
-                     </td>
-                     <td className="py-4 px-2 font-bold text-slate-500">{c.line}</td>
-                     <td className="py-4 px-2">
-                       <div className="flex flex-col">
-                         <span className="font-extrabold text-slate-800">{c.weight?.toLocaleString()} kg</span>
-                         <span className="text-[10px] text-blue-500 font-extrabold">{c.diameter} mm</span>
-                       </div>
-                     </td>
-                     <td className="py-4 px-2 text-center">
-                       <span className="text-[9px] font-black bg-slate-50 px-2 py-0.5 rounded border border-slate-200 uppercase">T{c.shift}</span>
-                     </td>
-                     <td className="py-4 px-2 text-right text-slate-500 leading-none">{c.time}</td>
-                   </tr>
-                 ))}
-                 {wireTodayStats.recentConsumptions.length === 0 && (
-                   <tr>
-                     <td colSpan={5} className="py-12 text-center text-slate-400 text-xs italic font-semibold">Nenhuma bobina consumida nas linhas hoje.</td>
-                   </tr>
-                 )}
-               </tbody>
-             </table>
-          </div>
-        </div>
-
-        {/* Quality Audit Checklist Submissions done today */}
-        <div className="lg:col-span-12 xl:col-span-6 bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6 pb-4 border-b border-slate-100">
-            <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
-              <ClipboardCheck className="w-5 h-5 text-emerald-600" />
-              Verificações de Qualidade em Linha (Hoje)
-            </h3>
-            <span className="text-[10px] font-bold text-slate-400">Total submetidas: {qualityTodayStats.totalInspectionsToday}</span>
-          </div>
-
-          {/* New Feitas & Pendentes Counter with Visual Progress Bar */}
-          <div className="mb-6 bg-slate-50/50 p-4 rounded-2xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="space-y-1">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Realizadas</p>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-black text-emerald-600 tabular-nums leading-none">
-                    {qualityTodayStats.doneCount}
-                  </span>
-                  <span className="text-[9px] font-bold text-slate-400">inspeções</span>
-                </div>
-              </div>
-              
-              <div className="w-px h-8 bg-slate-200 shrink-0" />
-              
-              <div className="space-y-1">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Ainda Pendentes</p>
-                <div className="flex items-baseline gap-1">
-                  <span className={cn(
-                    "text-2xl font-black tabular-nums leading-none",
-                    qualityTodayStats.pendingCount > 0 ? "text-amber-600" : "text-slate-400"
-                  )}>
-                    {qualityTodayStats.pendingCount}
-                  </span>
-                  <span className="text-[9px] font-bold text-slate-400">pendentes hoje</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Progress Bar Visualizer */}
-            <div className="flex-1 max-w-[200px] space-y-1.5 self-stretch sm:self-auto flex flex-col justify-center">
-              <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none">
-                <span>Progresso</span>
-                <span>
-                  {Math.round((qualityTodayStats.doneCount / Math.max(1, qualityTodayStats.doneCount + qualityTodayStats.pendingCount)) * 100)}%
-                </span>
-              </div>
-              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                  style={{ width: `${(qualityTodayStats.doneCount / Math.max(1, qualityTodayStats.doneCount + qualityTodayStats.pendingCount)) * 100}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Omission alert box if any omission exists */}
-          {qualityTodayStats.omissionsCount > 0 && (
-            <div className="mb-4 bg-amber-50 text-amber-800 p-4 rounded-2xl border border-amber-200 flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-black uppercase tracking-wider">Atenção Administrativa</p>
-                <p className="text-xs font-bold leading-relaxed mt-1">
-                  Registramos {qualityTodayStats.omissionsCount} omissão justificada de checklist de qualidade de produtos hoje. Revise em relatórios.
-                </p>
+                ))}
               </div>
             </div>
           )}
 
-          <div className="overflow-x-auto">
-             <table className="w-full text-left">
-               <thead>
-                 <tr className="border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                   <th className="py-3 px-2">Tipo / Template</th>
-                   <th className="py-3 px-2">Linha</th>
-                   <th className="py-3 px-2">Responsável</th>
-                   <th className="py-3 px-2 text-center">Turno</th>
-                   <th className="py-3 px-2 text-right">Horário</th>
-                 </tr>
-               </thead>
-               <tbody className="divide-y divide-slate-100">
-                 {qualityTodayStats.recentSubmissions.map((s, idx) => (
-                   <tr key={`val-sub-row-${idx}`} className="text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
-                     <td className="py-4 px-2 font-black text-slate-900 flex items-center gap-2">
-                       <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                       <span className="truncate max-w-[150px]">{s.templateName}</span>
-                     </td>
-                     <td className="py-4 px-2 tracking-tight">{s.line}</td>
-                     <td className="py-4 px-2 text-slate-500 uppercase text-xs font-extrabold truncate max-w-[100px]">{s.operator}</td>
-                     <td className="py-4 px-2 text-center">
-                       <span className="text-[9px] font-black bg-slate-50 px-2 py-0.5 rounded border border-slate-200 uppercase">T{s.shift}</span>
-                     </td>
-                     <td className="py-4 px-2 text-right text-slate-500 leading-none">{s.time}</td>
-                   </tr>
-                 ))}
-                 {qualityTodayStats.recentSubmissions.length === 0 && (
-                   <tr>
-                     <td colSpan={5} className="py-12 text-center text-slate-400 text-xs italic font-semibold">Sem auditoria de qualidade efetuada hoje.</td>
-                   </tr>
-                 )}
-               </tbody>
-             </table>
-          </div>
-        </div>
+          {/* Forklifts Fleet Inspections Detailed Board */}
+          {activeModules.forklifts !== false && (
+            <div className={cn("lg:col-span-12 bg-white p-4 md:p-6 rounded-[2rem] border border-slate-200 shadow-sm",
+              activeModules.dds !== false ? "xl:col-span-6" : "xl:col-span-12"
+            )}>
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
+                  <Truck className="w-5 h-5 text-amber-500" />
+                  Inspeção Diária da Frota (Checklists)
+                </h3>
+                <span className="text-[10px] text-slate-400 font-bold italic">Total: {forkliftTodayStats.totalForklifts} Ativas</span>
+              </div>
 
-      </div>
+              <div className="space-y-3">
+                {forkliftTodayStats.reports.map((f, idx) => (
+                  <div 
+                    key={`forklift-row-status-${idx}`}
+                    className="p-3.5 bg-slate-50/50 rounded-xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-start md:items-center gap-3">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-inner mt-0.5 md:mt-0",
+                        f.status === 'liberada' ? "bg-emerald-50 text-emerald-600" : 
+                        f.status === 'bloqueada' ? "bg-rose-50 text-rose-600" :
+                        "bg-slate-100 text-slate-400"
+                      )}>
+                        <Truck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-black text-slate-800 text-xs md:text-sm leading-none">Empilhadeira #{f.number}</p>
+                          <span className="text-[9px] font-bold text-slate-400">{f.model} • {f.plate}</span>
+                        </div>
+                        
+                        <p className="text-[11px] font-bold text-slate-400 mt-1 truncate">
+                          {f.inspected ? `Insp: ${f.operator} (${f.time})` : "Aguardando checklist pré-operacional"}
+                        </p>
+
+                        {f.anomalies.length > 0 && (
+                          <div className="mt-1.5 bg-rose-50 text-rose-600 px-2.5 py-1 rounded-lg border border-rose-100 inline-flex flex-wrap items-center gap-1 max-w-[240px] sm:max-w-md">
+                            <span className="text-[8px] font-black uppercase tracking-tight shrink-0">Danos:</span>
+                            <span className="text-[10px] font-bold truncate max-w-[150px] sm:max-w-xs">{f.anomalies.join(', ')}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 pt-2.5 md:pt-0 border-slate-100 shrink-0">
+                      <div className="md:text-right">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Status</p>
+                        <span className={cn(
+                          "inline-block mt-1 text-[10px] font-black px-2.5 py-0.5 rounded-md uppercase",
+                          f.status === 'liberada' ? "bg-emerald-100 text-emerald-800" : 
+                          f.status === 'bloqueada' ? "bg-rose-100 text-rose-800 ring-2 ring-rose-200" : 
+                          "bg-slate-100 text-slate-400"
+                        )}>
+                          {f.status === 'liberada' ? 'Liberada' : f.status === 'bloqueada' ? 'Bloqueada' : 'Não Inspecionada'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Wire Control Consumptions live feed vs Quality detailed checklist list */}
+      {(activeModules.wires !== false || activeModules.quality !== false) && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          
+          {/* Real-Time Wire Consumptions Feed */}
+          {activeModules.wires !== false && (
+            <div className={cn("lg:col-span-12 bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm",
+              activeModules.quality !== false ? "xl:col-span-6" : "xl:col-span-12"
+            )}>
+              <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
+                <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                  <Barcode className="w-5 h-5 text-indigo-600" />
+                  Consumos Recentes de Bobinas (Hoje)
+                </h3>
+                <span className="text-[10px] font-black bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase animate-pulse">Real-time feed</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                 <table className="w-full text-left">
+                   <thead>
+                     <tr className="border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                       <th className="py-3 px-2">Bobina ID</th>
+                       <th className="py-3 px-2">Linha</th>
+                       <th className="py-3 px-2">Bitola / Peso</th>
+                       <th className="py-3 px-2 text-center">Turno</th>
+                       <th className="py-3 px-2 text-right">Horário</th>
+                     </tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-100">
+                     {wireTodayStats.recentConsumptions.map((c, idx) => (
+                       <tr key={`coil-cons-row-${idx}`} className="text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+                         <td className="py-4 px-2 font-black text-slate-900 flex items-center gap-2">
+                           <div className="w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
+                           {c.coilNumber}
+                         </td>
+                         <td className="py-4 px-2 font-bold text-slate-500">{c.line}</td>
+                         <td className="py-4 px-2">
+                           <div className="flex flex-col">
+                             <span className="font-extrabold text-slate-800">{c.weight?.toLocaleString()} kg</span>
+                             <span className="text-[10px] text-blue-500 font-extrabold">{c.diameter} mm</span>
+                           </div>
+                         </td>
+                         <td className="py-4 px-2 text-center">
+                           <span className="text-[9px] font-black bg-slate-50 px-2 py-0.5 rounded border border-slate-200 uppercase">T{c.shift}</span>
+                         </td>
+                         <td className="py-4 px-2 text-right text-slate-500 leading-none">{c.time}</td>
+                       </tr>
+                     ))}
+                     {wireTodayStats.recentConsumptions.length === 0 && (
+                       <tr>
+                         <td colSpan={5} className="py-12 text-center text-slate-400 text-xs italic font-semibold">Nenhuma bobina consumida nas linhas hoje.</td>
+                       </tr>
+                     )}
+                   </tbody>
+                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* Quality Audit Checklist Submissions done today */}
+          {activeModules.quality !== false && (
+            <div className={cn("lg:col-span-12 bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm",
+              activeModules.wires !== false ? "xl:col-span-6" : "xl:col-span-12"
+            )}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6 pb-4 border-b border-slate-100">
+                <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                  <ClipboardCheck className="w-5 h-5 text-emerald-600" />
+                  Verificações de Qualidade em Linha (Hoje)
+                </h3>
+                <span className="text-[10px] font-bold text-slate-400">Total submetidas: {qualityTodayStats.totalInspectionsToday}</span>
+              </div>
+
+              {/* New Feitas & Pendentes Counter with Visual Progress Bar */}
+              <div className="mb-6 bg-slate-50/50 p-4 rounded-2xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Realizadas</p>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-black text-emerald-600 tabular-nums leading-none">
+                        {qualityTodayStats.doneCount}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400">inspeções</span>
+                    </div>
+                  </div>
+                  
+                  <div className="w-px h-8 bg-slate-200 shrink-0" />
+                  
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Ainda Pendentes</p>
+                    <div className="flex items-baseline gap-1">
+                      <span className={cn(
+                        "text-2xl font-black tabular-nums leading-none",
+                        qualityTodayStats.pendingCount > 0 ? "text-amber-600" : "text-slate-400"
+                      )}>
+                        {qualityTodayStats.pendingCount}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400">pendentes hoje</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Progress Bar Visualizer */}
+                <div className="flex-1 max-w-[200px] space-y-1.5 self-stretch sm:self-auto flex flex-col justify-center">
+                  <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none">
+                    <span>Progresso</span>
+                    <span>
+                      {Math.round((qualityTodayStats.doneCount / Math.max(1, qualityTodayStats.doneCount + qualityTodayStats.pendingCount)) * 100)}%
+                    </span>
+                  </div>
+                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                      style={{ width: `${(qualityTodayStats.doneCount / Math.max(1, qualityTodayStats.doneCount + qualityTodayStats.pendingCount)) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Omission alert box if any omission exists */}
+              {qualityTodayStats.omissionsCount > 0 && (
+                <div className="mb-4 bg-amber-50 text-amber-800 p-4 rounded-2xl border border-amber-200 flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-wider">Atenção Administrativa</p>
+                    <p className="text-xs font-bold leading-relaxed mt-1">
+                      Registramos {qualityTodayStats.omissionsCount} omissão justificada de checklist de qualidade de produtos hoje. Revise em relatórios.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                 <table className="w-full text-left">
+                   <thead>
+                     <tr className="border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                       <th className="py-3 px-2">Tipo / Template</th>
+                       <th className="py-3 px-2">Linha</th>
+                       <th className="py-3 px-2">Responsável</th>
+                       <th className="py-3 px-2 text-center">Turno</th>
+                       <th className="py-3 px-2 text-right">Horário</th>
+                     </tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-100">
+                     {qualityTodayStats.recentSubmissions.map((s, idx) => (
+                       <tr key={`val-sub-row-${idx}`} className="text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+                         <td className="py-4 px-2 font-black text-slate-900 flex items-center gap-2">
+                           <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                           <span className="truncate max-w-[150px]">{s.templateName}</span>
+                         </td>
+                         <td className="py-4 px-2 tracking-tight">{s.line}</td>
+                         <td className="py-4 px-2 text-slate-500 uppercase text-xs font-extrabold truncate max-w-[100px]">{s.operator}</td>
+                         <td className="py-4 px-2 text-center">
+                           <span className="text-[9px] font-black bg-slate-50 px-2 py-0.5 rounded border border-slate-200 uppercase">T{s.shift}</span>
+                         </td>
+                         <td className="py-4 px-2 text-right text-slate-500 leading-none">{s.time}</td>
+                       </tr>
+                     ))}
+                     {qualityTodayStats.recentSubmissions.length === 0 && (
+                       <tr>
+                         <td colSpan={5} className="py-12 text-center text-slate-400 text-xs italic font-semibold">Sem auditoria de qualidade efetuada hoje.</td>
+                       </tr>
+                     )}
+                   </tbody>
+                 </table>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
 
       {/* Non-Conformities detailed box if any */}
       {combinedNonConformities.length > 0 && (
