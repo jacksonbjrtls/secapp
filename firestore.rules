@@ -179,6 +179,7 @@ service cloud.firestore {
       allow get: if isSignedIn() && isValidId(signatureId) && (resource == null || resource.data.userId == request.auth.uid || isManager());
       allow list: if isSignedIn() && (isManager() || resource.data.userId == request.auth.uid);
       allow create: if isSignedIn() && isNotDisabled() && isValidId(signatureId) && isValidSignature(request.resource.data);
+      allow delete: if isManager() && isValidId(signatureId);
     }
 
     // Metrics
