@@ -7,6 +7,16 @@
 }
 
 @layer base {
+  html {
+    font-size: 14.5px; /* Reduz o tamanho das fontes e espaçamentos em todo o aplicativo de forma proporcional */
+  }
+  
+  @media (max-width: 640px) {
+    html {
+      font-size: 13.5px; /* Ajuste proporcional extra para dispositivos móveis */
+    }
+  }
+
   h1, h2, h3, h4 {
     @apply font-display;
   }

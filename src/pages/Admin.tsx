@@ -55,6 +55,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
 import { validateEmailDomain } from '../lib/domainUtils';
+import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 
 const Admin: React.FC = () => {
   const { isAdmin, isMaster, logoUrl, updateCompanyLogo } = useAuth();
@@ -63,6 +64,7 @@ const Admin: React.FC = () => {
   const [tempEditName, setTempEditName] = useState('');
   const [domains, setDomains] = useState<AllowedDomain[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userToDelete, setUserToDelete] = useState<{ id: string; email: string } | null>(null);
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
   const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding' | 'import'>('users');
@@ -896,13 +898,16 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
   };
 
 
-  const handleDeleteUser = async (userId: string, userEmail: string) => {
+  const handleDeleteUser = async (userId: string, userEmail: string, confirmed = false) => {
     if (userEmail === 'jacksonbjr@gmail.com') {
       setError('O usuário Master principal não pode ser excluído.');
       return;
     }
 
-    if (!window.confirm(`Tem certeza que deseja excluir permanentemente o perfil de ${userEmail}? Esta ação NÃO removerá a conta do Firebase Auth, apenas o perfil e permissões no sistema.`)) return;
+    if (!confirmed) {
+      setUserToDelete({ id: userId, email: userEmail });
+      return;
+    }
     
     setDeletingUserId(userId);
     try {
@@ -916,6 +921,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
       setError('Erro ao excluir usuário. Verifique as regras de segurança.');
     } finally {
       setDeletingUserId(null);
+      setUserToDelete(null);
     }
   };
 
@@ -2477,6 +2483,21 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
             </button>
           </motion.div>
         )}
+
+        <ConfirmationModal
+          isOpen={!!userToDelete}
+          onClose={() => setUserToDelete(null)}
+          title="Excluir Perfil?"
+          message={`Tem certeza que deseja excluir permanentemente o perfil de ${userToDelete?.email || ''}? Esta ação NÃO removerá a conta do Firebase Auth, apenas o perfil e permissões no sistema.`}
+          type="warning"
+          confirmText="Excluir"
+          showConfirmButton={true}
+          onConfirm={() => {
+            if (userToDelete) {
+              handleDeleteUser(userToDelete.id, userToDelete.email, true);
+            }
+          }}
+        />
       </AnimatePresence>
     </div>
   );

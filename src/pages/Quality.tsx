@@ -349,6 +349,7 @@ const Quality: React.FC = () => {
   // Perform Checklist Logic
   const [fillingTemplate, setFillingTemplate] = useState<QualityChecklistTemplate | null>(null);
   const [responses, setResponses] = useState<Record<string, any>>({});
+  const [observations, setObservations] = useState<Record<string, string>>({});
   const [submissionLineId, setSubmissionLineId] = useState<string>('');
   const [activeScanner, setActiveScanner] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -484,12 +485,17 @@ const Quality: React.FC = () => {
             userId: user.uid,
             userName: profile.displayName || user.email,
             shift: shiftIdentifier, // Format: "A - Turno 1"
-            responses: Object.entries(responses).map(([itemId, value]) => ({ itemId, value })),
+            responses: Object.entries(responses).map(([itemId, value]) => ({ 
+              itemId, 
+              value,
+              observation: observations[itemId] || ''
+            })),
             createdAt: serverTimestamp()
           });
           
           setFillingTemplate(null);
           setResponses({});
+          setObservations({});
           setSubmissionLineId('');
           
           setModalConfig({
@@ -1095,6 +1101,33 @@ const Quality: React.FC = () => {
                             )}
                           </div>
                         )}
+
+                        {item.type === 'text' && (
+                          <div className="space-y-4">
+                            <textarea
+                              value={responses[item.id] || ''}
+                              onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="Digite a sua resposta ou observação aqui..."
+                              rows={3}
+                              className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-semibold text-slate-700 placeholder-slate-400"
+                            />
+                          </div>
+                        )}
+
+                        {item.allowObservation && (
+                          <div className="mt-4">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 ml-1">
+                              Observação / Texto Livre
+                            </label>
+                            <textarea
+                              value={observations[item.id] || ''}
+                              onChange={(e) => setObservations(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="Digite observações ou justificativas se aplicável..."
+                              rows={2}
+                              className="w-full px-4 py-3 bg-slate-150 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-semibold text-slate-700 placeholder-slate-450"
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1176,6 +1209,7 @@ const Quality: React.FC = () => {
                       onClick={() => {
                         setFillingTemplate(template);
                         setResponses({});
+                        setObservations({});
                         // If selected line targets this template, default to it; otherwise default to empty or the template's single line
                         const defaultLineId = selectedLineId && targetLineIds.includes(selectedLineId)
                           ? selectedLineId
@@ -1471,6 +1505,7 @@ const Quality: React.FC = () => {
                                     <option value="number">Numérico</option>
                                     <option value="range">Range (Baixo/Alto)</option>
                                     <option value="barcode">Código / QR</option>
+                                    <option value="text">Texto Livre / Observação</option>
                                   </select>
                                   <button
                                     onClick={() => removeItemFromTemplate(item.id)}
@@ -1552,6 +1587,32 @@ const Quality: React.FC = () => {
                                     )}
                                   </>
                                 )}
+                                <div className="col-span-full border-t border-slate-100 pt-3 mt-1 flex flex-col sm:flex-row sm:items-center gap-4">
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.required !== false}
+                                      onChange={(e) => updateItemInTemplate(item.id, { required: e.target.checked })}
+                                      id={`required-${item.id}`}
+                                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                    />
+                                    <label htmlFor={`required-${item.id}`} className="text-xs font-bold text-slate-600">
+                                      Item Obrigatório
+                                    </label>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.allowObservation || false}
+                                      onChange={(e) => updateItemInTemplate(item.id, { allowObservation: e.target.checked })}
+                                      id={`allow-obs-${item.id}`}
+                                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                    />
+                                    <label htmlFor={`allow-obs-${item.id}`} className="text-xs font-bold text-slate-600">
+                                      Habilitar campo para observação (texto livre no checklist)
+                                    </label>
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           ))}
@@ -2387,7 +2448,8 @@ const Quality: React.FC = () => {
                   const compliant = template ? isResponseCompliant(resp.itemId, resp.value, template) : true;
                   
                   return (
-                    <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between gap-4">
+                    <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-4">
+                      <div className="flex items-center justify-between gap-4">
                        <div className="flex items-center gap-4">
                          <div className={cn(
                            "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm",
@@ -2397,7 +2459,14 @@ const Quality: React.FC = () => {
                          </div>
                          <div>
                            <p className="text-sm font-bold text-slate-900">{item?.label || 'Item Removido'}</p>
-                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{item?.type || 'N/A'}</p>
+                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                             {item?.type === 'condition' ? 'Opções (OK/NOK)' :
+                              item?.type === 'number' ? 'Numérico' :
+                              item?.type === 'range' ? 'Range (Baixo/Alto)' :
+                              item?.type === 'barcode' ? 'Código / QR' :
+                              item?.type === 'text' ? 'Texto Livre / Observação' :
+                              (item?.type || 'N/A')}
+                           </p>
                          </div>
                        </div>
                        <div className="text-right">
@@ -2405,12 +2474,32 @@ const Quality: React.FC = () => {
                            "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block",
                            compliant ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
                          )}>
-                           {resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : resp.value)}
+                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : resp.value))}
+                          </div>
+                       </div>
+                      </div>
+                      
+                      {item?.type === 'text' && (
+                        <div className="ml-14 bg-slate-50 border border-slate-100 p-4 rounded-xl text-xs font-semibold text-slate-600">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Resposta / Texto Livre</span>
+                          <span className="font-semibold text-slate-700 whitespace-pre-wrap">{resp.value}</span>
+                        </div>
+                      )}
+
+                      {resp.observation && (
+                        <div className="ml-14 bg-slate-50 border border-slate-100 p-4 rounded-xl text-xs font-semibold text-slate-600">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Observação do Operador</span>
+                          <span className="font-semibold text-slate-700">{resp.observation}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                  /*
                          </div>
                        </div>
                     </div>
                   );
-                })}
+                */})}
               </div>
 
               <div className="mt-10">

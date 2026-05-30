@@ -89,6 +89,7 @@ const Reports: React.FC = () => {
   const [filterDateStart, setFilterDateStart] = useState('');
   const [filterDateEnd, setFilterDateEnd] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
 
   useEffect(() => {
     resetFilters();
@@ -268,8 +269,11 @@ const Reports: React.FC = () => {
     fetchData();
   }, [isManager, isAdmin, isMaster]);
 
-  const handleCleanupOrphans = async () => {
-    if (orphanIds.length === 0 || !window.confirm(`Deseja realmente excluir ${orphanIds.length} registros de participação que não possuem DDS vinculado? Esta ação é irreversível.`)) {
+  const handleCleanupOrphans = async (confirmed = false) => {
+    if (orphanIds.length === 0) return;
+
+    if (!confirmed) {
+      setShowCleanupConfirm(true);
       return;
     }
 
@@ -291,6 +295,7 @@ const Reports: React.FC = () => {
       });
     } finally {
       setCleaningUp(false);
+      setShowCleanupConfirm(false);
     }
   };
 
@@ -1788,7 +1793,11 @@ const Reports: React.FC = () => {
                           </td>
                           <td className="px-6 py-4">
                              <div className="flex flex-wrap gap-1 max-w-xs">
-                                {item.responses.map((res: any, idx: number) => (
+                                {item.responses.filter((r: any) => {
+                                   const template = qualityTemplates[item.templateId];
+                                   const itemDef = template?.items?.find((i: any) => i.id === r.itemId);
+                                   return itemDef?.type !== 'text';
+                                }).map((res: any, idx: number) => (
                                    <span key={idx} className={cn(
                                      "px-2 py-0.5 rounded text-[9px] font-black uppercase",
                                      res.value === 'ok' || res.value === true ? "bg-emerald-100 text-emerald-700" :
@@ -1798,6 +1807,45 @@ const Reports: React.FC = () => {
                                      {res.label}{res.value !== undefined ? ': ' : ''}{res.value === true ? 'Sim' : res.value === false ? 'Não' : (res.value || '')}
                                    </span>
                                 ))}
+
+                                {/* Standalone Text/Observation Responses */}
+                                {item.responses.some((r: any) => {
+                                   const template = qualityTemplates[item.templateId];
+                                   const itemDef = template?.items?.find((i: any) => i.id === r.itemId);
+                                   return itemDef?.type === 'text';
+                                }) && (
+                                   <div className="w-full mt-1.5 space-y-1 bg-emerald-50/40 p-2 rounded-xl border border-emerald-100/50 text-left">
+                                      {item.responses.filter((r: any) => {
+                                         const template = qualityTemplates[item.templateId];
+                                         const itemDef = template?.items?.find((i: any) => i.id === r.itemId);
+                                         return itemDef?.type === 'text';
+                                      }).map((res: any, idx: number) => {
+                                         const template = qualityTemplates[item.templateId];
+                                         const itemDef = template?.items?.find((i: any) => i.id === res.itemId);
+                                         const displayName = itemDef?.label || res.label || res.itemId || 'Item';
+                                         return (
+                                            <p key={idx} className="text-[9px] text-emerald-800 font-semibold leading-tight">
+                                               <span className="font-bold text-emerald-600/70">{displayName}:</span> {res.value}
+                                            </p>
+                                         );
+                                      })}
+                                   </div>
+                                )}
+                                {/* Consolidated Observations */}
+                                {item.responses.some((r: any) => r.observation) && (
+                                   <div className="mt-1.5 space-y-1 bg-slate-50 p-2 rounded-xl border border-slate-200/50">
+                                      {item.responses.filter((r: any) => r.observation).map((res: any, idx: number) => {
+                                         const template = qualityTemplates[item.templateId];
+                                         const itemDef = template?.items?.find((i: any) => i.id === res.itemId);
+                                         const displayName = itemDef?.label || res.label || res.itemId || 'Item';
+                                         return (
+                                            <p key={idx} className="text-[9px] text-slate-500 font-semibold leading-tight">
+                                               <span className="font-bold text-slate-400">#{item.responses.indexOf(res) + 1} ({displayName}):</span> {res.observation}
+                                            </p>
+                                         );
+                                      })}
+                                   </div>
+                                )}
                              </div>
                           </td>
                         </>
@@ -2234,6 +2282,16 @@ const Reports: React.FC = () => {
           title={modalConfig.title}
           message={modalConfig.message}
           type={modalConfig.type}
+        />
+        <ConfirmationModal
+          isOpen={showCleanupConfirm}
+          onClose={() => setShowCleanupConfirm(false)}
+          title="Excluir Registros Órfãos?"
+          message={`Deseja realmente excluir ${orphanIds.length} registros de participação que não possuem DDS vinculado? Esta ação é irreversível.`}
+          type="warning"
+          confirmText="Sim, Excluir"
+          showConfirmButton={true}
+          onConfirm={() => handleCleanupOrphans(true)}
         />
       </AnimatePresence>
     </div>

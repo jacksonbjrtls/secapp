@@ -98,7 +98,7 @@ export interface QualitySector {
   createdAt: any;
 }
 
-export type ChecklistItemType = 'condition' | 'number' | 'range' | 'barcode';
+export type ChecklistItemType = 'condition' | 'number' | 'range' | 'barcode' | 'text';
 
 export interface ChecklistItemDefinition {
   id: string;
@@ -111,6 +111,7 @@ export interface ChecklistItemDefinition {
   conditionOptionsId?: string; // ID for custom options (e.g., ["OK", "NOK"])
   isInteger?: boolean; // For 'number' type
   isRangeDropdown?: boolean; // For 'range' type
+  allowObservation?: boolean; // Se o usuário pode colocar uma observação com texto livre
 }
 
 export interface QualityChecklistOptionSet {
@@ -144,6 +145,7 @@ export interface QualityChecklistSubmission {
   responses: {
     itemId: string;
     value: any;
+    observation?: string;
   }[];
   createdAt: any;
 }
