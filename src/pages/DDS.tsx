@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -118,6 +118,19 @@ const DDS: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [hasSigned, setHasSigned] = useState(false);
   const [registeredUsers, setRegisteredUsers] = useState<any[]>([]);
+  const [showExecutorDropdown, setShowExecutorDropdown] = useState(false);
+  const executorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (executorRef.current && !executorRef.current.contains(event.target as Node)) {
+        setShowExecutorDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
   const [showQRFullscreen, setShowQRFullscreen] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -1286,26 +1299,81 @@ const DDS: React.FC = () => {
                 </div>
               </div>
 
-              <div>
+              <div ref={executorRef} className="relative">
                 <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Executante (Responsável)</label>
-                <div className="flex gap-2">
+                <div className="relative flex items-center">
                   <input
                     type="text"
-                    list="registered-users"
-                    className="flex-1 bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
+                    className="w-full bg-slate-800 border-none rounded-xl pl-4 pr-10 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500 text-sm"
                     placeholder="Nome do responsável ou visitante"
                     value={newExecutor || ''}
-                    onChange={(e) => setNewExecutor(e.target.value)}
+                    onChange={(e) => {
+                      setNewExecutor(e.target.value);
+                      setShowExecutorDropdown(true);
+                    }}
+                    onFocus={() => setShowExecutorDropdown(true)}
                     required
                   />
-                  <datalist id="registered-users">
-                    {registeredUsers.map(user => (
-                      <option key={user.uid} value={user.displayName}>
-                        {user.email}
-                      </option>
-                    ))}
-                  </datalist>
+                  <button
+                    type="button"
+                    onClick={() => setShowExecutorDropdown(prev => !prev)}
+                    className="absolute right-3 text-slate-400 hover:text-white transition-colors"
+                  >
+                    {showExecutorDropdown ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
+
+                {showExecutorDropdown && (
+                  <div className="absolute left-0 right-0 mt-1 bg-slate-800 border border-slate-700/50 rounded-xl shadow-2xl z-50 max-h-60 overflow-y-auto">
+                    {/* Indicador de novo usuário sem cadastro */}
+                    {newExecutor && !registeredUsers.some(user => (user.displayName || '').toLowerCase() === newExecutor.toLowerCase()) && (
+                      <div 
+                        onClick={() => setShowExecutorDropdown(false)}
+                        className="px-4 py-2.5 border-b border-slate-700/30 font-bold text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 cursor-pointer flex items-center justify-between transition-colors"
+                      >
+                        <span className="truncate">Usar novo executor sem cadastro: "{newExecutor}"</span>
+                        <span className="text-[9px] bg-amber-500 text-slate-900 font-extrabold px-1.5 py-0.5 rounded flex-shrink-0 ml-2">Novo</span>
+                      </div>
+                    )}
+                    
+                    {registeredUsers.filter(user => {
+                      const queryStr = (newExecutor || '').toLowerCase();
+                      return (user.displayName || '').toLowerCase().includes(queryStr) || (user.email || '').toLowerCase().includes(queryStr);
+                    }).length === 0 ? (
+                      <div className="px-4 py-3 text-slate-400 text-xs text-center">
+                        Nenhum usuário cadastrado encontrado com "{newExecutor}"
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-700/20">
+                        {registeredUsers.filter(user => {
+                          const queryStr = (newExecutor || '').toLowerCase();
+                          return (user.displayName || '').toLowerCase().includes(queryStr) || (user.email || '').toLowerCase().includes(queryStr);
+                        }).map(user => {
+                          const isSelected = newExecutor === user.displayName;
+                          return (
+                            <div
+                              key={user.uid}
+                              onClick={() => {
+                                setNewExecutor(user.displayName);
+                                setShowExecutorDropdown(false);
+                              }}
+                              className={`px-4 py-3 text-xs flex flex-col hover:bg-slate-700/50 cursor-pointer transition-colors ${
+                                isSelected ? 'bg-emerald-500/15 border-l-2 border-emerald-500' : ''
+                              }`}
+                            >
+                              <span className="text-white font-bold text-[13px]">{user.displayName}</span>
+                              <span className="text-slate-400 text-[10px] mt-0.5">{user.email}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
