@@ -182,7 +182,7 @@ const DDS: React.FC = () => {
 
     // Fetch all registered users for the dropdown
     const fetchUsers = async () => {
-      if (!isManager) return;
+      if (!profile) return;
       try {
         const q = query(collection(db, 'users'), orderBy('displayName', 'asc'));
         const snapshot = await getDocs(q);
@@ -197,7 +197,7 @@ const DDS: React.FC = () => {
       }
     };
     fetchUsers();
-  }, [profile, isManager]);
+  }, [profile]);
 
   useEffect(() => {
     const urlPasscode = searchParams.get('passcode');

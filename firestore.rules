@@ -95,9 +95,9 @@ service cloud.firestore {
       }
 
       allow get: if isSignedIn() && (request.auth.uid == userId || isMaster() || isAdmin());
-      // For listing, we allow it if the user is a manager.
-      // To satisfy query security, we ensure the user has the role.
-      allow list: if isManager();
+      // For listing, we allow it if the user is approved.
+      // To satisfy query security, we ensure the user is approved.
+      allow list: if isApproved();
       
       allow create: if isSignedIn() && (
                       (request.auth.uid == userId && 
