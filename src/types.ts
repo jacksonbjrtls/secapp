@@ -170,6 +170,7 @@ export interface ConsumableItem {
   unit: ConsumableUnit;
   currentStock: number;
   minStock: number;
+  characteristics?: string;
   active: boolean;
   createdAt: any;
   updatedAt?: any;
@@ -188,6 +189,7 @@ export interface ConsumableLog {
   processedByUid: string;
   processedByName: string;
   shift?: 'Turno 1' | 'Turno 2' | 'Turno 3' | 'Geral';
+  group?: string;
   notes?: string;
   timestamp: any;
 }
