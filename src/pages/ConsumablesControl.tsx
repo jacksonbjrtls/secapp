@@ -67,10 +67,13 @@ import {
 const ConsumablesControl: React.FC = () => {
   const { user, profile, isApproved, isManager, isAdmin } = useAuth();
   
+  const isCommonUser = !isManager && !isAdmin;
+  
   // Custom 5 simpler tabs:
   // 1. Dashboard e Relatórios, 2. Cadastro, 3. Ajuste de Estoque, 4. Consumo do Operador, 5. Auditoria de Insumos
   type AdminTab = 'dashboard' | 'manage_items' | 'adjust_stock' | 'operator_consumption' | 'audit_log';
-  const [activeTab, setActiveTab] = useState<AdminTab>((!isManager && !isAdmin) ? 'operator_consumption' : 'dashboard');
+  const [activeTab, setActiveTab] = useState<AdminTab>(isCommonUser ? 'operator_consumption' : 'dashboard');
+  const actualTabToShow: AdminTab = isCommonUser ? 'operator_consumption' : activeTab;
   const [showTabMenu, setShowTabMenu] = useState(false);
   
   // Data State
@@ -632,7 +635,7 @@ const ConsumablesControl: React.FC = () => {
         </div>
 
         {/* Action Indicators displaying low supplies warnings */}
-        {lowStockItems.length > 0 && (
+        {lowStockItems.length > 0 && (isManager || isAdmin) && (
           <div className="bg-amber-500/10 border border-amber-500/20 text-amber-900 rounded-2xl px-4 py-3 max-w-md flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
             <div className="text-xs font-semibold">
@@ -648,22 +651,22 @@ const ConsumablesControl: React.FC = () => {
       </div>
 
       {/* Unified Menu Selector - Same responsive layout and dropdown format as the rest of the application */}
-      <div className="flex flex-col gap-4">
-        {/* Desktop Tabs - Visible on lg screens */}
-        <div className="hidden lg:flex items-center p-1.5 bg-slate-100/50 rounded-2xl border border-slate-200/60 backdrop-blur-sm w-fit">
-          <button
-            onClick={() => handleTabChange('dashboard')}
-            className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
-              activeTab === 'dashboard'
-                ? "bg-white text-slate-900 shadow-md shadow-slate-200/50"
-                : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-            )}
-          >
-            <TrendingUp className="w-4 h-4 animate-pulse text-emerald-600" /> Dashboard & Relatório
-          </button>
+      {(isManager || isAdmin) && (
+        <div className="flex flex-col gap-4">
+          {/* Desktop Tabs - Visible on lg screens */}
+          <div className="hidden lg:flex items-center p-1.5 bg-slate-100/50 rounded-2xl border border-slate-200/60 backdrop-blur-sm w-fit">
+            <button
+              onClick={() => handleTabChange('dashboard')}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+                activeTab === 'dashboard'
+                  ? "bg-white text-slate-900 shadow-md shadow-slate-200/50"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+              )}
+            >
+              <TrendingUp className="w-4 h-4 animate-pulse text-emerald-600" /> Dashboard & Relatório
+            </button>
 
-          {(isManager || isAdmin) && (
             <button
               onClick={() => handleTabChange('manage_items')}
               className={cn(
@@ -675,9 +678,7 @@ const ConsumablesControl: React.FC = () => {
             >
               <PackagePlus className="w-4 h-4" /> 1. Cadastrar Insumos
             </button>
-          )}
 
-          {(isManager || isAdmin) && (
             <button
               onClick={() => handleTabChange('adjust_stock')}
               className={cn(
@@ -689,21 +690,19 @@ const ConsumablesControl: React.FC = () => {
             >
               <Sliders className="w-4 h-4" /> 2. Entrada/Saída
             </button>
-          )}
 
-          <button
-            onClick={() => handleTabChange('operator_consumption')}
-            className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
-              activeTab === 'operator_consumption'
-                ? "bg-white text-blue-700 shadow-md shadow-slate-200/50"
-                : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-            )}
-          >
-            <User className="w-4 h-4" /> 3. Consumo do Operador
-          </button>
+            <button
+              onClick={() => handleTabChange('operator_consumption')}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+                activeTab === 'operator_consumption'
+                  ? "bg-white text-blue-700 shadow-md shadow-slate-200/50"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+              )}
+            >
+              <User className="w-4 h-4" /> 3. Consumo do Operador
+            </button>
 
-          {(isManager || isAdmin) && (
             <button
               onClick={() => handleTabChange('audit_log')}
               className={cn(
@@ -715,67 +714,67 @@ const ConsumablesControl: React.FC = () => {
             >
               <History className="w-4 h-4" /> 4. Auditoria de Estoque
             </button>
-          )}
-        </div>
+          </div>
 
-        {/* Mobile/Tablet Dropdown Control - Visible below lg screens */}
-        <div className="lg:hidden relative inline-block w-full max-w-sm">
-          <button
-            onClick={() => setShowTabMenu(!showTabMenu)}
-            className="w-full flex items-center justify-between gap-3 px-5 py-4 bg-white border border-slate-200 rounded-2xl text-xs font-black uppercase tracking-wider text-slate-700 shadow-sm transition-all active:scale-[0.98] hover:border-emerald-200"
-          >
-            <div className="flex items-center gap-2.5">
-              {activeTab === 'dashboard' && <><TrendingUp className="w-4 h-4 text-emerald-600 animate-pulse" /> Dashboard & Relatório</>}
-              {activeTab === 'manage_items' && <><PackagePlus className="w-4 h-4 text-slate-800" /> 1. Cadastrar Insumos</>}
-              {activeTab === 'adjust_stock' && <><Sliders className="w-4 h-4 text-emerald-700" /> 2. Entrada/Saída</>}
-              {activeTab === 'operator_consumption' && <><User className="w-4 h-4 text-blue-700" /> 3. Consumo do Operador</>}
-              {activeTab === 'audit_log' && <><History className="w-4 h-4 text-slate-900" /> 4. Auditoria de Estoque</>}
-            </div>
-            <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTabMenu && "rotate-180")} />
-          </button>
+          {/* Mobile/Tablet Dropdown Control - Visible below lg screens */}
+          <div className="lg:hidden relative inline-block w-full max-w-sm">
+            <button
+              onClick={() => setShowTabMenu(!showTabMenu)}
+              className="w-full flex items-center justify-between gap-3 px-5 py-4 bg-white border border-slate-200 rounded-2xl text-xs font-black uppercase tracking-wider text-slate-700 shadow-sm transition-all active:scale-[0.98] hover:border-emerald-200"
+            >
+              <div className="flex items-center gap-2.5">
+                {activeTab === 'dashboard' && <><TrendingUp className="w-4 h-4 text-emerald-600 animate-pulse" /> Dashboard & Relatório</>}
+                {activeTab === 'manage_items' && <><PackagePlus className="w-4 h-4 text-slate-800" /> 1. Cadastrar Insumos</>}
+                {activeTab === 'adjust_stock' && <><Sliders className="w-4 h-4 text-emerald-700" /> 2. Entrada/Saída</>}
+                {activeTab === 'operator_consumption' && <><User className="w-4 h-4 text-blue-700" /> 3. Consumo do Operador</>}
+                {activeTab === 'audit_log' && <><History className="w-4 h-4 text-slate-900" /> 4. Auditoria de Estoque</>}
+              </div>
+              <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTabMenu && "rotate-180")} />
+            </button>
 
-          <AnimatePresence>
-            {showTabMenu && (
-              <>
-                <div 
-                  className="fixed inset-0 z-10" 
-                  onClick={() => setShowTabMenu(false)} 
-                />
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  className="absolute right-0 mt-2 w-full min-w-[260px] bg-white border border-slate-100 rounded-2xl shadow-2xl z-20 overflow-hidden p-1.5"
-                >
-                  {[
-                    { id: 'dashboard', label: 'Dashboard & Relatório', icon: TrendingUp },
-                    { id: 'manage_items', label: '1. Cadastrar Insumos', icon: PackagePlus, roles: [(isManager || isAdmin)] },
-                    { id: 'adjust_stock', label: '2. Entrada/Saída', icon: Sliders, roles: [(isManager || isAdmin)] },
-                    { id: 'operator_consumption', label: '3. Consumo do Operador', icon: User },
-                    { id: 'audit_log', label: '4. Auditoria de Estoque', icon: History, roles: [(isManager || isAdmin)] }
-                  ].map((tab: any) => {
-                    if (tab.roles && !tab.roles.every(Boolean)) return null;
-                    const Icon = tab.icon;
-                    return (
-                      <button
-                        key={tab.id}
-                        onClick={() => handleTabChange(tab.id)}
-                        className={cn(
-                          "w-full flex items-center gap-2.5 px-4 py-3.5 rounded-xl text-left text-xs font-black uppercase tracking-wider transition-all",
-                          activeTab === tab.id ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
-                        )}
-                      >
-                        <Icon className="w-4 h-4" />
-                        {tab.label}
-                      </button>
-                    );
-                  })}
-                </motion.div>
-              </>
-            )}
-          </AnimatePresence>
+            <AnimatePresence>
+              {showTabMenu && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-10" 
+                    onClick={() => setShowTabMenu(false)} 
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute right-0 mt-2 w-full min-w-[260px] bg-white border border-slate-100 rounded-2xl shadow-2xl z-20 overflow-hidden p-1.5"
+                  >
+                    {[
+                      { id: 'dashboard', label: 'Dashboard & Relatório', icon: TrendingUp },
+                      { id: 'manage_items', label: '1. Cadastrar Insumos', icon: PackagePlus, roles: [(isManager || isAdmin)] },
+                      { id: 'adjust_stock', label: '2. Entrada/Saída', icon: Sliders, roles: [(isManager || isAdmin)] },
+                      { id: 'operator_consumption', label: '3. Consumo do Operador', icon: User },
+                      { id: 'audit_log', label: '4. Auditoria de Estoque', icon: History, roles: [(isManager || isAdmin)] }
+                    ].map((tab: any) => {
+                      if (tab.roles && !tab.roles.every(Boolean)) return null;
+                      const Icon = tab.icon;
+                      return (
+                        <button
+                          key={tab.id}
+                          onClick={() => handleTabChange(tab.id)}
+                          className={cn(
+                            "w-full flex items-center gap-2.5 px-4 py-3.5 rounded-xl text-left text-xs font-black uppercase tracking-wider transition-all",
+                            activeTab === tab.id ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                          )}
+                        >
+                          <Icon className="w-4 h-4" />
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Global Toast Success and Error Notifications Banner */}
       <AnimatePresence mode="wait">
@@ -820,7 +819,7 @@ const ConsumablesControl: React.FC = () => {
         <div className="transition-all duration-300">
           
           {/* TAB 1: DASHBOARD & CLEAN REPORT VIEWER */}
-          {activeTab === 'dashboard' && (
+          {actualTabToShow === 'dashboard' && (isManager || isAdmin) && (
             <div className="space-y-8">
               
               {/* KPIs Grid */}
@@ -1041,7 +1040,7 @@ const ConsumablesControl: React.FC = () => {
           )}
 
           {/* TAB 2: REGISTER INGREDIENTS (Point 1: Cadastro de Insumos & Característica) */}
-          {activeTab === 'manage_items' && (
+          {actualTabToShow === 'manage_items' && (isManager || isAdmin) && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
               {/* Add / Edit Form Column */}
@@ -1236,7 +1235,7 @@ const ConsumablesControl: React.FC = () => {
           )}
 
           {/* TAB 3: LOCAL ENTRY & WITHDRAWALS STOCK ADJUSTMENT (Point 2: Entrada e Saída de Insumos) */}
-          {activeTab === 'adjust_stock' && (
+          {actualTabToShow === 'adjust_stock' && (isManager || isAdmin) && (
             <div className="max-w-2xl mx-auto bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
               <div>
                 <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
@@ -1379,7 +1378,7 @@ const ConsumablesControl: React.FC = () => {
           )}
 
           {/* TAB 4: OPERATOR DIRECT CONSUMPTION LOG (Point 3: Consumo de Insumo Prático pelo Operador) */}
-          {activeTab === 'operator_consumption' && (
+          {actualTabToShow === 'operator_consumption' && (
             <div className="max-w-2xl mx-auto bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
               
               <div>
@@ -1475,14 +1474,27 @@ const ConsumablesControl: React.FC = () => {
 
                   <div>
                     <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1.5 ml-1">Nome do Operador *</label>
-                    <input
-                      required
-                      type="text"
-                      placeholder="Identificação do Operador que realizou a troca"
-                      value={consumeOperator}
-                      onChange={(e) => setConsumeOperator(e.target.value)}
-                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700"
-                    />
+                    {(!isManager && !isAdmin) ? (
+                      <div className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-between text-xs font-black text-slate-700 h-[46px]">
+                        <span className="flex items-center gap-2">
+                          <User className="w-4 h-4 text-blue-600" />
+                          {consumeOperator || profile?.displayName || user?.displayName || 'Operador'}
+                        </span>
+                        <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                          <Lock className="w-3 h-3 text-slate-400" />
+                          Bloqueado
+                        </span>
+                      </div>
+                    ) : (
+                      <input
+                        required
+                        type="text"
+                        placeholder="Identificação do Operador que realizou a troca"
+                        value={consumeOperator}
+                        onChange={(e) => setConsumeOperator(e.target.value)}
+                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -1516,7 +1528,7 @@ const ConsumablesControl: React.FC = () => {
           )}
 
           {/* TAB 5: COMPREHENSIVE AUDIT TRAIL LOG (Point 5: Aba de Auditoria de Insumo) */}
-          {activeTab === 'audit_log' && (
+          {actualTabToShow === 'audit_log' && (isManager || isAdmin) && (
             <div className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
               
               <div>
