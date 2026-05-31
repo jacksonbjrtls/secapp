@@ -47,7 +47,8 @@ import {
   RefreshCw,
   EyeOff,
   Eye,
-  Lock
+  Lock,
+  Users
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -65,9 +66,9 @@ import {
 } from 'recharts';
 
 const ConsumablesControl: React.FC = () => {
-  const { user, profile, isApproved, isManager, isAdmin } = useAuth();
+  const { user, profile, isApproved, isManager, isAdmin, loading: authLoading } = useAuth();
   
-  const isCommonUser = !isManager && !isAdmin;
+  const isCommonUser = !authLoading && !isManager && !isAdmin;
   
   // Custom 5 simpler tabs:
   // 1. Dashboard e Relatórios, 2. Cadastro, 3. Ajuste de Estoque, 4. Consumo do Operador, 5. Auditoria de Insumos
@@ -138,6 +139,20 @@ const ConsumablesControl: React.FC = () => {
       }
     }
   }, [consumeShift]);
+
+  // Auto-preselect first item and line when loaded (especially for common users)
+  useEffect(() => {
+    const activeItems = items.filter(i => i.active);
+    if (activeItems.length > 0 && !consumeItemId) {
+      setConsumeItemId(activeItems[0].id);
+    }
+  }, [items, consumeItemId]);
+
+  useEffect(() => {
+    if (lines.length > 0 && !consumeLineId) {
+      setConsumeLineId(lines[0].id);
+    }
+  }, [lines, consumeLineId]);
 
   // Redirect standard operators immediately to their primary "Consumo do Operador" view
   useEffect(() => {
@@ -603,6 +618,228 @@ const ConsumablesControl: React.FC = () => {
 
     return true;
   });
+
+  // Authorization layout validation
+  if (authLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm max-w-xl mx-auto my-12">
+        <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+        <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">Sincronizando Perfil...</p>
+      </div>
+    );
+  }
+
+  if (!isApproved) {
+    return (
+      <div className="min-h-[50vh] flex flex-col items-center justify-center p-6 text-center bg-white rounded-3xl border border-slate-100 shadow-sm max-w-xl mx-auto my-12">
+        <AlertTriangle className="w-16 h-16 text-amber-500 mb-4 animate-bounce" />
+        <h2 className="text-2xl font-black text-slate-900 tracking-tight">Modulo Indisponível</h2>
+        <p className="text-slate-500 text-sm font-semibold max-w-sm mt-2 leading-relaxed">
+          Sua conta está registrada mas seu perfil de aprovação ainda é pendente. Peça para o administrador do sistema liberar seu acesso no painel de gerência.
+        </p>
+      </div>
+    );
+  }
+
+  // Purely blocked operator-only interface
+  if (isCommonUser) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-8 md:px-8 space-y-8 font-sans">
+        {/* Simplified elegant title block */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-slate-100">
+          <div>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+              <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl">
+                <Package className="w-8 h-8 font-bold" />
+              </div>
+              Lançamento de Consumo de Insumos
+            </h1>
+            <p className="text-slate-500 text-sm font-medium mt-1 leading-relaxed">
+              Painel simplificado para registro imediato de insumos consumidos nas linhas de produção.
+            </p>
+          </div>
+        </div>
+
+        {/* Global Toast Success and Error Notifications Banner */}
+        <AnimatePresence mode="wait">
+          {successMsg && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="flex items-center gap-3 bg-emerald-50 text-emerald-800 border border-emerald-200 px-5 py-4 rounded-2xl shadow-sm font-bold text-sm"
+            >
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <span>{successMsg}</span>
+              <button onClick={() => setSuccessMsg('')} className="ml-auto text-emerald-500 hover:text-emerald-700">
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          )}
+
+          {errMsg && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="flex items-center gap-3 bg-rose-50 text-rose-800 border border-rose-200 px-5 py-4 rounded-2xl shadow-sm font-bold text-sm"
+            >
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+              <span>{errMsg}</span>
+              <button onClick={() => setErrMsg('')} className="ml-auto text-rose-500 hover:text-rose-700">
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-24 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm">
+            <Loader2 className="w-12 h-12 text-emerald-600 animate-spin mb-4" />
+            <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">Sincronizando Insumos...</p>
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
+            <div>
+              <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+                <User className="w-5.5 h-5.5 text-blue-600" />
+                Consumo Direto do Operador (Linha Fabril)
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
+                Registre de forma simplificada e imediata os insumos utilizados nas máquinas fabris durante o turno.
+              </p>
+            </div>
+
+            {activeItems.length === 0 ? (
+              <div className="text-center py-10 bg-slate-50 rounded-2xl border border-slate-100">
+                <Package className="w-12 h-12 text-slate-350 mx-auto mb-2" />
+                <p className="text-slate-500 font-bold text-sm">Ainda sem insumos catalogados e ativos.</p>
+              </div>
+            ) : (
+              <form onSubmit={handleProcessOperatorConsumption} className="space-y-4 p-5 bg-blue-50/20 border border-blue-100/50 rounded-3xl">
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1.5 ml-1">Insumo Utilizado *</label>
+                    <select
+                      required
+                      value={consumeItemId}
+                      onChange={(e) => setConsumeItemId(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700"
+                    >
+                      <option value="">Qual insumo consumiu?</option>
+                      {activeItems.map(item => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} ({item.currentStock.toFixed(1)} {item.unit} em estoque)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1.5 ml-1">Volume Consumido *</label>
+                    <input
+                      required
+                      type="number"
+                      step="any"
+                      min="0.01"
+                      placeholder="Digite a quantidade exata"
+                      value={consumeQty}
+                      onChange={(e) => setConsumeQty(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1.5 ml-1">Linha de Destino *</label>
+                    <select
+                      required
+                      value={consumeLineId}
+                      onChange={(e) => setConsumeLineId(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700"
+                    >
+                      <option value="">Qual Linha Fabril?</option>
+                      {lines.map(line => (
+                        <option key={line.id} value={line.id}>{line.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1.5 ml-1">Turno de Trabalho *</label>
+                    <select
+                      required
+                      value={consumeShift}
+                      onChange={(e: any) => setConsumeShift(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700"
+                    >
+                      <option value="Turno 1">Turno 1 (00:00 - 08:00)</option>
+                      <option value="Turno 2">Turno 2 (08:00 - 16:00)</option>
+                      <option value="Turno 3">Turno 3 (16:00 - 00:00)</option>
+                      <option value="Geral">Turno Geral (Comercial)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1.5 ml-1">Letra / Equipe Atribuída</label>
+                    <div className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-between text-xs font-black text-slate-700 h-[46px]">
+                      <span className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-blue-600" />
+                        Escala: {consumeGroup || 'No Scale'}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-bold">Auto</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1.5 ml-1">Nome do Operador *</label>
+                  <div className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-between text-xs font-black text-slate-700 h-[46px]">
+                    <span className="flex items-center gap-2">
+                      <User className="w-4 h-4 text-blue-600" />
+                      {consumeOperator || profile?.displayName || user?.displayName || 'Operador'}
+                    </span>
+                    <span className="flex items-center gap-1 text-[10px] text-slate-500 font-bold">
+                      <Lock className="w-3 h-3 text-slate-400" />
+                      Bloqueado
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1.5 ml-1">Observações do Operador</label>
+                  <textarea
+                    rows={2.5}
+                    placeholder="Opcional: Descreva anomalias ou observações se aplicável..."
+                    value={consumeNotes}
+                    onChange={(e) => setConsumeNotes(e.target.value)}
+                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-semibold text-slate-700 placeholder:font-normal placeholder:text-slate-400"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl transition-all shadow-md shadow-blue-600/10 text-xs uppercase tracking-wider flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      Registrar Consumo do Operador
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Authorization layout validation
   if (!isApproved) {
