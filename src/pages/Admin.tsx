@@ -605,6 +605,15 @@ const Admin: React.FC = () => {
       setError(`O domínio @${emailDomain} não é permitido. Cadastre o domínio primeiro na aba "Domínios".`);
       return;
     }
+
+    // Check for duplicate email in Firestore
+    const emailLower = newUser.email.toLowerCase().trim();
+    const emailQuery = query(collection(db, 'users'), where('email', '==', emailLower), limit(1));
+    const querySnapshot = await getDocs(emailQuery);
+    if (!querySnapshot.empty) {
+      setError("Este e-mail já possui um cadastro ativo no sistema.");
+      return;
+    }
     
     setAddUserLoading(true);
     const tempAppName = `temp-app-${Date.now()}`;

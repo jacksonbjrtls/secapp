@@ -816,32 +816,32 @@ export const Overview: React.FC = () => {
             <div className="flex flex-col items-center py-6">
               <div className="relative flex items-center justify-center">
                 {/* Visual Gauge Circle */}
-                <svg className="w-48 h-48 rotate-[-90deg]">
+                <svg className="w-36 h-36 rotate-[-90deg]" viewBox="0 0 144 144">
                   <circle
-                    cx="96"
-                    cy="96"
-                    r="80"
+                    cx="72"
+                    cy="72"
+                    r="50"
                     stroke="#f1f5f9"
-                    strokeWidth="12"
+                    strokeWidth="10"
                     fill="transparent"
                   />
                   <circle
-                    cx="96"
-                    cy="96"
-                    r="80"
+                    cx="72"
+                    cy="72"
+                    r="50"
                     stroke={healthIndex > 85 ? '#10b981' : healthIndex > 65 ? '#f59e0b' : '#ef4444'}
-                    strokeWidth="12"
+                    strokeWidth="10"
                     fill="transparent"
-                    strokeDasharray={2 * Math.PI * 80}
-                    strokeDashoffset={2 * Math.PI * 80 * (1 - healthIndex / 100)}
+                    strokeDasharray={2 * Math.PI * 50}
+                    strokeDashoffset={2 * Math.PI * 50 * (1 - healthIndex / 100)}
                     strokeLinecap="round"
                     className="transition-all duration-1000 ease-out"
                   />
                 </svg>
                 <div className="absolute flex flex-col items-center justify-center text-center">
-                  <span className="text-5xl font-black text-slate-900 tracking-tighter tabular-nums">{healthIndex}%</span>
+                  <span className="text-4xl font-black text-slate-900 tracking-tighter tabular-nums">{healthIndex}%</span>
                   <span className={cn(
-                    "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 mt-2 rounded-full",
+                    "text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 mt-1.5 rounded-full",
                     healthIndex >= 90 ? "bg-emerald-100 text-emerald-800" :
                     healthIndex >= 75 ? "bg-amber-100 text-amber-800" :
                     "bg-rose-100 text-rose-800"

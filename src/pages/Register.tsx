@@ -84,6 +84,16 @@ const Register: React.FC = () => {
         return;
       }
 
+      // Check for duplicate email in Firestore
+      const emailLower = email.toLowerCase().trim();
+      const emailQuery = query(collection(db, 'users'), where('email', '==', emailLower), limit(1));
+      const querySnapshot = await getDocs(emailQuery);
+      if (!querySnapshot.empty) {
+        setError("Este e-mail já possui um cadastro ativo no sistema. Caso seja o proprietário, faça login.");
+        setLoading(false);
+        return;
+      }
+
       // Create user
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
