@@ -935,9 +935,9 @@ const Quality: React.FC = () => {
                         {item.type === 'condition' && (
                           <div className="flex flex-wrap gap-3">
                             {item.conditionOptionsId ? (
-                              optionSets.find(s => s.id === item.conditionOptionsId)?.options.map(opt => (
+                              optionSets.find(s => s.id === item.conditionOptionsId)?.options.map((opt, optIdx) => (
                                 <button
-                                  key={opt}
+                                  key={`${opt}-${optIdx}`}
                                   onClick={() => setResponses(prev => ({ ...prev, [item.id]: opt }))}
                                   className={cn(
                                     "flex-1 min-w-[120px] py-4 rounded-2xl font-black transition-all border-2 text-sm",

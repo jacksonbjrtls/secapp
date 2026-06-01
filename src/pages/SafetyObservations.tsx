@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { MASTER_EMAILS } from '../constants';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -402,9 +403,11 @@ const SafetyObservations: React.FC = () => {
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'users'), (snap) => {
       const uniqueUsersMap = new Map<string, { id: string; name: string }>();
-
+ 
       snap.docs.forEach(doc => {
         const u = doc.data();
+        const userEmail = u.email?.toLowerCase().trim() || '';
+        if (MASTER_EMAILS.includes(userEmail)) return;
         const rawName = (u.displayName || u.name || u.nome || u.email || '').trim();
         if (rawName && !uniqueUsersMap.has(rawName)) {
           uniqueUsersMap.set(rawName, {
@@ -413,12 +416,12 @@ const SafetyObservations: React.FC = () => {
           });
         }
       });
-
+ 
       const ops = Array.from(uniqueUsersMap.values());
-
+ 
       // Sort alphabetically
       ops.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-
+ 
       setOperatorsState(ops);
       setDbOperators(ops.map(o => o.name));
     }, (err) => {
@@ -1350,8 +1353,8 @@ const SafetyObservations: React.FC = () => {
                           className="w-full text-xs font-semibold px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         >
                           <option value="">Selecionar...</option>
-                          {activePlantAreas.map(a => (
-                            <option key={a} value={a}>{a}</option>
+                          {activePlantAreas.map((a, idx) => (
+                            <option key={`observer-area-${a}-${idx}`} value={a}>{a}</option>
                           ))}
                         </select>
                       </div>
@@ -1388,8 +1391,8 @@ const SafetyObservations: React.FC = () => {
                           className="w-full text-xs font-semibold px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         >
                           <option value="">Selecionar...</option>
-                          {activePlantAreas.map(a => (
-                            <option key={a} value={a}>{a}</option>
+                          {activePlantAreas.map((a, idx) => (
+                            <option key={`observed-area-${a}-${idx}`} value={a}>{a}</option>
                           ))}
                         </select>
                       </div>
@@ -2009,8 +2012,8 @@ const SafetyObservations: React.FC = () => {
                   <div className="p-5 bg-white border border-slate-200 rounded-2xl space-y-3">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-wide block">DIRETRIZES OBSERVADAS (O QUE OBSERVAR):</span>
                     <div className="flex flex-wrap gap-2">
-                      {viewingObs.categoriesSelected.map((catName) => (
-                        <span key={catName} className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl block leading-tight">
+                      {viewingObs.categoriesSelected.map((catName, idx) => (
+                        <span key={`${catName}-${idx}`} className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl block leading-tight">
                           ✅ {catName}
                         </span>
                       ))}

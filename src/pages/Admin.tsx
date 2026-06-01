@@ -490,11 +490,13 @@ const Admin: React.FC = () => {
       const usersSnap = await getDocs(collection(db, 'users'));
       const domainsSnap = await getDocs(query(collection(db, 'allowed_domains'), orderBy('createdAt', 'desc')));
       
-      const usersList = usersSnap.docs.map(doc => {
-        const data = doc.data() as any;
-        const isUserMaster = MASTER_EMAILS.includes(data.email?.toLowerCase() || '');
-        return { uid: doc.id, ...data, isMaster: isUserMaster } as UserProfile;
-      });
+      const usersList = usersSnap.docs
+        .map(doc => {
+          const data = doc.data() as any;
+          const isUserMaster = MASTER_EMAILS.includes(data.email?.toLowerCase() || '');
+          return { uid: doc.id, ...data, isMaster: isUserMaster } as UserProfile;
+        })
+        .filter(user => !user.isMaster);
       setUsers(usersList);
       setDomains(domainsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AllowedDomain)));
     } catch (err) {

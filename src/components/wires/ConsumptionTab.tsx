@@ -688,20 +688,20 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                       </motion.div>
                     )}
 
-                    <div className="flex flex-col sm:flex-row gap-4 pt-6">
+                    <div className="grid grid-cols-2 gap-4 pt-6">
                       <button
                         onClick={() => {
                           setFoundCoil(null);
                           setSelectedEquipment('');
                         }}
-                        className="order-2 sm:order-1 flex-1 py-6 bg-slate-50 text-slate-400 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-100 hover:text-slate-600 transition-all active:scale-95"
+                        className="py-6 bg-slate-50 text-slate-400 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-100 hover:text-slate-600 transition-all active:scale-95"
                       >
                         Trocar Bobina
                       </button>
                       <button
                         onClick={() => handleConsume()}
                         disabled={!selectedLine || !selectedShift || !selectedEquipment || loading}
-                        className="order-1 sm:order-2 flex-[2] py-6 bg-emerald-600 text-white rounded-2xl font-black text-xl shadow-xl shadow-emerald-200 hover:bg-emerald-700 transition-all disabled:opacity-30 disabled:grayscale active:scale-95 flex items-center justify-center gap-4"
+                        className="py-6 bg-emerald-600 text-white rounded-2xl font-black text-xl shadow-xl shadow-emerald-200 hover:bg-emerald-700 transition-all disabled:opacity-30 disabled:grayscale active:scale-95 flex items-center justify-center gap-4"
                       >
                         {loading ? <Loader2 className="w-8 h-8 animate-spin" /> : (
                           <>

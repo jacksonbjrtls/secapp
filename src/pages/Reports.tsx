@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { 
   Smile,
@@ -256,7 +257,12 @@ const Reports: React.FC = () => {
           setSafetyObservationsData(safetyList);
 
           const usersSnap = await getDocs(collection(db, 'users'));
-          const usersList = usersSnap.docs.map(doc => ({ uid: doc.id, id: doc.id, ...doc.data() }));
+          const usersList = usersSnap.docs
+            .map(doc => ({ uid: doc.id, id: doc.id, ...doc.data() as any }))
+            .filter(user => {
+              const userEmail = user.email?.toLowerCase().trim() || '';
+              return !MASTER_EMAILS.includes(userEmail);
+            });
           setAllUsers(usersList);
         }
 

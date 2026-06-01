@@ -974,11 +974,11 @@ const OperationalRoutes: React.FC = () => {
                     {/* CONDITION TYPE CONFIG OR FALLBACKS */}
                     {eq.type === 'condition' && (
                       <div className="flex flex-wrap gap-2">
-                        {(optionSets.find(o => o.id === eq.conditionOptionsId)?.options || ['OK', 'NÃO OK']).map(option => {
+                        {(optionSets.find(o => o.id === eq.conditionOptionsId)?.options || ['OK', 'NÃO OK']).map((option, inlineIdx) => {
                           const isSelected = resp.value === option;
                           return (
                             <button
-                              key={option}
+                              key={`${option}-${inlineIdx}`}
                               type="button"
                               onClick={() => {
                                 setRouteResponses(prev => {

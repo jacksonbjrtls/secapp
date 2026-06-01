@@ -305,43 +305,39 @@ const Forklifts: React.FC = () => {
     
     setTestingEmail(true);
     try {
-      const response = await fetch('/api/send-notification', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recipients: settings.responsiblePersons,
-          failures: [
-            { name: "Motor de Partida", observation: "Ruído excessivo detectado no acionamento." },
-            { name: "Nível de Óleo", observation: "Abaixo do limite mínimo recomendado." }
-          ],
-          forkliftNumber: "TESTE-001",
-          conductorName: profile?.displayName || auth.currentUser?.email || 'Administrador'
-        })
-      });
+      const recipientEmails = settings.responsiblePersons.map(p => p.email).join(',');
+      const subject = `SecApp - Teste de Envio de E-mail`;
       
-      const result = await response.json();
-      if (response.ok && result.success) {
-        setModalConfig({
-          isOpen: true,
-          title: 'Sucesso!',
-          message: 'E-mail de teste enviado com sucesso! Verifique a caixa de entrada dos responsáveis.',
-          type: 'success'
-        });
-      } else {
-        const errorMsg = result.error || result.message || "Erro desconhecido.";
-        setModalConfig({
-          isOpen: true,
-          title: 'Falha no Envio',
-          message: `Ocorreu um erro ao enviar: ${errorMsg}`,
-          type: 'error'
-        });
-      }
+      const localTimeStr = new Date().toLocaleString('pt-BR');
+      const body = `Olá,
+
+Este é um e-mail de teste de não conformidade de empilhadeira enviado utilizando o cliente de e-mail do aparelho.
+
+Data/Hora Local: ${localTimeStr}
+Equipamento de Teste: TESTE-001
+Condutor: ${profile?.displayName || auth.currentUser?.email || 'Administrador'}
+
+Itens Não Conformes (Exemplo):
+- Motor de Partida: Ruído excessivo detectado no acionamento.
+- Nível de Óleo: Abaixo do limite mínimo recomendado.
+
+Este é um teste do SecApp - Sistema de Gestão de Segurança.`;
+
+      const mailtoLink = `mailto:${recipientEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      window.location.href = mailtoLink;
+
+      setModalConfig({
+        isOpen: true,
+        title: 'Sucesso!',
+        message: 'Cliente de e-mail do aparelho aberto com sucesso!',
+        type: 'success'
+      });
     } catch (err: any) {
       console.error("Test email error:", err);
       setModalConfig({
         isOpen: true,
-        title: 'Erro de Conexão',
-        message: `Não foi possível conectar ao servidor: ${err.message}`,
+        title: 'Erro',
+        message: `Não foi possível abrir o cliente de e-mail do aparelho: ${err.message}`,
         type: 'error'
       });
     } finally {
@@ -559,7 +555,7 @@ const Forklifts: React.FC = () => {
 
           const responsibleList = settings.responsiblePersons || [];
           const responsibleSummary = responsibleList.length > 0 
-            ? `E-mails notificados: ${responsibleList.map(p => p.email).join(', ')}`
+            ? `Cliente de e-mail do aparelho pronto para os responsáveis: ${responsibleList.map(p => p.email).join(', ')}.`
             : 'Nenhum responsável cadastrado para receber e-mail.';
 
           const notificationMessage = `Não conformidade detectada no equipamento ${showCheckModal.number} por ${profile?.displayName || auth.currentUser.email}. Itens: ${failures.map(f => f.name).join(', ')}`;
@@ -575,18 +571,33 @@ const Forklifts: React.FC = () => {
             failures
           });
 
-          // Call backend API to send real emails if responsible persons exist
+          // Call client-side mailto using device email configuration if responsible persons exist
           if (responsibleList.length > 0) {
-            fetch('/api/send-notification', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                recipients: responsibleList,
-                forkliftNumber: showCheckModal.number,
-                conductorName: profile?.displayName || auth.currentUser.email,
-                failures: failures
-              })
-            }).catch(err => console.error("Error calling notification API:", err));
+            try {
+              const recipientEmails = responsibleList.map(p => p.email).join(',');
+              const subject = `SecApp - Alerta de Não Conformidade: ${showCheckModal.number}`;
+              
+              const localTimeStr = new Date().toLocaleString('pt-BR');
+              const failuresText = failures.map(f => `- ${f.name}: ${f.observation || 'Sem observação.'}`).join('\n');
+              
+              const body = `Olá,
+
+Uma não conformidade crítica foi detectada durante a inspeção do equipamento do SecApp:
+
+Equipamento: ${showCheckModal.number}
+Condutor: ${profile?.displayName || auth.currentUser.email}
+Data/Hora Local: ${localTimeStr}
+
+Itens Não Conformes:
+${failuresText}
+
+Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
+
+              const mailtoLink = `mailto:${recipientEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+              window.location.href = mailtoLink;
+            } catch (err) {
+              console.error("Error launching device mailto:", err);
+            }
           }
           
           setModalConfig({
@@ -1514,172 +1525,194 @@ const Forklifts: React.FC = () => {
                             "bg-white p-6 rounded-[2rem] border transition-all shadow-sm space-y-4",
                             isAnswered ? "border-emerald-100 bg-emerald-50/10" : "border-slate-200 hover:border-emerald-200"
                           )}>
-                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                               <div className="flex-1 flex items-center gap-3">
-                                 {isAnswered && (
-                                   <div className="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shrink-0">
-                                     <CheckCircle2 className="w-5 h-5" />
-                                   </div>
-                                 )}
-                                 <div>
-                                   <p className="font-bold text-slate-800 tracking-tight mb-1">{index + 1}. {item.name}</p>
-                                   <div className="flex items-center gap-2">
-                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                             <div className="flex flex-col gap-4">
+                               <div className="flex items-center justify-between gap-4">
+                                 <div className="flex items-center gap-3">
+                                   <span className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-black text-sm shrink-0">
+                                     {index + 1}
+                                   </span>
+                                   <div>
+                                     <p className="font-bold text-slate-800 tracking-tight text-base md:text-lg">{item.name}</p>
+                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">
                                        {isAnswered ? (
-                                          <span className="text-emerald-500">Salvo no Banco</span>
+                                          <span className="text-emerald-500 font-bold">Respondido</span>
                                        ) : (
                                           <>Tipo: {item.type.replace('_', '/')}</>
                                        )}
                                      </p>
-                                     {isAnswered && (
-                                       <button 
-                                         type="button"
-                                         onClick={() => {
-                                            const newResults = { ...checklistResults };
-                                            delete newResults[item.id];
-                                            setChecklistResults(newResults);
-                                         }}
-                                         className="p-1 text-slate-400 hover:text-emerald-600 transition-colors"
-                                         title="Editar este item"
-                                       >
-                                         <Edit2 className="w-3.5 h-3.5" />
-                                       </button>
-                                     )}
                                    </div>
                                  </div>
+                                 {isAnswered && (
+                                   <button 
+                                     type="button"
+                                     onClick={() => {
+                                        const newResults = { ...checklistResults };
+                                        delete newResults[item.id];
+                                        setChecklistResults(newResults);
+                                     }}
+                                     className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all shrink-0"
+                                     title="Limpar resposta"
+                                   >
+                                     <X className="w-4.5 h-4.5" />
+                                   </button>
+                                 )}
                                </div>
 
-                               <div className="flex shrink-0">
+                               <div className="sm:pl-11">
                                   {item.type === 'boolean' && (
-                                    <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl">
+                                    <div className="grid grid-cols-2 gap-3 w-full">
                                        <button
                                          type="button"
                                          onClick={() => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], value: true, status: 'normal' }})}
                                          className={cn(
-                                           "px-6 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase transition-all",
-                                           checklistResults[item.id]?.value === true ? "bg-emerald-600 text-white shadow-md shadow-emerald-200/50" : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                                           "flex-1 py-4 rounded-2xl font-black transition-all border-2 text-sm flex items-center justify-center gap-2 uppercase tracking-widest",
+                                           checklistResults[item.id]?.value === true 
+                                             ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100" 
+                                             : "bg-white border-slate-200 text-slate-400 hover:border-emerald-200"
                                          )}
                                        >
+                                         <CheckCircle2 className="w-5 h-5" />
                                          OK
                                        </button>
                                        <button
                                          type="button"
                                          onClick={() => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], value: false, status: 'anormal' }})}
                                          className={cn(
-                                           "px-6 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase transition-all",
-                                           checklistResults[item.id]?.value === false ? "bg-rose-600 text-white shadow-md shadow-rose-200/50" : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                                           "flex-1 py-4 rounded-2xl font-black transition-all border-2 text-sm flex items-center justify-center gap-2 uppercase tracking-widest",
+                                           checklistResults[item.id]?.value === false 
+                                             ? "bg-rose-600 border-rose-600 text-white shadow-lg shadow-rose-100" 
+                                             : "bg-white border-slate-200 text-slate-400 hover:border-rose-200"
                                          )}
                                        >
+                                         <AlertTriangle className="w-5 h-5" />
                                          NÃO OK
                                        </button>
                                     </div>
                                   )}
 
                                   {item.type === 'normal_anormal' && (
-                                    <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl">
+                                    <div className="grid grid-cols-2 gap-3 w-full">
                                        <button
                                          type="button"
                                          onClick={() => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], value: 'normal', status: 'normal' }})}
                                          className={cn(
-                                           "px-6 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase transition-all",
-                                           checklistResults[item.id]?.value === 'normal' ? "bg-emerald-600 text-white shadow-md shadow-emerald-200/50" : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                                           "flex-1 py-4 rounded-2xl font-black transition-all border-2 text-sm flex items-center justify-center gap-2 uppercase tracking-widest",
+                                           checklistResults[item.id]?.value === 'normal' 
+                                             ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100" 
+                                             : "bg-white border-slate-200 text-slate-400 hover:border-emerald-200"
                                          )}
                                        >
+                                         <CheckCircle2 className="w-5 h-5" />
                                          NORMAL
                                        </button>
                                        <button
                                          type="button"
                                          onClick={() => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], value: 'anormal', status: 'anormal' }})}
                                          className={cn(
-                                           "px-6 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase transition-all",
-                                           checklistResults[item.id]?.value === 'anormal' ? "bg-rose-600 text-white shadow-md shadow-rose-200/50" : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                                           "flex-1 py-4 rounded-2xl font-black transition-all border-2 text-sm flex items-center justify-center gap-2 uppercase tracking-widest",
+                                           checklistResults[item.id]?.value === 'anormal' 
+                                             ? "bg-rose-600 border-rose-600 text-white shadow-lg shadow-rose-100" 
+                                             : "bg-white border-slate-200 text-slate-400 hover:border-rose-200"
                                          )}
                                        >
+                                         <AlertTriangle className="w-5 h-5" />
                                          ANORMAL
                                        </button>
                                     </div>
                                   )}
 
                                   {item.type === 'open_closed' && (
-                                    <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl">
+                                    <div className="grid grid-cols-2 gap-3 w-full">
                                        <button
                                          type="button"
                                          onClick={() => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], value: 'open', status: 'normal' }})}
                                          className={cn(
-                                           "px-6 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase transition-all",
-                                           checklistResults[item.id]?.value === 'open' ? "bg-emerald-600 text-white shadow-md shadow-emerald-200/50" : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                                           "flex-1 py-4 rounded-2xl font-black transition-all border-2 text-sm flex items-center justify-center gap-2 uppercase tracking-widest",
+                                           checklistResults[item.id]?.value === 'open' 
+                                             ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100" 
+                                             : "bg-white border-slate-200 text-slate-400 hover:border-emerald-200"
                                          )}
                                        >
+                                         <CheckCircle2 className="w-5 h-5" />
                                          ABERTO
                                        </button>
                                        <button
                                          type="button"
                                          onClick={() => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], value: 'closed', status: 'normal' }})}
                                          className={cn(
-                                           "px-6 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase transition-all",
-                                           checklistResults[item.id]?.value === 'closed' ? "bg-emerald-600 text-white shadow-md shadow-emerald-200/50" : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                                           "flex-1 py-4 rounded-2xl font-black transition-all border-2 text-sm flex items-center justify-center gap-2 uppercase tracking-widest",
+                                           checklistResults[item.id]?.value === 'closed' 
+                                             ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100" 
+                                             : "bg-white border-slate-200 text-slate-400 hover:border-emerald-200"
                                          )}
                                        >
+                                         <CheckCircle2 className="w-5 h-5" />
                                          FECHADO
                                        </button>
                                     </div>
                                   )}
 
                                   {item.type === 'numeric' && (
-                                    <div className="flex items-center gap-4">
+                                    <div className="flex flex-col md:flex-row items-stretch gap-4 w-full">
                                        {(item.showStatusSelection ?? true) ? (
                                          <>
-                                           <div className="relative">
+                                           <div className="relative flex-1">
                                              <input 
                                                type="text"
                                                required
-                                               className="w-32 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-emerald-50 font-black text-center pr-10"
-                                               placeholder="Valor..."
+                                               className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-emerald-50 font-black text-lg text-slate-800 pr-16"
+                                               placeholder="Digite o valor..."
                                                value={checklistResults[item.id]?.value || ''}
                                                onChange={e => {
                                                  const val = e.target.value;
                                                  setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], value: val }});
                                                }}
                                              />
-                                             {item.unit && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[8px] font-black text-slate-400 uppercase tracking-tighter">{item.unit}</span>}
+                                             {item.unit && <span className="absolute right-5 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400 uppercase tracking-widest">{item.unit}</span>}
                                            </div>
-                                           <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-2xl">
+                                           <div className="grid grid-cols-2 gap-3 flex-1">
                                              <button
                                                type="button"
                                                onClick={() => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], status: 'normal' }})}
                                                className={cn(
-                                                 "px-3 py-2 rounded-xl text-[8px] font-black tracking-widest uppercase transition-all",
-                                                 (checklistResults[item.id]?.status || 'normal') === 'normal' ? "bg-emerald-600 text-white shadow-md" : "text-slate-500 hover:text-slate-700"
+                                                 "flex-1 py-4 rounded-2xl font-black transition-all border-2 text-sm flex items-center justify-center gap-2 uppercase tracking-widest",
+                                                 (checklistResults[item.id]?.status || 'normal') === 'normal' 
+                                                   ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100" 
+                                                   : "bg-white border-slate-200 text-slate-400 hover:border-emerald-200"
                                                )}
                                              >
+                                               <CheckCircle2 className="w-5 h-5" />
                                                NORMAL
                                              </button>
                                              <button
                                                type="button"
                                                onClick={() => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], status: 'anormal' }})}
                                                className={cn(
-                                                 "px-3 py-2 rounded-xl text-[8px] font-black tracking-widest uppercase transition-all",
-                                                 checklistResults[item.id]?.status === 'anormal' ? "bg-rose-600 text-white shadow-md shadow-rose-200" : "text-slate-500 hover:text-slate-700"
+                                                 "flex-1 py-4 rounded-2xl font-black transition-all border-2 text-sm flex items-center justify-center gap-2 uppercase tracking-widest",
+                                                 checklistResults[item.id]?.status === 'anormal' 
+                                                   ? "bg-rose-600 border-rose-600 text-white shadow-lg shadow-rose-100" 
+                                                   : "bg-white border-slate-200 text-slate-400 hover:border-rose-200"
                                                )}
                                              >
+                                               <AlertTriangle className="w-5 h-5" />
                                                ANORMAL
                                              </button>
                                            </div>
                                          </>
                                        ) : (
-                                          <div className="relative">
+                                          <div className="relative w-full">
                                              <input 
                                                type="text"
                                                required
-                                               className="w-32 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-emerald-50 font-black text-center pr-10"
-                                               placeholder="Valor..."
+                                               className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-emerald-50 font-black text-lg text-slate-800 pr-16"
+                                               placeholder="Digite o valor..."
                                                value={checklistResults[item.id]?.value || ''}
                                                onChange={e => {
                                                  const val = e.target.value;
                                                  setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], value: val, status: 'normal' }});
                                                }}
                                              />
-                                             {item.unit && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[8px] font-black text-slate-400 uppercase tracking-tighter">{item.unit}</span>}
+                                             {item.unit && <span className="absolute right-5 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400 uppercase tracking-widest">{item.unit}</span>}
                                           </div>
                                        )}
                                     </div>

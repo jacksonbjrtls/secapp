@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { collection, onSnapshot, query, where, Timestamp, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { MASTER_EMAILS } from '../constants';
 import { safeToDate, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
@@ -94,7 +95,13 @@ export const Overview: React.FC = () => {
     todayStart.setHours(0, 0, 0, 0);
 
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-      setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const filtered = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() as any }))
+        .filter(user => {
+          const userEmail = user.email?.toLowerCase().trim() || '';
+          return !MASTER_EMAILS.includes(userEmail);
+        });
+      setUsers(filtered);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'users');
     });

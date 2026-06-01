@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { collection, query, limit, getDocs, orderBy, onSnapshot, where, Timestamp, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { Metric } from '../types';
 import { 
@@ -198,8 +199,13 @@ const Dashboard: React.FC = () => {
         const validSessionIds = new Set(sessionsSnap.docs.map(d => d.id));
         const validSignatures = signaturesSnap.docs.filter(d => validSessionIds.has(d.data().sessionId));
 
+        const nonMasterUsersCount = usersSnap.docs.filter(doc => {
+          const email = doc.data()?.email?.toLowerCase().trim() || '';
+          return !MASTER_EMAILS.includes(email);
+        }).length;
+
         setStats({
-          totalUsers: usersSnap.size,
+          totalUsers: nonMasterUsersCount,
           activeDDS: 0, 
           totalSignatures: validSignatures.length,
           allowedDomains: domainsSnap.size

@@ -19,6 +19,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { MASTER_EMAILS } from '../constants';
 import { Html5Qrcode } from "html5-qrcode";
 import { 
   Edit2,
@@ -186,11 +187,16 @@ const DDS: React.FC = () => {
       try {
         const q = query(collection(db, 'users'), orderBy('displayName', 'asc'));
         const snapshot = await getDocs(q);
-        const usersList = snapshot.docs.map(doc => ({
-          uid: doc.id,
-          displayName: doc.data().displayName,
-          email: doc.data().email
-        }));
+        const usersList = snapshot.docs
+          .map(doc => ({
+            uid: doc.id,
+            displayName: doc.data().displayName,
+            email: doc.data().email
+          }))
+          .filter(user => {
+            const userEmail = user.email?.toLowerCase().trim() || '';
+            return !MASTER_EMAILS.includes(userEmail);
+          });
         setRegisteredUsers(usersList);
       } catch (err) {
         console.error("Error fetching users:", err);
