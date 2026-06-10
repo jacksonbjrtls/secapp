@@ -54,8 +54,8 @@ interface HandoverReport {
   sector?: 'Enfardamento' | 'Parte Seca' | 'Parte Úmida';
   status: 'normal' | 'attention' | 'critical';
   notes: string;
-  pendingTasks: string;
-  stoppedEquipment: string;
+  pendingTasks?: string;
+  stoppedEquipment?: string;
   operatorIn: string;
   operatorOut: string;
   createdBy: string;
@@ -80,6 +80,28 @@ export const ShiftHandover: React.FC = () => {
   const [selectedType, setSelectedType] = useState<'operacional' | 'qualidade'>('operacional');
   const [selectedLine, setSelectedLine] = useState<'Linha A' | 'Linha B' | 'Linha C' | 'Linha D' | 'MS1' | 'MS2'>('Linha A');
   const [selectedSector, setSelectedSector] = useState<'Enfardamento' | 'Parte Seca' | 'Parte Úmida'>('Enfardamento');
+
+  // Filter lines dynamically based on selected sector
+  const availableLines = useMemo(() => {
+    if (selectedSector === 'Enfardamento') {
+      return ['Linha A', 'Linha B', 'Linha C', 'Linha D'] as const;
+    } else {
+      return ['MS1', 'MS2'] as const;
+    }
+  }, [selectedSector]);
+
+  const handleSectorChange = (sector: 'Enfardamento' | 'Parte Seca' | 'Parte Úmida') => {
+    setSelectedSector(sector);
+    if (sector === 'Enfardamento') {
+      if (!['Linha A', 'Linha B', 'Linha C', 'Linha D'].includes(selectedLine)) {
+        setSelectedLine('Linha A');
+      }
+    } else {
+      if (!['MS1', 'MS2'].includes(selectedLine)) {
+        setSelectedLine('MS1');
+      }
+    }
+  };
 
   // Active modules state
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
@@ -138,8 +160,6 @@ export const ShiftHandover: React.FC = () => {
   const [operatorIn, setOperatorIn] = useState<string>('');
   const [operatorOut, setOperatorOut] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
-  const [pendingTasks, setPendingTasks] = useState<string>('');
-  const [stoppedEquipment, setStoppedEquipment] = useState<string>('');
   const [submitError, setSubmitError] = useState<string>('');
   const [submitSuccess, setSubmitSuccess] = useState<string>('');
 
@@ -365,16 +385,12 @@ export const ShiftHandover: React.FC = () => {
       setOperatorIn(currentHandoverReport.operatorIn);
       setOperatorOut(currentHandoverReport.operatorOut || '');
       setNotes(currentHandoverReport.notes || '');
-      setPendingTasks(currentHandoverReport.pendingTasks || '');
-      setStoppedEquipment(currentHandoverReport.stoppedEquipment || '');
     } else {
       // Clear form except operatorIn which defaults to profile displayName
       setHandoverStatus('normal');
       setOperatorIn(profile?.displayName || '');
       setOperatorOut('');
       setNotes('');
-      setPendingTasks('');
-      setStoppedEquipment('');
       setIsEditingExisting(false);
     }
   }, [currentHandoverReport, selectedDate, selectedShift, profile]);
@@ -408,8 +424,6 @@ export const ShiftHandover: React.FC = () => {
       sector: selectedSector,
       status: handoverStatus,
       notes: notes.trim(),
-      pendingTasks: pendingTasks.trim(),
-      stoppedEquipment: stoppedEquipment.trim(),
       operatorIn: operatorIn.trim(),
       operatorOut: operatorOut.trim(),
       createdBy: user.uid,
@@ -513,30 +527,24 @@ export const ShiftHandover: React.FC = () => {
         </div>
       </div>
 
-      {/* Dynamic segmentation bar (Type, Line, Sector) */}
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Type selector */}
+      {/* Dynamic segmentation bar (Sector, Line stacked vertically) */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col gap-6">
+        {/* Sector selector */}
         <div className="space-y-2">
-          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Tipo de Passagem</label>
-          <div className="flex bg-slate-50 border border-slate-150 rounded-2xl p-1 w-full justify-between">
-            <button
-              onClick={() => setSelectedType('operacional')}
-              className={cn(
-                "flex-1 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer",
-                selectedType === 'operacional' ? "bg-white text-emerald-800 shadow-sm border border-slate-200/50" : "text-slate-500 hover:text-slate-800"
-              )}
-            >
-              ⚙️ Operacional
-            </button>
-            <button
-              onClick={() => setSelectedType('qualidade')}
-              className={cn(
-                "flex-1 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer",
-                selectedType === 'qualidade' ? "bg-white text-blue-800 shadow-sm border border-slate-200/50" : "text-slate-500 hover:text-slate-800"
-              )}
-            >
-              🧪 Qualidade
-            </button>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Setor Operacional</label>
+          <div className="flex bg-slate-50 border border-slate-150 rounded-2xl p-1 gap-1">
+            {['Enfardamento', 'Parte Seca', 'Parte Úmida'].map((s) => (
+              <button
+                key={s}
+                onClick={() => handleSectorChange(s as any)}
+                className={cn(
+                  "flex-1 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap",
+                  selectedSector === s ? "bg-white text-slate-900 shadow-xs border border-slate-200" : "text-slate-500 hover:text-slate-850"
+                )}
+              >
+                {s}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -544,7 +552,7 @@ export const ShiftHandover: React.FC = () => {
         <div className="space-y-2">
           <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Linha de Produção</label>
           <div className="flex bg-slate-50 border border-slate-150 rounded-2xl p-1 gap-1">
-            {['Linha A', 'Linha B', 'Linha C', 'Linha D', 'MS1', 'MS2'].map((l) => (
+            {availableLines.map((l) => (
               <button
                 key={l}
                 onClick={() => setSelectedLine(l as any)}
@@ -554,25 +562,6 @@ export const ShiftHandover: React.FC = () => {
                 )}
               >
                 {l.replace('Linha ', '')}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Sector selector */}
-        <div className="space-y-2">
-          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Setor Operacional</label>
-          <div className="flex bg-slate-50 border border-slate-150 rounded-2xl p-1 gap-1">
-            {['Enfardamento', 'Parte Seca', 'Parte Úmida'].map((s) => (
-              <button
-                key={s}
-                onClick={() => setSelectedSector(s as any)}
-                className={cn(
-                  "flex-1 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap",
-                  selectedSector === s ? "bg-white text-slate-900 shadow-xs border border-slate-200" : "text-slate-500 hover:text-slate-850"
-                )}
-              >
-                {s}
               </button>
             ))}
           </div>
@@ -610,7 +599,7 @@ export const ShiftHandover: React.FC = () => {
 
               <div className="space-y-1">
                 <span className="text-[10px] font-black uppercase tracking-widest bg-white/60 text-slate-700 px-2 py-0.5 rounded-full border border-black/5">
-                  Recebido do Turno Anterior ({previousShiftInfo.shift} • {formatDateDisplay(previousShiftInfo.date)}) • {previousShiftInfo.report.type?.toUpperCase() || 'OPERACIONAL'} • {previousShiftInfo.report.line || 'Linha A'} • {previousShiftInfo.report.sector || 'Enfardamento'}
+                  Recebido do Turno Anterior ({previousShiftInfo.shift} • {formatDateDisplay(previousShiftInfo.date)}) • {previousShiftInfo.report.sector || 'Enfardamento'} • {previousShiftInfo.report.line || 'Linha A'}
                 </span>
                 <h3 className="text-lg font-black tracking-tight mt-1">
                   Status de Entrada: {
@@ -620,15 +609,7 @@ export const ShiftHandover: React.FC = () => {
                 </h3>
                 <div className="text-sm font-semibold opacity-90 space-y-1.5 mt-2 max-w-4xl">
                   {previousShiftInfo.report.notes && (
-                    <p><strong>📝 Ocorrências do Turno:</strong> {previousShiftInfo.report.notes}</p>
-                  )}
-                  {previousShiftInfo.report.pendingTasks ? (
-                    <p className="text-amber-900 border-l-2 border-amber-400 pl-2"><strong>⚠️ O que ficou pendente:</strong> {previousShiftInfo.report.pendingTasks}</p>
-                  ) : (
-                    <p className="text-emerald-900"><strong>✅ Trabalhos Pendentes:</strong> Nenhuma pendência deixada. Tudo concluído!</p>
-                  )}
-                  {previousShiftInfo.report.stoppedEquipment && (
-                    <p className="text-rose-900"><strong>⚙️ Máquinas paradas / NOK:</strong> {previousShiftInfo.report.stoppedEquipment}</p>
+                    <p><strong>📝 Ocorrências, Observações e Destaques do Turno:</strong> {previousShiftInfo.report.notes}</p>
                   )}
                 </div>
                 <div className="pt-2 text-[10px] uppercase font-bold tracking-wider opacity-60">
@@ -641,7 +622,7 @@ export const ShiftHandover: React.FC = () => {
           <div className="bg-slate-100 border border-slate-200/60 p-5 rounded-3xl flex items-center gap-3 text-slate-500">
             <AlertCircle className="w-5 h-5 text-slate-400" />
             <p className="text-xs font-bold leading-relaxed">
-              Não encontramos nenhuma Ficha de Passagem gravada para o turno anterior (<strong>{previousShiftInfo.shift}</strong> do dia <strong>{formatDateDisplay(previousShiftInfo.date)}</strong>) para <span className="font-extrabold text-slate-700">{selectedType.toUpperCase()} - {selectedLine} - {selectedSector}</span>. Operação continuada normal.
+              Não encontramos nenhuma Ficha de Passagem gravada para o turno anterior (<strong>{previousShiftInfo.shift}</strong> do dia <strong>{formatDateDisplay(previousShiftInfo.date)}</strong>) para <span className="font-extrabold text-slate-700">{selectedSector} - {selectedLine}</span>. Operação continuada normal.
             </p>
           </div>
         )}
@@ -813,40 +794,22 @@ export const ShiftHandover: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Tipo de Passagem</span>
-                      <p className="text-sm font-bold text-slate-800 capitalize">{(currentHandoverReport.type || 'operacional') === 'qualidade' ? '🧪 Qualidade' : '⚙️ Operacional'}</p>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Setor Operacional</span>
+                      <p className="text-sm font-bold text-slate-800">{currentHandoverReport.sector || 'Enfardamento'}</p>
                     </div>
                     <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Linha de Produção</span>
                       <p className="text-sm font-bold text-slate-800">{currentHandoverReport.line || 'Linha A'}</p>
                     </div>
-                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Setor Operacional</span>
-                      <p className="text-sm font-bold text-slate-800">{currentHandoverReport.sector || 'Enfardamento'}</p>
-                    </div>
                   </div>
 
                   <div className="space-y-4">
                     <div>
-                      <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">📝 Observações e Ocorrências do Turno</h4>
+                      <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">📝 Ocorrências, Observações e Destaques do Turno</h4>
                       <p className="bg-slate-50 p-4 rounded-2xl text-sm leading-relaxed text-slate-700 whitespace-pre-wrap border border-slate-150 min-h-16 font-semibold">
                         {currentHandoverReport.notes || 'Nenhuma ocorrência registrada.'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="text-xs font-black text-slate-505 uppercase tracking-wider mb-1.5 text-amber-800">⚠️ Trabalhos Pendentes / Ficou por fazer</h4>
-                      <p className="bg-amber-50/40 p-4 rounded-2xl text-sm leading-relaxed text-slate-700 whitespace-pre-wrap border border-amber-100 min-h-16 font-semibold">
-                        {currentHandoverReport.pendingTasks || 'Tudo concluído! Nenhuma pendência para o próximo turno.'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="text-xs font-black text-slate-505 uppercase tracking-wider mb-1.5 text-rose-800">⚙️ Equipamentos e Linhas Parados ou com Problema</h4>
-                      <p className="bg-rose-50/40 p-4 rounded-2xl text-sm leading-relaxed text-slate-700 whitespace-pre-wrap border border-rose-100 min-h-16 font-semibold">
-                        {currentHandoverReport.stoppedEquipment || 'Todos os equipamentos operando normalmente.'}
                       </p>
                     </div>
                   </div>
@@ -870,7 +833,7 @@ export const ShiftHandover: React.FC = () => {
                       Turno Selecionado: {selectedShift} • {formatDateDisplay(selectedDate)}
                     </p>
                     <p className="text-xs text-emerald-800 font-black uppercase tracking-wider mt-0.5">
-                      Ficha: {selectedType.toUpperCase()} • {selectedLine} • {selectedSector}
+                      Ficha: {selectedLine} • {selectedSector}
                     </p>
                   </div>
 
@@ -964,33 +927,11 @@ export const ShiftHandover: React.FC = () => {
                   <div className="space-y-1.5">
                     <label className="block text-xs font-black text-slate-400 uppercase tracking-widest pl-1">Ocorrências, Observações e Destaques do Turno</label>
                     <textarea
-                      rows={3}
+                      rows={5}
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
-                      placeholder="Relate os principais acontecimentos, progresso de produção, incidentes de manutenção, etc."
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-550 font-semibold text-sm text-slate-700 outline-none resize-y min-h-24 leading-relaxed"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="block text-xs font-black text-amber-800 uppercase tracking-widest pl-1">⚠️ Trabalhos Pendentes / Não concluídos</label>
-                    <textarea
-                      rows={2}
-                      value={pendingTasks}
-                      onChange={(e) => setPendingTasks(e.target.value)}
-                      placeholder="Descreva o que o próximo turno precisará de imediato assumir ou concluir."
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-550 font-semibold text-sm text-slate-700 outline-none resize-y min-h-20 leading-relaxed"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="block text-xs font-black text-rose-800 uppercase tracking-widest pl-1">⚙️ Equipamentos ou Linhas Parados ou com Problema</label>
-                    <textarea
-                      rows={2}
-                      value={stoppedEquipment}
-                      onChange={(e) => setStoppedEquipment(e.target.value)}
-                      placeholder="Empilhadeiras bloqueadas, componentes com falha, linhas inoperantes..."
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-550 font-semibold text-sm text-slate-700 outline-none resize-y min-h-20 leading-relaxed"
+                      placeholder="Relate os principais acontecimentos, progresso de produção, incidentes, observações de segurança ou destaques do turno..."
+                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-550 font-semibold text-sm text-slate-700 outline-none resize-y min-h-32 leading-relaxed"
                     />
                   </div>
                 </div>
