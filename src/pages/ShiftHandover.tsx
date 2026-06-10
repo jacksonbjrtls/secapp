@@ -42,7 +42,11 @@ import {
   HelpCircle,
   Check,
   Edit2,
-  Lock
+  Lock,
+  PackagePlus,
+  Search,
+  X,
+  Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -138,7 +142,8 @@ export const ShiftHandover: React.FC = () => {
       activeModules.forklifts !== false,
       activeModules.quality !== false,
       activeModules.safety_observations !== false || activeModules.operational_routes !== false,
-      activeModules.dds !== false
+      activeModules.dds !== false,
+      activeModules.consumables !== false
     ].filter(Boolean).length;
   }, [activeModules]);
 
@@ -149,6 +154,7 @@ export const ShiftHandover: React.FC = () => {
   const [safetyObservations, setSafetyObservations] = useState<any[]>([]);
   const [ddsSessions, setDdsSessions] = useState<any[]>([]);
   const [allDdsSignatures, setAllDdsSignatures] = useState<any[]>([]);
+  const [consumableLogs, setConsumableLogs] = useState<any[]>([]);
   const [handovers, setHandovers] = useState<HandoverReport[]>([]);
 
   // Loading states
@@ -163,6 +169,24 @@ export const ShiftHandover: React.FC = () => {
   const [notes, setNotes] = useState<string>('');
   const [submitError, setSubmitError] = useState<string>('');
   const [submitSuccess, setSubmitSuccess] = useState<string>('');
+
+  // Guidelines popout & history search states
+  const [showGuidelines, setShowGuidelines] = useState<boolean>(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
+  const [historyFilterSector, setHistoryFilterSector] = useState<string>('Todos');
+
+  // Load guidelines check on first mount in this session
+  useEffect(() => {
+    const hasSeen = sessionStorage.getItem('seen_handover_guidelines');
+    if (!hasSeen) {
+      setShowGuidelines(true);
+    }
+  }, []);
+
+  const handleCloseGuidelines = () => {
+    sessionStorage.setItem('seen_handover_guidelines', 'true');
+    setShowGuidelines(false);
+  };
 
   // Initial filling of operatorIn once profile is loaded
   useEffect(() => {
@@ -247,6 +271,16 @@ export const ShiftHandover: React.FC = () => {
       setLoadingMetrics(false);
     });
 
+    const unsubConsumables = onSnapshot(collection(db, 'consumable_logs'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      setConsumableLogs(list);
+    }, (error) => {
+      console.warn('Erro ao carregar logs de insumos:', error);
+    });
+
     return () => {
       unsubForklifts();
       unsubQuality();
@@ -255,6 +289,7 @@ export const ShiftHandover: React.FC = () => {
       unsubDds();
       unsubSignatures();
       unsubHandovers();
+      unsubConsumables();
     };
   }, []);
 
@@ -319,6 +354,15 @@ export const ShiftHandover: React.FC = () => {
     const sessionIds = relevantSessions.map(s => s.id);
     const relevantDdsSignaturesCount = allDdsSignatures.filter(sig => sessionIds.includes(sig.sessionId)).length;
 
+    // 6. Consumables logs (Insumos)
+    const relevantConsumables = consumableLogs.filter(log => {
+      const itemInfo = parseIncidentTime(log.timestamp);
+      const isCorrectShift = log.shift === selectedShift;
+      return isCorrectShift && itemInfo && itemInfo.dateStr === selectedDate;
+    });
+    const consumablesOutCount = relevantConsumables.filter(l => l.type === 'consumption').length;
+    const consumablesInCount = relevantConsumables.filter(l => l.type === 'entry').length;
+
     return {
       forkliftTotal: relevantForklifts.length,
       forkliftConforme: forkliftConformeCount,
@@ -328,8 +372,11 @@ export const ShiftHandover: React.FC = () => {
       safetyCount: relevantSafety.length,
       ddsSessionsCount: relevantSessions.length,
       ddsSignaturesCount: relevantDdsSignaturesCount,
+      consumablesTotal: relevantConsumables.length,
+      consumablesOut: consumablesOutCount,
+      consumablesIn: consumablesInCount,
     };
-  }, [selectedDate, selectedShift, forkliftChecklists, qualitySubmissions, routeSubmissions, safetyObservations, ddsSessions, allDdsSignatures]);
+  }, [selectedDate, selectedShift, forkliftChecklists, qualitySubmissions, routeSubmissions, safetyObservations, ddsSessions, allDdsSignatures, consumableLogs]);
 
   // Calculations for previous date & shift
   const previousShiftInfo = useMemo(() => {
@@ -378,6 +425,41 @@ export const ShiftHandover: React.FC = () => {
       (h.sector || 'Enfardamento') === selectedSector
     );
   }, [selectedDate, selectedShift, handovers, selectedType, selectedLine, selectedSector]);
+
+  // Compute filtered handovers list for the historical sidebar navigation
+  const filteredHandovers = useMemo(() => {
+    let list = [...handovers];
+
+    // Sort by date descending, then shift descending, then line
+    list.sort((a, b) => {
+      if (a.date !== b.date) {
+        return b.date.localeCompare(a.date);
+      }
+      if (a.shift !== b.shift) {
+        return b.shift.localeCompare(a.shift);
+      }
+      return (a.line || '').localeCompare(b.line || '');
+    });
+
+    if (historyFilterSector && historyFilterSector !== 'Todos') {
+      list = list.filter(h => h.sector === historyFilterSector);
+    }
+
+    if (historySearchQuery.trim()) {
+      const query = historySearchQuery.toLowerCase();
+      list = list.filter(h => 
+        (h.operatorIn || '').toLowerCase().includes(query) || 
+        (h.operatorOut || '').toLowerCase().includes(query) || 
+        (h.notes || '').toLowerCase().includes(query) || 
+        (h.date || '').includes(query) ||
+        (h.shift || '').toLowerCase().includes(query) ||
+        (h.line || '').toLowerCase().includes(query) ||
+        (h.sector || '').toLowerCase().includes(query)
+      );
+    }
+
+    return list;
+  }, [handovers, historyFilterSector, historySearchQuery]);
 
   // Check if current user is allowed to edit the selected report
   const canEdit = useMemo(() => {
@@ -514,8 +596,17 @@ export const ShiftHandover: React.FC = () => {
               <p className="text-slate-500 font-semibold text-xs uppercase tracking-wider">Acompanhamento e Transferência Operacional entre Equipes</p>
             </div>
           </div>
-          <p className="text-slate-500 text-sm leading-relaxed max-w-2xl mt-3">
-            Visualize as atividades concluídas pelo turno anterior, verifique os indicadores e registre ou analise a passagem oficial do turno atual de forma digital e rápida.
+          <p className="text-slate-500 text-sm leading-relaxed max-w-2xl mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span>
+              Visualize as atividades concluídas pelo turno anterior, verifique os indicadores e registre ou analise a passagem oficial do turno atual de forma digital e rápida.
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowGuidelines(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-150 rounded-lg transition-all cursor-pointer"
+            >
+              <HelpCircle className="w-3.5 h-3.5" /> Ver Diretrizes &amp; Boas Práticas
+            </button>
           </p>
         </div>
 
@@ -669,7 +760,8 @@ export const ShiftHandover: React.FC = () => {
             activeIndicatorCount === 1 ? "grid-cols-1" :
             activeIndicatorCount === 2 ? "grid-cols-1 sm:grid-cols-2" :
             activeIndicatorCount === 3 ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" :
-            "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
+            activeIndicatorCount === 4 ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4" :
+            "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
           )} id="activity-metrics-grid">
             {/* Forklifts Stat Box */}
             {activeModules.forklifts !== false && (
@@ -753,6 +845,29 @@ export const ShiftHandover: React.FC = () => {
                   <h4 className="text-xl font-bold text-slate-900 mt-1">{shiftMetrics.ddsSignaturesCount} Assinaturas</h4>
                   <div className="text-[10px] font-bold text-slate-500 mt-1 flex items-center gap-1.5">
                     <span>{shiftMetrics.ddsSessionsCount} Diálogo(s) Iniciado(s)</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Consumables (Insumos) Box */}
+            {activeModules.consumables !== false && (
+              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-150 flex items-start gap-4" id="consumables-handover-box">
+                <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 shrink-0">
+                  <PackagePlus className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Controle de Insumos</p>
+                  <h4 className="text-xl font-bold text-slate-900 mt-1">{shiftMetrics.consumablesTotal} Registros</h4>
+                  <div className="flex items-center gap-2 mt-1.5 text-[10px] font-bold">
+                    <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                      {shiftMetrics.consumablesOut} Saídas / Consumo
+                    </span>
+                    {shiftMetrics.consumablesIn > 0 && (
+                      <span className="text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                        {shiftMetrics.consumablesIn} Entradas
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1007,46 +1122,241 @@ export const ShiftHandover: React.FC = () => {
           </div>
         </div>
 
-        {/* Right 1 Col: Quick Tips / Shift Guidelines */}
-        <div className="space-y-6">
-          <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden border border-slate-800">
-            {/* Absolute decorative circle */}
-            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl" />
-            
-            <h3 className="text-base font-black tracking-tight mb-4 flex items-center gap-2">
-              <Activity className="w-5 h-5 text-emerald-400" /> Boas Práticas na Passagem
-            </h3>
+        {/* Right 1 Col: Histórico de Passagens e Filtro de Datas Anteriores */}
+        <div className="space-y-6" id="history-sidebar">
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-150 space-y-5">
+            <div>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-emerald-600 animate-pulse" /> Histórico de Passagens
+                </h3>
+                <span className="text-[10px] font-black bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                  {filteredHandovers.length} registradas
+                </span>
+              </div>
+              <p className="text-slate-400 font-bold text-[10px] uppercase tracking-wider mt-1">Consulte ou edite turnos anteriores</p>
+            </div>
 
-            <div className="space-y-4 text-xs font-semibold text-slate-300 leading-relaxed">
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-slate-800 flex items-center justify-center text-[10px] text-emerald-400 shrink-0 font-bold mt-0.5">1</div>
-                <p>Verifique se todos os checklists de <strong>Empilhadeiras</strong> do seu turno foram preenchidos.</p>
+            {/* Quick Filters */}
+            <div className="space-y-2">
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar por operador, notas..."
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-transparent transition-all"
+                />
+                {historySearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setHistorySearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
               </div>
 
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-slate-800 flex items-center justify-center text-[10px] text-emerald-400 shrink-0 font-bold mt-0.5">2</div>
-                <p>Relate qualquer falha detectada que permaneceu pendente para manutenção ou tratamento pelo próximo turno.</p>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-slate-800 flex items-center justify-center text-[10px] text-emerald-400 shrink-0 font-bold mt-0.5">3</div>
-                <p>O DDS do turno deve possuir as assinaturas digitais de toda a equipe escalada para confirmar o alinhamento de segurança diário.</p>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-slate-800 flex items-center justify-center text-[10px] text-emerald-400 shrink-0 font-bold mt-0.5">4</div>
-                <p>Informe o nome do operador entrante se já souber para formalizar a entrega de custódia da área de atuação.</p>
+              {/* Sector Filter Dropdown or Buttons */}
+              <div className="flex items-center gap-1.5 pt-1">
+                <Filter className="w-3 h-3 text-slate-400 shrink-0" />
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Setor:</span>
+                <select
+                  value={historyFilterSector}
+                  onChange={(e) => setHistoryFilterSector(e.target.value)}
+                  className="bg-transparent border-none outline-none text-[10.5px] font-black text-slate-700 cursor-pointer focus:ring-0 py-0 pl-1 pr-4"
+                >
+                  <option value="Todos">Todos os Setores</option>
+                  <option value="Enfardamento">Enfardamento</option>
+                  <option value="Parte Seca">Parte Seca</option>
+                  <option value="Parte Úmida">Parte Úmida</option>
+                </select>
               </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-slate-800 flex items-center gap-2">
-              <Clock className="w-3.5 h-3.5 text-slate-550 animate-spin" style={{ animationDuration: '8s' }} />
-              <span className="text-[10px] text-slate-450 uppercase tracking-widest font-black font-mono">Próxima Escala Automática</span>
+            {/* Scrollable List of Handovers */}
+            <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
+              {filteredHandovers.length === 0 ? (
+                <div className="text-center py-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                  <p className="text-xs font-bold text-slate-400">Nenhum registro encontrado</p>
+                </div>
+              ) : (
+                filteredHandovers.map((item) => {
+                  const isSelected = item.date === selectedDate && 
+                                     item.shift === selectedShift && 
+                                     item.sector === selectedSector && 
+                                     item.line === selectedLine;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDate(item.date);
+                        setSelectedShift(item.shift as any);
+                        handleSectorChange(item.sector as any);
+                        if (item.line) {
+                          setSelectedLine(item.line as any);
+                        }
+                        setIsEditingExisting(false);
+                      }}
+                      className={cn(
+                        "w-full text-left p-3 rounded-2xl border transition-all cursor-pointer flex flex-col gap-2 relative group",
+                        isSelected 
+                          ? "bg-emerald-50/80 border-emerald-500 shadow-xs" 
+                          : "bg-slate-50 hover:bg-slate-100 border-slate-200/80 hover:border-slate-300"
+                      )}
+                    >
+                      <div className="flex items-start justify-between w-full">
+                        <div className="space-y-0.5">
+                          <span className="text-[10.5px] font-black text-slate-800">
+                            {formatDateDisplay(item.date)}
+                          </span>
+                          <span className="mx-1 text-slate-350">•</span>
+                          <span className="text-[10.5px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-100/50 px-1 py-0.2 rounded">
+                            {item.shift}
+                          </span>
+                        </div>
+                        <div className={cn(
+                          "w-2.5 h-2.5 rounded-full shrink-0",
+                          item.status === 'normal' && "bg-emerald-500",
+                          item.status === 'attention' && "bg-amber-550 animate-pulse",
+                          item.status === 'critical' && "bg-rose-550 animate-ping"
+                        )} />
+                      </div>
+
+                      <div className="text-[10px] font-bold text-slate-500 leading-tight">
+                        <p className="truncate"><strong className="text-slate-600">{item.sector}</strong> • {item.line}</p>
+                        <p className="text-slate-400 mt-1 truncate">De: <strong className="text-slate-600">{item.operatorIn}</strong> {item.operatorOut ? `➔ Para: ${item.operatorOut}` : ''}</p>
+                      </div>
+
+                      {item.notes && (
+                        <p className="text-[10px] font-semibold text-slate-500 truncate border-t border-slate-200/50 pt-1.5 mt-0.5 italic">
+                          "{item.notes}"
+                        </p>
+                      )}
+
+                      {isSelected && (
+                        <span className="absolute bottom-1 right-2 text-[8px] font-black text-emerald-700 uppercase tracking-widest bg-emerald-100 px-1.5 py-0.2 rounded">
+                          Carregado
+                        </span>
+                      )}
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
 
       </div>
+
+      {/* Visual Guidelines (Guidelines Popout / Modal) */}
+      <AnimatePresence>
+        {showGuidelines && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop Blur overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={handleCloseGuidelines}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+
+            {/* Modal Body Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white text-slate-800 rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl border border-slate-100 relative z-10 overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Decorative side shape */}
+              <div className="absolute top-0 right-0 w-36 h-36 bg-emerald-100/40 rounded-full blur-2xl pointer-events-none" />
+
+              {/* Close button X */}
+              <button 
+                type="button"
+                onClick={handleCloseGuidelines}
+                className="absolute top-5 right-5 w-8 h-8 rounded-full bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-700 transition-all cursor-pointer border border-slate-200/55"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              {/* Icon and Title */}
+              <div className="flex items-center gap-3 mb-6 border-b border-slate-100 pb-4">
+                <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600">
+                  <Activity className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-950 tracking-tight">Boas Práticas na Passagem</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Metodologia e Verificação Padrão</p>
+                </div>
+              </div>
+
+              {/* Step instructions */}
+              <div className="space-y-5 overflow-y-auto pr-1 flex-1 py-1 scrollbar-thin">
+                <div className="flex gap-4">
+                  <div className="w-7 h-7 rounded-full bg-emerald-50 flex items-center justify-center text-xs text-emerald-700 shrink-0 font-black">1</div>
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide">Inspeções de Empilhadeiras</h4>
+                    <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+                      Verifique se todos os checklists de <strong>Empilhadeiras</strong> do seu turno foram preenchidos para atestar que os equipamentos operavam em conformidade.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <div className="w-7 h-7 rounded-full bg-indigo-50 flex items-center justify-center text-xs text-indigo-700 shrink-0 font-black">2</div>
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide">Tratamento de Ocorrências</h4>
+                    <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+                      Relate de forma detalhada qualquer incidente técnico, falhas ou paradas prolongadas de máquinas que permaneceram pendentes para manutenção no próximo turno.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <div className="w-7 h-7 rounded-full bg-amber-500/10 flex items-center justify-center text-xs text-amber-700 shrink-0 font-black">3</div>
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide">Sessão de DDS Completa</h4>
+                    <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+                      O alinhamento e DDS (Diálogo Diário de Segurança) do turno deve possuir as assinaturas digitais de toda a equipe escalada antes da entrega física de chaves.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <div className="w-7 h-7 rounded-full bg-rose-50 flex items-center justify-center text-xs text-rose-700 shrink-0 font-black">4</div>
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide">Insumos e Custódia do Próximo Turno</h4>
+                    <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+                      Verifique se os registros de insumos/consumíveis estão atualizados e informe o nome do operador entrante para o encerramento seguro de sua responsabilidade jurídica.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Button to close */}
+              <div className="mt-8 pt-4 border-t border-slate-100 flex flex-col gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseGuidelines}
+                  className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-black text-sm uppercase tracking-wider rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" /> Entendi e Desejo Prosseguir
+                </button>
+                <p className="text-[9px] text-slate-450 font-semibold text-center uppercase tracking-widest block select-none">
+                  Esta mensagem não será exibida automaticamente na próxima vez
+                </p>
+              </div>
+
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
