@@ -106,7 +106,7 @@ interface GlobalSettings {
 }
 
 const Forklifts: React.FC = () => {
-  const { profile, isAdmin, isManager } = useAuth();
+  const { profile, isAdmin, isManager, isMaster } = useAuth();
   const [activeTab, setActiveTab] = useState<'checklists' | 'history' | 'admin'>('checklists');
   const [forklifts, setForklifts] = useState<Forklift[]>([]);
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
@@ -137,7 +137,7 @@ const Forklifts: React.FC = () => {
   const [testingEmail, setTestingEmail] = useState(false);
   const [draftDocId, setDraftDocId] = useState<string | null>(null);
   const [savingStatus, setSavingStatus] = useState<'saved' | 'saving' | 'offline'>('saved');
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'forklift' | 'item', title: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'forklift' | 'item' | 'checklist', title: string } | null>(null);
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -458,6 +458,20 @@ Este é um teste do SecApp - Sistema de Gestão de Segurança.`;
     } catch (err) {
       console.error(err);
       handleFirestoreError(err, OperationType.DELETE, `forklift_check_items/${id}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const deleteChecklist = async (id: string) => {
+    if (!isAdmin && !isManager && !isMaster) return;
+    setSubmitting(true);
+    try {
+      await deleteDoc(doc(db, 'forklift_checklists', id));
+      setDeleteConfirm(null);
+    } catch (err) {
+      console.error(err);
+      handleFirestoreError(err, OperationType.DELETE, `forklift_checklists/${id}`);
     } finally {
       setSubmitting(false);
     }
@@ -865,9 +879,33 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right">
-                           <button className="p-2 text-slate-400 group-hover:text-emerald-600 transition-colors">
-                             {expandedChecklistId === log.id ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-                           </button>
+                           <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
+                             {(isAdmin || isManager || isMaster) && (
+                               <button 
+                                 onClick={(e) => {
+                                   e.stopPropagation();
+                                   setDeleteConfirm({
+                                     id: log.id,
+                                     type: 'checklist',
+                                     title: `Inspeção de ${log.conductorName} (${log.forkliftNumber})`
+                                   });
+                                 }}
+                                 className="p-1 px-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all text-xs font-bold"
+                                 title="Excluir Inspeção"
+                               >
+                                 Excluir
+                               </button>
+                             )}
+                             <button 
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 setExpandedChecklistId(expandedChecklistId === log.id ? null : log.id);
+                               }}
+                               className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
+                             >
+                               {expandedChecklistId === log.id ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                             </button>
+                           </div>
                         </td>
                       </tr>
                       <AnimatePresence>
@@ -1537,7 +1575,7 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                                        {isAnswered ? (
                                           <span className="text-emerald-500 font-bold">Respondido</span>
                                        ) : (
-                                          <>Tipo: {item.type.replace('_', '/')}</>
+                                          null
                                        )}
                                      </p>
                                    </div>
@@ -1883,7 +1921,15 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                   Cancelar
                 </button>
                 <button 
-                  onClick={() => deleteConfirm.type === 'forklift' ? deleteForklift(deleteConfirm.id) : deleteCheckItem(deleteConfirm.id)}
+                  onClick={() => {
+                    if (deleteConfirm.type === 'forklift') {
+                      deleteForklift(deleteConfirm.id);
+                    } else if (deleteConfirm.type === 'checklist') {
+                      deleteChecklist(deleteConfirm.id);
+                    } else {
+                      deleteCheckItem(deleteConfirm.id);
+                    }
+                  }}
                   disabled={submitting}
                   className="flex-1 py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2"
                 >

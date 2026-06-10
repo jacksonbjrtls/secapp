@@ -108,7 +108,7 @@ const CountdownTimer: React.FC<{ expiresAt: Date }> = ({ expiresAt }) => {
 };
 
 const DDS: React.FC = () => {
-  const { profile, isAdmin, isManager } = useAuth();
+  const { profile, isAdmin, isManager, isMaster } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [sessions, setSessions] = useState<any[]>([]);
   const [activeSession, setActiveSession] = useState<any>(null);
@@ -620,8 +620,8 @@ const DDS: React.FC = () => {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (!isAdmin) {
-      setError('Apenas administradores podem excluir sessões.');
+    if (!isAdmin && !isMaster) {
+      setError('Apenas administradores ou master podem excluir sessões.');
       return;
     }
     setSessionToDelete(sessionId);
@@ -636,11 +636,17 @@ const DDS: React.FC = () => {
       const q = query(collection(db, 'dds_signatures'), where('sessionId', '==', sessionToDelete));
       const sigSnapshot = await getDocs(q);
       
-      if (!sigSnapshot.empty) {
+      if (!sigSnapshot.empty && !isMaster) {
         setError('Não é possível excluir um DDS que já possui assinaturas. De acordo com as normas de segurança, registros com participações são permanentes.');
         setLoading(false);
         setSessionToDelete(null);
         return;
+      }
+
+      // If isMaster and there are signatures, delete them first to avoid orphaned records
+      if (isMaster && !sigSnapshot.empty) {
+        const deletePromises = sigSnapshot.docs.map(d => deleteDoc(d.ref));
+        await Promise.all(deletePromises);
       }
 
       await deleteDoc(doc(db, 'dds_sessions', sessionToDelete));

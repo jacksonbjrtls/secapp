@@ -58,7 +58,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 type QualityTab = 'perform' | 'templates' | 'sectors' | 'options' | 'omissions' | 'dashboard';
 
 const Quality: React.FC = () => {
-  const { user, profile, isManager, isAdmin } = useAuth();
+  const { user, profile, isManager, isAdmin, isMaster } = useAuth();
   const [activeTab, setActiveTab] = useState<QualityTab>('perform');
   const [templates, setTemplates] = useState<QualityChecklistTemplate[]>([]);
   const [lines, setLines] = useState<ProductionLine[]>([]);
@@ -112,6 +112,7 @@ const Quality: React.FC = () => {
 
   // For Template Deletion
   const [templateToDelete, setTemplateToDelete] = useState<QualityChecklistTemplate | null>(null);
+  const [submissionToDelete, setSubmissionToDelete] = useState<QualityChecklistSubmission | null>(null);
   const [sectorToDelete, setSectorToDelete] = useState<QualitySector | null>(null);
   const [optionSetToDelete, setOptionSetToDelete] = useState<any | null>(null);
   const [lineToDelete, setLineToDelete] = useState<ProductionLine | null>(null);
@@ -922,7 +923,7 @@ const Quality: React.FC = () => {
 
                 <div className="p-8 space-y-8">
                   {fillingTemplate.items.map((item, idx) => (
-                    <div key={item.id} className="space-y-4">
+                    <div key={item.id || `item-${idx}`} className="space-y-4">
                       <div className="flex items-center gap-3">
                          <span className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-black text-sm">{idx + 1}</span>
                          <label className="text-lg font-bold text-slate-800">
@@ -1485,7 +1486,7 @@ const Quality: React.FC = () => {
 
                         <div className="space-y-3">
                           {newTemplate.items?.map((item, idx) => (
-                            <div key={item.id} className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
+                            <div key={item.id || `item-${idx}`} className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
                               <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
                                 <span className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center font-black text-xs shrink-0">{idx + 1}</span>
                                 <input
@@ -2182,8 +2183,8 @@ const Quality: React.FC = () => {
                 </div>
 
                 <div className="space-y-4">
-                  {submissions.map(sub => (
-                    <div key={sub.id} className="group bg-slate-50/50 hover:bg-white p-6 rounded-2xl border border-transparent hover:border-slate-200 transition-all flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  {submissions.map((sub, idx) => (
+                    <div key={sub.id || `sub-${idx}`} className="group bg-slate-50/50 hover:bg-white p-6 rounded-2xl border border-transparent hover:border-slate-200 transition-all flex flex-col md:flex-row md:items-center justify-between gap-6">
                       <div className="flex items-center gap-6">
                         <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center font-black text-emerald-600 border border-slate-100">
                           {lines.find(l => l.id === sub.lineId)?.name || sectors.find(s => s.id === sub.sectorId)?.name || lines.find(l => l.id === sub.sectorId)?.name || 'N/A'}
@@ -2204,6 +2205,15 @@ const Quality: React.FC = () => {
                              {safeToDate(sub.createdAt)?.toLocaleDateString('pt-BR')}
                            </p>
                          </div>
+                         {(isManager || isAdmin || isMaster) && (
+                           <button 
+                             onClick={() => setSubmissionToDelete(sub)}
+                             className="p-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                             title="Excluir Inspeção de Qualidade"
+                           >
+                             <Trash2 className="w-5 h-5" />
+                           </button>
+                         )}
                          <button 
                            onClick={() => setViewingSubmission(sub)}
                            className="p-2 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
@@ -2288,6 +2298,32 @@ const Quality: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Submission Deletion Confirmation */}
+      <ConfirmationModal
+        isOpen={!!submissionToDelete}
+        onClose={() => setSubmissionToDelete(null)}
+        title="Excluir Inspeção de Qualidade?"
+        message={`Deseja realmente excluir permanentemente esta inspeção de qualidade realizada por ${submissionToDelete?.userName}? Esta ação não poderá ser desfeita.`}
+        type="warning"
+        confirmText="Sim, Excluir"
+        showConfirmButton={true}
+        onConfirm={async () => {
+          if (!submissionToDelete) return;
+          try {
+            await deleteDoc(doc(db, 'quality_checklist_submissions', submissionToDelete.id));
+            setSubmissionToDelete(null);
+            setModalConfig({
+              isOpen: true,
+              title: 'Inspeção Excluída',
+              message: 'A inspeção de qualidade foi removida permanentemente do sistema.',
+              type: 'success'
+            });
+          } catch (err) {
+            handleFirestoreError(err, OperationType.DELETE, 'quality_checklist_submissions');
+          }
+        }}
+      />
 
       {/* Template Deletion Confirmation */}
       <ConfirmationModal

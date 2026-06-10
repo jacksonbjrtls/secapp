@@ -143,7 +143,7 @@ const SEED_CATEGORIES = [
 ];
 
 const SafetyObservations: React.FC = () => {
-  const { user, profile, isManager, isAdmin } = useAuth();
+  const { user, profile, isManager, isAdmin, isMaster } = useAuth();
   
   // Navigation tabs: 'observations_list' | 'report_hazard' | 'analytics' | 'manage_templates'
   const [activeTab, setActiveTab] = useState<'observations_list' | 'report_hazard' | 'analytics' | 'manage_templates'>('observations_list');
@@ -859,6 +859,36 @@ const SafetyObservations: React.FC = () => {
     handleUpdateStatus(resolvingId, 'resolved', resolutionNotes);
     setIsResolveModalOpen(false);
     setResolvingId(null);
+  };
+
+  const handleDeleteObservation = async (obsId: string) => {
+    if (!isAdmin && !isManager && !isMaster) return;
+    setModalConfig({
+      isOpen: true,
+      title: 'Confirmar Exclusão',
+      message: 'Tem certeza absoluta que deseja excluir permanentemente este registro de observação/desvio? Esta ação não pode ser desfeita.',
+      type: 'warning',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'safety_observations', obsId));
+          setViewingObs(null);
+          setModalConfig({
+            isOpen: true,
+            title: 'Excluído',
+            message: 'O registro de segurança foi removido permanentemente do sistema.',
+            type: 'success'
+          });
+        } catch (e) {
+          console.error("Error deleting safety observation:", e);
+          setModalConfig({
+            isOpen: true,
+            title: 'Erro ao Excluir',
+            message: 'Incapaz de remover o registro do banco de dados.',
+            type: 'error'
+          });
+        }
+      }
+    });
   };
 
   // Filter Observations Engine
@@ -2038,6 +2068,18 @@ const SafetyObservations: React.FC = () => {
                       <span>Mitigado por: {viewingObs.resolvedBy}</span>
                       <span>{safeToDate(viewingObs.resolvedAt)?.toLocaleDateString('pt-BR')}</span>
                     </div>
+                  </div>
+                )}
+
+                {/* Delete button for Admin/Manager/Master */}
+                {(isAdmin || isManager || isMaster) && (
+                  <div className="pt-4 border-t border-slate-100 flex justify-end">
+                    <button
+                      onClick={() => handleDeleteObservation(viewingObs.id)}
+                      className="px-6 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-1.5"
+                    >
+                      <Trash2 className="w-4 h-4" /> Excluir Registro Permanente
+                    </button>
                   </div>
                 )}
               </div>

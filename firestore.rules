@@ -31,6 +31,7 @@ service cloud.firestore {
       return true;
     }
 
+    // Checking domain allowed
     function isDomainAllowed() {
       return isSignedIn() && (
         isMaster() || (
@@ -146,13 +147,14 @@ service cloud.firestore {
                         request.resource.data.updatedAt == request.time)
                     );
       
-      allow delete: if isAdmin() && (!isMasterDoc(resource.data) || isMaster());
+      allow delete: if isMaster() || (isAdmin() && (!isMasterDoc(resource.data)));
     }
 
     // Allowed Domains
     match /allowed_domains/{domainId} {
       allow get, list: if true;
-      allow write: if isAdmin() && isValidId(domainId);
+      allow create, update: if isAdmin() && isValidId(domainId);
+      allow delete: if isMaster() || (isAdmin() && isValidId(domainId));
     }
 
     // User Login Logs
@@ -161,7 +163,8 @@ service cloud.firestore {
       allow create: if isSignedIn() && 
                     request.resource.data.userId == request.auth.uid && 
                     request.resource.data.timestamp == request.time;
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isMaster();
     }
 
     // DDS Sessions
@@ -180,7 +183,7 @@ service cloud.firestore {
       allow list: if isApproved();
       allow create: if isApproved() && isValidId(sessionId) && isValidSession(request.resource.data);
       allow update: if isApproved() && isValidId(sessionId) && (isManager() || resource.data.createdBy == request.auth.uid);
-      allow delete: if isApproved() && isValidId(sessionId) && (isManager() || resource.data.createdBy == request.auth.uid);
+      allow delete: if isMaster() || (isApproved() && isValidId(sessionId) && (isManager() || resource.data.createdBy == request.auth.uid));
     }
 
     // DDS Signatures
@@ -200,20 +203,22 @@ service cloud.firestore {
       allow get: if isSignedIn() && isValidId(signatureId) && (resource == null || resource.data.userId == request.auth.uid || isManager());
       allow list: if isSignedIn() && (isManager() || resource.data.userId == request.auth.uid);
       allow create: if isSignedIn() && isNotDisabled() && isValidId(signatureId) && isValidSignature(request.resource.data);
-      allow delete: if isManager() && isValidId(signatureId);
+      allow delete: if isMaster() || (isManager() && isValidId(signatureId));
     }
 
     // Metrics
     match /metrics/{metricId} {
       allow read: if isManager();
-      allow write: if isAdmin() && isEmailVerified() && isNotDisabled();
+      allow create, update: if isAdmin() && isEmailVerified() && isNotDisabled();
+      allow delete: if isMaster() || (isAdmin() && isEmailVerified() && isNotDisabled());
     }
 
     // Forklifts
     match /forklifts/{forkliftId} {
       allow get: if isApproved() && isValidId(forkliftId);
       allow list: if isApproved();
-      allow create, delete: if isManager() && isValidId(forkliftId);
+      allow create: if isManager() && isValidId(forkliftId);
+      allow delete: if isMaster() || (isManager() && isValidId(forkliftId));
       allow update: if isApproved();
     }
 
@@ -221,7 +226,8 @@ service cloud.firestore {
     match /forklift_check_items/{itemId} {
       allow get: if isApproved() && isValidId(itemId);
       allow list: if isApproved();
-      allow write: if isManager() && isValidId(itemId);
+      allow create, update: if isManager() && isValidId(itemId);
+      allow delete: if isMaster() || (isManager() && isValidId(itemId));
     }
 
     // Forklift Checklists
@@ -233,7 +239,8 @@ service cloud.firestore {
                       request.resource.data.timestamp == request.time &&
                       request.resource.data.keys().hasAll(['forkliftId', 'forkliftNumber', 'conductorId', 'conductorName', 'status', 'itemResults', 'timestamp']) &&
                       request.resource.data.status in ['normal', 'anormal'];
-      allow update, delete: if isManager() && isValidId(checklistId);
+      allow update: if isManager() && isValidId(checklistId);
+      allow delete: if isMaster() || (isManager() && isValidId(checklistId));
     }
 
     // Forklift Drafts
@@ -241,20 +248,24 @@ service cloud.firestore {
       allow get: if isApproved() && isValidId(draftId) &&
                     (resource == null || resource.data.conductorId == request.auth.uid);
       allow list: if isApproved() && (resource == null || resource.data.conductorId == request.auth.uid);
-      allow write: if isApproved() && isNotDisabled() && isValidId(draftId) && 
-                         (resource == null || resource.data.conductorId == request.auth.uid);
+      allow create, update: if isApproved() && isNotDisabled() && isValidId(draftId) && 
+                          (resource == null || resource.data.conductorId == request.auth.uid);
+      allow delete: if isMaster() || (isApproved() && isNotDisabled() && isValidId(draftId) && 
+                          (resource != null && resource.data.conductorId == request.auth.uid));
     }
 
     // Global Settings
     match /settings/global {
       allow read: if isSignedIn();
-      allow write: if isManager();
+      allow create, update: if isManager();
+      allow delete: if isMaster() || isManager();
     }
 
     // System Config Modules Settings
     match /system_config/{configId} {
       allow read: if isSignedIn() || (configId == 'branding');
-      allow write: if isAdmin() && isValidId(configId);
+      allow create, update: if isAdmin() && isValidId(configId);
+      allow delete: if isMaster() || (isAdmin() && isValidId(configId));
     }
 
     // Notifications
@@ -262,25 +273,29 @@ service cloud.firestore {
       allow get: if isApproved() && isValidId(notificationId);
       allow list: if isApproved();
       allow create: if isApproved() && isNotDisabled();
-      allow update, delete: if isManager();
+      allow update: if isManager();
+      allow delete: if isMaster() || isManager();
     }
 
     // Production Lines
     match /production_lines/{lineId} {
       allow get, list: if isApproved();
-      allow write: if isManager() && isValidId(lineId);
+      allow create, update: if isManager() && isValidId(lineId);
+      allow delete: if isMaster() || (isManager() && isValidId(lineId));
     }
 
     // Wire Storage Bays
     match /wire_storage_bays/{bayId} {
       allow get, list: if isApproved();
-      allow write: if isManager() && isValidId(bayId);
+      allow create, update: if isManager() && isValidId(bayId);
+      allow delete: if isMaster() || (isManager() && isValidId(bayId));
     }
 
     // Wire Suppliers
     match /wire_suppliers/{supplierId} {
       allow get, list: if isApproved();
-      allow write: if isAdmin() && isValidId(supplierId);
+      allow create, update: if isAdmin() && isValidId(supplierId);
+      allow delete: if isMaster() || (isAdmin() && isValidId(supplierId));
     }
 
     // Wire Batches
@@ -288,7 +303,7 @@ service cloud.firestore {
       allow get, list: if isApproved();
       allow create: if isManager() && isValidId(batchId);
       allow update: if isManager() && isValidId(batchId);
-      allow delete: if isAdmin() && isValidId(batchId);
+      allow delete: if isMaster() || (isAdmin() && isValidId(batchId));
     }
 
     // Wire Coils
@@ -296,7 +311,7 @@ service cloud.firestore {
       allow get, list: if isApproved();
       allow create: if isManager() && isValidId(coilId);
       allow update: if isApproved() && isValidId(coilId);
-      allow delete: if isAdmin() && isValidId(coilId);
+      allow delete: if isMaster() || (isAdmin() && isValidId(coilId));
     }
 
     // Monthly Production (Manual Inputs)
@@ -309,14 +324,16 @@ service cloud.firestore {
       }
 
       allow read: if isApproved();
-      allow write: if isManager() && isValidId(id) && isValidProduction(request.resource.data);
+      allow create, update: if isManager() && isValidId(id) && isValidProduction(request.resource.data);
+      allow delete: if isMaster() || (isManager() && isValidId(id));
     }
 
     // Quality Checklist Templates
     match /quality_checklist_templates/{templateId} {
       allow get: if isApproved() && isValidId(templateId);
       allow list: if isApproved();
-      allow write: if isManager() && isValidId(templateId);
+      allow create, update: if isManager() && isValidId(templateId);
+      allow delete: if isMaster() || (isManager() && isValidId(templateId));
     }
 
     // Quality Checklist Submissions
@@ -326,7 +343,8 @@ service cloud.firestore {
       allow create: if isApproved() && isNotDisabled() &&
                       request.resource.data.userId == request.auth.uid &&
                       request.resource.data.createdAt == request.time;
-      allow update, delete: if isManager();
+      allow update: if isManager();
+      allow delete: if isMaster() || isManager();
     }
 
     // Quality Checklist Omissions
@@ -336,25 +354,29 @@ service cloud.firestore {
       allow create: if isApproved() && isNotDisabled() &&
                       request.resource.data.userId == request.auth.uid &&
                       request.resource.data.createdAt == request.time;
-      allow update, delete: if isManager();
+      allow update: if isManager();
+      allow delete: if isMaster() || isManager();
     }
 
     // Quality Sectors
     match /quality_sectors/{sectorId} {
       allow read: if isApproved();
-      allow write: if isManager() && isValidId(sectorId);
+      allow create, update: if isManager() && isValidId(sectorId);
+      allow delete: if isMaster() || (isManager() && isValidId(sectorId));
     }
 
     // Quality Checklist Options
     match /quality_checklist_options/{optionSetId} {
       allow read: if isApproved();
-      allow write: if isManager() && isValidId(optionSetId);
+      allow create, update: if isManager() && isValidId(optionSetId);
+      allow delete: if isMaster() || (isManager() && isValidId(optionSetId));
     }
 
     // Route Templates
     match /route_templates/{templateId} {
       allow get, list: if isApproved();
-      allow write: if isManager() && isValidId(templateId);
+      allow create, update: if isManager() && isValidId(templateId);
+      allow delete: if isMaster() || (isManager() && isValidId(templateId));
     }
 
     // Route Submissions
@@ -363,7 +385,8 @@ service cloud.firestore {
       allow create: if isApproved() && isNotDisabled() && isValidId(submissionId) &&
                       request.resource.data.operatorId == request.auth.uid &&
                       request.resource.data.createdAt == request.time;
-      allow update, delete: if isManager();
+      allow update: if isManager();
+      allow delete: if isMaster() || isManager();
     }
 
     // Safety Observations
@@ -374,25 +397,28 @@ service cloud.firestore {
                       request.resource.data.createdAt == request.time;
       allow update: if isApproved() && isNotDisabled() && isValidId(observationId) && 
                       (isManager() || resource.data.reportedById == request.auth.uid);
-      allow delete: if isManager() && isValidId(observationId);
+      allow delete: if isMaster() || (isManager() && isValidId(observationId));
     }
 
     // Safety Categories (O Que Observar)
     match /safety_categories/{categoryId} {
       allow get, list: if isApproved();
-      allow write: if isManager() && isValidId(categoryId);
+      allow create, update: if isManager() && isValidId(categoryId);
+      allow delete: if isMaster() || (isManager() && isValidId(categoryId));
     }
 
     // Safety Areas (Areas)
     match /safety_areas/{areaId} {
       allow get, list: if isApproved();
-      allow write: if isManager() && isValidId(areaId);
+      allow create, update: if isManager() && isValidId(areaId);
+      allow delete: if isMaster() || (isManager() && isValidId(areaId));
     }
 
     // Operators Autocomplete List
     match /operators/{operatorId} {
       allow get, list: if isApproved();
-      allow write: if isManager() && isValidId(operatorId);
+      allow create, update: if isManager() && isValidId(operatorId);
+      allow delete: if isMaster() || (isManager() && isValidId(operatorId));
     }
 
     // Consumable Items
@@ -400,7 +426,7 @@ service cloud.firestore {
       allow get, list: if isApproved();
       allow create: if isApproved() && isValidId(itemId);
       allow update: if isApproved() && isValidId(itemId);
-      allow delete: if isManager() && isValidId(itemId);
+      allow delete: if isMaster() || (isManager() && isValidId(itemId));
     }
 
     // Consumable Logs
@@ -409,7 +435,8 @@ service cloud.firestore {
       allow create: if isApproved() && isValidId(logId) &&
                       request.resource.data.processedByUid == request.auth.uid &&
                       request.resource.data.timestamp == request.time;
-      allow update, delete: if isManager() && isValidId(logId);
+      allow update: if isManager() && isValidId(logId);
+      allow delete: if isMaster() || (isManager() && isValidId(logId));
     }
 
     // Shift Handovers
@@ -425,8 +452,7 @@ service cloud.firestore {
                         resource.data.shift == getBrazilShift()
                       )
                     );
-      allow delete: if isManager() && isValidId(handoverId);
+      allow delete: if isMaster() || (isManager() && isValidId(handoverId));
     }
   }
 }
-

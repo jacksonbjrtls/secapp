@@ -114,7 +114,7 @@ export interface RouteSubmission {
 }
 
 const OperationalRoutes: React.FC = () => {
-  const { user, profile, isManager, isAdmin } = useAuth();
+  const { user, profile, isManager, isAdmin, isMaster } = useAuth();
   
   // Tabs: 'my_routes' | 'new_route' | 'manage_templates' | 'metrics'
   const [activeTab, setActiveTab] = useState<'my_routes' | 'new_route' | 'manage_templates' | 'metrics'>('my_routes');
@@ -157,6 +157,7 @@ const OperationalRoutes: React.FC = () => {
   // Modal & Confirmation Config
   const [viewingRoute, setViewingRoute] = useState<RouteSubmission | null>(null);
   const [routeToDelete, setRouteToDelete] = useState<RouteTemplate | null>(null);
+  const [submissionToDelete, setSubmissionToDelete] = useState<RouteSubmission | null>(null);
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -787,12 +788,12 @@ const OperationalRoutes: React.FC = () => {
                   Nenhum registro de ronda de equipamentos executado no banco.
                 </div>
               ) : (
-                submissions.slice(0, 10).map((sub) => {
+                submissions.slice(0, 10).map((sub, idx) => {
                   const dateObj = safeToDate(sub.createdAt);
                   const failResponsesCount = sub.responses.filter(r => r.status === 'not_ok').length;
 
                   return (
-                    <div key={sub.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-slate-300 transition-all">
+                    <div key={sub.id || `sub-${idx}`} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-slate-300 transition-all">
                       <div className="flex items-center gap-4">
                         <div className={cn(
                           "w-12 h-12 rounded-2xl shrink-0 flex items-center justify-center text-white font-black",
@@ -817,6 +818,15 @@ const OperationalRoutes: React.FC = () => {
                             {failResponsesCount > 0 ? `${failResponsesCount} Falhas Reportadas` : 'Sem anomalia'}
                           </p>
                         </div>
+                        {(isManager || isAdmin || isMaster) && (
+                          <button
+                            onClick={() => setSubmissionToDelete(sub)}
+                            className="p-2 text-slate-350 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                            title="Excluir Registro de Ronda"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => setViewingRoute(sub)}
                           className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all"
@@ -2058,6 +2068,32 @@ const OperationalRoutes: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* DELETE SUBMISSION CONFIRM */}
+      <ConfirmationModal
+        isOpen={!!submissionToDelete}
+        onClose={() => setSubmissionToDelete(null)}
+        title="Excluir Registro de Ronda?"
+        message={`Deseja realmente excluir permanentemente este registro de ronda concluída por ${submissionToDelete?.operatorName}? Esta ação não poderá ser desfeita.`}
+        type="warning"
+        confirmText="Sim, Excluir"
+        showConfirmButton={true}
+        onConfirm={async () => {
+          if (!submissionToDelete) return;
+          try {
+            await deleteDoc(doc(db, 'route_submissions', submissionToDelete.id));
+            setSubmissionToDelete(null);
+            setModalConfig({
+              isOpen: true,
+              title: 'Registro Excluído',
+              message: 'O registro de ronda foi excluído do sistema permanentemente.',
+              type: 'success'
+            });
+          } catch (err) {
+            handleFirestoreError(err, OperationType.DELETE, 'route_submissions');
+          }
+        }}
+      />
 
       {/* DELETE TEMPLATE CONFIRM */}
       <ConfirmationModal
