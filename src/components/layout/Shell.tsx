@@ -23,7 +23,8 @@ import {
   Sparkles,
   Link2,
   Check,
-  PackagePlus
+  PackagePlus,
+  ArrowLeftRight
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
@@ -160,6 +161,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   useEffect(() => {
     const defaultNav = [
+      { id: 'shift_handover', name: 'Passagem de Turno', href: '/shift-handover', icon: ArrowLeftRight, show: true },
       { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, show: !!isManager || !!isAdmin },
       { id: 'overview', name: 'Overview', href: '/overview', icon: Activity, show: !!isManager || !!isAdmin },
       { id: 'forklifts', name: 'Empilhadeiras', href: '/forklifts', icon: Truck, show: activeModules.forklifts !== false },

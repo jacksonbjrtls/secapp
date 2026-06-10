@@ -21,6 +21,7 @@ import Quality from './pages/Quality';
 import Overview from './pages/Overview';
 import OperationalRoutes from './pages/OperationalRoutes';
 import SafetyObservations from './pages/SafetyObservations';
+import { ShiftHandover } from './pages/ShiftHandover';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean; requireManager?: boolean }> = ({ 
@@ -323,9 +324,9 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
 };
 
 const HomeRedirect = () => {
-  const { isManager, isAdmin, loading } = useAuth();
+  const { loading } = useAuth();
   if (loading) return null;
-  return (isManager || isAdmin) ? <Navigate to="/overview" replace /> : <Navigate to="/dds" replace />;
+  return <Navigate to="/shift-handover" replace />;
 };
 
 const App: React.FC = () => {
@@ -341,6 +342,15 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <HomeRedirect />
+              </ProtectedRoute>
+            } 
+          />
+
+          <Route 
+            path="/shift-handover" 
+            element={
+              <ProtectedRoute>
+                <ShiftHandover />
               </ProtectedRoute>
             } 
           />

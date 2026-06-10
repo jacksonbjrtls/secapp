@@ -390,6 +390,17 @@ service cloud.firestore {
                       request.resource.data.timestamp == request.time;
       allow update, delete: if isManager() && isValidId(logId);
     }
+
+    // Shift Handovers
+    match /shift_handovers/{handoverId} {
+      allow get, list: if isApproved();
+      allow create: if isApproved() && isNotDisabled() && isValidId(handoverId) &&
+                      request.resource.data.createdBy == request.auth.uid &&
+                      request.resource.data.createdAt == request.time;
+      allow update: if isApproved() && isNotDisabled() && isValidId(handoverId) &&
+                      (isManager() || resource.data.createdBy == request.auth.uid);
+      allow delete: if isManager() && isValidId(handoverId);
+    }
   }
 }
 

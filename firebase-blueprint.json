@@ -491,6 +491,29 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["itemId", "itemName", "quantity", "type", "processedByUid", "processedByName", "timestamp"]
+    },
+    "ShiftHandover": {
+      "title": "Shift Handover",
+      "description": "Report logged at the end of a shift to communicate with the next shift.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "shift": { "type": "string" },
+        "line": { "type": "string", "enum": ["Linha A", "Linha B", "Linha C", "Linha D", "MS1", "MS2"] },
+        "sector": { "type": "string", "enum": ["Enfardamento", "Parte Seca", "Parte Úmida"] },
+        "status": { "type": "string", "enum": ["normal", "attention", "critical"] },
+        "notes": { "type": "string" },
+        "pendingTasks": { "type": "string" },
+        "stoppedEquipment": { "type": "string" },
+        "operatorIn": { "type": "string" },
+        "operatorOut": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdByEmail": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "shift", "status", "operatorIn", "createdBy", "createdAt"]
     }
   },
   "firestore": {
@@ -613,6 +636,10 @@
     "/consumable_logs/{logId}": {
       "schema": "ConsumableLog",
       "description": "List of entries and consumption logs of consumables."
+    },
+    "/shift_handovers/{handoverId}": {
+      "schema": "ShiftHandover",
+      "description": "Information passed between shift operations."
     }
   }
 }
