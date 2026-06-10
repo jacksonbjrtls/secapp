@@ -324,8 +324,11 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
 };
 
 const HomeRedirect = () => {
-  const { loading } = useAuth();
+  const { loading, isAdmin, isManager, isMaster } = useAuth();
   if (loading) return null;
+  if (isAdmin || isManager || isMaster) {
+    return <Navigate to="/overview" replace />;
+  }
   return <Navigate to="/shift-handover" replace />;
 };
 

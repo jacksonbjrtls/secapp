@@ -41,7 +41,8 @@ import {
   CheckCircle,
   HelpCircle,
   Check,
-  Edit2
+  Edit2,
+  Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -66,7 +67,7 @@ interface HandoverReport {
 }
 
 export const ShiftHandover: React.FC = () => {
-  const { profile, user } = useAuth();
+  const { profile, user, isManager } = useAuth();
 
   // Selected parameters
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -378,6 +379,28 @@ export const ShiftHandover: React.FC = () => {
     );
   }, [selectedDate, selectedShift, handovers, selectedType, selectedLine, selectedSector]);
 
+  // Check if current user is allowed to edit the selected report
+  const canEdit = useMemo(() => {
+    if (!user) return false;
+    if (isManager) return true; // Managers/Admins can always edit any report
+    
+    // If the report doesn't exist yet, we can create it
+    if (!currentHandoverReport) return true;
+
+    // Report exists: Check if it belongs to the current user
+    const isOwner = currentHandoverReport.createdBy === user.uid;
+    if (!isOwner) return false;
+    
+    // Check if the selected shift is the current, active shift
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${year}-${month}-${day}`;
+    
+    return selectedDate === todayStr && selectedShift === getCurrentShift();
+  }, [user, isManager, currentHandoverReport, selectedDate, selectedShift]);
+
   // Populate form fields if a report exists for the selected shift and user opens editing
   useEffect(() => {
     if (currentHandoverReport) {
@@ -399,6 +422,11 @@ export const ShiftHandover: React.FC = () => {
     e.preventDefault();
     if (!user) {
       setSubmitError('Você precisa estar autenticado para registrar uma passagem de turno.');
+      return;
+    }
+
+    if (!canEdit) {
+      setSubmitError('Você não tem permissão para editar este relatório ou o turno correspondente já foi encerrado.');
       return;
     }
 
@@ -752,12 +780,18 @@ export const ShiftHandover: React.FC = () => {
                     <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Submetido por: {currentHandoverReport.createdByName || currentHandoverReport.createdByEmail}</p>
                   </div>
 
-                  <button
-                    onClick={() => setIsEditingExisting(true)}
-                    className="flex items-center gap-1 px-3.5 py-1.5 border border-slate-200 hover:bg-slate-50 active:scale-95 text-slate-600 text-xs font-black rounded-xl transition-all cursor-pointer"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" /> Editar Relatório
-                  </button>
+                  {canEdit ? (
+                    <button
+                      onClick={() => setIsEditingExisting(true)}
+                      className="flex items-center gap-1 px-3.5 py-1.5 border border-slate-200 hover:bg-slate-50 active:scale-95 text-slate-600 text-xs font-black rounded-xl transition-all cursor-pointer"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" /> Editar Relatório
+                    </button>
+                  ) : (
+                    <span className="flex items-center gap-1 px-3.5 py-1.5 text-slate-400 text-xs font-black rounded-xl border border-slate-100 bg-slate-50">
+                      <Lock className="w-3.5 h-3.5 text-slate-400" /> Turno Encerrado
+                    </span>
+                  )}
                 </div>
 
                 {/* Status Indicator */}

@@ -81,6 +81,27 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_@.-]+$');
     }
 
+    // Brazil/Eldorado Time and Shift Helpers
+    function getBrazilHour() {
+      return int(string(request.time - duration.value(10800, 's')).split('T')[1].split(':')[0]);
+    }
+
+    function getBrazilDate() {
+      return string(request.time - duration.value(10800, 's')).split('T')[0];
+    }
+
+    function getBrazilShift() {
+      return getBrazilHour() >= 0 && getBrazilHour() < 8 ? 'Turno 1' :
+             (getBrazilHour() >= 8 && getBrazilHour() < 16 ? 'Turno 2' : 'Turno 3');
+    }
+
+    function isUserBlocked() {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('disabled', false) == true || 
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', '') == 'blocked');
+    }
+
     // Users Collection
     match /users/{userId} {
       function isValidUser(data) {
@@ -393,12 +414,17 @@ service cloud.firestore {
 
     // Shift Handovers
     match /shift_handovers/{handoverId} {
-      allow get, list: if isApproved();
-      allow create: if isApproved() && isNotDisabled() && isValidId(handoverId) &&
+      allow get, list: if isSignedIn() && !isUserBlocked();
+      allow create: if isSignedIn() && !isUserBlocked() && isValidId(handoverId) &&
                       request.resource.data.createdBy == request.auth.uid &&
-                      request.resource.data.createdAt == request.time;
-      allow update: if isApproved() && isNotDisabled() && isValidId(handoverId) &&
-                      (isManager() || resource.data.createdBy == request.auth.uid);
+                      (request.resource.data.createdAt == request.time || request.resource.data.createdAt is timestamp);
+      allow update: if isSignedIn() && !isUserBlocked() && isValidId(handoverId) && (
+                      isManager() || (
+                        resource.data.createdBy == request.auth.uid &&
+                        resource.data.date == getBrazilDate() &&
+                        resource.data.shift == getBrazilShift()
+                      )
+                    );
       allow delete: if isManager() && isValidId(handoverId);
     }
   }
