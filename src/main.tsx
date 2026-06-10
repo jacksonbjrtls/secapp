@@ -22,7 +22,18 @@ if (typeof window !== 'undefined') {
   // 1. Unhandled Rejections Tracker (with stopImmediatePropagation to hide from Vite overlay/browser alerts)
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
-    const message = reason instanceof Error ? reason.message : String(reason || '');
+    let message = '';
+    if (reason) {
+      if (reason instanceof Error) {
+        message = reason.message;
+      } else if (typeof reason === 'string') {
+        message = reason;
+      } else if (typeof reason === 'object') {
+        message = reason.message || reason.description || JSON.stringify(reason);
+      } else {
+        message = String(reason);
+      }
+    }
     if (isBenignError(message)) {
       event.preventDefault();
       event.stopPropagation();
@@ -33,7 +44,8 @@ if (typeof window !== 'undefined') {
   // 2. Standard Errors Tracker
   window.addEventListener('error', (event) => {
     const message = event.message || '';
-    if (isBenignError(message)) {
+    const errorMsg = event.error instanceof Error ? event.error.message : '';
+    if (isBenignError(message) || isBenignError(errorMsg)) {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();

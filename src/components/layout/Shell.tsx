@@ -132,6 +132,55 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       setActiveInstallTab('desktop');
     }
   }, []);
+
+  // Track swipe gestures to open and close the sidebar menu on mobile devices
+  useEffect(() => {
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchCurrentX = 0;
+    let touchCurrentY = 0;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      touchCurrentX = touchStartX;
+      touchCurrentY = touchStartY;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      touchCurrentX = e.touches[0].clientX;
+      touchCurrentY = e.touches[0].clientY;
+    };
+
+    const handleTouchEnd = () => {
+      const diffX = touchCurrentX - touchStartX;
+      const diffY = touchCurrentY - touchStartY;
+
+      // Ensure it was a clear swipe mostly in the horizontal axis
+      if (Math.abs(diffX) > Math.abs(diffY) * 1.8 && Math.abs(diffX) > 60) {
+        if (diffX > 0) {
+          // Swipe Right: only trigger to open if standard touch gesture starts near the left edge
+          if (touchStartX < 100) {
+            setIsSidebarOpen(true);
+          }
+        } else {
+          // Swipe Left: triggers to close the sidebar from anywhere on the screen
+          setIsSidebarOpen(false);
+        }
+      }
+    };
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    window.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, []);
+
   const location = useLocation();
   const navigate = useNavigate();
 
