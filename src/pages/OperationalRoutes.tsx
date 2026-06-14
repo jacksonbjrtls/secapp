@@ -1878,265 +1878,263 @@ const OperationalRoutes: React.FC = () => {
                             </div>
 
                             {/* Down Arrow square button (matches images exactly) */}
-                            <div className="relative">
-                              <button
-                                type="button"
-                                onClick={() => setExpandedEquipmentId(isExpanded ? null : eq.id)}
-                                className={cn(
-                                  "w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 text-white cursor-pointer",
-                                  isExpanded ? "bg-emerald-800 rotate-180" : "bg-[#0d6e4f] hover:bg-emerald-800"
-                                )}
-                              >
-                                <ChevronRight className="w-5 h-5 rotate-90 stroke-[3]" />
-                              </button>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedEquipmentId(isExpanded ? null : eq.id)}
+                              className={cn(
+                                "w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 text-white cursor-pointer",
+                                isExpanded ? "bg-emerald-800 rotate-180" : "bg-[#0d6e4f] hover:bg-emerald-800"
+                              )}
+                            >
+                              <ChevronRight className="w-5 h-5 rotate-90 stroke-[3]" />
+                            </button>
+                          </div>
 
-                              <AnimatePresence>
-                                {isExpanded && (
-                                  <>
-                                    {/* Transparent backdrop overlay for click away */}
-                                    <div
-                                      className="fixed inset-0 z-30 cursor-default"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setExpandedEquipmentId(null);
-                                      }}
-                                    />
-                                    
-                                    <motion.div
-                                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                      className="absolute right-0 mt-2 z-40 w-72 sm:w-80 bg-white border border-slate-200 rounded-3xl shadow-2xl p-4 space-y-4 text-xs font-semibold text-slate-800"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      {/* Header of Dropdown */}
-                                      <div className="border-b border-slate-100 pb-2">
-                                        <p className="text-[10px] font-black text-[#0d6e4f] tracking-wide uppercase">Parâmetros de Coleta</p>
-                                        <p className="text-slate-500 font-bold text-[11px] mt-0.5 truncate max-w-[260px] leading-tight">{eq.name}</p>
-                                      </div>
+                          <AnimatePresence>
+                            {isExpanded && (
+                              <>
+                                {/* Transparent backdrop overlay for click away */}
+                                <div
+                                  className="fixed inset-0 z-30 cursor-default"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedEquipmentId(null);
+                                  }}
+                                />
+                                
+                                <motion.div
+                                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                  className="absolute left-0 right-0 mt-2 z-40 w-full bg-white border border-slate-200 rounded-3xl shadow-2xl p-5 space-y-4 text-xs font-semibold text-slate-800"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {/* Header of Dropdown */}
+                                  <div className="border-b border-slate-100 pb-2">
+                                    <p className="text-[10px] font-black text-[#0d6e4f] tracking-wide uppercase">Parâmetros de Coleta</p>
+                                    <p className="text-slate-500 font-bold text-[11px] mt-0.5 truncate max-w-[260px] leading-tight">{eq.name}</p>
+                                  </div>
 
-                                      {eq.description && (
-                                        <p className="text-slate-400 text-[11px] leading-normal italic bg-slate-50 p-2 rounded-xl">" {eq.description} "</p>
-                                      )}
+                                  {eq.description && (
+                                    <p className="text-slate-400 text-[11px] leading-normal italic bg-slate-50 p-2 rounded-xl">" {eq.description} "</p>
+                                  )}
 
-                                      {/* Custom collect fields depending on type */}
-                                      <div className="space-y-3">
-                                        {/* CONDITION TYPE OPTION ROWS */}
-                                        {eq.type === 'condition' && (
-                                          <div className="space-y-1.5">
-                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Parâmetro:</span>
-                                            <div className="flex flex-wrap gap-2">
-                                              {(optionSets.find(o => o.id === eq.conditionOptionsId)?.options || ['OK', 'NÃO OK']).map((option, inlineOptionIdx) => {
-                                                const isSelected = resp.value === option;
-                                                return (
-                                                  <button
-                                                    key={`${option}-${inlineOptionIdx}`}
-                                                    type="button"
-                                                    onClick={() => {
-                                                      const labelLower = option.toLowerCase();
-                                                      const autoStatus = (labelLower === 'not ok' || labelLower === 'nok' || labelLower.includes('não') || labelLower.includes('falha') || labelLower.includes('instável'))
-                                                        ? 'not_ok'
-                                                        : 'ok';
-                                                      
-                                                      setRouteResponses(prev => ({
-                                                        ...prev,
-                                                        [eq.id]: {
-                                                          ...prev[eq.id],
-                                                          value: option,
-                                                          status: autoStatus
-                                                        }
-                                                      }));
-                                                      
-                                                      if (autoStatus === 'not_ok') {
-                                                        setAnomalyDetailingEqId(eq.id);
-                                                      }
-                                                    }}
-                                                    className={cn(
-                                                      "px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
-                                                      isSelected 
-                                                        ? "bg-emerald-50 text-emerald-700 border-[#0d6e4f] ring-1 ring-[#0d6e4f]" 
-                                                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                                                    )}
-                                                  >
-                                                    {option}
-                                                  </button>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        {/* NUMBER VALUE COLLECT */}
-                                        {eq.type === 'number' && (
-                                          <div className="space-y-1.5">
-                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Valor Medido:</span>
-                                            <input
-                                              type="number"
-                                              placeholder={`mín: ${eq.min ?? '0'} / máx: ${eq.max ?? '10'}...`}
-                                              value={resp.value || ''}
-                                              onChange={(e) => {
-                                                const rawVal = e.target.value;
-                                                const valNum = parseFloat(rawVal);
-                                                let autoStatus = 'ok';
-                                                if (rawVal !== '' && !isNaN(valNum)) {
-                                                  const minLimit = eq.min !== undefined ? eq.min : 0;
-                                                  const maxLimit = eq.max !== undefined ? eq.max : 10;
-                                                  if (valNum < minLimit || valNum > maxLimit) {
-                                                    autoStatus = 'not_ok';
-                                                  }
-                                                }
-                                                setRouteResponses(prev => ({
-                                                  ...prev,
-                                                  [eq.id]: { 
-                                                    ...prev[eq.id], 
-                                                    value: rawVal,
-                                                    status: autoStatus as 'ok' | 'not_ok'
-                                                  }
-                                                }));
-                                                
-                                                if (autoStatus === 'not_ok') {
-                                                  setAnomalyDetailingEqId(eq.id);
-                                                }
-                                              }}
-                                              className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-1 focus:ring-[#0d6e4f] font-bold"
-                                            />
-                                          </div>
-                                        )}
-
-                                        {/* RANGE SELECTIONS BAIXO/NORMAL/ALTO */}
-                                        {eq.type === 'range' && (
-                                          <div className="space-y-1.5">
-                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Nível Operacional:</span>
-                                            <div className="flex gap-2">
-                                              {[
-                                                { label: 'BAIXO', val: 'low', col: 'bg-amber-600 text-white border-amber-600' },
-                                                { label: 'NORMAL / OK', val: 'normal', col: 'bg-[#0d6e4f] text-white border-[#0d6e4f]' },
-                                                { label: 'ALTO', val: 'high', col: 'bg-rose-600 text-white border-rose-600' }
-                                              ].map(rnVal => {
-                                                const isActive = resp.value === rnVal.val;
-                                                return (
-                                                  <button
-                                                    key={rnVal.val}
-                                                    type="button"
-                                                    onClick={() => {
-                                                      const autoStatus = rnVal.val === 'low' || rnVal.val === 'high' ? 'not_ok' : 'ok';
-                                                      setRouteResponses(prev => ({
-                                                        ...prev,
-                                                        [eq.id]: {
-                                                          ...prev[eq.id],
-                                                          value: rnVal.val,
-                                                          status: autoStatus
-                                                        }
-                                                      }));
-                                                      if (autoStatus === 'not_ok') {
-                                                        setAnomalyDetailingEqId(eq.id);
-                                                      }
-                                                    }}
-                                                    className={cn(
-                                                      "flex-1 py-1.5 rounded-xl text-[9px] font-black uppercase border transition-all text-center cursor-pointer",
-                                                      isActive ? rnVal.col : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
-                                                    )}
-                                                  >
-                                                    {rnVal.label}
-                                                  </button>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        {/* BARCODE VALUE COLLECT */}
-                                        {eq.type === 'barcode' && (
-                                          <div className="space-y-1.5 relative">
-                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Identificador Cód. Barras:</span>
-                                            <div className="flex gap-2">
-                                              <input
-                                                type="text"
-                                                placeholder="Digite ou leia..."
-                                                value={resp.value || ''}
-                                                onChange={(e) => {
+                                  {/* Custom collect fields depending on type */}
+                                  <div className="space-y-3">
+                                    {/* CONDITION TYPE OPTION ROWS */}
+                                    {eq.type === 'condition' && (
+                                      <div className="space-y-1.5">
+                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Parâmetro:</span>
+                                        <div className="flex flex-wrap gap-2">
+                                          {(optionSets.find(o => o.id === eq.conditionOptionsId)?.options || ['OK', 'NÃO OK']).map((option, inlineOptionIdx) => {
+                                            const isSelected = resp.value === option;
+                                            return (
+                                              <button
+                                                key={`${option}-${inlineOptionIdx}`}
+                                                type="button"
+                                                onClick={() => {
+                                                  const labelLower = option.toLowerCase();
+                                                  const autoStatus = (labelLower === 'not ok' || labelLower === 'nok' || labelLower.includes('não') || labelLower.includes('falha') || labelLower.includes('instável'))
+                                                    ? 'not_ok'
+                                                    : 'ok';
+                                                  
                                                   setRouteResponses(prev => ({
                                                     ...prev,
-                                                    [eq.id]: { ...prev[eq.id], value: e.target.value }
+                                                    [eq.id]: {
+                                                      ...prev[eq.id],
+                                                      value: option,
+                                                      status: autoStatus
+                                                    }
                                                   }));
+                                                  
+                                                  if (autoStatus === 'not_ok') {
+                                                    setAnomalyDetailingEqId(eq.id);
+                                                  }
                                                 }}
-                                                className="flex-1 text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold"
-                                              />
-                                              <button
-                                                type="button"
-                                                onClick={() => setActiveScanner(eq.id)}
-                                                className="p-2 bg-emerald-50 text-[#0d6e4f] border border-emerald-100 rounded-xl hover:bg-emerald-100 shrink-0 cursor-pointer"
+                                                className={cn(
+                                                  "px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
+                                                  isSelected 
+                                                    ? "bg-emerald-50 text-emerald-700 border-[#0d6e4f] ring-1 ring-[#0d6e4f]" 
+                                                    : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                                                )}
                                               >
-                                                <QrCode className="w-4 h-4" />
+                                                {option}
                                               </button>
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        {/* If QR Scanner is triggered for individual item */}
-                                        {activeScanner === eq.id && (
-                                          <div className="p-3 bg-black rounded-xl overflow-hidden aspect-video border border-slate-800 relative max-w-[260px] mx-auto">
-                                            <div id="qr-reader-route" className="w-full h-full" />
-                                            <button
-                                              type="button"
-                                              onClick={() => setActiveScanner(null)}
-                                              className="absolute top-2 right-2 p-1 bg-black/50 text-white rounded-full cursor-pointer"
-                                            >
-                                              <X className="w-3.5 h-3.5" />
-                                            </button>
-                                          </div>
-                                        )}
-
-                                        {/* Display if they detailed and filled deep NON-OK options */}
-                                        {resp.status === 'not_ok' && detailingResponses[eq.id] && (
-                                          <div className="p-3 bg-rose-50/50 border border-rose-100 rounded-xl text-[10px] text-rose-950 space-y-1">
-                                            <div className="flex items-center gap-1 text-[9px] font-black uppercase text-rose-750">
-                                              <AlertTriangle className="w-3.5 h-3.5 text-rose-500" /> Detalhes Desvio
-                                            </div>
-                                            <p className="leading-tight">Diagnóstico: <strong>{detailingResponses[eq.id].diagnostic}</strong></p>
-                                            <p className="leading-tight">Ação: <strong>{detailingResponses[eq.id].actionTaken}</strong></p>
-                                            <button
-                                              type="button"
-                                              onClick={() => setAnomalyDetailingEqId(eq.id)}
-                                              className="text-blue-600 hover:underline hover:text-blue-800 font-bold uppercase text-[9px] block mt-1 cursor-pointer"
-                                            >
-                                              Editar Parâmetros Técnicos
-                                            </button>
-                                          </div>
-                                        )}
+                                            );
+                                          })}
+                                        </div>
                                       </div>
+                                    )}
 
-                                      {/* Custom notes text comment inside dropdown */}
-                                      <div className="border-t border-slate-100 pt-3 mt-1 space-y-1">
-                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Notas / Detalhamento:</span>
+                                    {/* NUMBER VALUE COLLECT */}
+                                    {eq.type === 'number' && (
+                                      <div className="space-y-1.5">
+                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Valor Medido:</span>
                                         <input
-                                          type="text"
-                                          placeholder="Observações adicionais..."
-                                          value={resp.notes || ''}
+                                          type="number"
+                                          placeholder={`mín: ${eq.min ?? '0'} / máx: ${eq.max ?? '10'}...`}
+                                          value={resp.value || ''}
                                           onChange={(e) => {
+                                            const rawVal = e.target.value;
+                                            const valNum = parseFloat(rawVal);
+                                            let autoStatus = 'ok';
+                                            if (rawVal !== '' && !isNaN(valNum)) {
+                                              const minLimit = eq.min !== undefined ? eq.min : 0;
+                                              const maxLimit = eq.max !== undefined ? eq.max : 10;
+                                              if (valNum < minLimit || valNum > maxLimit) {
+                                                autoStatus = 'not_ok';
+                                              }
+                                            }
                                             setRouteResponses(prev => ({
                                               ...prev,
-                                              [eq.id]: { ...prev[eq.id], notes: e.target.value }
+                                              [eq.id]: { 
+                                                ...prev[eq.id], 
+                                                value: rawVal,
+                                                status: autoStatus as 'ok' | 'not_ok'
+                                              }
                                             }));
+                                            
+                                            if (autoStatus === 'not_ok') {
+                                              setAnomalyDetailingEqId(eq.id);
+                                            }
                                           }}
-                                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-700 outline-none focus:ring-1 focus:ring-[#0d6e4f] text-xs"
+                                          className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-1 focus:ring-[#0d6e4f] font-bold"
                                         />
                                       </div>
+                                    )}
 
-                                      {/* CONFIRM BUTTON */}
-                                      <button
-                                        type="button"
-                                        onClick={() => setExpandedEquipmentId(null)}
-                                        className="w-full py-2 bg-[#0d6e4f] hover:bg-emerald-800 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider transition-colors shadow-xs cursor-pointer"
-                                      >
-                                        OK / Confirmar
-                                      </button>
-                                    </motion.div>
-                                  </>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          </div>
+                                    {/* RANGE SELECTIONS BAIXO/NORMAL/ALTO */}
+                                    {eq.type === 'range' && (
+                                      <div className="space-y-1.5">
+                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Nível Operacional:</span>
+                                        <div className="flex gap-2">
+                                          {[
+                                            { label: 'BAIXO', val: 'low', col: 'bg-amber-600 text-white border-amber-600' },
+                                            { label: 'NORMAL / OK', val: 'normal', col: 'bg-[#0d6e4f] text-white border-[#0d6e4f]' },
+                                            { label: 'ALTO', val: 'high', col: 'bg-rose-600 text-white border-rose-600' }
+                                          ].map(rnVal => {
+                                            const isActive = resp.value === rnVal.val;
+                                            return (
+                                              <button
+                                                key={rnVal.val}
+                                                type="button"
+                                                onClick={() => {
+                                                  const autoStatus = rnVal.val === 'low' || rnVal.val === 'high' ? 'not_ok' : 'ok';
+                                                  setRouteResponses(prev => ({
+                                                    ...prev,
+                                                    [eq.id]: {
+                                                      ...prev[eq.id],
+                                                      value: rnVal.val,
+                                                      status: autoStatus
+                                                    }
+                                                  }));
+                                                  if (autoStatus === 'not_ok') {
+                                                    setAnomalyDetailingEqId(eq.id);
+                                                  }
+                                                }}
+                                                className={cn(
+                                                  "flex-1 py-1.5 rounded-xl text-[9px] font-black uppercase border transition-all text-center cursor-pointer",
+                                                  isActive ? rnVal.col : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
+                                                )}
+                                              >
+                                                {rnVal.label}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* BARCODE VALUE COLLECT */}
+                                    {eq.type === 'barcode' && (
+                                      <div className="space-y-1.5 relative">
+                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Identificador Cód. Barras:</span>
+                                        <div className="flex gap-2">
+                                          <input
+                                            type="text"
+                                            placeholder="Digite ou leia..."
+                                            value={resp.value || ''}
+                                            onChange={(e) => {
+                                              setRouteResponses(prev => ({
+                                                ...prev,
+                                                [eq.id]: { ...prev[eq.id], value: e.target.value }
+                                              }));
+                                            }}
+                                            className="flex-1 text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold"
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => setActiveScanner(eq.id)}
+                                            className="p-2 bg-emerald-50 text-[#0d6e4f] border border-emerald-100 rounded-xl hover:bg-emerald-100 shrink-0 cursor-pointer"
+                                          >
+                                            <QrCode className="w-4 h-4" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* If QR Scanner is triggered for individual item */}
+                                    {activeScanner === eq.id && (
+                                      <div className="p-3 bg-black rounded-xl overflow-hidden aspect-video border border-slate-800 relative max-w-[260px] mx-auto">
+                                        <div id="qr-reader-route" className="w-full h-full" />
+                                        <button
+                                          type="button"
+                                          onClick={() => setActiveScanner(null)}
+                                          className="absolute top-2 right-2 p-1 bg-black/50 text-white rounded-full cursor-pointer"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    )}
+
+                                    {/* Display if they detailed and filled deep NON-OK options */}
+                                    {resp.status === 'not_ok' && detailingResponses[eq.id] && (
+                                      <div className="p-3 bg-rose-50/50 border border-rose-100 rounded-xl text-[10px] text-rose-950 space-y-1">
+                                        <div className="flex items-center gap-1 text-[9px] font-black uppercase text-rose-750">
+                                          <AlertTriangle className="w-3.5 h-3.5 text-rose-500" /> Detalhes Desvio
+                                        </div>
+                                        <p className="leading-tight">Diagnóstico: <strong>{detailingResponses[eq.id].diagnostic}</strong></p>
+                                        <p className="leading-tight">Ação: <strong>{detailingResponses[eq.id].actionTaken}</strong></p>
+                                        <button
+                                          type="button"
+                                          onClick={() => setAnomalyDetailingEqId(eq.id)}
+                                          className="text-blue-600 hover:underline hover:text-blue-800 font-bold uppercase text-[9px] block mt-1 cursor-pointer"
+                                        >
+                                          Editar Parâmetros Técnicos
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Custom notes text comment inside dropdown */}
+                                  <div className="border-t border-slate-100 pt-3 mt-1 space-y-1">
+                                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Notas / Detalhamento:</span>
+                                    <textarea
+                                      placeholder="Escreva observações adicionais para este item, observações técnicas ou detalhes do status..."
+                                      value={resp.notes || ''}
+                                      rows={3}
+                                      onChange={(e) => {
+                                        setRouteResponses(prev => ({
+                                          ...prev,
+                                          [eq.id]: { ...prev[eq.id], notes: e.target.value }
+                                        }));
+                                      }}
+                                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-700 outline-none focus:ring-1 focus:ring-[#0d6e4f] text-xs resize-none"
+                                    />
+                                  </div>
+
+                                  {/* CONFIRM BUTTON */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedEquipmentId(null)}
+                                    className="w-full py-2.5 bg-[#0d6e4f] hover:bg-emerald-800 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider transition-colors shadow-xs cursor-pointer"
+                                  >
+                                    OK / Confirmar
+                                  </button>
+                                </motion.div>
+                              </>
+                            )}
+                          </AnimatePresence>
                         </div>
                       );
                     });
