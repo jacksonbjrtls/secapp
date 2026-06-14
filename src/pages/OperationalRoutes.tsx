@@ -6,6 +6,8 @@ import {
   updateDoc, 
   deleteDoc, 
   doc, 
+  getDoc,
+  setDoc,
   serverTimestamp, 
   getDocs,
   query,
@@ -14,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { getCurrentShift, getGroupForShift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -27,6 +30,7 @@ import {
   AlertTriangle, 
   Camera, 
   Upload, 
+  Download,
   History, 
   Settings, 
   FileText, 
@@ -46,7 +50,14 @@ import {
   Clock,
   QrCode,
   Tag,
-  Maximize2
+  Maximize2,
+  Search,
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  LogOut,
+  Check,
+  Home
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -113,6 +124,179 @@ export interface RouteSubmission {
   }[];
 }
 
+export interface ParsedEquipmentCSV {
+  raw: Record<string, string>;
+  equipment: RouteEquipmentItem;
+  errors: string[];
+  warnings: string[];
+}
+
+export const parseCSVEquipments = (text: string, linesList: ProductionLine[], sectorsList: QualitySector[]): ParsedEquipmentCSV[] => {
+  if (!text.trim()) return [];
+  
+  // Split into lines, handle CRLF and LF safely
+  const rawLines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+  if (rawLines.length === 0) return [];
+  
+  // Detect delimiter
+  const firstLine = rawLines[0];
+  let delimiter = ',';
+  if (firstLine.includes(';')) delimiter = ';';
+  else if (firstLine.includes('\t')) delimiter = '\t';
+  
+  // Custom split CSV function to handle quotes correctly
+  const splitCSVLine = (lineStr: string, delim: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < lineStr.length; i++) {
+        const char = lineStr[i];
+        if (char === '"') {
+            inQuotes = !inQuotes;
+        } else if (char === delim && !inQuotes) {
+            result.push(current.trim());
+            current = '';
+        } else {
+            current += char;
+        }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = splitCSVLine(rawLines[0], delimiter).map(h => h.toLowerCase().trim()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove accents
+  );
+  
+  // Map standard header candidates
+  const colIndex = {
+    name: headers.findIndex(h => ['nome', 'name', 'equipamento', 'equipment'].includes(h)),
+    tag: headers.findIndex(h => ['tag', 'patrimonio', 'patrimônio', 'codigo', 'código', 'code'].includes(h)),
+    description: headers.findIndex(h => ['descricao', 'descrição', 'especificacao', 'especificação', 'instrucoes', 'instruções', 'specification', 'spec', 'description'].includes(h)),
+    sector: headers.findIndex(h => ['setor', 'sector', 'area', 'área'].includes(h)),
+    line: headers.findIndex(h => ['linha', 'line', 'producao', 'produção'].includes(h)),
+    type: headers.findIndex(h => ['tipo', 'type', 'tipodados', 'coleta'].includes(h)),
+    required: headers.findIndex(h => ['obrigatorio', 'obrigatório', 'requerido', 'required', 'obrigatoria'].includes(h)),
+    min: headers.findIndex(h => ['min', 'minimo', 'mínimo'].includes(h)),
+    max: headers.findIndex(h => ['max', 'maximo', 'máximo'].includes(h)),
+    step: headers.findIndex(h => ['passo', 'step'].includes(h))
+  };
+
+  // If we can't find name column, try to default to the 1st column as name
+  if (colIndex.name === -1 && headers.length > 0) {
+    colIndex.name = 0;
+  }
+
+  const results: ParsedEquipmentCSV[] = [];
+
+  for (let i = 1; i < rawLines.length; i++) {
+    const rowRaw = rawLines[i];
+    const cells = splitCSVLine(rowRaw, delimiter);
+    if (cells.length === 0 || (cells.length === 1 && !cells[0])) continue;
+    
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    
+    const name = colIndex.name !== -1 && cells[colIndex.name] ? cells[colIndex.name].replace(/^"|"$/g, '').trim() : '';
+    if (!name) {
+      errors.push(`Linha ${i + 1}: O nome do equipamento está vazio.`);
+      continue;
+    }
+    
+    const tag = colIndex.tag !== -1 && cells[colIndex.tag] ? cells[colIndex.tag].replace(/^"|"$/g, '').trim() : '';
+    const description = colIndex.description !== -1 && cells[colIndex.description] ? cells[colIndex.description].replace(/^"|"$/g, '').trim() : '';
+    
+    // Sector lookup by name or ID
+    let sectorId = '';
+    const sectorVal = colIndex.sector !== -1 && cells[colIndex.sector] ? cells[colIndex.sector].replace(/^"|"$/g, '').trim() : '';
+    if (sectorVal) {
+      const matchedSector = sectorsList.find(s => 
+        s.id === sectorVal || 
+        s.name.toLowerCase().trim() === sectorVal.toLowerCase().trim()
+      );
+      if (matchedSector) {
+        sectorId = matchedSector.id;
+      } else {
+        warnings.push(`Setor "${sectorVal}" não encontrado.`);
+      }
+    }
+    
+    // Line lookup by name or ID
+    let lineId = '';
+    const lineVal = colIndex.line !== -1 && cells[colIndex.line] ? cells[colIndex.line].replace(/^"|"$/g, '').trim() : '';
+    if (lineVal) {
+      const matchedLine = linesList.find(l => 
+        l.id === lineVal || 
+        l.name.toLowerCase().trim() === lineVal.toLowerCase().trim()
+      );
+      if (matchedLine) {
+        lineId = matchedLine.id;
+      } else {
+        warnings.push(`Linha "${lineVal}" não encontrada.`);
+      }
+    }
+    
+    // Type mapping with default
+    let type: 'condition' | 'number' | 'range' | 'barcode' = 'condition';
+    const typeVal = colIndex.type !== -1 && cells[colIndex.type] ? cells[colIndex.type].replace(/^"|"$/g, '').toLowerCase().trim() : '';
+    if (typeVal) {
+      if (['numerico', 'número', 'numero', 'number', 'num'].includes(typeVal)) {
+        type = 'number';
+      } else if (['faixa', 'range', 'alerta', 'rango'].includes(typeVal)) {
+        type = 'range';
+      } else if (['codigo', 'código', 'barras', 'barcode', 'qr'].includes(typeVal)) {
+        type = 'barcode';
+      } else if (['condition', 'condicao', 'condição', 'opcoes', 'opções', 'ok/nok'].includes(typeVal)) {
+        type = 'condition';
+      } else {
+        warnings.push(`Tipo "${typeVal}" desconhecido. Usando padrão "Opções OK/NOK".`);
+      }
+    }
+    
+    // Required boolean map
+    let required = true;
+    const reqVal = colIndex.required !== -1 && cells[colIndex.required] ? cells[colIndex.required].replace(/^"|"$/g, '').toLowerCase().trim() : '';
+    if (reqVal) {
+      if (['nao', 'não', 'false', 'no', '0'].includes(reqVal)) {
+        required = false;
+      }
+    }
+    
+    // Numerical inputs
+    const minVal = colIndex.min !== -1 && cells[colIndex.min] ? parseFloat(cells[colIndex.min]) : undefined;
+    const maxVal = colIndex.max !== -1 && cells[colIndex.max] ? parseFloat(cells[colIndex.max]) : undefined;
+    const stepVal = colIndex.step !== -1 && cells[colIndex.step] ? parseFloat(cells[colIndex.step]) : undefined;
+    
+    const equipment: RouteEquipmentItem = {
+      id: `eq_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 5)}`,
+      name,
+      tag,
+      description,
+      required,
+      type,
+      lineId: lineId || undefined,
+      sectorId: sectorId || undefined,
+      min: (minVal !== undefined && isNaN(minVal)) ? undefined : minVal,
+      max: (maxVal !== undefined && isNaN(maxVal)) ? undefined : maxVal,
+      step: (stepVal !== undefined && isNaN(stepVal)) ? undefined : stepVal,
+    };
+    
+    const rawMap: Record<string, string> = {};
+    headers.forEach((h, idx) => {
+      rawMap[h] = cells[idx] || '';
+    });
+    
+    results.push({
+      raw: rawMap,
+      equipment,
+      errors,
+      warnings
+    });
+  }
+  
+  return results;
+};
+
 const OperationalRoutes: React.FC = () => {
   const { user, profile, isManager, isAdmin, isMaster } = useAuth();
   
@@ -143,6 +327,12 @@ const OperationalRoutes: React.FC = () => {
   const [templateCustomPeriod, setTemplateCustomPeriod] = useState('');
   const [templateEquipments, setTemplateEquipments] = useState<RouteEquipmentItem[]>([]);
 
+  // MASS EQUIPMENT CHARGE FROM CSV
+  const [isCsvImportModalOpen, setIsCsvImportModalOpen] = useState(false);
+  const [csvText, setCsvText] = useState('');
+  const [csvParseResults, setCsvParseResults] = useState<ParsedEquipmentCSV[]>([]);
+  const [csvDragOver, setCsvDragOver] = useState(false);
+
   // New Route Execution Form
   const [selectedTemplate, setSelectedTemplate] = useState<RouteTemplate | null>(null);
   const [routeResponses, setRouteResponses] = useState<Record<string, {
@@ -153,6 +343,46 @@ const OperationalRoutes: React.FC = () => {
     generateObservation?: boolean;
     observationText?: string;
   }>>({});
+
+  // Route Step-by-Step Wizard States
+  const [routeStep, setRouteStep] = useState<'select_area' | 'select_sector' | 'select_details' | 'active_inspection'>('select_area');
+  const [selectedArea, setSelectedArea] = useState<string | null>(null);
+  const [selectedSector, setSelectedSector] = useState<QualitySector | null>(null);
+  const [selectedLine, setSelectedLine] = useState<ProductionLine | null>(null);
+  const [selectedShift, setSelectedShift] = useState<string>(() => {
+    const currentShift = getCurrentShift();
+    const shiftMapping: Record<string, string> = {
+      'Turno 1': '00:00 - 08:00',
+      'Turno 2': '08:00 - 16:00',
+      'Turno 3': '16:00 - 24:00'
+    };
+    return shiftMapping[currentShift] || '08:00 - 16:00';
+  });
+  const [selectedTeam, setSelectedTeam] = useState<string>(() => {
+    const currentShift = getCurrentShift();
+    return getGroupForShift(new Date(), currentShift) || 'A';
+  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [expandedEquipmentId, setExpandedEquipmentId] = useState<string | null>(null);
+  const [isDraftLoaded, setIsDraftLoaded] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
+
+  // States for the detailed NON OK / Anomaly Specification Modal (Images 9 & 10)
+  const [anomalyDetailingEqId, setAnomalyDetailingEqId] = useState<string | null>(null);
+  const [detailingResponses, setDetailingResponses] = useState<Record<string, {
+    inspectionType: string;
+    diagnostic: string;
+    notes: string;
+    photoUrl?: string;
+    actionTaken: string;
+    responsibleCenter: string;
+    schedule: string;
+    sapNote: string;
+  }>>({});
+
+  // States for justification modal of routes not executed (Step 3)
+  const [isJustifyModalOpen, setIsJustifyModalOpen] = useState(false);
+  const [justificationText, setJustificationText] = useState('');
   
   // Modal & Confirmation Config
   const [viewingRoute, setViewingRoute] = useState<RouteSubmission | null>(null);
@@ -175,6 +405,7 @@ const OperationalRoutes: React.FC = () => {
 
   // Reference for file input clicks
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const csvFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Year & Month filter for charts
   const [filterMonth, setFilterMonth] = useState<number>(new Date().getMonth());
@@ -186,6 +417,13 @@ const OperationalRoutes: React.FC = () => {
   ];
 
   // Subscribe to Route Templates
+  useEffect(() => {
+    if (isCsvImportModalOpen) {
+      const results = parseCSVEquipments(csvText, lines, sectors);
+      setCsvParseResults(results);
+    }
+  }, [csvText, isCsvImportModalOpen, lines, sectors]);
+
   useEffect(() => {
     const unsubTemplates = onSnapshot(collection(db, 'route_templates'), (snap) => {
       setTemplates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RouteTemplate)));
@@ -218,6 +456,65 @@ const OperationalRoutes: React.FC = () => {
     });
     return () => unsub();
   }, []);
+
+  // Auto-save route draft to Firestore on changes
+  useEffect(() => {
+    if (!selectedTemplate || !user || routeStep !== 'active_inspection') return;
+
+    const hasValues = Object.keys(routeResponses).length > 0;
+    if (!hasValues) return;
+
+    const draftId = `${user.uid}_${selectedTemplate.id}`;
+    
+    const timeoutId = setTimeout(async () => {
+      try {
+        await setDoc(doc(db, 'route_drafts', draftId), {
+          templateId: selectedTemplate.id,
+          templateName: selectedTemplate.name,
+          operatorId: user.uid,
+          routeResponses,
+          detailingResponses,
+          selectedArea,
+          selectedSector: selectedSector ? { id: selectedSector.id, name: selectedSector.name } : null,
+          selectedLine: selectedLine ? { id: selectedLine.id, name: selectedLine.name } : null,
+          selectedShift,
+          selectedTeam,
+          updatedAt: new Date()
+        });
+      } catch (err) {
+        console.error("Erro ao salvar rascunho de rota:", err);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timeoutId);
+  }, [routeResponses, detailingResponses, selectedTemplate, routeStep, user, selectedArea, selectedSector, selectedLine, selectedShift, selectedTeam]);
+
+  // Clean / Discard draft
+  const handleDiscardDraftAndStartFresh = async () => {
+    if (!selectedTemplate || !user) return;
+    
+    const initialResponses: Record<string, any> = {};
+    selectedTemplate.equipments.forEach(eq => {
+      initialResponses[eq.id] = {
+        status: 'ok',
+        notes: '',
+        value: eq.type === 'range' ? 'normal' : '',
+        generateObservation: false,
+        observationText: ''
+      };
+    });
+    setRouteResponses(initialResponses);
+    setDetailingResponses({});
+    setIsDraftLoaded(false);
+    setDraftSavedAt(null);
+    
+    const draftId = `${user.uid}_${selectedTemplate.id}`;
+    try {
+      await deleteDoc(doc(db, 'route_drafts', draftId));
+    } catch (e) {
+      console.error("Erro ao remover rascunho de rota deletado:", e);
+    }
+  };
 
   // Subscribe to Sectors
   useEffect(() => {
@@ -375,6 +672,87 @@ const OperationalRoutes: React.FC = () => {
     }));
   };
 
+  // CSV Bulk Import handlers
+  const handleDownloadCsvTemplate = () => {
+    const csvContent = "nome,tag,descricao,setor,linha,tipo,obrigatorio\n" +
+      "Compressor de Ar,COMP-01,Inspecionar vazamento e pressao,Utilidades,,numérico,sim\n" +
+      "Ponte Rolante,PTR-02,Verificar esticadores de cabo de aco,,Linha 1,opções,não\n" +
+      "Motor Redutor Executivo,MTR-03,Coletar aquecimento dos mancais,,,range,sim\n" +
+      "Leitor Optico de Caixa,LIT-04,Validar chave de fim de curso,,,barcode,sim";
+    
+    // Add BOM for Microsoft Excel UTF-8 compatibility
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "modelo_importacao_equipamentos.csv");
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCsvFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    readCsvFile(file);
+  };
+
+  const readCsvFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (text) {
+        setCsvText(text);
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
+  const handleCsvDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setCsvDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      readCsvFile(file);
+    }
+  };
+
+  const handleApplyImport = (shouldReplace: boolean) => {
+    if (csvParseResults.length === 0) return;
+    
+    const validEquipments = csvParseResults
+      .filter(item => item.errors.length === 0)
+      .map(item => item.equipment);
+      
+    if (validEquipments.length === 0) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Nenhum Equipamento Válido',
+        message: 'Nenhum equipamento foi carregado pois todas as linhas possuem erros de validação.',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (shouldReplace) {
+      setTemplateEquipments(validEquipments);
+    } else {
+      setTemplateEquipments(prev => [...prev, ...validEquipments]);
+    }
+
+    setIsCsvImportModalOpen(false);
+    setCsvText('');
+    setCsvParseResults([]);
+    
+    setModalConfig({
+      isOpen: true,
+      title: 'Equipamentos Carregados',
+      message: `${validEquipments.length} equipamentos foram adicionados com sucesso ao modelo de rota. Salve o modelo para registrar permanentemente no banco.`,
+      type: 'success'
+    });
+  };
+
   // Create or Update template in firestore
   const handleSaveTemplate = async () => {
     if (!templateName.trim()) {
@@ -475,19 +853,90 @@ const OperationalRoutes: React.FC = () => {
   };
 
   // Initialize Route Execution responses
-  const handleStartRoute = (tmpl: RouteTemplate) => {
+  const handleStartRoute = async (tmpl: RouteTemplate) => {
     setSelectedTemplate(tmpl);
-    const initialResponses: Record<string, any> = {};
-    tmpl.equipments.forEach(eq => {
-      initialResponses[eq.id] = {
-        status: 'ok',
-        notes: '',
-        value: eq.type === 'range' ? 'normal' : '',
-        generateObservation: false,
-        observationText: ''
+    setSearchQuery('');
+    setExpandedEquipmentId(null);
+    setAnomalyDetailingEqId(null);
+    setIsDraftLoaded(false);
+    setDraftSavedAt(null);
+
+    let loadedDraft: any = null;
+    if (user) {
+      try {
+        const draftDoc = await getDoc(doc(db, 'route_drafts', `${user.uid}_${tmpl.id}`));
+        if (draftDoc.exists()) {
+          loadedDraft = draftDoc.data();
+        }
+      } catch (e) {
+        console.error("Erro ao buscar rascunho anterior:", e);
+      }
+    }
+
+    if (loadedDraft) {
+      setRouteResponses(loadedDraft.routeResponses || {});
+      setDetailingResponses(loadedDraft.detailingResponses || {});
+      if (loadedDraft.selectedArea) setSelectedArea(loadedDraft.selectedArea);
+      
+      // Resolve sector and line
+      if (loadedDraft.selectedSector) {
+        setSelectedSector(loadedDraft.selectedSector);
+      } else {
+        const matchedSector = sectors.find(s => s.id === tmpl.sectorId) || sectors[0] || null;
+        setSelectedSector(matchedSector);
+      }
+      
+      if (loadedDraft.selectedLine) {
+        setSelectedLine(loadedDraft.selectedLine);
+      } else {
+        const matchedSector = sectors.find(s => s.id === tmpl.sectorId) || sectors[0] || null;
+        const matchedLine = matchedSector && matchedSector.lineIds && matchedSector.lineIds.length > 0
+          ? (lines.find(l => l.id === matchedSector.lineIds[0]) || lines[0] || null)
+          : (lines[0] || null);
+        setSelectedLine(matchedLine);
+      }
+      
+      if (loadedDraft.selectedShift) setSelectedShift(loadedDraft.selectedShift);
+      if (loadedDraft.selectedTeam) setSelectedTeam(loadedDraft.selectedTeam);
+      
+      const savedDate = loadedDraft.updatedAt?.toDate ? loadedDraft.updatedAt.toDate() : new Date(loadedDraft.updatedAt);
+      setDraftSavedAt(savedDate);
+      setIsDraftLoaded(true);
+      setRouteStep('active_inspection');
+    } else {
+      const initialResponses: Record<string, any> = {};
+      tmpl.equipments.forEach(eq => {
+        initialResponses[eq.id] = {
+          status: 'ok',
+          notes: '',
+          value: eq.type === 'range' ? 'normal' : '',
+          generateObservation: false,
+          observationText: ''
+        };
+      });
+      setRouteResponses(initialResponses);
+      
+      const matchedSector = sectors.find(s => s.id === tmpl.sectorId) || sectors[0] || null;
+      const matchedLine = matchedSector && matchedSector.lineIds && matchedSector.lineIds.length > 0
+        ? (lines.find(l => l.id === matchedSector.lineIds[0]) || lines[0] || null)
+        : (lines[0] || null);
+
+      setRouteStep('active_inspection');
+      setSelectedArea(matchedSector ? matchedSector.name : 'SECAGEM');
+      setSelectedSector(matchedSector);
+      setSelectedLine(matchedLine);
+      
+      const currentShift = getCurrentShift();
+      const shiftMapping: Record<string, string> = {
+        'Turno 1': '00:00 - 08:00',
+        'Turno 2': '08:00 - 16:00',
+        'Turno 3': '16:00 - 24:00'
       };
-    });
-    setRouteResponses(initialResponses);
+      setSelectedShift(shiftMapping[currentShift] || '08:00 - 16:00');
+      setSelectedTeam(getGroupForShift(new Date(), currentShift) || 'A');
+      setDetailingResponses({});
+    }
+    
     setActiveTab('new_route');
   };
 
@@ -523,16 +972,36 @@ const OperationalRoutes: React.FC = () => {
         try {
           const finalResponses = selectedTemplate.equipments.map(eq => {
             const resp = routeResponses[eq.id];
+            // Read anomaly details if any
+            const detail = detailingResponses[eq.id] || {
+              inspectionType: '',
+              diagnostic: '',
+              notes: '',
+              photoUrl: '',
+              actionTaken: '',
+              responsibleCenter: '',
+              schedule: '',
+              sapNote: ''
+            };
+            
             return {
               equipmentId: eq.id,
               equipmentName: eq.name,
               equipmentTag: eq.tag || '',
               status: resp.status,
-              notes: resp.notes || '',
-              photoUrl: resp.photoUrl || '',
+              notes: resp.notes || detail.notes || '',
+              photoUrl: resp.photoUrl || detail.photoUrl || '',
               value: resp.value !== undefined ? resp.value : '',
               observationGenerated: !!resp.generateObservation,
-              observationText: resp.generateObservation ? resp.observationText : ''
+              observationText: resp.generateObservation ? resp.observationText : '',
+              
+              // New details fields
+              inspectionType: detail.inspectionType || '',
+              diagnostic: detail.diagnostic || '',
+              actionTaken: detail.actionTaken || '',
+              responsibleCenter: detail.responsibleCenter || '',
+              schedule: detail.schedule || '',
+              sapNote: detail.sapNote || ''
             };
           });
 
@@ -543,12 +1012,20 @@ const OperationalRoutes: React.FC = () => {
             operatorName: profile?.displayName || user.email || 'Operador',
             operatorId: user.uid,
             responses: finalResponses,
+            
+            // New fields for wizard
+            areaName: selectedArea || 'SECAGEM',
+            sectorName: selectedSector ? selectedSector.name : '',
+            lineName: selectedLine ? selectedLine.name : '',
+            shift: selectedShift,
+            team: selectedTeam,
+            
             createdAt: serverTimestamp()
           });
 
           // 2. Loop through and create Safety Observations in firestore if requested
           for (const resp of finalResponses) {
-            if (resp.status === 'not_ok' && resp.observationGenerated && resp.observationText) {
+            if (resp.status === 'not_ok' && (resp.observationGenerated || resp.diagnostic || resp.notes)) {
               await addDoc(collection(db, 'safety_observations'), {
                 equipmentId: resp.equipmentId,
                 equipmentName: resp.equipmentName,
@@ -556,7 +1033,7 @@ const OperationalRoutes: React.FC = () => {
                 routeName: selectedTemplate.name,
                 reportedBy: profile?.displayName || user.email || 'Operador',
                 reportedById: user.uid,
-                description: resp.observationText,
+                description: resp.observationText || `Falha identificada: ${resp.diagnostic || 'Anomalia no equipamento'}. Comentário: ${resp.notes || 'Nenhum'}. Providência: ${resp.actionTaken || 'Tomar providências'}`,
                 photoUrl: resp.photoUrl || '',
                 status: 'pending', // pending, working, resolved
                 createdAt: serverTimestamp()
@@ -564,8 +1041,19 @@ const OperationalRoutes: React.FC = () => {
             }
           }
 
+          // Delete Draft
+          const draftId = `${user.uid}_${selectedTemplate.id}`;
+          try {
+            await deleteDoc(doc(db, 'route_drafts', draftId));
+          } catch (e) {
+            console.error("Erro ao remover rascunho de rota concluída:", e);
+          }
+
           setSelectedTemplate(null);
           setRouteResponses({});
+          setDetailingResponses({});
+          setIsDraftLoaded(false);
+          setDraftSavedAt(null);
           setActiveTab('my_routes');
           
           setModalConfig({
@@ -845,462 +1333,861 @@ const OperationalRoutes: React.FC = () => {
         <motion.div 
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-8 md:p-10 rounded-[2.5rem] border border-slate-200 max-w-4xl mx-auto shadow-sm"
+          className="bg-slate-50 border border-slate-200 rounded-[2.5rem] max-w-2xl mx-auto overflow-hidden shadow-xl"
         >
-          {/* Active checklist execution page */}
-          <div className="flex items-center justify-between border-b border-slate-100 pb-6 mb-8">
-            <div className="space-y-1">
-              <span className="px-3 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-black tracking-widest uppercase rounded-full border border-emerald-100">Registro de Ronda</span>
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight mt-1">{selectedTemplate.name}</h2>
-            </div>
-            <button 
+          {/* VISUAL BRANDED FOREST GREEN HEADER BAR (Matches screenshots exactly) */}
+          <div className="bg-[#0d6e4f] text-white p-6 relative flex flex-col items-center justify-center text-center shrink-0">
+            {/* Left Back Arrow / Home indicator */}
+            <button
               onClick={() => {
-                setSelectedTemplate(null);
-                setRouteResponses({});
-                setActiveTab('my_routes');
+                setModalConfig({
+                  isOpen: true,
+                  title: 'Cancelar Ronda?',
+                  message: 'Deseja realmente abandonar a execução desta rota operacional? Todos os dados preenchidos serão perdidos.',
+                  type: 'warning',
+                  showConfirmButton: true,
+                  confirmText: 'Sair da Rota',
+                  onConfirm: () => {
+                    closeModal();
+                    if (user && selectedTemplate) {
+                      const draftId = `${user.uid}_${selectedTemplate.id}`;
+                      deleteDoc(doc(db, 'route_drafts', draftId)).catch(console.error);
+                    }
+                    setSelectedTemplate(null);
+                    setRouteResponses({});
+                    setDetailingResponses({});
+                    setIsDraftLoaded(false);
+                    setDraftSavedAt(null);
+                    setActiveTab('my_routes');
+                  }
+                });
               }}
-              className="p-3 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-2xl transition-all"
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-white hover:bg-emerald-800 p-2 rounded-full transition-colors"
+              title="Voltar"
             >
-              <X className="w-6 h-6" />
+              <ChevronLeft className="w-6 h-6 stroke-[3]" />
+            </button>
+
+            {/* Header Content Titles */}
+            <div className="space-y-0.5 text-center">
+              {routeStep !== 'active_inspection' && (
+                <h2 className="text-sm font-black tracking-widest uppercase opacity-90">ROTA OPERACIONAL</h2>
+              )}
+              {routeStep === 'select_area' && (
+                <p className="text-base font-black tracking-wide">Selecione sua Área</p>
+              )}
+              {routeStep === 'select_sector' && (
+                <p className="text-base font-black tracking-wide">Setores: {selectedArea || 'SECAGEM'}</p>
+              )}
+              {routeStep === 'select_details' && (
+                <p className="text-base font-black tracking-wide uppercase">{selectedSector?.name || 'Selecione a Linha'}</p>
+              )}
+              {routeStep === 'active_inspection' && (
+                <div className="text-center flex flex-col items-center">
+                  <p className="text-sm sm:text-base font-black uppercase leading-tight">
+                    {selectedTemplate?.name || 'ROTA OPERACIONAL'}
+                  </p>
+                  <p className="text-[10px] sm:text-xs font-bold opacity-90 mt-0.5 uppercase tracking-wider">
+                    TURNO: {selectedShift} | EQUIPE: {selectedTeam}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-0.5 bg-[#0b5c42] px-3 py-1 rounded-full border border-emerald-800/40 shadow-inner">
+                    <span className="text-[9px] sm:text-[10px] font-bold text-emerald-100 uppercase tracking-wider leading-none">
+                      Equipamentos: <span className="font-extrabold text-white">{selectedTemplate.equipments.length}</span>
+                    </span>
+                    <span className="text-emerald-700/60 font-medium leading-none select-none">|</span>
+                    <span className="text-[9px] sm:text-[10px] font-bold text-emerald-100 uppercase tracking-wider leading-none">
+                      Inspecionados: <span className="font-extrabold text-emerald-300">{
+                        selectedTemplate.equipments.filter(e => 
+                          routeResponses[e.id]?.status !== undefined && 
+                          (routeResponses[e.id].value !== '' || routeResponses[e.id].notes !== '' || routeResponses[e.id].status === 'not_ok')
+                        ).length
+                      }</span>
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right Bracket Logout Icon */}
+            <button
+              onClick={() => {
+                setModalConfig({
+                  isOpen: true,
+                  title: 'Cancelar Ronda?',
+                  message: 'Deseja realmente abandonar a execução desta rota operacional? Todos os dados preenchidos serão perdidos.',
+                  type: 'warning',
+                  showConfirmButton: true,
+                  confirmText: 'Sair da Rota',
+                  onConfirm: () => {
+                    closeModal();
+                    if (user && selectedTemplate) {
+                      const draftId = `${user.uid}_${selectedTemplate.id}`;
+                      deleteDoc(doc(db, 'route_drafts', draftId)).catch(console.error);
+                    }
+                    setSelectedTemplate(null);
+                    setRouteResponses({});
+                    setDetailingResponses({});
+                    setIsDraftLoaded(false);
+                    setDraftSavedAt(null);
+                    setActiveTab('my_routes');
+                  }
+                });
+              }}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-white hover:bg-emerald-800 p-2 rounded-full transition-colors"
+              title="Sair"
+            >
+              <LogOut className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="space-y-8">
-            {selectedTemplate.equipments.map((eq, index) => {
-              const resp = routeResponses[eq.id] || { status: 'ok', notes: '', value: '', generateObservation: false, observationText: '' };
-              const lastInsp = getEquipmentLastInspection(eq.name, eq.tag);
-              const lastInspDate = lastInsp ? safeToDate(lastInsp.createdAt) : null;
+          {/* WIZARD PANEL BODY */}
+          <div className="p-6 md:p-8 bg-white space-y-6">
+            
+            {/* STEP 1: SELECT AREA */}
+            {routeStep === 'select_area' && (
+              <div className="space-y-6 animate-fade-in">
+                <div className="text-center md:text-left">
+                  <h3 className="text-2xl font-black text-[#0d6e4f] tracking-tight leading-none">Selecione sua Área</h3>
+                  <p className="text-xs font-semibold text-slate-400 mt-2">Escolha uma das plantas operacionais abaixo para iniciar o checklist da rota.</p>
+                </div>
 
-              // Render logic for custom value parameters
-              return (
-                <div key={eq.id} className="p-6 bg-slate-50/50 border border-slate-100 rounded-[2rem] hover:bg-slate-50/80 transition-all space-y-4">
-                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                    <div className="space-y-1 my-auto">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg">Equipamento {index + 1}</span>
-                        <h3 className="font-black text-slate-800 text-base">{eq.name}</h3>
-                        {eq.tag && (
-                          <span className="text-[10px] font-black uppercase text-slate-500 bg-slate-100 px-2 py-0.5 rounded flex items-center gap-1">
-                            <Tag className="w-3 h-3 text-slate-400" /> {eq.tag}
-                          </span>
-                        )}
-                        {eq.required && <span className="text-rose-500 font-bold text-xs">*</span>}
-                      </div>
-                      
-                      {/* Equipment Location / Lines Details */}
-                      <div className="flex items-center gap-4 text-[10px] font-extrabold text-blue-600 uppercase tracking-wider pl-1">
-                        {eq.sectorId && (
-                          <span>Setor: {sectors.find(s => s.id === eq.sectorId)?.name || eq.sectorId}</span>
-                        )}
-                        {eq.lineId && (
-                          <span>Linha: {lines.find(l => l.id === eq.lineId)?.name || eq.lineId}</span>
-                        )}
-                      </div>
-
-                      {eq.description && (
-                        <p className="text-xs text-slate-400 font-medium ml-1 leading-normal max-w-xl">{eq.description}</p>
-                      )}
+                <div className="space-y-3">
+                  {/* Option 1: SECAGEM (Direct representation of Image 1) */}
+                  <button
+                    onClick={() => {
+                      setSelectedArea('SECAGEM');
+                      setRouteStep('select_sector');
+                    }}
+                    className="w-full flex items-center gap-4 bg-slate-50 border-2 border-slate-200/85 hover:border-[#0d6e4f] p-5 rounded-3xl transition-all hover:bg-emerald-50/25 text-left group"
+                  >
+                    {/* Concentric Spiral SVG custom logo */}
+                    <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center border border-emerald-100 shadow-sm shrink-0">
+                      <svg className="w-7 h-7" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path 
+                          d="M50 15 C69.33 15, 85 30.67, 85 50 C85 69.33, 69.33 85, 50 85 C30.67 85, 15 69.33, 15 50 C15 36.67, 22.33 25.33, 33 20" 
+                          stroke="#0d6e4f" 
+                          strokeWidth="6" 
+                          strokeLinecap="round" 
+                          strokeDasharray="4 4"
+                        />
+                        <path 
+                          d="M50 25 C63.81 25, 75 36.19, 75 50 C75 63.81, 63.81 75, 50 75 C36.19 75, 25 63.81, 25 50 C25 41.67, 29.17 34.17, 36 30" 
+                          stroke="#10b981" 
+                          strokeWidth="6" 
+                          strokeLinecap="round" 
+                        />
+                        <path 
+                          d="M50 35 C58.28 35, 65 41.72, 65 50 C65 58.28, 58.28 65, 50 65 C41.72 65, 35 58.28, 35 50" 
+                          stroke="#34d399" 
+                          strokeWidth="6" 
+                          strokeLinecap="round" 
+                        />
+                      </svg>
                     </div>
 
-                    {/* Conforme / Falha buttons */}
-                    <div className="flex gap-2 min-w-[200px] md:self-center shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setRouteResponses(prev => ({
-                          ...prev,
-                          [eq.id]: { ...prev[eq.id], status: 'ok' }
-                        }))}
-                        className={cn(
-                          "flex-1 py-3 text-xs uppercase tracking-wider font-black rounded-xl border transition-all active:scale-95",
-                          resp.status === 'ok' 
-                            ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-50" 
-                            : "bg-white border-slate-200 text-slate-400 hover:border-emerald-200"
-                        )}
-                      >
-                        Conforme
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRouteResponses(prev => ({
-                          ...prev,
-                          [eq.id]: { ...prev[eq.id], status: 'not_ok' }
-                        }))}
-                        className={cn(
-                          "flex-1 py-3 text-xs uppercase tracking-wider font-black rounded-xl border transition-all active:scale-95",
-                          resp.status === 'not_ok' 
-                            ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-50" 
-                            : "bg-white border-slate-200 text-slate-400 hover:border-rose-200"
-                        )}
-                      >
-                        Instável
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* ACTIVE PREVIOUS WARNING AND TIMELINE INTEGRATION */}
-                  {lastInsp && (
-                    <div className={cn(
-                      "p-4 rounded-2xl border text-xs leading-relaxed transition-all",
-                      lastInsp.status === 'not_ok' 
-                        ? "bg-rose-50/40 border-rose-100 text-rose-950" 
-                        : "bg-slate-100/60 border-slate-200/50 text-slate-700"
-                    )}>
-                      <div className="flex items-center justify-between gap-2 border-b pb-2 mb-2 border-slate-200/50 flex-wrap">
-                        <div className="flex items-center gap-1 text-slate-600 font-extrabold uppercase tracking-wider text-[10px]">
-                          {lastInsp.status === 'not_ok' ? (
-                            <AlertTriangle className="w-3.5 h-3.5 text-rose-500 animate-bounce" />
-                          ) : (
-                            <History className="w-3.5 h-3.5 text-slate-400" />
-                          )}
-                          Inspeção Anterior ({lastInspDate ? lastInspDate.toLocaleDateString('pt-BR') : 'Sem data'})
-                        </div>
-                        
-                        <button
-                          type="button"
-                          onClick={() => setHistoryEquipment({ name: eq.name, tag: eq.tag })}
-                          className="text-[10px] font-black text-blue-600 hover:text-blue-800 hover:underline uppercase flex items-center gap-1 shrink-0"
-                        >
-                          <History className="w-3 h-3" /> Ver Histórico Completo
-                        </button>
-                      </div>
-
-                      <p className="text-[11px] font-medium">
-                        Realizada por <strong className="font-bold">{lastInsp.operatorName}</strong>. 
-                        Status: <strong className={cn("font-bold px-1 py-0.5 rounded text-[9px] uppercase", lastInsp.status === 'ok' ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800")}>{lastInsp.status === 'ok' ? 'Conforme' : 'Instável'}</strong>
-                        {lastInsp.value !== undefined && lastInsp.value !== '' && (
-                          <span> • Vistoriado: <strong className="font-bold text-slate-800 bg-white border px-1.5 py-0.5 rounded">{String(lastInsp.value)}</strong></span>
-                        )}
+                    <div className="flex-1">
+                      <h4 className="font-black text-slate-800 text-lg uppercase tracking-wide group-hover:text-[#0d6e4f] transition-colors leading-none">SECAGEM</h4>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1.5 flex items-center gap-1">
+                        <Layers className="w-3.5 h-3.5 text-emerald-600" /> Planta de Processamento e Secadoras
                       </p>
-                      {lastInsp.notes && (
-                        <p className="mt-1 pb-1 text-slate-500 text-[11px] font-medium italic">" Obs: {lastInsp.notes} "</p>
-                      )}
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-[#0d6e4f]" />
+                  </button>
+
+                  {/* Fallback Option so it feels completely standard */}
+                  <button
+                    onClick={() => {
+                      setSelectedArea('OUTRA ÁREA');
+                      setRouteStep('select_sector');
+                    }}
+                    className="w-full flex items-center gap-4 bg-slate-50 border border-slate-200 hover:border-slate-300 opacity-60 p-5 rounded-3xl transition-all text-left group"
+                  >
+                    <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center shrink-0">
+                      <Wrench className="w-5 h-5 text-slate-400" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-slate-600 text-base uppercase leading-none">OUTRAS ÁREAS</h4>
+                      <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-wider">Demais instalações auxiliares</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 2: SELECT SECTOR */}
+            {routeStep === 'select_sector' && (
+              <div className="space-y-5 animate-fade-in">
+                <div className="text-center md:text-left">
+                  <h3 className="text-2xl font-black text-[#0d6e4f] tracking-tight leading-none">Setores: {selectedArea}</h3>
+                  <p className="text-xs font-semibold text-slate-400 mt-2">Escolha o setor departamental onde será executada a rota operacional.</p>
+                </div>
+
+                <div className="space-y-3">
+                  {sectors.map(sec => (
+                    <button
+                      key={sec.id}
+                      onClick={() => {
+                        setSelectedSector(sec);
+                        setRouteStep('select_details');
+                      }}
+                      className="w-full flex items-center gap-4 bg-slate-50 border-2 border-slate-200/80 hover:border-[#0d6e4f] p-5 rounded-3xl transition-all hover:bg-emerald-50/25 text-left group"
+                    >
+                      <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center border border-emerald-100 shadow-sm shrink-0">
+                        <svg className="w-7 h-7" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path 
+                            d="M50 15 C69.33 15, 85 30.67, 85 50 C85 69.33, 69.33 85, 50 85 C30.67 85, 15 69.33, 15 50 C15 36.67, 22.33 25.33, 33 20" 
+                            stroke="#0d6e4f" 
+                            strokeWidth="6" 
+                            strokeLinecap="round" 
+                            strokeDasharray="4 4"
+                          />
+                          <path 
+                            d="M50 25 C63.81 25, 75 36.19, 75 50 C75 63.81, 63.81 75, 50 75 C36.19 75, 25 63.81, 25 50 C25 41.67, 29.17 34.17, 36 30" 
+                            stroke="#10b981" 
+                            strokeWidth="6" 
+                            strokeLinecap="round" 
+                          />
+                        </svg>
+                      </div>
+
+                      <div className="flex-1">
+                        <h4 className="font-black text-slate-800 text-base uppercase tracking-wide group-hover:text-[#0d6e4f] transition-colors leading-none">{sec.name}</h4>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase mt-1.5">Clique para prosseguir para o preenchimento de detalhes</p>
+                      </div>
+                      <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-[#0d6e4f]" />
+                    </button>
+                  ))}
+
+                  {sectors.length === 0 && (
+                    <div className="p-8 text-center bg-slate-50 border border-dashed rounded-3xl text-slate-400 text-xs">
+                      Nenhum setor de qualidade cadastrado no sistema. Por favor, crie um setor de qualidade primeiro.
                     </div>
                   )}
+                </div>
+              </div>
+            )}
 
-                  {/* CUSTOMIZABLE PARAMETERS FIELD COLLECTOR GROUP */}
-                  <div className="p-5 bg-white border border-slate-100 rounded-2xl space-y-3">
-                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 font-semibold block">Parâmetro de Coleta em Campo:</span>
-                    
-                    {/* CONDITION TYPE CONFIG OR FALLBACKS */}
-                    {eq.type === 'condition' && (
-                      <div className="flex flex-wrap gap-2">
-                        {(optionSets.find(o => o.id === eq.conditionOptionsId)?.options || ['OK', 'NÃO OK']).map((option, inlineIdx) => {
-                          const isSelected = resp.value === option;
-                          return (
-                            <button
-                              key={`${option}-${inlineIdx}`}
-                              type="button"
-                              onClick={() => {
-                                setRouteResponses(prev => {
-                                  // Auto set status 'not_ok' if option contains failure hints
-                                  const labelLower = option.toLowerCase();
-                                  const autoStatus = (labelLower === 'not ok' || labelLower === 'nok' || labelLower.includes('não') || labelLower.includes('falha') || labelLower.includes('instável'))
-                                    ? 'not_ok'
-                                    : prev[eq.id]?.status || 'ok';
+            {/* STEP 3: SELECT DETAILS (Line, Shift & Team) */}
+            {routeStep === 'select_details' && (
+              <div className="space-y-6 animate-fade-in text-slate-800">
+                <div className="text-left border-b pb-4 border-slate-100">
+                  <h3 className="text-xl font-black text-[#0d6e4f] uppercase tracking-tight">Setor: {selectedSector?.name}</h3>
+                  <p className="text-xs font-semibold text-slate-450 mt-1">Configure a linha, turno e equipe de inspeção para abrir o caderno de ronda.</p>
+                </div>
 
-                                  return {
-                                    ...prev,
-                                    [eq.id]: {
-                                      ...prev[eq.id],
-                                      value: option,
-                                      status: autoStatus
-                                    }
-                                  };
-                                });
-                              }}
-                              className={cn(
-                                "px-4 py-2.5 rounded-xl text-xs font-bold transition-all border",
-                                isSelected 
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-500 ring-1 ring-emerald-500" 
-                                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-                              )}
-                            >
-                              {option}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* NUMBER COGNITIVE LAYOUTS */}
-                    {eq.type === 'number' && (
-                      <div className="max-w-md">
-                        {eq.isRangeDropdown ? (
-                          <div className="space-y-1">
-                            <select
-                              value={resp.value || ''}
-                              onChange={(e) => setRouteResponses(prev => ({
-                                ...prev,
-                                [eq.id]: { ...prev[eq.id], value: e.target.value }
-                              }))}
-                              className="w-full text-xs px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-slate-700"
-                            >
-                              <option value="">Selecione um valor de medição...</option>
-                              {(() => {
-                                const minV = eq.min ?? 0;
-                                const maxV = eq.max ?? 10;
-                                const stepV = eq.step ?? 1;
-                                const list: number[] = [];
-                                for (let v = minV; v <= maxV; v = Number((v + stepV).toFixed(4))) {
-                                  list.push(v);
-                                }
-                                return list.map(v => (
-                                  <option key={v} value={v}>{v}</option>
-                                ));
-                              })()}
-                            </select>
-                            <span className="text-[10px] text-slate-400 font-semibold pl-1">Range de escala: de {eq.min} até {eq.max} (Passo de {eq.step})</span>
+                {/* 1. LINHA DE PRODUÇÃO (Production Line) */}
+                <div className="space-y-2.5">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-slate-400">Linha de Produção</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {lines
+                      .filter(l => !selectedSector?.lineIds || selectedSector.lineIds.length === 0 || selectedSector.lineIds.includes(l.id))
+                      .map(ln => {
+                        const isChosen = selectedLine?.id === ln.id;
+                        return (
+                          <div
+                            key={ln.id}
+                            onClick={() => setSelectedLine(ln)}
+                            className={cn(
+                              "flex items-center gap-3 p-4 border rounded-2xl cursor-pointer transition-all hover:bg-slate-50/50",
+                              isChosen ? "border-[#0d6e4f] bg-emerald-50/10 ring-1 ring-[#0d6e4f]" : "border-slate-200"
+                            )}
+                          >
+                            <div className={cn(
+                              "w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0",
+                              isChosen ? "border-[#0d6e4f]" : "border-slate-300"
+                            )}>
+                              {isChosen && <div className="w-2.5 h-2.5 rounded-full bg-[#0d6e4f]" />}
+                            </div>
+                            <span className="font-black text-sm uppercase tracking-wide text-slate-850 leading-none">{ln.name}</span>
                           </div>
-                        ) : (
-                          <input
-                            type="number"
-                            step={eq.isInteger ? "1" : "any"}
-                            placeholder={`Digite o valor operacional medido (mín: ${eq.min ?? '0'} / máx: ${eq.max ?? '10'})...`}
-                            value={resp.value || ''}
-                            onChange={(e) => setRouteResponses(prev => ({
-                              ...prev,
-                              [eq.id]: { ...prev[eq.id], value: e.target.value }
-                            }))}
-                            className="w-full text-xs px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
-                          />
-                        )}
+                        );
+                      })}
+
+                    {lines.length === 0 && (
+                      <div className="col-span-2 text-center p-4 bg-slate-50 border rounded-2xl text-xs text-slate-400">
+                        Nenhuma linha cadastrada. Utilizando defaults...
+                        <div className="flex gap-2 mt-2">
+                          {['MS1', 'MS2'].map(defName => (
+                            <button
+                              key={defName}
+                              onClick={() => setSelectedLine({ id: defName, name: defName, active: true })}
+                              className="flex-1 p-3 border rounded-xl font-bold text-xs"
+                            >
+                              {defName}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     )}
+                  </div>
+                </div>
 
-                    {/* RANGE BAJO/NORMAL/ALTO BUTTONS */}
-                    {eq.type === 'range' && (
-                      <div className="flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setRouteResponses(prev => ({
-                            ...prev,
-                            [eq.id]: { ...prev[eq.id], value: 'low' }
-                          }))}
+                {/* 2. TURNO (Shift Selection) */}
+                <div className="space-y-2.5">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-slate-400">Turno Operacional</label>
+                  <div className="space-y-2">
+                    {[
+                      '00:00 - 08:00',
+                      '08:00 - 16:00',
+                      '16:00 - 24:00'
+                    ].map(sh => {
+                      const isChosen = selectedShift === sh;
+                      return (
+                        <div
+                          key={sh}
+                          onClick={() => setSelectedShift(sh)}
                           className={cn(
-                            "flex-1 py-3 text-[11px] font-black uppercase rounded-xl border-2 transition-all max-w-[150px]",
-                            resp.value === 'low'
-                              ? "bg-amber-600 border-amber-600 text-white"
-                              : "bg-white border-slate-200 text-slate-400"
+                            "flex items-center gap-3 p-4 border rounded-2xl cursor-pointer transition-all hover:bg-slate-50/50",
+                            isChosen ? "border-[#0d6e4f] bg-emerald-50/10 ring-1 ring-[#0d6e4f]" : "border-slate-200"
                           )}
                         >
-                          BAIXO
-                        </button>
+                          <div className={cn(
+                            "w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0",
+                            isChosen ? "border-[#0d6e4f]" : "border-slate-300"
+                          )}>
+                            {isChosen && <div className="w-2.5 h-2.5 rounded-full bg-[#0d6e4f]" />}
+                          </div>
+                          <span className="font-bold text-sm text-slate-800 leading-none">{sh}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 3. EQUIPE (Team A Through E) */}
+                <div className="space-y-2.5">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-slate-400">Equipe / Grupo</label>
+                  <div className="flex justify-between items-center gap-2">
+                    {['A', 'B', 'C', 'D', 'E'].map(tm => {
+                      const isChosen = selectedTeam === tm;
+                      return (
                         <button
+                          key={tm}
                           type="button"
-                          onClick={() => setRouteResponses(prev => ({
-                            ...prev,
-                            [eq.id]: { ...prev[eq.id], value: 'normal' }
-                          }))}
+                          onClick={() => setSelectedTeam(tm)}
                           className={cn(
-                            "flex-1 py-3 text-[11px] font-black uppercase rounded-xl border-2 transition-all max-w-[150px]",
-                            resp.value === 'normal'
-                              ? "bg-emerald-600 border-emerald-600 text-white"
-                              : "bg-white border-slate-200 text-slate-400"
+                            "w-11 h-11 uppercase font-black text-xs rounded-full border transition-all flex items-center justify-center shadow-xs active:scale-95",
+                            isChosen 
+                              ? "bg-[#0d6e4f] text-white border-[#0d6e4f] ring-2 ring-emerald-100" 
+                              : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
                           )}
                         >
-                          NORMAL / OK
+                          {tm}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setRouteResponses(prev => ({
-                            ...prev,
-                            [eq.id]: { ...prev[eq.id], value: 'high' }
-                          }))}
-                          className={cn(
-                            "flex-1 py-3 text-[11px] font-black uppercase rounded-xl border-2 transition-all max-w-[150px]",
-                            resp.value === 'high'
-                              ? "bg-rose-600 border-rose-600 text-white"
-                              : "bg-white border-slate-200 text-slate-400"
-                          )}
-                        >
-                          ALTO
-                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 4. BUTTONS - Submissions Start or Non-Executed Justification */}
+                <div className="pt-4 border-t border-slate-100 space-y-3">
+                  <button
+                    onClick={() => {
+                      if (!selectedLine) {
+                        setModalConfig({
+                          isOpen: true,
+                          title: 'Linha Requerida',
+                          message: 'Por favor, selecione uma linha de produção para iniciar a ronda.',
+                          type: 'error'
+                        });
+                        return;
+                      }
+                      setRouteStep('active_inspection');
+                    }}
+                    className="w-full bg-[#0d6e4f] hover:bg-emerald-800 text-white font-black py-4 rounded-2xl transition-all shadow-md active:scale-95 text-xs uppercase tracking-wider"
+                  >
+                    INICIAR ROTA
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsJustifyModalOpen(true);
+                    }}
+                    className="w-full bg-rose-50 hover:bg-rose-100 text-rose-600 font-black py-3.5 rounded-2xl transition-all text-[11px] uppercase tracking-wider border border-rose-100 block text-center"
+                  >
+                    JUSTIFICAR ROTA NÃO REALIZADA
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 4: ITEM LISTS / DRILLDOWNS (Images 4 through 8) */}
+            {routeStep === 'active_inspection' && (
+              <div className="space-y-4 animate-fade-in text-slate-800">
+                
+                {/* Search query textbox + QR scan icon (Direct representation of image 4 search row) */}
+                <div className="relative group">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#0d6e4f] w-5 h-5 transition-colors" />
+                  <input
+                    type="text"
+                    placeholder="Itens de busca"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-3xl pl-12 pr-12 py-3.5 outline-none focus:bg-white focus:ring-2 focus:ring-[#0d6e4f]/50 font-bold text-xs text-slate-700 placeholder:text-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Trigger dynamic scanner popup
+                      setActiveScanner('general-lookup');
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#0d6e4f] hover:bg-slate-100 p-2 rounded-full"
+                    title="Ler Placa de Identificação por Código / TAG QR"
+                  >
+                    <QrCode className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {isDraftLoaded && draftSavedAt && (
+                  <div className="bg-emerald-50 border border-emerald-200/80 p-4 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-800 animate-fade-in sm:px-6 shadow-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-emerald-100 flex items-center justify-center shrink-0">
+                        <Clock className="w-5 h-5 text-emerald-600 animate-pulse" />
                       </div>
-                    )}
+                      <div className="text-left leading-tight">
+                        <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wide">Rascunho Recuperado</h4>
+                        <p className="text-[10px] text-emerald-700 font-bold mt-0.5 max-w-sm">
+                          Progresso salvo automaticamente às {draftSavedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} do dia {draftSavedAt.toLocaleDateString('pt-BR')}.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModalConfig({
+                          isOpen: true,
+                          title: 'Reiniciar Rota?',
+                          message: 'Se você reiniciar, todas as respostas recuperadas serão apagadas permanentemente. Deseja continuar?',
+                          type: 'warning',
+                          showConfirmButton: true,
+                          confirmText: 'Limpar e Começar Nova',
+                          onConfirm: () => {
+                            closeModal();
+                            handleDiscardDraftAndStartFresh();
+                          }
+                        });
+                      }}
+                      className="text-slate-500 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-100/30 font-extrabold text-[10px] uppercase tracking-wider py-2 px-3 rounded-xl border border-slate-200 bg-white shadow-xs leading-none shrink-0 transition-colors cursor-pointer"
+                    >
+                      Começar do Zero
+                    </button>
+                  </div>
+                )}
 
-                    {/* BARCODE VALUE AND QR SCAN OR TEXT Typing */}
-                    {eq.type === 'barcode' && (
-                      <div className="space-y-3">
-                        <div className="relative group max-w-md">
-                          <QrCode className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-500 w-5 h-5 transition-colors" />
-                          <input
-                            type="text"
-                            placeholder="Aponte o leitor ou digite o código do dispositivo..."
-                            value={resp.value || ''}
-                            onChange={(e) => setRouteResponses(prev => ({
-                              ...prev,
-                              [eq.id]: { ...prev[eq.id], value: e.target.value }
-                            }))}
-                            className="w-full pl-12 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-xs"
-                          />
+                {/* QR CAMERA BOX POPULAR SCANNER ON TOP */}
+                {activeScanner === 'general-lookup' && (
+                  <div className="p-4 bg-slate-900 rounded-3xl text-white space-y-3 relative overflow-hidden border border-slate-800 animate-slide-in">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-[#10b981] flex items-center gap-1">
+                      <QrCode className="w-4 h-4 animate-bounce" /> Leitor de Tag de Equipamento Ativo
+                    </h4>
+                    <p className="text-[10px] text-slate-400 font-semibold leading-normal">
+                      Aponte a câmera ao QR Code / Código de Barras colado no equipamento para localizá-lo de forma autônoma.
+                    </p>
+                    <div className="aspect-video relative rounded-2xl bg-black overflow-hidden border border-slate-800 max-w-sm mx-auto">
+                      {cameraError ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                          <AlertCircle className="w-8 h-8 text-rose-500 mb-2" />
+                          <p className="text-[10px] font-bold leading-relaxed">{cameraError}</p>
                           <button
                             type="button"
                             onClick={() => {
-                              setActiveScanner(eq.id);
+                              setActiveScanner(null);
+                              setCameraError(null);
                             }}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1.5 rounded-lg"
+                            className="mt-3 px-3 py-1.5 bg-white text-slate-900 text-[10px] font-bold uppercase rounded-lg"
                           >
-                            <QrCode className="w-4.5 h-4.5" />
+                            Fechar
                           </button>
                         </div>
-
-                        {activeScanner === eq.id && (
-                          <div className="relative bg-black rounded-2xl overflow-hidden aspect-video border border-slate-800 max-w-md">
-                            {cameraError ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center text-white bg-slate-900 border border-slate-700 rounded-2xl">
-                                <AlertCircle className="w-10 h-10 text-rose-500 mb-3" />
-                                <p className="text-xs font-bold leading-normal mb-4">{cameraError}</p>
-                                <button
-                                  onClick={() => setActiveScanner(null)}
-                                  className="px-4 py-2 bg-white text-slate-900 rounded-xl font-bold text-[10px] hover:bg-slate-100 uppercase"
-                                >
-                                  Fechar Câmera
-                                </button>
-                              </div>
-                            ) : (
-                              <>
-                                <div id="qr-reader-route" className="w-full h-full" />
-                                <button 
-                                  onClick={() => setActiveScanner(null)}
-                                  className="absolute top-3 right-3 bg-black/50 text-white p-1.5 rounded-full hover:bg-black/80 z-10"
-                                >
-                                  <X className="w-4.5 h-4.5" />
-                                </button>
-                                <div className="absolute inset-x-8 inset-y-12 border border-emerald-500/50 pointer-events-none rounded animate-pulse" />
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                      ) : (
+                        <>
+                          <div id="qr-reader-route" className="w-full h-full" />
+                          <button
+                            onClick={() => setActiveScanner(null)}
+                            className="absolute top-2 right-2 bg-black/60 hover:bg-black p-1.5 rounded-full text-white z-20"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
+                )}
 
-                  {/* Photograph Upload & Safety Observation Context when checking fails */}
-                  <AnimatePresence>
-                    {resp.status === 'not_ok' && (
-                      <motion.div 
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100/80 overflow-hidden"
-                      >
-                        {/* Photograph Upload container */}
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col items-center justify-center min-h-[160px] text-center relative group">
-                          {resp.photoUrl ? (
-                            <div className="w-full h-full relative group">
-                              <img src={resp.photoUrl} alt="Anomalia" className="w-full h-32 object-cover rounded-xl" />
-                              <button
-                                onClick={() => setRouteResponses(prev => ({
-                                  ...prev,
-                                  [eq.id]: {
-                                    ...prev[eq.id],
-                                    photoUrl: undefined
-                                  }
-                                }))}
-                                className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full text-white hover:bg-black/90 transition-colors"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="space-y-2">
-                              <div className="w-10 h-10 bg-slate-50 text-slate-500 rounded-full flex items-center justify-center mx-auto border border-slate-100">
-                                <Camera className="w-5 h-5" />
+                {/* ITEMS CARDS GRID LIST (Represented in images 4, 5, 6) */}
+                <div className="space-y-3">
+                  {(() => {
+                    const filtered = selectedTemplate.equipments.filter(eq => {
+                      if (!searchQuery) return true;
+                      const q = searchQuery.toLowerCase();
+                      return eq.name.toLowerCase().includes(q) || (eq.tag && eq.tag.toLowerCase().includes(q));
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="py-12 bg-slate-50 border border-slate-200 border-dashed rounded-3xl text-center text-slate-450 text-xs font-semibold">
+                          Nenhum equipamento de rota encontrado na pesquisa por "{searchQuery}".
+                        </div>
+                      );
+                    }
+
+                    return filtered.map((eq, inlineIdx) => {
+                      const isExpanded = expandedEquipmentId === eq.id;
+                      const resp = routeResponses[eq.id] || { status: 'ok', notes: '', value: '', generateObservation: false };
+                      const isChecked = resp.value !== '' || resp.notes !== '' || resp.status === 'not_ok';
+                      
+                      return (
+                        <div
+                          key={eq.id}
+                          className={cn(
+                            "border rounded-3xl transition-all bg-white relative",
+                            isChecked ? "border-[#0d6e4f]/60 shadow-sm" : "border-slate-200"
+                          )}
+                        >
+                          {/* Item Header */}
+                          <div className="p-4 flex items-center justify-between gap-4 select-none">
+                            {/* Left part */}
+                            <div 
+                              onClick={() => setExpandedEquipmentId(isExpanded ? null : eq.id)}
+                              className="flex-1 cursor-pointer"
+                            >
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {eq.tag ? (
+                                  <span className={cn(
+                                    "text-xs font-black px-2 py-0.5 rounded leading-none uppercase transition-colors duration-200",
+                                    resp.value === '' 
+                                      ? "bg-slate-100 text-slate-500 border border-slate-200" 
+                                      : (resp.status === 'not_ok' ? "bg-rose-100 text-rose-700" : "bg-[#f0fdf4] text-[#0d6e4f]")
+                                  )}>
+                                    {eq.tag}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase">TAG PENDENTE</span>
+                                )}
+                                
+                                {isChecked && (
+                                  <Check className={cn(
+                                    "w-4 h-4 shrink-0 font-bold",
+                                    resp.status === 'not_ok' ? "text-rose-500" : "text-[#0d6e4f]"
+                                  )} />
+                                )}
                               </div>
-                              <p className="text-[11px] font-black text-slate-500 uppercase tracking-widest">Anexar Evidência Visual</p>
-                              <p className="text-[9px] text-slate-400 font-medium">Insira uma fotografia de evidência do equipamento falho</p>
+                              <h4 className="font-extrabold text-slate-700 text-sm mt-1 leading-tight uppercase truncate max-w-[340px]">
+                                {eq.name}
+                              </h4>
+                            </div>
+
+                            {/* Down Arrow square button (matches images exactly) */}
+                            <div className="relative">
                               <button
                                 type="button"
-                                onClick={() => fileInputRefs.current[eq.id]?.click()}
-                                className="px-3 py-1.5 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider rounded-lg hover:bg-slate-800 transition-colors mt-2"
+                                onClick={() => setExpandedEquipmentId(isExpanded ? null : eq.id)}
+                                className={cn(
+                                  "w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 text-white cursor-pointer",
+                                  isExpanded ? "bg-emerald-800 rotate-180" : "bg-[#0d6e4f] hover:bg-emerald-800"
+                                )}
                               >
-                                Selecionar Imagem
+                                <ChevronRight className="w-5 h-5 rotate-90 stroke-[3]" />
                               </button>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                ref={el => fileInputRefs.current[eq.id] = el}
-                                className="hidden"
-                                onChange={(e) => handleFileChange(eq.id, e)}
-                              />
+
+                              <AnimatePresence>
+                                {isExpanded && (
+                                  <>
+                                    {/* Transparent backdrop overlay for click away */}
+                                    <div
+                                      className="fixed inset-0 z-30 cursor-default"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setExpandedEquipmentId(null);
+                                      }}
+                                    />
+                                    
+                                    <motion.div
+                                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                      className="absolute right-0 mt-2 z-40 w-72 sm:w-80 bg-white border border-slate-200 rounded-3xl shadow-2xl p-4 space-y-4 text-xs font-semibold text-slate-800"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {/* Header of Dropdown */}
+                                      <div className="border-b border-slate-100 pb-2">
+                                        <p className="text-[10px] font-black text-[#0d6e4f] tracking-wide uppercase">Parâmetros de Coleta</p>
+                                        <p className="text-slate-500 font-bold text-[11px] mt-0.5 truncate max-w-[260px] leading-tight">{eq.name}</p>
+                                      </div>
+
+                                      {eq.description && (
+                                        <p className="text-slate-400 text-[11px] leading-normal italic bg-slate-50 p-2 rounded-xl">" {eq.description} "</p>
+                                      )}
+
+                                      {/* Custom collect fields depending on type */}
+                                      <div className="space-y-3">
+                                        {/* CONDITION TYPE OPTION ROWS */}
+                                        {eq.type === 'condition' && (
+                                          <div className="space-y-1.5">
+                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Parâmetro:</span>
+                                            <div className="flex flex-wrap gap-2">
+                                              {(optionSets.find(o => o.id === eq.conditionOptionsId)?.options || ['OK', 'NÃO OK']).map((option, inlineOptionIdx) => {
+                                                const isSelected = resp.value === option;
+                                                return (
+                                                  <button
+                                                    key={`${option}-${inlineOptionIdx}`}
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const labelLower = option.toLowerCase();
+                                                      const autoStatus = (labelLower === 'not ok' || labelLower === 'nok' || labelLower.includes('não') || labelLower.includes('falha') || labelLower.includes('instável'))
+                                                        ? 'not_ok'
+                                                        : 'ok';
+                                                      
+                                                      setRouteResponses(prev => ({
+                                                        ...prev,
+                                                        [eq.id]: {
+                                                          ...prev[eq.id],
+                                                          value: option,
+                                                          status: autoStatus
+                                                        }
+                                                      }));
+                                                      
+                                                      if (autoStatus === 'not_ok') {
+                                                        setAnomalyDetailingEqId(eq.id);
+                                                      }
+                                                    }}
+                                                    className={cn(
+                                                      "px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
+                                                      isSelected 
+                                                        ? "bg-emerald-50 text-emerald-700 border-[#0d6e4f] ring-1 ring-[#0d6e4f]" 
+                                                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                                                    )}
+                                                  >
+                                                    {option}
+                                                  </button>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* NUMBER VALUE COLLECT */}
+                                        {eq.type === 'number' && (
+                                          <div className="space-y-1.5">
+                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Valor Medido:</span>
+                                            <input
+                                              type="number"
+                                              placeholder={`mín: ${eq.min ?? '0'} / máx: ${eq.max ?? '10'}...`}
+                                              value={resp.value || ''}
+                                              onChange={(e) => {
+                                                const rawVal = e.target.value;
+                                                const valNum = parseFloat(rawVal);
+                                                let autoStatus = 'ok';
+                                                if (rawVal !== '' && !isNaN(valNum)) {
+                                                  const minLimit = eq.min !== undefined ? eq.min : 0;
+                                                  const maxLimit = eq.max !== undefined ? eq.max : 10;
+                                                  if (valNum < minLimit || valNum > maxLimit) {
+                                                    autoStatus = 'not_ok';
+                                                  }
+                                                }
+                                                setRouteResponses(prev => ({
+                                                  ...prev,
+                                                  [eq.id]: { 
+                                                    ...prev[eq.id], 
+                                                    value: rawVal,
+                                                    status: autoStatus as 'ok' | 'not_ok'
+                                                  }
+                                                }));
+                                                
+                                                if (autoStatus === 'not_ok') {
+                                                  setAnomalyDetailingEqId(eq.id);
+                                                }
+                                              }}
+                                              className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-1 focus:ring-[#0d6e4f] font-bold"
+                                            />
+                                          </div>
+                                        )}
+
+                                        {/* RANGE SELECTIONS BAIXO/NORMAL/ALTO */}
+                                        {eq.type === 'range' && (
+                                          <div className="space-y-1.5">
+                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Nível Operacional:</span>
+                                            <div className="flex gap-2">
+                                              {[
+                                                { label: 'BAIXO', val: 'low', col: 'bg-amber-600 text-white border-amber-600' },
+                                                { label: 'NORMAL / OK', val: 'normal', col: 'bg-[#0d6e4f] text-white border-[#0d6e4f]' },
+                                                { label: 'ALTO', val: 'high', col: 'bg-rose-600 text-white border-rose-600' }
+                                              ].map(rnVal => {
+                                                const isActive = resp.value === rnVal.val;
+                                                return (
+                                                  <button
+                                                    key={rnVal.val}
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const autoStatus = rnVal.val === 'low' || rnVal.val === 'high' ? 'not_ok' : 'ok';
+                                                      setRouteResponses(prev => ({
+                                                        ...prev,
+                                                        [eq.id]: {
+                                                          ...prev[eq.id],
+                                                          value: rnVal.val,
+                                                          status: autoStatus
+                                                        }
+                                                      }));
+                                                      if (autoStatus === 'not_ok') {
+                                                        setAnomalyDetailingEqId(eq.id);
+                                                      }
+                                                    }}
+                                                    className={cn(
+                                                      "flex-1 py-1.5 rounded-xl text-[9px] font-black uppercase border transition-all text-center cursor-pointer",
+                                                      isActive ? rnVal.col : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
+                                                    )}
+                                                  >
+                                                    {rnVal.label}
+                                                  </button>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* BARCODE VALUE COLLECT */}
+                                        {eq.type === 'barcode' && (
+                                          <div className="space-y-1.5 relative">
+                                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Identificador Cód. Barras:</span>
+                                            <div className="flex gap-2">
+                                              <input
+                                                type="text"
+                                                placeholder="Digite ou leia..."
+                                                value={resp.value || ''}
+                                                onChange={(e) => {
+                                                  setRouteResponses(prev => ({
+                                                    ...prev,
+                                                    [eq.id]: { ...prev[eq.id], value: e.target.value }
+                                                  }));
+                                                }}
+                                                className="flex-1 text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold"
+                                              />
+                                              <button
+                                                type="button"
+                                                onClick={() => setActiveScanner(eq.id)}
+                                                className="p-2 bg-emerald-50 text-[#0d6e4f] border border-emerald-100 rounded-xl hover:bg-emerald-100 shrink-0 cursor-pointer"
+                                              >
+                                                <QrCode className="w-4 h-4" />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* If QR Scanner is triggered for individual item */}
+                                        {activeScanner === eq.id && (
+                                          <div className="p-3 bg-black rounded-xl overflow-hidden aspect-video border border-slate-800 relative max-w-[260px] mx-auto">
+                                            <div id="qr-reader-route" className="w-full h-full" />
+                                            <button
+                                              type="button"
+                                              onClick={() => setActiveScanner(null)}
+                                              className="absolute top-2 right-2 p-1 bg-black/50 text-white rounded-full cursor-pointer"
+                                            >
+                                              <X className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
+                                        )}
+
+                                        {/* Display if they detailed and filled deep NON-OK options */}
+                                        {resp.status === 'not_ok' && detailingResponses[eq.id] && (
+                                          <div className="p-3 bg-rose-50/50 border border-rose-100 rounded-xl text-[10px] text-rose-950 space-y-1">
+                                            <div className="flex items-center gap-1 text-[9px] font-black uppercase text-rose-750">
+                                              <AlertTriangle className="w-3.5 h-3.5 text-rose-500" /> Detalhes Desvio
+                                            </div>
+                                            <p className="leading-tight">Diagnóstico: <strong>{detailingResponses[eq.id].diagnostic}</strong></p>
+                                            <p className="leading-tight">Ação: <strong>{detailingResponses[eq.id].actionTaken}</strong></p>
+                                            <button
+                                              type="button"
+                                              onClick={() => setAnomalyDetailingEqId(eq.id)}
+                                              className="text-blue-600 hover:underline hover:text-blue-800 font-bold uppercase text-[9px] block mt-1 cursor-pointer"
+                                            >
+                                              Editar Parâmetros Técnicos
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      {/* Custom notes text comment inside dropdown */}
+                                      <div className="border-t border-slate-100 pt-3 mt-1 space-y-1">
+                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Notas / Detalhamento:</span>
+                                        <input
+                                          type="text"
+                                          placeholder="Observações adicionais..."
+                                          value={resp.notes || ''}
+                                          onChange={(e) => {
+                                            setRouteResponses(prev => ({
+                                              ...prev,
+                                              [eq.id]: { ...prev[eq.id], notes: e.target.value }
+                                            }));
+                                          }}
+                                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-700 outline-none focus:ring-1 focus:ring-[#0d6e4f] text-xs"
+                                        />
+                                      </div>
+
+                                      {/* CONFIRM BUTTON */}
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedEquipmentId(null)}
+                                        className="w-full py-2 bg-[#0d6e4f] hover:bg-emerald-800 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider transition-colors shadow-xs cursor-pointer"
+                                      >
+                                        OK / Confirmar
+                                      </button>
+                                    </motion.div>
+                                  </>
+                                )}
+                              </AnimatePresence>
                             </div>
-                          )}
+                          </div>
                         </div>
+                      );
+                    });
+                  })()}
+                </div>
 
-                        {/* Safety Observations Toggle */}
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-3">
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={!!resp.generateObservation}
-                              onChange={(e) => setRouteResponses(prev => ({
-                                ...prev,
-                                [eq.id]: {
-                                  ...prev[eq.id],
-                                  generateObservation: e.target.checked
-                                }
-                              }))}
-                              className="w-4 h-4 text-emerald-600 bg-slate-100 border-slate-300 rounded focus:ring-emerald-500 focus:ring-2"
-                            />
-                            <span className="text-xs font-black text-slate-700 uppercase tracking-widest">Registrar Ordem de Segurança</span>
-                          </label>
-
-                          {resp.generateObservation && (
-                            <textarea
-                              rows={3}
-                              placeholder="Descreva as condições de instabilidade ou riscos ambientais observados..."
-                              value={resp.observationText || ''}
-                              onChange={(e) => setRouteResponses(prev => ({
-                                ...prev,
-                                [eq.id]: {
-                                  ...prev[eq.id],
-                                  observationText: e.target.value
-                                }
-                              }))}
-                              className="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 font-bold text-slate-600 placeholder:text-slate-400 leading-normal"
-                            />
-                          )}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  {/* Comment notes field */}
-                  <div className="flex items-center gap-2 border-t pt-2 border-dashed border-slate-200">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap">Comentações:</span>
-                    <input
-                      type="text"
-                      placeholder="Espaço opcional para anotações do vistoriador..."
-                      value={resp.notes}
-                      onChange={(e) => setRouteResponses(prev => ({
-                        ...prev,
-                        [eq.id]: { ...prev[eq.id], notes: e.target.value }
-                      }))}
-                      className="w-full bg-transparent border-none outline-none text-xs font-semibold py-1 focus:text-slate-700 text-slate-500 placeholder:text-slate-300"
-                    />
+                {/* BOTTOM STICKY FLOATING METRICS SUMMARY FOOTER */}
+                <div className="pt-4 border-t border-slate-150 flex items-center justify-end gap-4 py-4 px-1">
+                  <div className="flex gap-2.5 w-full sm:w-auto shrink-0 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModalConfig({
+                          isOpen: true,
+                          title: 'Cancelar Ronda?',
+                          message: 'Deseja realmente abandonar a execução desta rota operacional? Todos os dados preenchidos serão perdidos.',
+                          type: 'warning',
+                          showConfirmButton: true,
+                          confirmText: 'Sair da Rota',
+                          onConfirm: () => {
+                            closeModal();
+                            if (user && selectedTemplate) {
+                              const draftId = `${user.uid}_${selectedTemplate.id}`;
+                              deleteDoc(doc(db, 'route_drafts', draftId)).catch(console.error);
+                            }
+                            setSelectedTemplate(null);
+                            setRouteResponses({});
+                            setDetailingResponses({});
+                            setIsDraftLoaded(false);
+                            setDraftSavedAt(null);
+                            setActiveTab('my_routes');
+                          }
+                        });
+                      }}
+                      className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black rounded-xl text-xs uppercase tracking-wide leading-none"
+                    >
+                      Voltar
+                    </button>
+                    
+                    <button
+                      type="button"
+                      onClick={handleSaveRouteSubmission}
+                      className="px-8 py-3 bg-[#0d6e4f] hover:bg-emerald-800 text-white font-black rounded-xl text-xs uppercase tracking-wide leading-none shadow-md shadow-emerald-50 active:scale-95 transition-all"
+                    >
+                      Finalizar Ronda
+                    </button>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            )}
 
-          <div className="flex gap-4 justify-end mt-12 border-t border-slate-100 pt-8">
-            <button
-              onClick={() => {
-                setSelectedTemplate(null);
-                setRouteResponses({});
-                setActiveTab('my_routes');
-              }}
-              className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-all text-xs uppercase"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={handleSaveRouteSubmission}
-              className="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-lg shadow-emerald-100 transition-all text-xs uppercase"
-            >
-              Salvar e Concluir Ronda
-            </button>
           </div>
         </motion.div>
       ) : activeTab === 'manage_templates' ? (
@@ -1840,15 +2727,29 @@ const OperationalRoutes: React.FC = () => {
 
                 {/* EQUIPMENTS TABLE SETUP */}
                 <div className="space-y-4 pt-4">
-                  <div className="flex items-center justify-between border-b pb-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
                     <h4 className="text-xs font-black text-slate-950 uppercase tracking-widest ml-1">Equipamentos associados ({templateEquipments.length})</h4>
-                    <button
-                      type="button"
-                      onClick={handleAddEquipmentField}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg flex items-center gap-1 leading-none uppercase tracking-wider text-[10px]"
-                    >
-                      <Plus className="w-3 h-3" /> Adicionar Equipamento
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCsvText('');
+                          setCsvParseResults([]);
+                          setIsCsvImportModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg flex items-center gap-1.5 leading-none uppercase tracking-wider text-[10px] transition-colors shadow-sm"
+                        title="Importar Equipamentos via arquivo CSV"
+                      >
+                        <Upload className="w-3.5 h-3.5" /> Importar CSV
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAddEquipmentField}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg flex items-center gap-1 leading-none uppercase tracking-wider text-[10px] transition-colors"
+                      >
+                        <Plus className="w-3 h-3" /> Adicionar Equipamento
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-6 max-h-[400px] overflow-y-auto pr-2">
@@ -2063,6 +2964,317 @@ const OperationalRoutes: React.FC = () => {
                 >
                   Salvar Rota
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL IMPORTAÇÃO DE EQUIPAMENTOS EM MASSA VIA CSV */}
+      <AnimatePresence>
+        {isCsvImportModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+              onClick={() => setIsCsvImportModalOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[2rem] border border-slate-200 w-full max-w-5xl overflow-hidden relative shadow-2xl z-10 max-h-[92vh] flex flex-col pt-6 font-semibold"
+            >
+              {/* Header */}
+              <div className="px-8 pb-4 border-b border-slate-100 flex items-start justify-between shrink-0">
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                    <Upload className="w-5 h-5 text-emerald-600" /> Carregar Equipamentos em Massa
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5 font-medium">Importe de forma autônoma dezenas de equipamentos com mapeamento automático de colunas, setores e linhas.</p>
+                </div>
+                <button 
+                  onClick={() => setIsCsvImportModalOpen(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-50 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-8 overflow-y-auto flex-1 space-y-6">
+                
+                {/* Info & Instructions */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  
+                  {/* Instruzões de Formatação */}
+                  <div className="lg:col-span-1 bg-slate-50 p-5 rounded-2xl border border-slate-200/50 space-y-4">
+                    <div className="flex flex-col gap-2.5 border-b pb-2.5 border-slate-200">
+                      <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider flex items-center gap-1.5">
+                        <FileText className="w-4 h-4 text-slate-500" /> Instruções de Importação
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={handleDownloadCsvTemplate}
+                        className="w-full mt-1.5 px-3 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                        title="Baixar arquivo modelo .csv pré-configurado"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Baixar Modelo CSV
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-3 text-[11px] leading-relaxed font-medium text-slate-600">
+                      <div>
+                        <span className="font-extrabold text-slate-900 block font-sans">nome <span className="text-rose-500">*obrigatório</span></span>
+                        <p className="text-slate-500">Ex: Compressor de Ar Principal</p>
+                      </div>
+                      <div>
+                        <span className="font-extrabold text-slate-900 block">tag</span>
+                        <p className="text-slate-500">Identificação interna. Ex: COMP-112</p>
+                      </div>
+                      <div>
+                        <span className="font-extrabold text-slate-900 block">descricao</span>
+                        <p className="text-slate-500">Ex: Medir pressão e ruídos</p>
+                      </div>
+                      <div>
+                        <span className="font-extrabold text-slate-900 block">setor</span>
+                        <p className="text-slate-500">Nome ou ID do setor para vinculação automática.</p>
+                      </div>
+                      <div>
+                        <span className="font-extrabold text-slate-900 block">linha</span>
+                        <p className="text-slate-500">Nome ou ID da linha de produção.</p>
+                      </div>
+                      <div>
+                        <span className="font-extrabold text-slate-900 block">tipo</span>
+                        <p className="text-slate-500">opções, numérico, range, barcode</p>
+                      </div>
+                      <div>
+                        <span className="font-extrabold text-slate-900 block">obrigatorio</span>
+                        <p className="text-slate-500">sim / não (padrão: sim)</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Upload Area & Pasting Area */}
+                  <div className="lg:col-span-2 space-y-4">
+                    <div className="flex gap-2 border-b pb-2 border-slate-100">
+                      <span className="text-xs font-black text-slate-850 uppercase tracking-wider">Selecione o método de entrada</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Drag and Drop File zone */}
+                      <div 
+                        onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
+                        onDragLeave={() => setCsvDragOver(false)}
+                        onDrop={handleCsvDrop}
+                        onClick={() => csvFileInputRef.current?.click()}
+                        className={cn(
+                          "border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all min-h-[160px] select-none",
+                          csvDragOver 
+                            ? "border-emerald-500 bg-emerald-50/50" 
+                            : "border-slate-200 hover:border-slate-350 hover:bg-slate-50"
+                        )}
+                      >
+                        <input 
+                          type="file" 
+                          ref={csvFileInputRef}
+                          onChange={handleCsvFileSelect}
+                          accept=".csv"
+                          className="hidden"
+                        />
+                        <div className="p-3 bg-emerald-50 text-emerald-600 rounded-full mb-3">
+                          <Upload className="w-5 h-5" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-800">Arraste seu arquivo CSV</span>
+                        <span className="text-[10px] text-slate-400 mt-1 font-medium">Ou clique para selecionar no computador</span>
+                        <span className="text-[9px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 mt-2 font-black">PADRÃO: VÍRGULA OU PONTO E VÍRGULA</span>
+                      </div>
+
+                      {/* Paste direct Area */}
+                      <div className="space-y-1.5 flex flex-col">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Colar dados do Excel / CSV</label>
+                          <button 
+                            type="button"
+                            onClick={() => setCsvText(
+                              "nome,tag,descricao,setor,linha,tipo,obrigatorio\n" +
+                              "Compressor de Ar,COMP-01,Medir pressão,Utilidades,,numérico,sim\n" +
+                              "Ponte Rolante,PTR-02,Ganchos de elevação,,Linha 1,opções,não\n" +
+                              "Motor Alimentador,MTR-03,Aquecimento de mancais,,,range,sim"
+                            )}
+                            className="text-[9px] font-black text-emerald-600 hover:text-emerald-700 uppercase tracking-wider"
+                          >
+                            Carregar Exemplo
+                          </button>
+                        </div>
+                        
+                        <textarea
+                          placeholder="Cole aqui as linhas copiadas da sua planilha ou arquivo texto CSV.&#13;Primeira linha deve conter os cabeçalhos das colunas."
+                          value={csvText}
+                          onChange={(e) => setCsvText(e.target.value)}
+                          className="w-full flex-1 text-xs px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-mono focus:ring-1 focus:ring-emerald-500 min-h-[130px] font-medium resize-none leading-relaxed"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Live Preview Container */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-slate-500" /> Pré-visualização dos Equipamentos ({csvParseResults.length})
+                    </h4>
+                    {csvParseResults.length > 0 && (
+                      <button 
+                        type="button"
+                        onClick={() => { setCsvText(''); setCsvParseResults([]); }}
+                        className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase tracking-wider flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Limpar Dados
+                      </button>
+                    )}
+                  </div>
+
+                  {csvParseResults.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 flex flex-col items-center justify-center">
+                      <Clipboard className="w-8 h-8 text-slate-350 mb-2" />
+                      <span className="text-xs font-bold text-slate-600">Nenhum dado importado para exibir</span>
+                      <p className="text-[10px] text-slate-400 mt-0.5 font-medium max-w-sm">Insira de forma rápida alguns dados colando no campo de texto ou arrastando um arquivo .csv no painel acima.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                            <th className="py-3 px-4">Linha</th>
+                            <th className="py-3 px-4">Nome</th>
+                            <th className="py-3 px-4">Tag</th>
+                            <th className="py-3 px-4">Setor Mapeado</th>
+                            <th className="py-3 px-4">Linha Mapeada</th>
+                            <th className="py-3 px-4">Coleta</th>
+                            <th className="py-3 px-4 text-center">Obrigatório</th>
+                            <th className="py-3 px-4 text-right">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-medium">
+                          {csvParseResults.map((item, index) => {
+                            const isErr = item.errors.length > 0;
+                            const isWarn = item.warnings.length > 0;
+                            
+                            return (
+                              <tr key={index} className={cn("hover:bg-slate-50/60", isErr ? "bg-rose-50/20" : "")}>
+                                <td className="py-3 px-4 text-slate-400 font-bold">{index + 1}</td>
+                                <td className="py-3 px-4 font-bold text-slate-850">
+                                  {item.equipment.name || <span className="text-rose-500 italic">Vazio</span>}
+                                  {isErr && (
+                                    <span className="block text-[10px] text-rose-500 font-semibold mt-0.5">{item.errors.join(' ')}</span>
+                                  )}
+                                  {isWarn && (
+                                    <span className="block text-[10px] text-amber-500 font-semibold mt-0.5">{item.warnings.join(' ')}</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4">
+                                  {item.equipment.tag ? (
+                                    <span className="bg-slate-100 text-slate-650 px-1.5 py-0.5 rounded text-[10px] font-extrabold">{item.equipment.tag}</span>
+                                  ) : (
+                                    <span className="text-slate-350 italic">-</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4">
+                                  {item.equipment.sectorId ? (
+                                    <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-lg text-[10px]">
+                                      {sectors.find(s => s.id === item.equipment.sectorId)?.name}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 italic">Global</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4">
+                                  {item.equipment.lineId ? (
+                                    <span className="text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded-lg text-[10px]">
+                                      {lines.find(l => l.id === item.equipment.lineId)?.name}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 italic">Geral</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4 font-bold text-slate-650">
+                                  {item.equipment.type === 'condition' && 'Opções (OK/NOK)'}
+                                  {item.equipment.type === 'number' && 'Numérico'}
+                                  {item.equipment.type === 'range' && 'Range (Baixo/Normal/Alto)'}
+                                  {item.equipment.type === 'barcode' && 'Barcode / QR'}
+                                </td>
+                                <td className="py-3 px-4 text-center">
+                                  <span className={cn(
+                                    "px-1.5 py-0.5 rounded text-[10px] font-black",
+                                    item.equipment.required 
+                                      ? "bg-amber-50 text-amber-700" 
+                                      : "bg-slate-100 text-slate-400"
+                                  )}>
+                                    {item.equipment.required ? 'SIM' : 'NÃO'}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 text-right">
+                                  {isErr ? (
+                                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-rose-100 text-rose-700 rounded-full font-black text-[9px] uppercase"><AlertCircle className="w-3 h-3" /> Erro</span>
+                                  ) : isWarn ? (
+                                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full font-black text-[9px] uppercase"><AlertTriangle className="w-3 h-3" /> Aviso</span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-black text-[9px] uppercase"><Check className="w-3 h-3" /> Ok</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* Footer */}
+              <div className="px-8 py-6 bg-slate-50 border-t border-slate-100 flex flex-wrap gap-4 justify-between items-center shrink-0">
+                <span className="text-[10px] text-slate-450 font-bold max-w-sm">
+                  {csvParseResults.length > 0 && (
+                    <>
+                      Carregados <strong className="text-slate-700">{csvParseResults.filter(r => r.errors.length === 0).length}</strong> válidos de <strong className="text-slate-700">{csvParseResults.length}</strong> no total. Erros serão ignorados automaticamente.
+                    </>
+                  )}
+                </span>
+                
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsCsvImportModalOpen(false)}
+                    className="px-6 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black uppercase text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    Voltar
+                  </button>
+                  {csvParseResults.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleApplyImport(false)}
+                        className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-black rounded-xl text-xs uppercase transition-colors"
+                      >
+                        Adicionar ao Final
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleApplyImport(true)}
+                        className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs uppercase shadow-md shadow-emerald-150 transition-colors"
+                      >
+                        Substituir Lista Atual
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </motion.div>
           </div>

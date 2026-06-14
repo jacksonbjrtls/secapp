@@ -389,6 +389,18 @@ service cloud.firestore {
       allow delete: if isMaster() || isManager();
     }
 
+    // Route Drafts
+    match /route_drafts/{draftId} {
+      allow get: if isApproved() && (draftId is string && draftId.size() <= 128) &&
+                    (resource == null || resource.data.operatorId == request.auth.uid);
+      allow list: if isApproved() && (resource == null || resource.data.operatorId == request.auth.uid);
+      allow create, update: if isApproved() && isNotDisabled() && (draftId is string && draftId.size() <= 128) && 
+                          (resource == null || resource.data.operatorId == request.auth.uid) &&
+                          request.resource.data.operatorId == request.auth.uid;
+      allow delete: if isMaster() || (isApproved() && isNotDisabled() && (draftId is string && draftId.size() <= 128) && 
+                          (resource != null && resource.data.operatorId == request.auth.uid));
+    }
+
     // Safety Observations
     match /safety_observations/{observationId} {
       allow get, list: if isApproved();

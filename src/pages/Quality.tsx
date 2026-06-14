@@ -42,6 +42,7 @@ import {
   BarChart3,
   Clock,
   ChevronRight,
+  ChevronLeft,
   Edit2,
   QrCode,
   Thermometer,
@@ -349,6 +350,7 @@ const Quality: React.FC = () => {
 
   // Perform Checklist Logic
   const [fillingTemplate, setFillingTemplate] = useState<QualityChecklistTemplate | null>(null);
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [responses, setResponses] = useState<Record<string, any>>({});
   const [observations, setObservations] = useState<Record<string, string>>({});
   const [submissionLineId, setSubmissionLineId] = useState<string>('');
@@ -855,26 +857,60 @@ const Quality: React.FC = () => {
             )}
 
             {fillingTemplate ? (
-              <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
-                <div className="p-8 border-b border-slate-100 bg-slate-50/50">
-                  <div className="flex items-center justify-between gap-4 mb-2">
-                    <h2 className="text-2xl font-black text-slate-900">{fillingTemplate.name}</h2>
-                    <button 
-                      onClick={() => {
-                        setFillingTemplate(null);
-                        setSubmissionLineId('');
-                      }}
-                      className="p-2 hover:bg-white rounded-full text-slate-400 hover:text-rose-500 transition-all"
-                    >
-                      <X className="w-6 h-6" />
-                    </button>
+              <div className="bg-slate-50 border border-slate-200 rounded-[2.5rem] max-w-2xl mx-auto overflow-hidden shadow-xl">
+                {/* VISUAL BRANDED FOREST GREEN HEADER BAR (Matches Operational Routes style!) */}
+                <div className="bg-[#0d6e4f] text-white p-6 relative flex flex-col items-center justify-center text-center">
+                  {/* Left Back Arrow icon */}
+                  <button
+                    onClick={() => {
+                      setFillingTemplate(null);
+                      setSubmissionLineId('');
+                    }}
+                    className="absolute left-4 top-1/2 -translate-y-1/2 text-white hover:bg-emerald-800 p-2 rounded-full transition-colors"
+                    title="Voltar"
+                  >
+                    <ChevronLeft className="w-6 h-6 stroke-[3]" />
+                  </button>
+
+                  {/* Header Content Titles */}
+                  <div className="space-y-0.5">
+                    <h2 className="text-xs font-black tracking-widest uppercase opacity-90">CHECK-LIST DE QUALIDADE</h2>
+                    <p className="text-base font-black tracking-wide uppercase leading-tight mt-0.5">{fillingTemplate.name}</p>
+                    <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider line-clamp-1 max-w-[320px] mx-auto">{fillingTemplate.description}</p>
                   </div>
-                  <p className="text-slate-500 font-medium mb-4">{fillingTemplate.description}</p>
-                  
+
+                  {/* Right Close Button with safety modal */}
+                  <button
+                    onClick={() => {
+                      setModalConfig({
+                        isOpen: true,
+                        title: 'Cancelar Preenchimento?',
+                        message: 'Deseja realmente abandonar a execução deste check-list de qualidade? Todos os dados marcados serão perdidos.',
+                        type: 'warning',
+                        showConfirmButton: true,
+                        confirmText: 'Sair e Descartar',
+                        onConfirm: () => {
+                          closeModal();
+                          setFillingTemplate(null);
+                          setResponses({});
+                          setObservations({});
+                          setSubmissionLineId('');
+                        }
+                      });
+                    }}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-white hover:bg-emerald-800 p-2 rounded-full transition-colors"
+                    title="Sair"
+                  >
+                    <X className="w-5 h-5 stroke-[2.5]" />
+                  </button>
+                </div>
+
+                {/* PROGRESSIVE CONTAINER BLOCK */}
+                <div className="p-6 md:p-8 bg-white space-y-6">
                   {/* Line Selection if Template covers multiple lines */}
                   {(fillingTemplate.sectorId === 'all' || sectors.some(s => s.id === fillingTemplate.sectorId)) && (
-                    <div className="bg-white p-4 rounded-2xl border border-slate-200">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1 block mb-2">Identifique a Linha Inspecionada</label>
+                    <div className="bg-slate-50 p-4 rounded-[1.5rem] border border-slate-200">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-[#0d6e4f] ml-1 block mb-2 font-mono">Identifique a Linha Inspecionada</label>
                       <div className="flex flex-wrap gap-2">
                         {lines.filter(l => {
                           if (fillingTemplate.sectorId === 'all') return true;
@@ -902,10 +938,10 @@ const Quality: React.FC = () => {
                               className={cn(
                                 "px-4 py-2.5 rounded-xl text-xs font-bold transition-all border flex items-center gap-1.5",
                                 submissionLineId === line.id 
-                                  ? "bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-150" 
+                                  ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100" 
                                   : isLineCompleted
-                                    ? "bg-slate-50 border-slate-200 text-slate-400 hover:bg-slate-100"
-                                    : "bg-white border-slate-200 text-slate-700 hover:border-blue-200"
+                                    ? "bg-slate-100 border-slate-200 text-slate-400 hover:bg-slate-200"
+                                    : "bg-white border-slate-200 text-slate-700 hover:border-emerald-300"
                               )}
                             >
                               {isLineCompleted && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
@@ -919,233 +955,425 @@ const Quality: React.FC = () => {
                       </div>
                     </div>
                   )}
-                </div>
 
-                <div className="p-8 space-y-8">
-                  {fillingTemplate.items.map((item, idx) => (
-                    <div key={item.id || `item-${idx}`} className="space-y-4">
-                      <div className="flex items-center gap-3">
-                         <span className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-black text-sm">{idx + 1}</span>
-                         <label className="text-lg font-bold text-slate-800">
-                           {item.label}
-                           {item.required && <span className="text-rose-500 ml-1">*</span>}
-                         </label>
+                  {/* PROGRESS BAR VISUAL INDICATOR */}
+                  {(() => {
+                    const answeredCount = fillingTemplate.items.filter(item => responses[item.id] !== undefined && responses[item.id] !== '').length;
+                    const totalQuestionsCount = fillingTemplate.items.length;
+                    const progressPct = totalQuestionsCount > 0 ? (answeredCount / totalQuestionsCount) * 100 : 0;
+                    return (
+                      <div className="bg-slate-50/50 p-4 border border-slate-150 rounded-[1.5rem] space-y-2">
+                        <div className="flex justify-between items-center text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                          <span className="flex items-center gap-1.5 font-mono">
+                            <Clock className="w-3.5 h-3.5 text-emerald-600" /> PROCESSO DE PREENCHIMENTO
+                          </span>
+                          <span className="text-emerald-700 font-extrabold">{answeredCount} de {totalQuestionsCount} respondidos ({Math.round(progressPct)}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-emerald-500 h-full transition-all duration-300 rounded-full" 
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
                       </div>
+                    );
+                  })()}
 
-                      <div className="ml-11">
-                        {item.type === 'condition' && (
-                          <div className="flex flex-wrap gap-3">
-                            {item.conditionOptionsId ? (
-                              optionSets.find(s => s.id === item.conditionOptionsId)?.options.map((opt, optIdx) => (
-                                <button
-                                  key={`${opt}-${optIdx}`}
-                                  onClick={() => setResponses(prev => ({ ...prev, [item.id]: opt }))}
-                                  className={cn(
-                                    "flex-1 min-w-[120px] py-4 rounded-2xl font-black transition-all border-2 text-sm",
-                                    responses[item.id] === opt 
-                                      ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100" 
-                                      : "bg-white border-slate-200 text-slate-400 hover:border-emerald-200"
-                                  )}
-                                >
-                                  {opt}
-                                </button>
-                              ))
-                            ) : (
-                              <>
-                                <button
-                                  onClick={() => setResponses(prev => ({ ...prev, [item.id]: 'ok' }))}
-                                  className={cn(
-                                    "flex-1 py-4 rounded-2xl font-black transition-all border-2 flex items-center justify-center gap-2",
-                                    responses[item.id] === 'ok' 
-                                      ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100" 
-                                      : "bg-white border-slate-200 text-slate-400 hover:border-emerald-200"
-                                  )}
-                                >
-                                  <CheckCircle2 className="w-5 h-5" />
-                                  OK / CONFORME
-                                </button>
-                                <button
-                                  onClick={() => setResponses(prev => ({ ...prev, [item.id]: 'not_ok' }))}
-                                  className={cn(
-                                    "flex-1 py-4 rounded-2xl font-black transition-all border-2 flex items-center justify-center gap-2",
-                                    responses[item.id] === 'not_ok' 
-                                      ? "bg-rose-600 border-rose-600 text-white shadow-lg shadow-rose-100" 
-                                      : "bg-white border-slate-200 text-slate-400 hover:border-rose-200"
-                                  )}
-                                >
-                                  <AlertCircle className="w-5 h-5" />
-                                  NÃO CONFORME
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        )}
+                  {/* ACCORDION ITEMS STREAM (Matches OperationalRoutes structure exactly) */}
+                  <div className="space-y-3">
+                    {fillingTemplate.items.map((item, idx) => {
+                      const isExpanded = expandedItemId === item.id;
+                      const isAnswered = responses[item.id] !== undefined && responses[item.id] !== '';
+                      const currentValue = responses[item.id];
 
-                        {item.type === 'number' && (
-                          <div className="space-y-4">
-                            {item.isRangeDropdown ? (
-                              <select
-                                value={responses[item.id] || ''}
-                                onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                                className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-black text-lg appearance-none"
-                              >
-                                <option value="">Selecione o valor...</option>
-                                {generateRangeOptions(item.min, item.max, item.step).map(val => (
-                                  <option key={val} value={val}>
-                                    {val % 1 === 0 ? val : val.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <div className="relative group">
-                                <Hash className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-500 transition-colors" />
-                                <input
-                                  type="number"
-                                  step={item.isInteger ? "1" : (item.step || "0.01")}
-                                  value={responses[item.id] || ''}
-                                  onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                                  placeholder={item.isInteger ? "Digite um número inteiro..." : "Digite o valor numérico..."}
-                                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
+                      // Helper to advance to the next item
+                      const advanceToNext = () => {
+                        const nextIdx = idx + 1;
+                        if (nextIdx < fillingTemplate.items.length) {
+                          setExpandedItemId(fillingTemplate.items[nextIdx].id);
+                        }
+                      };
 
-                        {item.type === 'range' && (
-                          <div className="flex flex-wrap gap-4">
-                            <button
-                              onClick={() => setResponses(prev => ({ ...prev, [item.id]: 'low' }))}
-                              className={cn(
-                                "flex-1 py-4 rounded-2xl font-black transition-all border-2",
-                                responses[item.id] === 'low' 
-                                  ? "bg-amber-600 border-amber-600 text-white" 
-                                  : "bg-white border-slate-200 text-slate-400"
-                              )}
-                            >
-                              BAIXO
-                            </button>
-                            <button
-                              onClick={() => setResponses(prev => ({ ...prev, [item.id]: 'normal' }))}
-                              className={cn(
-                                "flex-1 py-4 rounded-2xl font-black transition-all border-2",
-                                responses[item.id] === 'normal' 
-                                  ? "bg-emerald-600 border-emerald-600 text-white" 
-                                  : "bg-white border-slate-200 text-slate-400"
-                              )}
-                            >
-                              NORMAL / OK
-                            </button>
-                            <button
-                              onClick={() => setResponses(prev => ({ ...prev, [item.id]: 'high' }))}
-                              className={cn(
-                                "flex-1 py-4 rounded-2xl font-black transition-all border-2",
-                                responses[item.id] === 'high' 
-                                  ? "bg-rose-600 border-rose-600 text-white" 
-                                  : "bg-white border-slate-200 text-slate-400"
-                              )}
-                            >
-                              ALTO
-                            </button>
-                          </div>
-                        )}
-
-                        {item.type === 'barcode' && (
-                          <div className="space-y-4">
-                            <div className="relative group">
-                              <QrCode className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                              <input
-                                type="text"
-                                id={`barcode-${item.id}`}
-                                value={responses[item.id] || ''}
-                                onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                                placeholder="Scaneie ou digite o código de leitura..."
-                                className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
-                              />
-                              <button
-                                onClick={() => {
-                                  // Trigger scanner logic
-                                  setActiveScanner(item.id);
-                                }}
-                                className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-600 hover:text-emerald-700 p-2"
-                              >
-                                <QrCode className="w-6 h-6" />
-                              </button>
-                            </div>
-
-                            {activeScanner === item.id && (
-                              <div className="relative bg-black rounded-2xl overflow-hidden aspect-video">
-                                {cameraError ? (
-                                  <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center text-white bg-slate-900 border-2 border-slate-700 rounded-2xl">
-                                    <AlertCircle className="w-12 h-12 text-rose-500 mb-4" />
-                                    <p className="text-sm font-black mb-6">{cameraError}</p>
-                                    <button
-                                      onClick={() => setActiveScanner(null)}
-                                      className="px-6 py-2 bg-white text-slate-900 rounded-xl font-black text-xs hover:bg-slate-100"
-                                    >
-                                      FECHAR
-                                    </button>
-                                  </div>
+                      return (
+                        <div
+                          key={item.id || `item-${idx}`}
+                          id={`focus-item-${item.id}`}
+                          className={cn(
+                            "border rounded-[1.5rem] overflow-hidden transition-all bg-white",
+                            isAnswered ? "border-emerald-600/50 shadow-sm" : "border-slate-200",
+                            isExpanded ? "ring-2 ring-emerald-600/30 border-emerald-600 shadow-md" : ""
+                          )}
+                        >
+                          {/* Item Header */}
+                          <div 
+                            onClick={() => setExpandedItemId(isExpanded ? null : item.id)}
+                            className="p-4 flex items-center justify-between gap-4 cursor-pointer select-none bg-white hover:bg-slate-50/50 transition-colors"
+                          >
+                            <div className="flex-1 flex items-center gap-3">
+                              {/* Indicator badge circle style */}
+                              <div className={cn(
+                                "w-7 h-7 rounded-lg flex items-center justify-center font-black text-xs shrink-0 transition-all",
+                                isAnswered 
+                                  ? "bg-emerald-100 text-emerald-800" 
+                                  : "bg-slate-100 text-slate-500"
+                              )}>
+                                {isAnswered ? (
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                                 ) : (
-                                  <>
-                                    <div id="qr-reader" className="w-full h-full" />
-                                    <button 
-                                      onClick={() => setActiveScanner(null)}
-                                      className="absolute top-4 right-4 bg-white/20 backdrop-blur-md text-white p-2 rounded-full hover:bg-white/40 z-10"
-                                    >
-                                      <X className="w-5 h-5" />
-                                    </button>
-                                    <div className="absolute inset-0 border-2 border-emerald-500/50 pointer-events-none rounded-2xl animate-pulse" />
-                                  </>
+                                  idx + 1
                                 )}
                               </div>
+
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-extrabold text-slate-800 text-xs md:text-sm leading-tight uppercase tracking-wide truncate max-w-[380px]">
+                                  {item.label}
+                                  {item.required && <span className="text-rose-500 ml-1 font-black">*</span>}
+                                </h4>
+                                {!isExpanded && isAnswered && (
+                                  <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest mt-1 flex items-center gap-1.5 font-mono">
+                                    <span>CONCLUÍDO</span>
+                                    <span className="opacity-40">•</span>
+                                    <span>VALOR: <strong className="bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-150">{String(currentValue).toUpperCase()}</strong></span>
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Chevron square button (Operational routes style!) */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedItemId(isExpanded ? null : item.id);
+                              }}
+                              className={cn(
+                                "w-8 h-8 rounded-lg flex items-center justify-center transition-all shrink-0 text-white",
+                                isExpanded ? "bg-emerald-800 rotate-180" : "bg-[#0d6e4f] hover:bg-emerald-800"
+                              )}
+                            >
+                              <ChevronRight className="w-4 h-4 rotate-90 stroke-[3]" />
+                            </button>
+                          </div>
+
+                          {/* Item Expanded contents */}
+                          <AnimatePresence>
+                            {isExpanded && (
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="border-t border-slate-100 bg-slate-50/50 p-4 space-y-4"
+                              >
+                                {item.type === 'condition' && (
+                                  <div className="flex flex-wrap gap-2.5">
+                                    {item.conditionOptionsId ? (
+                                      optionSets.find(s => s.id === item.conditionOptionsId)?.options.map((opt, optIdx) => (
+                                        <button
+                                          key={`${opt}-${optIdx}`}
+                                          type="button"
+                                          onClick={() => {
+                                            setResponses(prev => ({ ...prev, [item.id]: opt }));
+                                            setTimeout(advanceToNext, 250);
+                                          }}
+                                          className={cn(
+                                            "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all",
+                                            responses[item.id] === opt 
+                                              ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100" 
+                                              : "bg-white border-slate-200 text-slate-500 hover:border-emerald-300"
+                                          )}
+                                        >
+                                          {opt}
+                                        </button>
+                                      ))
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setResponses(prev => ({ ...prev, [item.id]: 'ok' }));
+                                            setTimeout(advanceToNext, 250);
+                                          }}
+                                          className={cn(
+                                            "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
+                                            responses[item.id] === 'ok' 
+                                              ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100" 
+                                              : "bg-white border-slate-200 text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/10"
+                                          )}
+                                        >
+                                          <CheckCircle2 className="w-4 h-4" />
+                                          CONFORME (OK)
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setResponses(prev => ({ ...prev, [item.id]: 'not_ok' }));
+                                            // Don't auto-advance on fail, let them type observation if they want
+                                          }}
+                                          className={cn(
+                                            "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
+                                            responses[item.id] === 'not_ok' 
+                                              ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100" 
+                                              : "bg-white border-slate-200 text-slate-500 hover:border-rose-300 hover:bg-rose-50/10"
+                                          )}
+                                        >
+                                          <AlertCircle className="w-4 h-4" />
+                                          NÃO CONFORME
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+
+                                {item.type === 'number' && (
+                                  <div className="space-y-3">
+                                    {item.isRangeDropdown ? (
+                                      <select
+                                        value={responses[item.id] || ''}
+                                        onChange={(e) => {
+                                          setResponses(prev => ({ ...prev, [item.id]: e.target.value }));
+                                          // Simple change auto-advance if not empty
+                                          if (e.target.value) {
+                                            setTimeout(advanceToNext, 250);
+                                          }
+                                        }}
+                                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/50 outline-none font-black text-sm appearance-none"
+                                      >
+                                        <option value="">Selecione o valor...</option>
+                                        {generateRangeOptions(item.min, item.max, item.step).map(val => (
+                                          <option key={val} value={val}>
+                                            {val % 1 === 0 ? val : val.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <div className="relative group">
+                                        <Hash className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-600 w-4 h-4" />
+                                        <input
+                                          type="number"
+                                          step={item.isInteger ? "1" : (item.step || "0.01")}
+                                          value={responses[item.id] || ''}
+                                          onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              advanceToNext();
+                                            }
+                                          }}
+                                          placeholder={item.isInteger ? "Digite um número inteiro..." : "Digite o valor numérico..."}
+                                          className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-bold text-xs"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {item.type === 'range' && (
+                                  <div className="flex flex-wrap gap-2.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setResponses(prev => ({ ...prev, [item.id]: 'low' }));
+                                        setTimeout(advanceToNext, 250);
+                                      }}
+                                      className={cn(
+                                        "flex-1 py-3 px-3 rounded-xl font-extrabold text-xs transition-all border-2",
+                                        responses[item.id] === 'low' 
+                                          ? "bg-amber-600 border-amber-600 text-white shadow-md shadow-amber-50" 
+                                          : "bg-white border-slate-200 text-slate-500 hover:border-amber-300"
+                                      )}
+                                    >
+                                      BAIXO
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setResponses(prev => ({ ...prev, [item.id]: 'normal' }));
+                                        setTimeout(advanceToNext, 250);
+                                      }}
+                                      className={cn(
+                                        "flex-1 py-3 px-3 rounded-xl font-extrabold text-xs transition-all border-2",
+                                        responses[item.id] === 'normal' 
+                                          ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-50" 
+                                          : "bg-white border-slate-200 text-slate-500 hover:border-emerald-300"
+                                      )}
+                                    >
+                                      NORMAL / OK
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setResponses(prev => ({ ...prev, [item.id]: 'high' }));
+                                        setTimeout(advanceToNext, 250);
+                                      }}
+                                      className={cn(
+                                        "flex-1 py-3 px-3 rounded-xl font-extrabold text-xs transition-all border-2",
+                                        responses[item.id] === 'high' 
+                                          ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-50" 
+                                          : "bg-white border-slate-200 text-slate-500 hover:border-rose-300"
+                                      )}
+                                    >
+                                      ALTO
+                                    </button>
+                                  </div>
+                                )}
+
+                                {item.type === 'barcode' && (
+                                  <div className="space-y-3">
+                                    <div className="relative group">
+                                      <QrCode className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                                      <input
+                                        type="text"
+                                        id={`barcode-${item.id}`}
+                                        value={responses[item.id] || ''}
+                                        onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            advanceToNext();
+                                          }
+                                        }}
+                                        placeholder="Escaneie ou digite o código de leitura..."
+                                        className="w-full pl-10 pr-10 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-bold text-xs"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          // Trigger scanner logic
+                                          setActiveScanner(item.id);
+                                        }}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-600 hover:text-emerald-700 p-1.5"
+                                        title="Abrir Scanner"
+                                      >
+                                        <QrCode className="w-5 h-5" />
+                                      </button>
+                                    </div>
+
+                                    {activeScanner === item.id && (
+                                      <div className="relative bg-black rounded-xl overflow-hidden aspect-video border border-slate-800">
+                                        {cameraError ? (
+                                          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center text-white bg-slate-900 font-mono">
+                                            <AlertCircle className="w-8 h-8 text-rose-500 mb-2 animate-pulse" />
+                                            <p className="text-[10px] font-black leading-tight mb-4">{cameraError}</p>
+                                            <button
+                                              type="button"
+                                              onClick={() => setActiveScanner(null)}
+                                              className="px-4 py-1.5 bg-white text-slate-900 rounded-lg font-black text-[10px]"
+                                            >
+                                              FECHAR
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <div id="qr-reader" className="w-full h-full" />
+                                            <button 
+                                              type="button"
+                                              onClick={() => setActiveScanner(null)}
+                                              className="absolute top-2.5 right-2.5 bg-black/50 text-white p-1.5 rounded-full hover:bg-black"
+                                            >
+                                              <X className="w-3.5 h-3.5" />
+                                            </button>
+                                            <div className="absolute inset-0 border-2 border-emerald-500/40 pointer-events-none rounded-xl animate-pulse" />
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {item.type === 'text' && (
+                                  <div className="space-y-3">
+                                    <textarea
+                                      value={responses[item.id] || ''}
+                                      onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                      placeholder="Digite a sua observação ou comentário aqui..."
+                                      rows={2}
+                                      className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none text-xs font-semibold text-slate-700 placeholder-slate-400"
+                                    />
+                                  </div>
+                                )}
+
+                                {item.allowObservation && (
+                                  <div className="pt-2">
+                                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1 ml-1 font-mono">
+                                      Complemento / Obs. Livre
+                                    </label>
+                                    <textarea
+                                      value={observations[item.id] || ''}
+                                      onChange={(e) => setObservations(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                      placeholder="Adicionar detalhes se necessário..."
+                                      rows={2}
+                                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500/30 outline-none text-[10px] font-semibold text-slate-650 placeholder-slate-400"
+                                    />
+                                  </div>
+                                )}
+
+                                {/* Inner Card Navigation Helpers */}
+                                <div className="flex justify-between items-center bg-slate-100/50 p-2.5 rounded-xl border border-slate-200/40 mt-3">
+                                  <button
+                                    type="button"
+                                    disabled={idx === 0}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setExpandedItemId(fillingTemplate.items[idx - 1].id);
+                                    }}
+                                    className="px-3 py-1.5 text-[10px] font-black uppercase text-slate-400 hover:text-slate-700 disabled:opacity-40 transition-colors"
+                                  >
+                                    Item Anterior
+                                  </button>
+
+                                  {idx < fillingTemplate.items.length - 1 ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setExpandedItemId(fillingTemplate.items[idx + 1].id);
+                                      }}
+                                      className="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-[10px] font-black uppercase rounded-lg transition-colors"
+                                    >
+                                      Próximo Item
+                                    </button>
+                                  ) : (
+                                    <span className="text-[9px] font-black uppercase text-emerald-600 px-3 py-1.5 font-mono">Último Item da Ficha</span>
+                                  )}
+                                </div>
+                              </motion.div>
                             )}
-                          </div>
-                        )}
-
-                        {item.type === 'text' && (
-                          <div className="space-y-4">
-                            <textarea
-                              value={responses[item.id] || ''}
-                              onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                              placeholder="Digite a sua resposta ou observação aqui..."
-                              rows={3}
-                              className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-semibold text-slate-700 placeholder-slate-400"
-                            />
-                          </div>
-                        )}
-
-                        {item.allowObservation && (
-                          <div className="mt-4">
-                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 ml-1">
-                              Observação / Texto Livre
-                            </label>
-                            <textarea
-                              value={observations[item.id] || ''}
-                              onChange={(e) => setObservations(prev => ({ ...prev, [item.id]: e.target.value }))}
-                              placeholder="Digite observações ou justificativas se aplicável..."
-                              rows={2}
-                              className="w-full px-4 py-3 bg-slate-150 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-semibold text-slate-700 placeholder-slate-450"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                          </AnimatePresence>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="p-8 bg-slate-50/50 border-t border-slate-100 flex justify-end gap-4">
+                {/* VISUAL BOTTOM ACTION FOOTER FOR SUBMISSION */}
+                <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row justify-end gap-3 rounded-b-[2.5rem]">
                   <button
-                    onClick={() => setFillingTemplate(null)}
-                    className="px-6 py-3 font-bold text-slate-500 hover:bg-white rounded-xl transition-all"
+                    type="button"
+                    onClick={() => {
+                      setModalConfig({
+                        isOpen: true,
+                        title: 'Descartar Check-list?',
+                        message: 'Deseja realmente cancelar este preenchimento de qualidade? Todos os dados marcados serão perdidos.',
+                        type: 'warning',
+                        showConfirmButton: true,
+                        confirmText: 'Sim, Descartar',
+                        onConfirm: () => {
+                          closeModal();
+                          setFillingTemplate(null);
+                          setResponses({});
+                          setObservations({});
+                          setSubmissionLineId('');
+                        }
+                      });
+                    }}
+                    className="px-5 py-3 font-extrabold text-slate-500 hover:bg-slate-100 rounded-xl text-xs uppercase tracking-wider transition-all"
                   >
                     Descartar
                   </button>
                   <button
+                    type="button"
                     onClick={handleSubmitChecklist}
-                    className="px-8 py-3 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-100 transition-all flex items-center gap-2"
+                    className="px-8 py-3 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-700 shadow-md shadow-emerald-100 text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                   >
-                    <Save className="w-5 h-5" />
+                    <Save className="w-4 h-4 shrink-0" />
                     Finalizar Inspeção
                   </button>
                 </div>
@@ -1211,6 +1439,7 @@ const Quality: React.FC = () => {
                         setFillingTemplate(template);
                         setResponses({});
                         setObservations({});
+                        setExpandedItemId(template.items[0]?.id || null);
                         // If selected line targets this template, default to it; otherwise default to empty or the template's single line
                         const defaultLineId = selectedLineId && targetLineIds.includes(selectedLineId)
                           ? selectedLineId

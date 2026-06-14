@@ -403,6 +403,21 @@
       },
       "required": ["templateId", "templateName", "operatorId", "operatorName", "responses", "createdAt"]
     },
+    "RouteDraft": {
+      "title": "Route Draft",
+      "description": "In-progress asset inspection route checklist draft.",
+      "type": "object",
+      "properties": {
+        "templateId": { "type": "string" },
+        "templateName": { "type": "string" },
+        "operatorId": { "type": "string" },
+        "selectedArea": { "type": "string" },
+        "selectedShift": { "type": "string" },
+        "selectedTeam": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["templateId", "operatorId", "updatedAt"]
+    },
     "SafetyObservation": {
       "title": "Safety Observation",
       "description": "Reported safety hazard or non-conformity.",
@@ -612,6 +627,10 @@
     "/route_submissions/{submissionId}": {
       "schema": "RouteSubmission",
       "description": "Completed asset inspection routes submissions."
+    },
+    "/route_drafts/{draftId}": {
+      "schema": "RouteDraft",
+      "description": "In-progress asset inspection route drafts."
     },
     "/safety_observations/{observationId}": {
       "schema": "SafetyObservation",
