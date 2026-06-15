@@ -58,7 +58,11 @@ import {
   ChevronRight,
   LogOut,
   Check,
-  Home
+  Home,
+  Video,
+  GripVertical,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -100,6 +104,7 @@ export interface RouteTemplate {
   sectorId: string; // Associated system sector, line, or 'all' (meaning factory wide)
   frequency: 'shift' | 'weekly' | 'custom';
   customFrequencyPeriod?: string; // used when frequency is 'custom'
+  allowedShifts?: string[];
   equipments: RouteEquipmentItem[];
   createdAt: any;
   updatedAt?: any;
@@ -119,6 +124,7 @@ export interface RouteSubmission {
     status: 'ok' | 'not_ok';
     notes: string;
     photoUrl?: string;
+    videoUrl?: string;
     value?: any; // Dynamic field value collected
     observationGenerated?: boolean;
     observationText?: string;
@@ -326,7 +332,10 @@ const OperationalRoutes: React.FC = () => {
   const [templateSectorId, setTemplateSectorId] = useState('all');
   const [templateFrequency, setTemplateFrequency] = useState<'shift' | 'weekly' | 'custom'>('shift');
   const [templateCustomPeriod, setTemplateCustomPeriod] = useState('');
+  const [templateAllowedShifts, setTemplateAllowedShifts] = useState<string[]>([]);
   const [templateEquipments, setTemplateEquipments] = useState<RouteEquipmentItem[]>([]);
+  const [draggedEquipmentIndex, setDraggedEquipmentIndex] = useState<number | null>(null);
+  const [dragOverEquipmentIndex, setDragOverEquipmentIndex] = useState<number | null>(null);
 
   // MASS EQUIPMENT CHARGE FROM CSV
   const [isCsvImportModalOpen, setIsCsvImportModalOpen] = useState(false);
@@ -340,6 +349,7 @@ const OperationalRoutes: React.FC = () => {
     status: 'ok' | 'not_ok';
     notes: string;
     photoUrl?: string;
+    videoUrl?: string;
     value?: any;
     generateObservation?: boolean;
     observationText?: string;
@@ -449,6 +459,24 @@ const OperationalRoutes: React.FC = () => {
       setIsReadOnlyRoute(false);
     }
   }, [selectedTemplate]);
+
+  // Lock parent layout scrolling on active inspection to keep route header perfectly sticky at the top
+  useEffect(() => {
+    if (activeTab === 'new_route' && selectedTemplate && routeStep === 'active_inspection') {
+      const mainEl = document.querySelector('main');
+      if (mainEl) {
+        const originalOverflow = mainEl.style.overflow || 'auto';
+        mainEl.style.overflow = 'hidden';
+        
+        // Also scroll to top initially so that the container is fully in view
+        mainEl.scrollTo({ top: 0, behavior: 'instant' });
+        
+        return () => {
+          mainEl.style.overflow = originalOverflow;
+        };
+      }
+    }
+  }, [activeTab, selectedTemplate, routeStep]);
 
   // Subscribe to Route Templates
   useEffect(() => {
@@ -616,7 +644,8 @@ const OperationalRoutes: React.FC = () => {
           status: resp.status,
           notes: resp.notes,
           value: resp.value,
-          photoUrl: resp.photoUrl
+          photoUrl: resp.photoUrl,
+          videoUrl: resp.videoUrl
         };
       }
     }
@@ -639,7 +668,8 @@ const OperationalRoutes: React.FC = () => {
           status: resp.status,
           notes: resp.notes,
           value: resp.value,
-          photoUrl: resp.photoUrl
+          photoUrl: resp.photoUrl,
+          videoUrl: resp.videoUrl
         });
       }
     });
@@ -652,6 +682,7 @@ const OperationalRoutes: React.FC = () => {
     setTemplateSectorId('all');
     setTemplateFrequency('shift');
     setTemplateCustomPeriod('');
+    setTemplateAllowedShifts([]);
     setTemplateEquipments([
       { 
         id: 'eq_1', 
@@ -673,6 +704,7 @@ const OperationalRoutes: React.FC = () => {
     setTemplateSectorId(tmpl.sectorId || 'all');
     setTemplateFrequency(tmpl.frequency || 'shift');
     setTemplateCustomPeriod(tmpl.customFrequencyPeriod || '');
+    setTemplateAllowedShifts(tmpl.allowedShifts || []);
     setTemplateEquipments(tmpl.equipments || []);
     setIsTemplateModalOpen(true);
   };
@@ -704,6 +736,35 @@ const OperationalRoutes: React.FC = () => {
       }
       return eq;
     }));
+  };
+
+  const moveEquipmentUp = (index: number) => {
+    if (index === 0) return;
+    const list = [...templateEquipments];
+    const prev = list[index - 1];
+    list[index - 1] = list[index];
+    list[index] = prev;
+    setTemplateEquipments(list);
+  };
+
+  const moveEquipmentDown = (index: number) => {
+    if (index === templateEquipments.length - 1) return;
+    const list = [...templateEquipments];
+    const next = list[index + 1];
+    list[index + 1] = list[index];
+    list[index] = next;
+    setTemplateEquipments(list);
+  };
+
+  const handleDropEquipment = (targetIdx: number) => {
+    if (draggedEquipmentIndex === null) return;
+    const list = [...templateEquipments];
+    const itemToMove = list[draggedEquipmentIndex];
+    list.splice(draggedEquipmentIndex, 1);
+    list.splice(targetIdx, 0, itemToMove);
+    setTemplateEquipments(list);
+    setDraggedEquipmentIndex(null);
+    setDragOverEquipmentIndex(null);
   };
 
   // CSV Bulk Import handlers
@@ -816,6 +877,7 @@ const OperationalRoutes: React.FC = () => {
         sectorId: templateSectorId,
         frequency: templateFrequency,
         customFrequencyPeriod: templateFrequency === 'custom' ? templateCustomPeriod : '',
+        allowedShifts: templateAllowedShifts,
         equipments: templateEquipments.map(eq => ({
           id: eq.id,
           name: eq.name,
@@ -868,22 +930,45 @@ const OperationalRoutes: React.FC = () => {
     }
   };
 
-  // Image upload base64 parser
+  // Image/video upload base64 parser
   const handleFileChange = (equipmentId: string, event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      if (file.size > 25 * 1024 * 1024) {
+        setModalConfig({
+          isOpen: true,
+          title: 'Arquivo muito grande',
+          message: 'O tamanho máximo permitido para vídeos e fotos é de 25MB para garantir a estabilidade do sistema.',
+          type: 'error'
+        });
+        return;
+      }
+
+      const isVideo = file.type.startsWith('video/');
       const reader = new FileReader();
       reader.onloadend = () => {
         setRouteResponses(prev => ({
           ...prev,
           [equipmentId]: {
             ...prev[equipmentId],
-            photoUrl: reader.result as string
+            photoUrl: isVideo ? undefined : (reader.result as string),
+            videoUrl: isVideo ? (reader.result as string) : undefined
           }
         }));
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleClearEquipmentMedia = (equipmentId: string) => {
+    setRouteResponses(prev => ({
+      ...prev,
+      [equipmentId]: {
+        ...prev[equipmentId],
+        photoUrl: undefined,
+        videoUrl: undefined
+      }
+    }));
   };
 
   // Initialize Route Execution responses
@@ -1046,6 +1131,7 @@ const OperationalRoutes: React.FC = () => {
               status: resp.status,
               notes: resp.notes || detail.notes || '',
               photoUrl: resp.photoUrl || detail.photoUrl || '',
+              videoUrl: resp.videoUrl || detail.videoUrl || '',
               value: resp.value !== undefined ? resp.value : '',
               observationGenerated: !!resp.generateObservation,
               observationText: resp.generateObservation ? resp.observationText : '',
@@ -1271,7 +1357,14 @@ const OperationalRoutes: React.FC = () => {
           <div className="space-y-4">
             <h2 className="text-xl font-black text-slate-900 tracking-tight ml-1">Rotas de Vistoria Ativas</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {templates.filter(t => t.active).map(tmpl => {
+              {templates
+                .filter(t => t.active)
+                .filter(t => {
+                  if (!t.allowedShifts || t.allowedShifts.length === 0) return true;
+                  const currentShift = getCurrentShift();
+                  return t.allowedShifts.includes(currentShift);
+                })
+                .map(tmpl => {
                 const sectorObj = sectors.find(s => s.id === tmpl.sectorId);
                 const lineObj = lines.find(l => l.id === tmpl.sectorId);
                 const scopeLabel = tmpl.sectorId === 'all' 
@@ -1316,6 +1409,11 @@ const OperationalRoutes: React.FC = () => {
                         <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-slate-50 text-slate-500 rounded">
                           {tmpl.equipments?.length || 0} Equipamentos
                         </span>
+                        {tmpl.allowedShifts && tmpl.allowedShifts.length > 0 && (
+                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-lg">
+                            {tmpl.allowedShifts.join(', ')}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -1412,7 +1510,12 @@ const OperationalRoutes: React.FC = () => {
         <motion.div 
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-slate-50 border border-slate-200 rounded-[2.5rem] max-w-2xl mx-auto overflow-hidden shadow-xl"
+          className={cn(
+            "bg-slate-50 border border-slate-200 rounded-[2.5rem] mx-auto overflow-hidden shadow-xl flex flex-col transition-all duration-300",
+            routeStep === 'active_inspection' 
+              ? "max-w-4xl h-[calc(100vh-64px)] max-h-[calc(100vh-64px)] md:h-[calc(100vh-100px)] md:max-h-[calc(100vh-100px)] w-full" 
+              : "max-w-2xl w-full"
+          )}
         >
           {/* VISUAL BRANDED FOREST GREEN HEADER BAR (Matches screenshots exactly) */}
           <div className="bg-[#0d6e4f] text-white p-6 relative flex flex-col items-center justify-center text-center shrink-0">
@@ -1491,7 +1594,10 @@ const OperationalRoutes: React.FC = () => {
           </div>
 
           {/* WIZARD PANEL BODY */}
-          <div className="p-6 md:p-8 bg-white space-y-6">
+          <div className={cn(
+            "p-6 md:p-8 bg-white space-y-6",
+            routeStep === 'active_inspection' ? "flex-1 overflow-y-auto" : ""
+          )}>
             
             {/* STEP 1: SELECT AREA */}
             {routeStep === 'select_area' && (
@@ -2304,6 +2410,70 @@ const OperationalRoutes: React.FC = () => {
                                     />
                                   </div>
 
+                                  {/* Section: Multimedia Attachment (Photo / Short Video) */}
+                                  <div className="border-t border-slate-100 pt-3 mt-1.5 space-y-1.5 text-left">
+                                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1 select-none">
+                                      <Camera className="w-3.5 h-3.5 text-slate-400" /> Evidência do Item (Foto ou Vídeo):
+                                    </span>
+                                    
+                                    {resp.photoUrl || resp.videoUrl ? (
+                                      <div className="relative border border-slate-200 rounded-2xl overflow-hidden bg-slate-950 flex flex-col justify-center items-center">
+                                        {resp.photoUrl && (
+                                          <img 
+                                            src={resp.photoUrl} 
+                                            alt="Mídia de inspeção" 
+                                            className="w-full max-h-48 object-cover rounded-2xl" 
+                                          />
+                                        )}
+                                        {resp.videoUrl && (
+                                          <video 
+                                            src={resp.videoUrl} 
+                                            controls 
+                                            playsInline
+                                            className="w-full max-h-48 object-contain rounded-2xl bg-black" 
+                                          />
+                                        )}
+                                        
+                                        {!isReadOnlyRoute && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleClearEquipmentMedia(eq.id)}
+                                            className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-rose-600 text-white rounded-full transition-colors cursor-pointer"
+                                            title="Remover anexo"
+                                          >
+                                            <X className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <>
+                                        {!isReadOnlyRoute ? (
+                                          <div className="flex gap-2">
+                                            <label className="flex-1 border-2 border-dashed border-slate-250 hover:border-[#0d6e4f] rounded-2xl p-4 flex flex-col items-center justify-center gap-1 cursor-pointer hover:bg-slate-50 transition-colors">
+                                              <Upload className="w-4 h-4 text-slate-400" />
+                                              <span className="text-[9px] font-black text-slate-600 uppercase tracking-wider block">
+                                                Anexar Foto ou Vídeo
+                                              </span>
+                                              <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest block block-inline">
+                                                Máximo 25MB (PNG, JPG, MP4)
+                                              </span>
+                                              <input
+                                                type="file"
+                                                accept="image/*,video/*"
+                                                onChange={(e) => handleFileChange(eq.id, e)}
+                                                className="hidden"
+                                              />
+                                            </label>
+                                          </div>
+                                        ) : (
+                                          <span className="text-[10px] text-slate-400 font-semibold italic mt-1 block">
+                                            Nenhuma mídia foi anexada para este item.
+                                          </span>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+
                                   {/* CONFIRM BUTTON */}
                                   <button
                                     type="button"
@@ -2447,6 +2617,11 @@ const OperationalRoutes: React.FC = () => {
                       <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
                         Foco de Rota: <span className="font-extrabold text-slate-700">{applicableLabel}</span>
                       </p>
+                      {tmpl.allowedShifts && tmpl.allowedShifts.length > 0 && (
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
+                          Turno(s) Autorizados: <span className="font-extrabold text-[#0d6e4f]">{tmpl.allowedShifts.join(', ')}</span>
+                        </p>
+                      )}
                     </div>
 
                     <div className="bg-slate-50 p-4 rounded-xl max-h-[140px] overflow-y-auto border border-slate-100/50">
@@ -2796,12 +2971,19 @@ const OperationalRoutes: React.FC = () => {
                           </span>
                         </div>
 
-                        {/* Image preview in detail modal */}
-                        {resp.photoUrl && (
+                        {/* Image/Video preview in detail modal */}
+                        {(resp.photoUrl || resp.videoUrl) && (
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-200/50">
                             <div>
-                              <span className="text-[9px] text-slate-400 font-black block mb-2 uppercase tracking-wide">Fotografia do local</span>
-                              <img src={resp.photoUrl} alt="Vistoria" className="w-full h-32 object-cover rounded-xl shadow-xs" />
+                              <span className="text-[9px] text-slate-400 font-black block mb-2 uppercase tracking-wide">
+                                Evidência anexada ({resp.photoUrl ? 'Foto' : 'Vídeo'})
+                              </span>
+                              {resp.photoUrl && (
+                                <img src={resp.photoUrl} alt="Vistoria" className="w-full h-32 object-cover rounded-xl shadow-xs" />
+                              )}
+                              {resp.videoUrl && (
+                                <video src={resp.videoUrl} controls playsInline className="w-full h-32 object-cover bg-black rounded-xl shadow-xs" />
+                              )}
                             </div>
                             
                             {/* If safety observation generating was linked */}
@@ -2928,7 +3110,55 @@ const OperationalRoutes: React.FC = () => {
                   )}
                 </div>
 
-                {/* EQUIPMENTS TABLE SETUP */}
+                {/* Agendamento de Turnos */}
+                <div className="bg-slate-50/50 border border-slate-200/60 p-5 rounded-2xl space-y-3">
+                  <div>
+                    <label className="text-xs font-black text-slate-800 uppercase tracking-wider block">Agendamento & Restrição de Execução por Turno</label>
+                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Determine em quais turnos esta rota de vistoria poderá ser realizada. Deixe desmarcado para livre visualização.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-4 pt-1">
+                    {['Turno 1', 'Turno 2', 'Turno 3'].map((sht) => {
+                      const hourRange = sht === 'Turno 1' ? '00:00 - 08:00' : sht === 'Turno 2' ? '08:00 - 16:00' : '16:00 - 24:00';
+                      const isSelected = templateAllowedShifts.includes(sht);
+                      return (
+                        <button
+                          key={sht}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setTemplateAllowedShifts(prev => prev.filter(s => s !== sht));
+                            } else {
+                              setTemplateAllowedShifts(prev => [...prev, sht]);
+                            }
+                          }}
+                          className={cn(
+                            "flex-1 min-w-[140px] px-4 py-3 border rounded-xl flex flex-col items-center justify-center text-center transition-all",
+                            isSelected
+                              ? "bg-emerald-50 text-emerald-800 border-emerald-500 ring-2 ring-emerald-500/20"
+                              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                          )}
+                        >
+                          <span className="text-[11px] font-black uppercase tracking-wide">{sht}</span>
+                          <span className="text-[9px] text-slate-400 font-semibold mt-0.5">{hourRange}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {templateAllowedShifts.length > 0 && (
+                    <p className="text-[9px] text-emerald-700 font-black uppercase tracking-wider flex items-center gap-1 mt-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                      Visível somente no: {templateAllowedShifts.join(', ')}
+                    </p>
+                  )}
+                  {templateAllowedShifts.length === 0 && (
+                    <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider flex items-center gap-1 mt-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                      Livre: Visível e executável em todos os turnos
+                    </p>
+                  )}
+                </div>
+
+                 {/* EQUIPMENTS TABLE SETUP */}
                 <div className="space-y-4 pt-4">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
                     <h4 className="text-xs font-black text-slate-950 uppercase tracking-widest ml-1">Equipamentos associados ({templateEquipments.length})</h4>
@@ -2957,16 +3187,72 @@ const OperationalRoutes: React.FC = () => {
 
                   <div className="space-y-6 max-h-[400px] overflow-y-auto pr-2">
                     {templateEquipments.map((eq, idx) => (
-                      <div key={eq.id} className="p-5 bg-slate-50 border border-slate-200 rounded-3xl relative space-y-4">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveEquipmentField(eq.id)}
-                          className="absolute top-4 right-4 text-slate-300 hover:text-rose-500 transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block font-extrabold">Equipamento #{idx + 1}</span>
+                      <div 
+                        key={eq.id} 
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggedEquipmentIndex(idx);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setDragOverEquipmentIndex(idx);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedEquipmentIndex(null);
+                          setDragOverEquipmentIndex(null);
+                        }}
+                        onDrop={() => handleDropEquipment(idx)}
+                        className={cn(
+                          "p-5 bg-slate-50 border rounded-3xl relative space-y-4 transition-all duration-200",
+                          draggedEquipmentIndex === idx ? "opacity-30 bg-slate-100" : "",
+                          dragOverEquipmentIndex === idx ? "border-dashed border-emerald-400 scale-[0.98] bg-emerald-50/20" : "border-slate-200"
+                        )}
+                      >
+                        <div className="flex items-center justify-between border-b border-slate-200/55 pb-2">
+                          <div className="flex items-center gap-1.5 select-none">
+                            <div className="cursor-grab text-slate-400 hover:text-slate-600 active:cursor-grabbing p-1">
+                              <GripVertical className="w-4 h-4" />
+                            </div>
+                            <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest font-extrabold">
+                              Equipamento #{idx + 1}
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => moveEquipmentUp(idx)}
+                              disabled={idx === 0}
+                              className={cn(
+                                "p-1 rounded hover:bg-slate-200 text-slate-500 transition-colors cursor-pointer",
+                                idx === 0 && "opacity-30 cursor-not-allowed"
+                              )}
+                              title="Mover para Cima"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveEquipmentDown(idx)}
+                              disabled={idx === templateEquipments.length - 1}
+                              className={cn(
+                                "p-1 rounded hover:bg-slate-200 text-slate-500 transition-colors cursor-pointer",
+                                idx === templateEquipments.length - 1 && "opacity-30 cursor-not-allowed"
+                              )}
+                              title="Mover para Baixo"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveEquipmentField(eq.id)}
+                              className="p-1 rounded hover:bg-rose-50 text-slate-350 hover:text-rose-500 transition-colors ml-1 cursor-pointer"
+                              title="Excluir Equipamento"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
 
                         {/* Row 1: Equipment Name, tag, specs */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
