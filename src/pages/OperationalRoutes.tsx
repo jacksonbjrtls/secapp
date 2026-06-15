@@ -28,6 +28,7 @@ import {
   Edit2, 
   CheckCircle2, 
   AlertTriangle, 
+  Lock,
   Camera, 
   Upload, 
   Download,
@@ -365,6 +366,8 @@ const OperationalRoutes: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedEquipmentId, setExpandedEquipmentId] = useState<string | null>(null);
   const [isDraftLoaded, setIsDraftLoaded] = useState(false);
+  const [isPrefilledFromHistory, setIsPrefilledFromHistory] = useState(false);
+  const [isReadOnlyRoute, setIsReadOnlyRoute] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
 
   // States for the detailed NON OK / Anomaly Specification Modal (Images 9 & 10)
@@ -416,6 +419,37 @@ const OperationalRoutes: React.FC = () => {
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
   ];
 
+  // Helper helper function to find route submission under current shift and today's date
+  const getTemplateShiftSubmissionToday = (tmplId: string) => {
+    const currentShift = getCurrentShift();
+    const shiftMapping: Record<string, string> = {
+      'Turno 1': '00:00 - 08:00',
+      'Turno 2': '08:00 - 16:00',
+      'Turno 3': '16:00 - 24:00'
+    };
+    const currentShiftValue = shiftMapping[currentShift] || '08:00 - 16:00';
+    const today = new Date();
+
+    return submissions.find(s => {
+      if (s.templateId !== tmplId) return false;
+      if (s.shift !== currentShiftValue) return false;
+      const subDate = safeToDate(s.createdAt);
+      if (!subDate) return false;
+      return (
+        subDate.getDate() === today.getDate() &&
+        subDate.getMonth() === today.getMonth() &&
+        subDate.getFullYear() === today.getFullYear()
+      );
+    }) || null;
+  };
+
+  // Reset read-only status when template exits
+  useEffect(() => {
+    if (!selectedTemplate) {
+      setIsReadOnlyRoute(false);
+    }
+  }, [selectedTemplate]);
+
   // Subscribe to Route Templates
   useEffect(() => {
     if (isCsvImportModalOpen) {
@@ -459,7 +493,7 @@ const OperationalRoutes: React.FC = () => {
 
   // Auto-save route draft to Firestore on changes
   useEffect(() => {
-    if (!selectedTemplate || !user || routeStep !== 'active_inspection') return;
+    if (!selectedTemplate || !user || routeStep !== 'active_inspection' || isReadOnlyRoute) return;
 
     const hasValues = Object.keys(routeResponses).length > 0;
     if (!hasValues) return;
@@ -854,6 +888,23 @@ const OperationalRoutes: React.FC = () => {
 
   // Initialize Route Execution responses
   const handleStartRoute = async (tmpl: RouteTemplate) => {
+    // Check if the route has already been completed in the current shift today
+    const existingSubmission = getTemplateShiftSubmissionToday(tmpl.id);
+    if (existingSubmission) {
+      setIsReadOnlyRoute(true);
+      const dateText = existingSubmission.createdAt?.toDate 
+        ? existingSubmission.createdAt.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        : 'recentemente';
+      setModalConfig({
+        isOpen: true,
+        title: 'Modo de Leitura: Turno Concluído',
+        message: `Esta rota operacional já foi realizada e enviada neste turno às ${dateText} por ${existingSubmission.operatorName}. Carregamos os dados preenchidos em modo de visualização / somente-leitura.`,
+        type: 'info'
+      });
+    } else {
+      setIsReadOnlyRoute(false);
+    }
+
     setSelectedTemplate(tmpl);
     setSearchQuery('');
     setExpandedEquipmentId(null);
@@ -877,6 +928,7 @@ const OperationalRoutes: React.FC = () => {
       setRouteResponses(loadedDraft.routeResponses || {});
       setDetailingResponses(loadedDraft.detailingResponses || {});
       if (loadedDraft.selectedArea) setSelectedArea(loadedDraft.selectedArea);
+      setIsPrefilledFromHistory(false);
       
       // Resolve sector and line
       if (loadedDraft.selectedSector) {
@@ -904,17 +956,20 @@ const OperationalRoutes: React.FC = () => {
       setIsDraftLoaded(true);
       setRouteStep('active_inspection');
     } else {
+      const lastSubmissionForTemplate = submissions.find(s => s.templateId === tmpl.id);
       const initialResponses: Record<string, any> = {};
       tmpl.equipments.forEach(eq => {
+        const prevResp = lastSubmissionForTemplate?.responses?.find(r => r.equipmentId === eq.id);
         initialResponses[eq.id] = {
-          status: 'ok',
-          notes: '',
-          value: eq.type === 'range' ? 'normal' : '',
+          status: prevResp ? prevResp.status : 'ok',
+          notes: prevResp ? prevResp.notes : '',
+          value: prevResp && prevResp.value !== undefined ? prevResp.value : (eq.type === 'range' ? 'normal' : ''),
           generateObservation: false,
           observationText: ''
         };
       });
       setRouteResponses(initialResponses);
+      setIsPrefilledFromHistory(!!lastSubmissionForTemplate);
       
       const matchedSector = sectors.find(s => s.id === tmpl.sectorId) || sectors[0] || null;
       const matchedLine = matchedSector && matchedSector.lineIds && matchedSector.lineIds.length > 0
@@ -1225,14 +1280,29 @@ const OperationalRoutes: React.FC = () => {
                 
                 const showPeriod = tmpl.frequency === 'custom' && tmpl.customFrequencyPeriod;
 
+                const completionToday = getTemplateShiftSubmissionToday(tmpl.id);
+
                 return (
-                  <div key={tmpl.id} className="bg-white border border-slate-200 p-8 rounded-[2rem] shadow-xs flex flex-col justify-between hover:border-emerald-500 transition-all group">
+                  <div key={tmpl.id} className={cn(
+                    "bg-white border p-8 rounded-[2rem] shadow-xs flex flex-col justify-between hover:border-emerald-500 transition-all group",
+                    completionToday ? "border-emerald-100 bg-[#fafdfb]" : "border-slate-200"
+                  )}>
                     <div className="space-y-4">
-                      <div className="w-11 h-11 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
+                      <div className={cn(
+                        "w-11 h-11 rounded-2xl flex items-center justify-center",
+                        completionToday ? "bg-emerald-100 text-emerald-700" : "bg-emerald-50 text-emerald-600"
+                      )}>
                         <Wrench className="w-5 h-5" />
                       </div>
                       <div>
-                        <h3 className="font-black text-lg text-slate-900 tracking-tight leading-tight group-hover:text-emerald-600 transition-colors uppercase">{tmpl.name}</h3>
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-black text-lg text-slate-900 tracking-tight leading-tight group-hover:text-emerald-600 transition-colors uppercase">{tmpl.name}</h3>
+                          {completionToday && (
+                            <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg flex items-center gap-1 shrink-0 animate-fade-in select-none">
+                              <Check className="w-3 h-3 text-emerald-800 shrink-0" /> Turno Ok
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-slate-400 font-semibold mt-1 flex items-center gap-1">
                           <LayoutGrid className="w-3.5 h-3.5 text-slate-400" /> {scopeLabel}
                         </p>
@@ -1251,9 +1321,18 @@ const OperationalRoutes: React.FC = () => {
 
                     <button
                       onClick={() => handleStartRoute(tmpl)}
-                      className="w-full mt-6 py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
+                      className={cn(
+                        "w-full mt-6 py-3 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2",
+                        completionToday 
+                          ? "bg-slate-100 hover:bg-slate-200 text-slate-500 border border-slate-200" 
+                          : "bg-slate-900 hover:bg-slate-800 text-white"
+                      )}
                     >
-                      Iniciar Ronda <Clipboard className="w-4 h-4" />
+                      {completionToday ? (
+                        <>Ronda Concluída <Check className="w-4 h-4 text-emerald-600 shrink-0" /></>
+                      ) : (
+                        <>Iniciar Ronda <Clipboard className="w-4 h-4 shrink-0" /></>
+                      )}
                     </button>
                   </div>
                 );
@@ -1408,36 +1487,7 @@ const OperationalRoutes: React.FC = () => {
               )}
             </div>
 
-            {/* Right Bracket Logout Icon */}
-            <button
-              onClick={() => {
-                setModalConfig({
-                  isOpen: true,
-                  title: 'Cancelar Ronda?',
-                  message: 'Deseja realmente abandonar a execução desta rota operacional? Todos os dados preenchidos serão perdidos.',
-                  type: 'warning',
-                  showConfirmButton: true,
-                  confirmText: 'Sair da Rota',
-                  onConfirm: () => {
-                    closeModal();
-                    if (user && selectedTemplate) {
-                      const draftId = `${user.uid}_${selectedTemplate.id}`;
-                      deleteDoc(doc(db, 'route_drafts', draftId)).catch(console.error);
-                    }
-                    setSelectedTemplate(null);
-                    setRouteResponses({});
-                    setDetailingResponses({});
-                    setIsDraftLoaded(false);
-                    setDraftSavedAt(null);
-                    setActiveTab('my_routes');
-                  }
-                });
-              }}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-white hover:bg-emerald-800 p-2 rounded-full transition-colors"
-              title="Sair"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
+
           </div>
 
           {/* WIZARD PANEL BODY */}
@@ -1738,6 +1788,38 @@ const OperationalRoutes: React.FC = () => {
                   </button>
                 </div>
 
+                {isReadOnlyRoute && (
+                  <div className="bg-amber-50 border border-amber-200/60 p-4 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-800 animate-fade-in sm:px-6 shadow-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center shrink-0">
+                        <Lock className="w-5 h-5 text-amber-705" />
+                      </div>
+                      <div className="text-left leading-tight">
+                        <h4 className="text-xs font-black text-amber-900 uppercase tracking-wide">Rota Concluída neste Turno</h4>
+                        <p className="text-[10px] text-amber-700 font-bold mt-0.5 max-w-sm">
+                          Esta rota operacional já foi realizada e enviada neste turno. Você está visualizando os dados preenchidos no modo somente leitura.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isPrefilledFromHistory && !isDraftLoaded && !isReadOnlyRoute && (
+                  <div className="bg-[#f0fbf6] border border-[#d1f2e1] p-4 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-800 animate-fade-in sm:px-6 shadow-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-emerald-100 flex items-center justify-center shrink-0">
+                        <History className="w-5 h-5 text-[#0d6e4f]" />
+                      </div>
+                      <div className="text-left leading-tight">
+                        <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wide">Integração por Histórico</h4>
+                        <p className="text-[10px] text-emerald-700 font-bold mt-0.5 max-w-sm">
+                          Os campos desta rota foram pré-preenchidos com os dados da última inspeção realizada. Revise e adicione notas caso haja necessidade de correção.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {isDraftLoaded && draftSavedAt && (
                   <div className="bg-emerald-50 border border-emerald-200/80 p-4 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-800 animate-fade-in sm:px-6 shadow-xs">
                     <div className="flex items-center gap-3">
@@ -1753,6 +1835,7 @@ const OperationalRoutes: React.FC = () => {
                     </div>
                     <button
                       type="button"
+                      disabled={isReadOnlyRoute}
                       onClick={() => {
                         setModalConfig({
                           isOpen: true,
@@ -1767,7 +1850,12 @@ const OperationalRoutes: React.FC = () => {
                           }
                         });
                       }}
-                      className="text-slate-500 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-100/30 font-extrabold text-[10px] uppercase tracking-wider py-2 px-3 rounded-xl border border-slate-200 bg-white shadow-xs leading-none shrink-0 transition-colors cursor-pointer"
+                      className={cn(
+                        "font-extrabold text-[10px] uppercase tracking-wider py-2 px-3 rounded-xl border shadow-xs leading-none shrink-0 transition-colors",
+                        isReadOnlyRoute
+                          ? "bg-slate-100 text-slate-305 border-slate-200 cursor-not-allowed opacity-60"
+                          : "text-slate-500 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-100/30 bg-white border-slate-200 cursor-pointer"
+                      )}
                     >
                       Começar do Zero
                     </button>
@@ -1892,46 +1980,36 @@ const OperationalRoutes: React.FC = () => {
 
                           <AnimatePresence>
                             {isExpanded && (
-                              <>
-                                {/* Transparent backdrop overlay for click away */}
-                                <div
-                                  className="fixed inset-0 z-30 cursor-default"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setExpandedEquipmentId(null);
-                                  }}
-                                />
-                                
-                                <motion.div
-                                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                  className="absolute left-0 right-0 mt-2 z-40 w-full bg-white border border-slate-200 rounded-3xl shadow-2xl p-5 space-y-4 text-xs font-semibold text-slate-800"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  {/* Header of Dropdown */}
-                                  <div className="border-b border-slate-100 pb-2">
-                                    <p className="text-[10px] font-black text-[#0d6e4f] tracking-wide uppercase">Parâmetros de Coleta</p>
-                                    <p className="text-slate-500 font-bold text-[11px] mt-0.5 truncate max-w-[260px] leading-tight">{eq.name}</p>
-                                  </div>
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: "auto" }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="overflow-hidden border-t border-slate-100 p-5 space-y-4 text-xs font-semibold text-[#1e293b] bg-slate-50/40 rounded-b-3xl"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+
 
                                   {eq.description && (
                                     <p className="text-slate-400 text-[11px] leading-normal italic bg-slate-50 p-2 rounded-xl">" {eq.description} "</p>
                                   )}
 
                                   {/* Custom collect fields depending on type */}
-                                  <div className="space-y-3">
+                                  <div className="space-y-4">
                                     {/* CONDITION TYPE OPTION ROWS */}
                                     {eq.type === 'condition' && (
-                                      <div className="space-y-1.5">
-                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Parâmetro:</span>
-                                        <div className="flex flex-wrap gap-2">
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                                        <div className="flex flex-col text-left">
+                                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Parâmetro de Inspeção:</span>
+                                          <span className="text-xs font-black text-slate-700 uppercase mt-0.5">Selecione o Estado</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 justify-end">
                                           {(optionSets.find(o => o.id === eq.conditionOptionsId)?.options || ['OK', 'NÃO OK']).map((option, inlineOptionIdx) => {
                                             const isSelected = resp.value === option;
                                             return (
                                               <button
                                                 key={`${option}-${inlineOptionIdx}`}
                                                 type="button"
+                                                disabled={isReadOnlyRoute}
                                                 onClick={() => {
                                                   const labelLower = option.toLowerCase();
                                                   const autoStatus = (labelLower === 'not ok' || labelLower === 'nok' || labelLower.includes('não') || labelLower.includes('falha') || labelLower.includes('instável'))
@@ -1952,7 +2030,8 @@ const OperationalRoutes: React.FC = () => {
                                                   }
                                                 }}
                                                 className={cn(
-                                                  "px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
+                                                  "px-3 py-2 rounded-xl text-xs font-bold border transition-all",
+                                                  isReadOnlyRoute ? "cursor-not-allowed opacity-75" : "cursor-pointer",
                                                   isSelected 
                                                     ? "bg-emerald-50 text-emerald-700 border-[#0d6e4f] ring-1 ring-[#0d6e4f]" 
                                                     : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
@@ -1968,46 +2047,62 @@ const OperationalRoutes: React.FC = () => {
 
                                     {/* NUMBER VALUE COLLECT */}
                                     {eq.type === 'number' && (
-                                      <div className="space-y-1.5">
-                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Valor Medido:</span>
-                                        <input
-                                          type="number"
-                                          placeholder={`mín: ${eq.min ?? '0'} / máx: ${eq.max ?? '10'}...`}
-                                          value={resp.value || ''}
-                                          onChange={(e) => {
-                                            const rawVal = e.target.value;
-                                            const valNum = parseFloat(rawVal);
-                                            let autoStatus = 'ok';
-                                            if (rawVal !== '' && !isNaN(valNum)) {
-                                              const minLimit = eq.min !== undefined ? eq.min : 0;
-                                              const maxLimit = eq.max !== undefined ? eq.max : 10;
-                                              if (valNum < minLimit || valNum > maxLimit) {
-                                                autoStatus = 'not_ok';
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                                        <div className="flex flex-col text-left">
+                                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Valor Medido:</span>
+                                          <span className="text-xs font-black text-slate-700 uppercase mt-0.5">
+                                            Limites: {eq.min ?? '0'} a {eq.max ?? '10'} {eq.unit ?? ''}
+                                          </span>
+                                        </div>
+                                        <div className="flex gap-2 justify-end w-full sm:w-auto">
+                                          <input
+                                            type="number"
+                                            placeholder="..."
+                                            disabled={isReadOnlyRoute}
+                                            value={resp.value || ''}
+                                            onChange={(e) => {
+                                              const rawVal = e.target.value;
+                                              const valNum = parseFloat(rawVal);
+                                              let autoStatus = 'ok';
+                                              if (rawVal !== '' && !isNaN(valNum)) {
+                                                const minLimit = eq.min !== undefined ? eq.min : 0;
+                                                const maxLimit = eq.max !== undefined ? eq.max : 10;
+                                                if (valNum < minLimit || valNum > maxLimit) {
+                                                  autoStatus = 'not_ok';
+                                                }
                                               }
-                                            }
-                                            setRouteResponses(prev => ({
-                                              ...prev,
-                                              [eq.id]: { 
-                                                ...prev[eq.id], 
-                                                value: rawVal,
-                                                status: autoStatus as 'ok' | 'not_ok'
+                                              setRouteResponses(prev => ({
+                                                ...prev,
+                                                [eq.id]: { 
+                                                  ...prev[eq.id], 
+                                                  value: rawVal,
+                                                  status: autoStatus as 'ok' | 'not_ok'
+                                                }
+                                              }));
+                                              
+                                              if (autoStatus === 'not_ok') {
+                                                setAnomalyDetailingEqId(eq.id);
                                               }
-                                            }));
-                                            
-                                            if (autoStatus === 'not_ok') {
-                                              setAnomalyDetailingEqId(eq.id);
-                                            }
-                                          }}
-                                          className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-1 focus:ring-[#0d6e4f] font-bold"
-                                        />
+                                            }}
+                                            className={cn(
+                                              "w-full sm:w-36 text-right text-xs px-3 py-2 border rounded-xl outline-none font-bold",
+                                              isReadOnlyRoute 
+                                                ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" 
+                                                : "bg-slate-50 border-slate-200 text-slate-705 focus:ring-1 focus:ring-[#0d6e4f]"
+                                            )}
+                                          />
+                                        </div>
                                       </div>
                                     )}
 
                                     {/* RANGE SELECTIONS BAIXO/NORMAL/ALTO */}
                                     {eq.type === 'range' && (
-                                      <div className="space-y-1.5">
-                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Nível Operacional:</span>
-                                        <div className="flex gap-2">
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                                        <div className="flex flex-col text-left">
+                                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Nível Operacional:</span>
+                                          <span className="text-xs font-black text-slate-700 uppercase mt-0.5">Defina o Nível</span>
+                                        </div>
+                                        <div className="flex gap-1.5 justify-end w-full sm:w-auto shrink-0">
                                           {[
                                             { label: 'BAIXO', val: 'low', col: 'bg-amber-600 text-white border-amber-600' },
                                             { label: 'NORMAL / OK', val: 'normal', col: 'bg-[#0d6e4f] text-white border-[#0d6e4f]' },
@@ -2018,6 +2113,7 @@ const OperationalRoutes: React.FC = () => {
                                               <button
                                                 key={rnVal.val}
                                                 type="button"
+                                                disabled={isReadOnlyRoute}
                                                 onClick={() => {
                                                   const autoStatus = rnVal.val === 'low' || rnVal.val === 'high' ? 'not_ok' : 'ok';
                                                   setRouteResponses(prev => ({
@@ -2033,7 +2129,8 @@ const OperationalRoutes: React.FC = () => {
                                                   }
                                                 }}
                                                 className={cn(
-                                                  "flex-1 py-1.5 rounded-xl text-[9px] font-black uppercase border transition-all text-center cursor-pointer",
+                                                  "px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase border transition-all text-center",
+                                                  isReadOnlyRoute ? "cursor-not-allowed opacity-75" : "cursor-pointer",
                                                   isActive ? rnVal.col : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
                                                 )}
                                               >
@@ -2047,12 +2144,16 @@ const OperationalRoutes: React.FC = () => {
 
                                     {/* BARCODE VALUE COLLECT */}
                                     {eq.type === 'barcode' && (
-                                      <div className="space-y-1.5 relative">
-                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Identificador Cód. Barras:</span>
-                                        <div className="flex gap-2">
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                                        <div className="flex flex-col text-left">
+                                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Cód. Barras:</span>
+                                          <span className="text-xs font-black text-slate-700 uppercase mt-0.5">Identificador Cód. Barras</span>
+                                        </div>
+                                        <div className="flex gap-2 justify-end w-full sm:w-auto shrink-0">
                                           <input
                                             type="text"
                                             placeholder="Digite ou leia..."
+                                            disabled={isReadOnlyRoute}
                                             value={resp.value || ''}
                                             onChange={(e) => {
                                               setRouteResponses(prev => ({
@@ -2060,12 +2161,19 @@ const OperationalRoutes: React.FC = () => {
                                                 [eq.id]: { ...prev[eq.id], value: e.target.value }
                                               }));
                                             }}
-                                            className="flex-1 text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold"
+                                            className={cn(
+                                              "w-full sm:w-36 text-xs px-3 py-2 border rounded-xl outline-none font-bold text-right",
+                                              isReadOnlyRoute ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" : "bg-slate-50 border-slate-200 text-slate-700"
+                                            )}
                                           />
                                           <button
                                             type="button"
+                                            disabled={isReadOnlyRoute}
                                             onClick={() => setActiveScanner(eq.id)}
-                                            className="p-2 bg-emerald-50 text-[#0d6e4f] border border-emerald-100 rounded-xl hover:bg-emerald-100 shrink-0 cursor-pointer"
+                                            className={cn(
+                                              "p-2 rounded-xl shrink-0 border",
+                                              isReadOnlyRoute ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" : "bg-emerald-50 text-[#0d6e4f] border-emerald-100 hover:bg-emerald-100 cursor-pointer"
+                                            )}
                                           >
                                             <QrCode className="w-4 h-4" />
                                           </button>
@@ -2106,11 +2214,81 @@ const OperationalRoutes: React.FC = () => {
                                     )}
                                   </div>
 
+                                  {/* HISTORICAL RECORDS OF THIS EQUIPMENT (WITHIN ACTIVE ROUTE) */}
+                                  {(() => {
+                                    const eqHistory = submissions
+                                      .map(sub => {
+                                        const r = sub.responses?.find(resp => resp.equipmentId === eq.id);
+                                        if (!r) return null;
+                                        return {
+                                          createdAt: sub.createdAt,
+                                          operatorName: sub.operatorName,
+                                          status: r.status,
+                                          value: r.value,
+                                          notes: r.notes
+                                        };
+                                      })
+                                      .filter((item): item is NonNullable<typeof item> => item !== null)
+                                      .slice(0, 3);
+                                    
+                                    if (eqHistory.length === 0) return null;
+
+                                    return (
+                                      <div className="border-t border-slate-100 pt-3 mt-1.5 space-y-1.5 text-left">
+                                        <div className="flex items-center gap-1.5 select-none">
+                                          <History className="w-3.5 h-3.5 text-slate-400" />
+                                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Histórico Recente de Parâmetros:</span>
+                                        </div>
+                                        <div className="bg-slate-50 border border-slate-150 rounded-2xl p-2.5 divide-y divide-slate-150/40">
+                                          {eqHistory.map((hist, histIdx) => {
+                                            const rawDate = hist.createdAt;
+                                            let dateText = 'Data indisponível';
+                                            if (rawDate) {
+                                              const d = rawDate.toDate ? rawDate.toDate() : new Date(rawDate);
+                                              dateText = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                                            }
+                                            
+                                            let valDisplay = hist.value ?? '';
+                                            if (valDisplay === 'low') valDisplay = 'BAIXO';
+                                            if (valDisplay === 'normal') valDisplay = 'NORMAL / OK';
+                                            if (valDisplay === 'high') valDisplay = 'ALTO';
+
+                                            return (
+                                              <div key={histIdx} className="text-[10px] text-slate-600 font-medium py-1.5 first:pt-0 last:pb-0 leading-normal">
+                                                <div className="flex items-center justify-between font-bold text-slate-400">
+                                                  <span>{dateText}</span>
+                                                  <span className="text-[8px] font-black px-1.5 py-0.5 rounded-sm uppercase tracking-wider bg-slate-205 text-slate-600">
+                                                    {hist.operatorName?.split(' ')[0] || 'Inspetor'}
+                                                  </span>
+                                                </div>
+                                                <div className="mt-1 flex items-center justify-between gap-2.5 flex-wrap">
+                                                  <div className="flex items-center gap-1.5">
+                                                    <span className={cn(
+                                                      "w-2 h-2 rounded-full shrink-0",
+                                                      hist.status === 'not_ok' ? "bg-rose-500 animate-pulse" : "bg-emerald-500"
+                                                    )} />
+                                                    <span className="text-slate-800 font-extrabold uppercase">{valDisplay}</span>
+                                                  </div>
+                                                  {hist.notes && (
+                                                    <p className="text-slate-400 italic text-[9.5px] leading-tight w-full truncate max-w-full">
+                                                      "{hist.notes}"
+                                                    </p>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+
                                   {/* Custom notes text comment inside dropdown */}
                                   <div className="border-t border-slate-100 pt-3 mt-1 space-y-1">
                                     <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Notas / Detalhamento:</span>
                                     <textarea
                                       placeholder="Escreva observações adicionais para este item, observações técnicas ou detalhes do status..."
+                                      disabled={isReadOnlyRoute}
                                       value={resp.notes || ''}
                                       rows={3}
                                       onChange={(e) => {
@@ -2119,20 +2297,28 @@ const OperationalRoutes: React.FC = () => {
                                           [eq.id]: { ...prev[eq.id], notes: e.target.value }
                                         }));
                                       }}
-                                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-700 outline-none focus:ring-1 focus:ring-[#0d6e4f] text-xs resize-none"
+                                      className={cn(
+                                        "w-full border rounded-xl px-3 py-2 font-semibold text-slate-700 outline-none text-xs resize-none",
+                                        isReadOnlyRoute ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" : "bg-slate-50 border-slate-200 focus:ring-1 focus:ring-[#0d6e4f]"
+                                      )}
                                     />
                                   </div>
 
                                   {/* CONFIRM BUTTON */}
                                   <button
                                     type="button"
+                                    disabled={isReadOnlyRoute}
                                     onClick={() => setExpandedEquipmentId(null)}
-                                    className="w-full py-2.5 bg-[#0d6e4f] hover:bg-emerald-800 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider transition-colors shadow-xs cursor-pointer"
+                                    className={cn(
+                                      "w-full py-2.5 font-extrabold rounded-xl text-[10px] uppercase tracking-wider transition-colors shadow-xs",
+                                      isReadOnlyRoute
+                                        ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                                        : "bg-[#0d6e4f] hover:bg-emerald-800 text-white cursor-pointer"
+                                    )}
                                   >
                                     OK / Confirmar
                                   </button>
-                                </motion.div>
-                              </>
+                              </motion.div>
                             )}
                           </AnimatePresence>
                         </div>
@@ -2147,6 +2333,15 @@ const OperationalRoutes: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
+                        if (isReadOnlyRoute) {
+                          setSelectedTemplate(null);
+                          setRouteResponses({});
+                          setDetailingResponses({});
+                          setIsDraftLoaded(false);
+                          setDraftSavedAt(null);
+                          setActiveTab('my_routes');
+                          return;
+                        }
                         setModalConfig({
                           isOpen: true,
                           title: 'Cancelar Ronda?',
@@ -2171,16 +2366,26 @@ const OperationalRoutes: React.FC = () => {
                       }}
                       className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black rounded-xl text-xs uppercase tracking-wide leading-none"
                     >
-                      Voltar
+                      {isReadOnlyRoute ? 'Sair' : 'Voltar'}
                     </button>
                     
-                    <button
-                      type="button"
-                      onClick={handleSaveRouteSubmission}
-                      className="px-8 py-3 bg-[#0d6e4f] hover:bg-emerald-800 text-white font-black rounded-xl text-xs uppercase tracking-wide leading-none shadow-md shadow-emerald-50 active:scale-95 transition-all"
-                    >
-                      Finalizar Ronda
-                    </button>
+                    {isReadOnlyRoute ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="px-8 py-3 bg-slate-100 border border-slate-200 text-slate-400 font-black rounded-xl text-xs uppercase tracking-wide leading-none cursor-not-allowed"
+                      >
+                        Salvo neste Turno
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSaveRouteSubmission}
+                        className="px-8 py-3 bg-[#0d6e4f] hover:bg-emerald-800 text-white font-black rounded-xl text-xs uppercase tracking-wide leading-none shadow-md shadow-emerald-50 active:scale-95 transition-all"
+                      >
+                        Finalizar Ronda
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
