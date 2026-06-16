@@ -63,7 +63,11 @@ import {
   GripVertical,
   ChevronUp,
   ChevronDown,
-  Paperclip
+  Paperclip,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  CloudUpload
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -341,13 +345,110 @@ const OperationalRoutes: React.FC = () => {
   const [lightboxMedia, setLightboxMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
 
   // Partial Route Justification States
+  const [isExitModalOpen, setIsExitModalOpen] = useState(false);
   const [isPartialModalOpen, setIsPartialModalOpen] = useState(false);
   const [partialJustification, setPartialJustification] = useState('');
   const [inspectedCount, setInspectedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
+  // States to manage SQLite-like persistence offline queue
+  const [offlineQueue, setOfflineQueue] = useState<{ submission: any; safetyObservations: any[] }[]>([]);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('route_offline_queue');
+      if (saved) {
+        setOfflineQueue(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.error("Erro ao carregar fila offline:", e);
+    }
+  }, []);
+
+  const saveQueueToLocalStorage = (queue: { submission: any; safetyObservations: any[] }[]) => {
+    try {
+      localStorage.setItem('route_offline_queue', JSON.stringify(queue));
+      setOfflineQueue(queue);
+    } catch (e) {
+      console.error("Erro ao salvar fila offline:", e);
+    }
+  };
+
+  const syncOfflineSubmissions = async (forcedQueue?: any) => {
+    const queueToUpload = forcedQueue || offlineQueue;
+    if (isSyncing || queueToUpload.length === 0) return;
+    setIsSyncing(true);
+    setSyncError(null);
+    
+    let successCount = 0;
+    try {
+      for (const item of queueToUpload) {
+        // 1. Upload Submission with server timestamp
+        await addDoc(collection(db, 'route_submissions'), {
+          ...item.submission,
+          createdAt: serverTimestamp()
+        });
+        
+        // 2. Upload related safety observations
+        for (const obs of item.safetyObservations) {
+          await addDoc(collection(db, 'safety_observations'), {
+            ...obs,
+            createdAt: serverTimestamp()
+          });
+        }
+        successCount++;
+      }
+      
+      saveQueueToLocalStorage([]);
+      setModalConfig({
+        isOpen: true,
+        title: 'Sincronização Concluída!',
+        message: `${successCount} rota(s) salvas no modo offline foram sincronizadas com sucesso com o servidor central.`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error("Erro na sincronização offline:", err);
+      const remainingQueue = queueToUpload.slice(successCount);
+      saveQueueToLocalStorage(remainingQueue);
+      setSyncError("Problema de rede ao sincronizar. Sincronizaremos automaticamente quando houver internet estável.");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Monitor network status
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   // Filter states for Past Submissions list (Rondas) - Simplified, Professional Date Filter
   const [histSelectedDate, setHistSelectedDate] = useState<string>('');
+
+  const allSubmissionsMerged = useMemo(() => {
+    const localSubs = offlineQueue.map((item, idx) => ({
+      id: `offline_pending_${idx}`,
+      ...item.submission,
+      isOfflinePending: true
+    }));
+    return [...localSubs, ...submissions];
+  }, [submissions, offlineQueue]);
 
   const filteredHistSubmissions = useMemo(() => {
     const today = new Date();
@@ -355,7 +456,7 @@ const OperationalRoutes: React.FC = () => {
     const startOfYesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
     startOfYesterday.setHours(0, 0, 0, 0);
 
-    return submissions.filter(sub => {
+    return allSubmissionsMerged.filter(sub => {
       const dateObj = safeToDate(sub.createdAt);
       if (!dateObj) return false;
 
@@ -371,7 +472,7 @@ const OperationalRoutes: React.FC = () => {
       // Default automatic mode: only show yesterday and today
       return dateObj >= startOfYesterday;
     });
-  }, [submissions, histSelectedDate]);
+  }, [allSubmissionsMerged, histSelectedDate]);
 
   // MASS EQUIPMENT CHARGE FROM CSV
   const [isCsvImportModalOpen, setIsCsvImportModalOpen] = useState(false);
@@ -612,6 +713,62 @@ const OperationalRoutes: React.FC = () => {
     } catch (e) {
       console.error("Erro ao remover rascunho de rota deletado:", e);
     }
+  };
+
+  const handleDiscardDraftAndExit = async () => {
+    setIsExitModalOpen(false);
+    if (user && selectedTemplate) {
+      const draftId = `${user.uid}_${selectedTemplate.id}`;
+      try {
+        await deleteDoc(doc(db, 'route_drafts', draftId));
+      } catch (e) {
+        console.error("Erro ao remover rascunho ao sair:", e);
+      }
+    }
+    setSelectedTemplate(null);
+    setRouteResponses({});
+    setDetailingResponses({});
+    setIsDraftLoaded(false);
+    setDraftSavedAt(null);
+    setActiveTab('my_routes');
+  };
+
+  const handleSaveDraftAndExit = async () => {
+    setIsExitModalOpen(false);
+    if (selectedTemplate && user) {
+      const draftId = `${user.uid}_${selectedTemplate.id}`;
+      try {
+        await setDoc(doc(db, 'route_drafts', draftId), {
+          templateId: selectedTemplate.id,
+          templateName: selectedTemplate.name,
+          operatorId: user.uid,
+          routeResponses,
+          detailingResponses,
+          selectedArea,
+          selectedSector: selectedSector ? { id: selectedSector.id, name: selectedSector.name } : null,
+          selectedLine: selectedLine ? { id: selectedLine.id, name: selectedLine.name } : null,
+          selectedShift,
+          selectedTeam,
+          updatedAt: new Date()
+        });
+      } catch (err) {
+        console.error("Erro ao salvar rascunho de rota manualmente ao sair:", err);
+      }
+    }
+
+    setSelectedTemplate(null);
+    setRouteResponses({});
+    setDetailingResponses({});
+    setIsDraftLoaded(false);
+    setDraftSavedAt(null);
+    setActiveTab('my_routes');
+
+    setModalConfig({
+      isOpen: true,
+      title: 'Progresso Salvo com Sucesso!',
+      message: 'Seu rascunho foi salvo localmente/nuvem e você poderá continuar preenchendo exatamente de onde parou em outro momento.',
+      type: 'success'
+    });
   };
 
   // Subscribe to Sectors
@@ -1167,79 +1324,134 @@ const OperationalRoutes: React.FC = () => {
       confirmText: 'Enviar Rota',
       onConfirm: async () => {
         closeModal();
-        try {
-          const finalResponses = selectedTemplate.equipments.map(eq => {
-            const resp = routeResponses[eq.id];
-            // Read anomaly details if any
-            const detail = detailingResponses[eq.id] || {
-              inspectionType: '',
-              diagnostic: '',
-              notes: '',
-              photoUrl: '',
-              actionTaken: '',
-              responsibleCenter: '',
-              schedule: '',
-              sapNote: ''
-            };
+        
+        const finalResponses = selectedTemplate.equipments.map(eq => {
+          const resp = routeResponses[eq.id];
+          // Read anomaly details if any
+          const detail = detailingResponses[eq.id] || {
+            inspectionType: '',
+            diagnostic: '',
+            notes: '',
+            photoUrl: '',
+            actionTaken: '',
+            responsibleCenter: '',
+            schedule: '',
+            sapNote: ''
+          };
+          
+          return {
+            equipmentId: eq.id,
+            equipmentName: eq.name,
+            equipmentTag: eq.tag || '',
+            status: resp.status,
+            notes: resp.notes || detail.notes || '',
+            photoUrl: resp.photoUrl || detail.photoUrl || '',
+            videoUrl: resp.videoUrl || detail.videoUrl || '',
+            value: resp.value !== undefined ? resp.value : '',
+            observationGenerated: !!resp.generateObservation,
+            observationText: resp.generateObservation ? resp.observationText : '',
             
-            return {
-              equipmentId: eq.id,
-              equipmentName: eq.name,
-              equipmentTag: eq.tag || '',
-              status: resp.status,
-              notes: resp.notes || detail.notes || '',
-              photoUrl: resp.photoUrl || detail.photoUrl || '',
-              videoUrl: resp.videoUrl || detail.videoUrl || '',
-              value: resp.value !== undefined ? resp.value : '',
-              observationGenerated: !!resp.generateObservation,
-              observationText: resp.generateObservation ? resp.observationText : '',
-              
-              // New details fields
-              inspectionType: detail.inspectionType || '',
-              diagnostic: detail.diagnostic || '',
-              actionTaken: detail.actionTaken || '',
-              responsibleCenter: detail.responsibleCenter || '',
-              schedule: detail.schedule || '',
-              sapNote: detail.sapNote || ''
-            };
-          });
+            // New details fields
+            inspectionType: detail.inspectionType || '',
+            diagnostic: detail.diagnostic || '',
+            actionTaken: detail.actionTaken || '',
+            responsibleCenter: detail.responsibleCenter || '',
+            schedule: detail.schedule || '',
+            sapNote: detail.sapNote || ''
+          };
+        });
 
-          // 1. Save Submissions
+        // Prepare structured data for submission
+        const submissionData = {
+          templateId: selectedTemplate.id,
+          templateName: selectedTemplate.name,
+          operatorName: profile?.displayName || user.email || 'Operador',
+          operatorId: user.uid,
+          responses: finalResponses,
+          
+          // New fields for wizard
+          areaName: selectedArea || 'SECAGEM',
+          sectorName: selectedSector ? selectedSector.name : '',
+          lineName: selectedLine ? selectedLine.name : '',
+          shift: selectedShift,
+          team: selectedTeam,
+          partialJustification: forcedJustification || ''
+        };
+
+        const safetyObsData: any[] = [];
+        for (const resp of finalResponses) {
+          if (resp.status === 'not_ok' && (resp.observationGenerated || resp.diagnostic || resp.notes)) {
+            safetyObsData.push({
+              equipmentId: resp.equipmentId,
+              equipmentName: resp.equipmentName,
+              routeTemplateId: selectedTemplate.id,
+              routeName: selectedTemplate.name,
+              reportedBy: profile?.displayName || user.email || 'Operador',
+              reportedById: user.uid,
+              description: resp.observationText || `Falha identificada: ${resp.diagnostic || 'Anomalia no equipamento'}. Comentário: ${resp.notes || 'Nenhum'}. Providência: ${resp.actionTaken || 'Tomar providências'}`,
+              photoUrl: resp.photoUrl || '',
+              status: 'pending' // pending, working, resolved
+            });
+          }
+        }
+
+        // Logic block: check if online or offline
+        if (!isOnline) {
+          // 1. Queue offline
+          const pendingItem = {
+            submission: {
+              ...submissionData,
+              createdAt: new Date().toISOString() // Local representation
+            },
+            safetyObservations: safetyObsData.map(obs => ({
+              ...obs,
+              createdAt: new Date().toISOString()
+            }))
+          };
+
+          const newQueue = [...offlineQueue, pendingItem];
+          saveQueueToLocalStorage(newQueue);
+
+          // 2. Delete Draft (silently, ignore offline fail)
+          const draftId = `${user.uid}_${selectedTemplate.id}`;
+          try {
+            await deleteDoc(doc(db, 'route_drafts', draftId));
+          } catch (e) {
+            console.warn("Erro ao deletar rascunho em modo offline (ignorado):", e);
+          }
+
+          // Reset forms and notify user of successful offline cache
+          setSelectedTemplate(null);
+          setRouteResponses({});
+          setDetailingResponses({});
+          setIsDraftLoaded(false);
+          setDraftSavedAt(null);
+          setActiveTab('my_routes');
+          setIsPartialModalOpen(false);
+          setPartialJustification('');
+          
+          setModalConfig({
+            isOpen: true,
+            title: 'Salvo em Cache Offline!',
+            message: 'Você está offline. Os dados da rota foram guardados com êxito no dispositivo e serão sincronizados de forma automática com o Painel Central assim que houver internet.',
+            type: 'warning'
+          });
+          return;
+        }
+
+        try {
+          // 1. Save Submissions Online
           await addDoc(collection(db, 'route_submissions'), {
-            templateId: selectedTemplate.id,
-            templateName: selectedTemplate.name,
-            operatorName: profile?.displayName || user.email || 'Operador',
-            operatorId: user.uid,
-            responses: finalResponses,
-            
-            // New fields for wizard
-            areaName: selectedArea || 'SECAGEM',
-            sectorName: selectedSector ? selectedSector.name : '',
-            lineName: selectedLine ? selectedLine.name : '',
-            shift: selectedShift,
-            team: selectedTeam,
-            
-            partialJustification: forcedJustification || '',
-            
+            ...submissionData,
             createdAt: serverTimestamp()
           });
 
-          // 2. Loop through and create Safety Observations in firestore if requested
-          for (const resp of finalResponses) {
-            if (resp.status === 'not_ok' && (resp.observationGenerated || resp.diagnostic || resp.notes)) {
-              await addDoc(collection(db, 'safety_observations'), {
-                equipmentId: resp.equipmentId,
-                equipmentName: resp.equipmentName,
-                routeTemplateId: selectedTemplate.id,
-                routeName: selectedTemplate.name,
-                reportedBy: profile?.displayName || user.email || 'Operador',
-                reportedById: user.uid,
-                description: resp.observationText || `Falha identificada: ${resp.diagnostic || 'Anomalia no equipamento'}. Comentário: ${resp.notes || 'Nenhum'}. Providência: ${resp.actionTaken || 'Tomar providências'}`,
-                photoUrl: resp.photoUrl || '',
-                status: 'pending', // pending, working, resolved
-                createdAt: serverTimestamp()
-              });
-            }
+          // 2. Create Safety Observations Online
+          for (const obs of safetyObsData) {
+            await addDoc(collection(db, 'safety_observations'), {
+              ...obs,
+              createdAt: serverTimestamp()
+            });
           }
 
           // Delete Draft
@@ -1268,7 +1480,44 @@ const OperationalRoutes: React.FC = () => {
             type: 'success'
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, 'route_submissions');
+          console.warn("Falha de rede no envio online, caindo para fila offline de contingência:", err);
+          // Fallback to offline queue
+          const pendingItem = {
+            submission: {
+              ...submissionData,
+              createdAt: new Date().toISOString()
+            },
+            safetyObservations: safetyObsData.map(obs => ({
+              ...obs,
+              createdAt: new Date().toISOString()
+            }))
+          };
+
+          const newQueue = [...offlineQueue, pendingItem];
+          saveQueueToLocalStorage(newQueue);
+
+          const draftId = `${user.uid}_${selectedTemplate.id}`;
+          try {
+            await deleteDoc(doc(db, 'route_drafts', draftId));
+          } catch (e) {
+            console.warn("Erro ao deletar rascunho no fallback offline:", e);
+          }
+
+          setSelectedTemplate(null);
+          setRouteResponses({});
+          setDetailingResponses({});
+          setIsDraftLoaded(false);
+          setDraftSavedAt(null);
+          setActiveTab('my_routes');
+          setIsPartialModalOpen(false);
+          setPartialJustification('');
+
+          setModalConfig({
+            isOpen: true,
+            title: 'Salvo em Cache Local!',
+            message: 'Ocorreu uma instabilidade na transmissão online. Para evitar perda, os dados foram salvos offline e sincronizarão assim que a rede se restabelecer.',
+            type: 'warning'
+          });
         }
       }
     });
@@ -1408,6 +1657,76 @@ const OperationalRoutes: React.FC = () => {
             Métricas
           </button>
         </div>
+      </div>
+
+      {/* OFFLINE STATUS & SYNC PANEL */}
+      <div className={cn(
+        "bg-white border rounded-[2.5rem] p-6 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6 transition-all duration-300",
+        offlineQueue.length > 0 ? "border-amber-200 bg-amber-50/20" : "border-slate-100"
+      )}>
+        <div className="flex items-center gap-4">
+          <div className={cn(
+            "w-12 h-12 rounded-2xl flex items-center justify-center shadow-inner",
+            isOnline 
+              ? (offlineQueue.length > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700") 
+              : "bg-red-100 text-red-600"
+          )}>
+            {!isOnline ? (
+              <WifiOff className="w-5 h-5 text-red-600 dynamic-pulse" />
+            ) : offlineQueue.length > 0 ? (
+              <CloudUpload className="w-5 h-5 text-amber-600 animate-bounce" />
+            ) : (
+              <Wifi className="w-5 h-5 text-emerald-600" />
+            )}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-sm text-slate-800">
+                {!isOnline ? 'OPERANDO EM MODO OFFLINE' : 'CONEXÃO ESTÁVEL (ONLINE)'}
+              </span>
+              <span className={cn(
+                "w-2 h-2 rounded-full inline-block",
+                isOnline ? "bg-emerald-500 animate-ping" : "bg-red-500"
+              )} />
+            </div>
+            <p className="text-xs font-semibold text-slate-500 mt-0.5">
+              {!isOnline 
+                ? 'Você está desconectado. As rondas serão armazenadas com segurança neste dispositivo até que a internet volte.' 
+                : offlineQueue.length > 0 
+                  ? `Sinal restabelecido. Você possui ${offlineQueue.length} ronda(s) pendentes registradas localmente.`
+                  : 'Sistemas prontos. Todas as novas vistorias serão transmitidas instantaneamente para o servidor.'
+              }
+            </p>
+          </div>
+        </div>
+
+        {offlineQueue.length > 0 && (
+          <div className="flex items-center gap-3 w-full md:w-auto self-stretch md:self-auto">
+            <button
+              type="button"
+              onClick={() => syncOfflineSubmissions()}
+              disabled={isSyncing || !isOnline}
+              className={cn(
+                "w-full md:w-auto px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-md active:scale-95 transition-all text-white flex items-center justify-center gap-2 cursor-pointer",
+                !isOnline 
+                  ? "bg-slate-300 shadow-none cursor-not-allowed text-slate-500" 
+                  : "bg-[#0d6e4f] hover:bg-emerald-800 shadow-emerald-50/50"
+              )}
+            >
+              {isSyncing ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Sincronizando...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  {isOnline ? 'Sincronizar Rondadas' : 'Aguardando Conexão'}
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -1593,17 +1912,29 @@ const OperationalRoutes: React.FC = () => {
                   const failResponsesCount = sub.responses.filter(r => r.status === 'not_ok').length;
 
                   return (
-                    <div key={sub.id || `sub-${idx}`} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-slate-300 transition-all">
+                    <div key={sub.id || `sub-${idx}`} className={cn(
+                      "bg-white p-6 rounded-2xl border shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all",
+                      sub.isOfflinePending 
+                        ? "border-amber-200 bg-amber-50/10 hover:border-amber-300" 
+                        : "border-slate-200 hover:border-slate-300"
+                    )}>
                       <div className="flex items-center gap-4">
                         <div className={cn(
                           "w-12 h-12 rounded-2xl shrink-0 flex items-center justify-center text-white font-black",
-                          failResponsesCount > 0 ? "bg-rose-500" : "bg-emerald-500"
+                          sub.isOfflinePending 
+                            ? "bg-amber-500" 
+                            : failResponsesCount > 0 ? "bg-rose-500" : "bg-emerald-500"
                         )}>
                           <Clipboard className="w-6 h-6" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
                             <h3 className="font-black text-slate-900 text-base leading-tight uppercase">{sub.templateName}</h3>
+                            {sub.isOfflinePending && (
+                              <span className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-amber-100 text-amber-950 border border-amber-200 rounded-full font-black text-[8px] uppercase tracking-wider animate-pulse">
+                                Salvo Offline
+                              </span>
+                            )}
                             {sub.partialJustification && (
                               <span className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-100 rounded-full font-black text-[8px] uppercase tracking-wider">
                                 Parcial
@@ -1665,27 +1996,16 @@ const OperationalRoutes: React.FC = () => {
             {/* Left Back Arrow / Home indicator */}
             <button
               onClick={() => {
-                setModalConfig({
-                  isOpen: true,
-                  title: 'Cancelar Ronda?',
-                  message: 'Deseja realmente abandonar a execução desta rota operacional? Todos os dados preenchidos serão perdidos.',
-                  type: 'warning',
-                  showConfirmButton: true,
-                  confirmText: 'Sair da Rota',
-                  onConfirm: () => {
-                    closeModal();
-                    if (user && selectedTemplate) {
-                      const draftId = `${user.uid}_${selectedTemplate.id}`;
-                      deleteDoc(doc(db, 'route_drafts', draftId)).catch(console.error);
-                    }
-                    setSelectedTemplate(null);
-                    setRouteResponses({});
-                    setDetailingResponses({});
-                    setIsDraftLoaded(false);
-                    setDraftSavedAt(null);
-                    setActiveTab('my_routes');
-                  }
-                });
+                if (isReadOnlyRoute) {
+                  setSelectedTemplate(null);
+                  setRouteResponses({});
+                  setDetailingResponses({});
+                  setIsDraftLoaded(false);
+                  setDraftSavedAt(null);
+                  setActiveTab('my_routes');
+                } else {
+                  setIsExitModalOpen(true);
+                }
               }}
               className="absolute left-4 top-1/2 -translate-y-1/2 text-white hover:bg-emerald-800 p-2 rounded-full transition-colors"
               title="Voltar"
@@ -2677,27 +2997,7 @@ const OperationalRoutes: React.FC = () => {
                           setActiveTab('my_routes');
                           return;
                         }
-                        setModalConfig({
-                          isOpen: true,
-                          title: 'Cancelar Ronda?',
-                          message: 'Deseja realmente abandonar a execução desta rota operacional? Todos os dados preenchidos serão perdidos.',
-                          type: 'warning',
-                          showConfirmButton: true,
-                          confirmText: 'Sair da Rota',
-                          onConfirm: () => {
-                            closeModal();
-                            if (user && selectedTemplate) {
-                              const draftId = `${user.uid}_${selectedTemplate.id}`;
-                              deleteDoc(doc(db, 'route_drafts', draftId)).catch(console.error);
-                            }
-                            setSelectedTemplate(null);
-                            setRouteResponses({});
-                            setDetailingResponses({});
-                            setIsDraftLoaded(false);
-                            setDraftSavedAt(null);
-                            setActiveTab('my_routes');
-                          }
-                        });
+                        setIsExitModalOpen(true);
                       }}
                       className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black rounded-xl text-xs uppercase tracking-wide leading-none"
                     >
@@ -4066,6 +4366,69 @@ const OperationalRoutes: React.FC = () => {
                   )}
                 >
                   Confirmar e Enviar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+       {/* CUSTOM EXIT AND RESUME MODE MODAL */}
+      <AnimatePresence>
+        {isExitModalOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+              onClick={() => setIsExitModalOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[2rem] border border-slate-200 w-full max-w-sm overflow-hidden relative shadow-2xl z-10 pt-6 font-semibold"
+            >
+              {/* Header */}
+              <div className="px-6 pb-4 border-b border-slate-100 flex flex-col items-center text-center">
+                <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center shadow-inner mb-3">
+                  <LogOut className="w-6 h-6 stroke-[2]" />
+                </div>
+                <h3 className="text-lg font-black text-slate-900 leading-tight">
+                  Sair da Ronda Operacional?
+                </h3>
+                <p className="text-xs text-slate-405 text-slate-500 mt-1.5 font-semibold leading-relaxed">
+                  O progresso que você preencheu até aqui está seguro. Gostaria de salvar como rascunho para continuar preenchendo mais tarde?
+                </p>
+              </div>
+
+              {/* Body Operations Stack */}
+              <div className="p-6 space-y-3">
+                <button
+                  type="button"
+                  onClick={handleSaveDraftAndExit}
+                  className="w-full py-3.5 px-4 bg-[#0d6e4f] hover:bg-emerald-800 text-white rounded-xl text-xs uppercase font-black tracking-wide shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  💾 Salvar como Rascunho e Sair
+                </button>
+
+                <p className="text-[10px] text-slate-400 text-center font-bold uppercase tracking-wider py-1">— ou —</p>
+
+                <button
+                  type="button"
+                  onClick={handleDiscardDraftAndExit}
+                  className="w-full py-3 px-4 border border-rose-200 text-rose-600 hover:bg-rose-50 rounded-xl text-xs uppercase font-black tracking-wide transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  🗑️ Descartar Tudo e Sair
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsExitModalOpen(false)}
+                  className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs uppercase font-black tracking-wide transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer mt-2"
+                >
+                  Continuar Preenchendo
                 </button>
               </div>
             </motion.div>
