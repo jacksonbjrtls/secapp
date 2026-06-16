@@ -1653,10 +1653,11 @@ const OperationalRoutes: React.FC = () => {
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           className={cn(
-            "bg-slate-50 border border-slate-200 rounded-[2.5rem] mx-auto overflow-hidden shadow-xl flex flex-col transition-all duration-300",
+            "bg-slate-50 overflow-hidden flex flex-col transition-all duration-300",
+            "fixed inset-0 z-[100] w-full h-[100dvh] rounded-none border-none shadow-none md:relative md:inset-auto md:z-0 md:w-full md:rounded-[2.5rem] md:border md:border-slate-200 md:shadow-xl md:mx-auto",
             routeStep === 'active_inspection' 
-              ? "max-w-4xl h-[calc(100vh-64px)] max-h-[calc(100vh-64px)] md:h-[calc(100vh-100px)] md:max-h-[calc(100vh-100px)] w-full" 
-              : "max-w-2xl w-full"
+              ? "md:max-w-4xl md:h-[calc(100vh-100px)] md:max-h-[calc(100vh-100px)]" 
+              : "md:max-w-2xl md:h-auto md:max-h-[calc(100vh-100px)]"
           )}
         >
           {/* VISUAL BRANDED FOREST GREEN HEADER BAR (Matches screenshots exactly) */}
@@ -1736,10 +1737,7 @@ const OperationalRoutes: React.FC = () => {
           </div>
 
           {/* WIZARD PANEL BODY */}
-          <div className={cn(
-            "p-6 md:p-8 bg-white space-y-6",
-            routeStep === 'active_inspection' ? "flex-1 overflow-y-auto" : ""
-          )}>
+          <div className="p-6 md:p-8 bg-white space-y-6 flex-1 overflow-y-auto">
             
             {/* STEP 1: SELECT AREA */}
             {routeStep === 'select_area' && (
