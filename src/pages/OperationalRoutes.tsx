@@ -62,7 +62,8 @@ import {
   Video,
   GripVertical,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Paperclip
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -129,6 +130,7 @@ export interface RouteSubmission {
     observationGenerated?: boolean;
     observationText?: string;
   }[];
+  partialJustification?: string;
 }
 
 export interface ParsedEquipmentCSV {
@@ -336,6 +338,13 @@ const OperationalRoutes: React.FC = () => {
   const [templateEquipments, setTemplateEquipments] = useState<RouteEquipmentItem[]>([]);
   const [draggedEquipmentIndex, setDraggedEquipmentIndex] = useState<number | null>(null);
   const [dragOverEquipmentIndex, setDragOverEquipmentIndex] = useState<number | null>(null);
+  const [lightboxMedia, setLightboxMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
+
+  // Partial Route Justification States
+  const [isPartialModalOpen, setIsPartialModalOpen] = useState(false);
+  const [partialJustification, setPartialJustification] = useState('');
+  const [inspectedCount, setInspectedCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
 
   // MASS EQUIPMENT CHARGE FROM CSV
   const [isCsvImportModalOpen, setIsCsvImportModalOpen] = useState(false);
@@ -1081,8 +1090,12 @@ const OperationalRoutes: React.FC = () => {
   };
 
   // Save Route Submission
-  const handleSaveRouteSubmission = async () => {
+  const handleSaveRouteSubmission = async (forcedJustificationParam?: any) => {
     if (!selectedTemplate || !user) return;
+
+    const forcedJustification = (typeof forcedJustificationParam === 'string') 
+      ? forcedJustificationParam.trim() 
+      : undefined;
 
     // Validation
     const missing = selectedTemplate.equipments.find(
@@ -1099,12 +1112,30 @@ const OperationalRoutes: React.FC = () => {
       return;
     }
 
+    const total = selectedTemplate.equipments.length;
+    const inspected = selectedTemplate.equipments.filter(e => 
+      routeResponses[e.id]?.status !== undefined && 
+      (routeResponses[e.id].value !== '' || routeResponses[e.id].notes !== '' || routeResponses[e.id].status === 'not_ok')
+    ).length;
+
+    const isPartial = inspected < total;
+
+    if (isPartial && !forcedJustification) {
+      setInspectedCount(inspected);
+      setTotalCount(total);
+      setPartialJustification('');
+      setIsPartialModalOpen(true);
+      return;
+    }
+
     // Modal Confirmation before saving
     setModalConfig({
       isOpen: true,
-      title: 'Confirmar Envio da Rota?',
-      message: `Deseja concluir e registrar os dados da rota de inspeção "${selectedTemplate.name}"?`,
-      type: 'info',
+      title: isPartial ? 'Confirmar Envio Parcial?' : 'Confirmar Envio da Rota?',
+      message: isPartial 
+        ? `Você está concluindo uma ronda parcial (${inspected} de ${total} equipamentos). Deseja registrar com a justificativa fornecida?`
+        : `Deseja concluir e registrar os dados da rota de inspeção "${selectedTemplate.name}"?`,
+      type: isPartial ? 'warning' : 'info',
       showConfirmButton: true,
       confirmText: 'Enviar Rota',
       onConfirm: async () => {
@@ -1161,6 +1192,8 @@ const OperationalRoutes: React.FC = () => {
             shift: selectedShift,
             team: selectedTeam,
             
+            partialJustification: forcedJustification || '',
+            
             createdAt: serverTimestamp()
           });
 
@@ -1196,11 +1229,15 @@ const OperationalRoutes: React.FC = () => {
           setIsDraftLoaded(false);
           setDraftSavedAt(null);
           setActiveTab('my_routes');
+          setIsPartialModalOpen(false);
+          setPartialJustification('');
           
           setModalConfig({
             isOpen: true,
             title: 'Rota Registrada!',
-            message: 'Inspeção de rota operacional concluída e transmitida ao servidor com sucesso!',
+            message: isPartial 
+              ? 'Inspeção parcial enviada com sucesso no servidor!'
+              : 'Inspeção de rota operacional concluída e transmitida ao servidor com sucesso!',
             type: 'success'
           });
         } catch (err) {
@@ -1418,11 +1455,12 @@ const OperationalRoutes: React.FC = () => {
                     </div>
 
                     <button
+                      disabled={!!completionToday}
                       onClick={() => handleStartRoute(tmpl)}
                       className={cn(
                         "w-full mt-6 py-3 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2",
                         completionToday 
-                          ? "bg-slate-100 hover:bg-slate-200 text-slate-500 border border-slate-200" 
+                          ? "bg-slate-50 text-slate-400 border border-slate-150 cursor-not-allowed opacity-60" 
                           : "bg-slate-900 hover:bg-slate-800 text-white"
                       )}
                     >
@@ -2335,7 +2373,7 @@ const OperationalRoutes: React.FC = () => {
                                         };
                                       })
                                       .filter((item): item is NonNullable<typeof item> => item !== null)
-                                      .slice(0, 3);
+                                      .slice(0, 1);
                                     
                                     if (eqHistory.length === 0) return null;
 
@@ -2343,7 +2381,7 @@ const OperationalRoutes: React.FC = () => {
                                       <div className="border-t border-slate-100 pt-3 mt-1.5 space-y-1.5 text-left">
                                         <div className="flex items-center gap-1.5 select-none">
                                           <History className="w-3.5 h-3.5 text-slate-400" />
-                                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Histórico Recente de Parâmetros:</span>
+                                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Histórico da última rota:</span>
                                         </div>
                                         <div className="bg-slate-50 border border-slate-150 rounded-2xl p-2.5 divide-y divide-slate-150/40">
                                           {eqHistory.map((hist, histIdx) => {
@@ -2410,68 +2448,93 @@ const OperationalRoutes: React.FC = () => {
                                     />
                                   </div>
 
-                                  {/* Section: Multimedia Attachment (Photo / Short Video) */}
-                                  <div className="border-t border-slate-100 pt-3 mt-1.5 space-y-1.5 text-left">
-                                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1 select-none">
-                                      <Camera className="w-3.5 h-3.5 text-slate-400" /> Evidência do Item (Foto ou Vídeo):
-                                    </span>
-                                    
-                                    {resp.photoUrl || resp.videoUrl ? (
-                                      <div className="relative border border-slate-200 rounded-2xl overflow-hidden bg-slate-950 flex flex-col justify-center items-center">
-                                        {resp.photoUrl && (
-                                          <img 
-                                            src={resp.photoUrl} 
-                                            alt="Mídia de inspeção" 
-                                            className="w-full max-h-48 object-cover rounded-2xl" 
-                                          />
-                                        )}
-                                        {resp.videoUrl && (
-                                          <video 
-                                            src={resp.videoUrl} 
-                                            controls 
-                                            playsInline
-                                            className="w-full max-h-48 object-contain rounded-2xl bg-black" 
-                                          />
-                                        )}
-                                        
-                                        {!isReadOnlyRoute && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleClearEquipmentMedia(eq.id)}
-                                            className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-rose-600 text-white rounded-full transition-colors cursor-pointer"
-                                            title="Remover anexo"
-                                          >
-                                            <X className="w-3.5 h-3.5" />
-                                          </button>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <>
-                                        {!isReadOnlyRoute ? (
-                                          <div className="flex gap-2">
-                                            <label className="flex-1 border-2 border-dashed border-slate-250 hover:border-[#0d6e4f] rounded-2xl p-4 flex flex-col items-center justify-center gap-1 cursor-pointer hover:bg-slate-50 transition-colors">
-                                              <Upload className="w-4 h-4 text-slate-400" />
-                                              <span className="text-[9px] font-black text-slate-600 uppercase tracking-wider block">
-                                                Anexar Foto ou Vídeo
-                                              </span>
-                                              <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest block block-inline">
-                                                Máximo 25MB (PNG, JPG, MP4)
-                                              </span>
-                                              <input
-                                                type="file"
-                                                accept="image/*,video/*"
-                                                onChange={(e) => handleFileChange(eq.id, e)}
-                                                className="hidden"
-                                              />
-                                            </label>
-                                          </div>
-                                        ) : (
-                                          <span className="text-[10px] text-slate-400 font-semibold italic mt-1 block">
-                                            Nenhuma mídia foi anexada para este item.
-                                          </span>
-                                        )}
-                                      </>
-                                    )}
+                                  {/* Section: Multimedia Attachment (Photo / Short Video) - Space Saving & Professional */}
+                                  <div className="border-t border-slate-100 pt-3 mt-1.5 flex items-center justify-between gap-4">
+                                    <div className="text-left">
+                                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider flex items-center gap-1 select-none">
+                                        <Camera className="w-3.5 h-3.5 text-slate-400" /> Mídia de Evidência:
+                                      </span>
+                                      <p className="text-[9px] text-slate-400 font-semibold mt-0.5">
+                                        Anexe foto/vídeo curto do equipamento
+                                      </p>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {resp.photoUrl || resp.videoUrl ? (
+                                        <div className="relative group border border-slate-200 rounded-xl overflow-hidden bg-slate-50 flex items-center justify-center w-11 h-11 shadow-xs transition-all hover:border-emerald-500">
+                                          {resp.photoUrl && (
+                                            <img 
+                                              src={resp.photoUrl} 
+                                              alt="Mídia" 
+                                              className="w-full h-full object-cover cursor-pointer"
+                                              onClick={() => setLightboxMedia({ url: resp.photoUrl!, type: 'image' })}
+                                              title="Clique para ampliar"
+                                            />
+                                          )}
+                                          {resp.videoUrl && (
+                                            <div 
+                                              className="w-full h-full bg-slate-950 flex items-center justify-center relative cursor-pointer"
+                                              onClick={() => setLightboxMedia({ url: resp.videoUrl!, type: 'video' })}
+                                              title="Clique para reproduzir vídeo"
+                                            >
+                                              <Video className="w-3.5 h-3.5 text-white" />
+                                            </div>
+                                          )}
+                                          
+                                          {!isReadOnlyRoute && (
+                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                              <button
+                                                type="button"
+                                                onClick={() => handleClearEquipmentMedia(eq.id)}
+                                                className="p-0.5 bg-rose-600 text-white rounded-full transition-colors cursor-pointer"
+                                                title="Remover anexo"
+                                              >
+                                                <X className="w-2.5 h-2.5" />
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <>
+                                          {!isReadOnlyRoute ? (
+                                            <div className="flex items-center gap-1.5">
+                                              {/* CAMERA DIRECT PHOTO BUTTON */}
+                                              <label 
+                                                className="w-9 h-9 border border-slate-200 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50/10 rounded-xl flex items-center justify-center transition-all cursor-pointer shadow-xs" 
+                                                title="Tirar Foto Direto da Câmera"
+                                              >
+                                                <Camera className="w-4 h-4 text-slate-500 hover:text-emerald-600" />
+                                                <input
+                                                  type="file"
+                                                  accept="image/*"
+                                                  capture="environment"
+                                                  onChange={(e) => handleFileChange(eq.id, e)}
+                                                  className="hidden"
+                                                />
+                                              </label>
+
+                                              {/* FILE SELECTOR (CLIPPER / PAPERCLIP) */}
+                                              <label 
+                                                className="w-9 h-9 border border-slate-200 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50/10 rounded-xl flex items-center justify-center transition-all cursor-pointer shadow-xs"
+                                                title="Anexar Arquivo (Foto ou Vídeo da Galeria)"
+                                              >
+                                                <Paperclip className="w-4 h-4 text-slate-500 hover:text-emerald-600" />
+                                                <input
+                                                  type="file"
+                                                  accept="image/*,video/*"
+                                                  onChange={(e) => handleFileChange(eq.id, e)}
+                                                  className="hidden"
+                                                />
+                                              </label>
+                                            </div>
+                                          ) : (
+                                            <span className="text-[10px] text-slate-400 font-semibold italic">
+                                              Nenhuma mídia
+                                            </span>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
 
                                   {/* CONFIRM BUTTON */}
@@ -2938,6 +3001,17 @@ const OperationalRoutes: React.FC = () => {
                     </span>
                   </div>
                 </div>
+
+                {viewingRoute.partialJustification && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs font-semibold">
+                    <span className="text-[10px] text-amber-800 font-black block uppercase tracking-wider mb-1">
+                      Justificativa de Preenchimento Parcial:
+                    </span>
+                    <span className="text-amber-950 font-medium italic block leading-relaxed">
+                      "{viewingRoute.partialJustification}"
+                    </span>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Equipamentos Analisados</h4>
@@ -3822,6 +3896,81 @@ const OperationalRoutes: React.FC = () => {
         }}
       />
 
+      {/* PARTIAL ROUTE JUSTIFICATION MODAL */}
+      <AnimatePresence>
+        {isPartialModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-xs"
+              onClick={() => setIsPartialModalOpen(false)}
+            />
+            
+            <motion.div
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              className="relative max-w-md w-full bg-white rounded-[2.5rem] p-6 lg:p-8 border border-slate-200 shadow-2xl z-10 flex flex-col font-semibold text-left"
+            >
+              <div className="flex items-center gap-3 border-b border-slate-100 pb-4 mb-4">
+                <div className="w-10 h-10 bg-amber-50 rounded-full flex items-center justify-center text-amber-600 shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase font-black text-amber-600 tracking-widest block font-extrabold">Atenção</span>
+                  <h3 className="text-base font-black text-slate-900 mt-0.5 leading-tight">Justificativa de Preenchimento Parcial</h3>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-500 leading-normal mb-4 font-medium">
+                Você avaliou <strong className="font-extrabold text-[#0d6e4f]">{inspectedCount}</strong> de <strong className="font-extrabold text-slate-700">{totalCount}</strong> equipamentos.
+                Como este preenchimento é parcial, é obrigatório registrar uma justificativa clara descrevendo os motivos para auditoria e controle do SAP.
+              </p>
+
+              <div className="space-y-1 textarea-container text-left mb-6">
+                <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest block">
+                  Sua Justificativa (Mínimo 5 caracteres):
+                </label>
+                <textarea
+                  value={partialJustification}
+                  onChange={(e) => setPartialJustification(e.target.value)}
+                  placeholder="Ex: Equipamento parado para manutenção corretiva pela equipe de elétrica, ronda concluída sem inspecionar esse item prioritário."
+                  rows={4}
+                  className="w-full text-xs font-semibold p-4 rounded-2xl border border-slate-200 outline-hidden focus:border-[#0d6e4f] focus:ring-1 focus:ring-[#0d6e4f]/30 transition-all font-sans text-slate-800 placeholder-slate-400 font-medium"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsPartialModalOpen(false)}
+                  className="px-4 py-2.5 bg-slate-10 border border-slate-200 text-slate-600 rounded-xl text-xs uppercase font-bold tracking-wide transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={partialJustification.trim().length < 5}
+                  onClick={() => {
+                    handleSaveRouteSubmission(partialJustification.trim());
+                  }}
+                  className={cn(
+                    "px-6 py-2.5 rounded-xl text-xs uppercase font-black tracking-wide transition-all shadow-md cursor-pointer",
+                    partialJustification.trim().length >= 5
+                      ? "bg-[#0d6e4f] text-white hover:bg-emerald-800 shadow-emerald-50/50"
+                      : "bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200/50 shadow-none"
+                  )}
+                >
+                  Confirmar e Enviar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* GLOBAL MODALS */}
       <ConfirmationModal
         isOpen={modalConfig.isOpen}
@@ -3833,6 +3982,66 @@ const OperationalRoutes: React.FC = () => {
         onConfirm={modalConfig.onConfirm}
         confirmText={modalConfig.confirmText}
       />
+
+      {/* PREMIUM MEDIA SHOWCASE LIGHTBOX */}
+      <AnimatePresence>
+        {lightboxMedia && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setLightboxMedia(null)}
+            className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4 backdrop-blur-xs"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative max-w-3xl w-full bg-slate-900 rounded-[2rem] overflow-hidden border border-slate-800 shadow-2xl p-2 flex flex-col items-center"
+            >
+              {/* Top controls */}
+              <div className="absolute top-4 right-4 z-10 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLightboxMedia(null)}
+                  className="p-2.5 bg-black/60 hover:bg-rose-600 text-white rounded-full transition-all cursor-pointer shadow-md"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Media viewer */}
+              <div className="w-full h-auto max-h-[80vh] flex items-center justify-center bg-black rounded-2xl overflow-hidden self-stretch">
+                {lightboxMedia.type === 'image' ? (
+                  <img
+                    src={lightboxMedia.url}
+                    alt="Ampliação da evidência"
+                    className="max-w-full max-h-[75vh] object-contain rounded-2xl"
+                  />
+                ) : (
+                  <video
+                    src={lightboxMedia.url}
+                    controls
+                    autoPlay
+                    playsInline
+                    className="max-w-full max-h-[75vh] object-contain rounded-2xl"
+                  />
+                )}
+              </div>
+
+              <div className="py-3 px-4 text-center">
+                <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
+                  Evidência Multimídia de Inspeção
+                </p>
+                <p className="text-[9px] text-slate-500 font-bold uppercase mt-1">
+                  Toque/Clique fora para fechar a visualização
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
