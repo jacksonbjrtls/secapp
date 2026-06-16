@@ -222,7 +222,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'operational_routes', name: 'Rota Operacional', href: '/operational-routes', icon: Activity, show: activeModules.operational_routes !== false },
       { id: 'safety_observations', name: 'Obs. Segurança', href: '/safety-observations', icon: ShieldAlert, show: activeModules.safety_observations !== false },
       { id: 'schedule', name: 'Escala', href: '/schedule', icon: CalendarDays, show: activeModules.schedule !== false },
-      { id: 'admin', name: 'Gerenciar Usuários', href: '/admin', icon: Users, show: !!isAdmin },
+      { id: 'admin', name: 'Painel Administrativo', href: '/admin', icon: Users, show: !!isAdmin },
       { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
     ];
 
