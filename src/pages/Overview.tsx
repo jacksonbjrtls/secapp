@@ -65,6 +65,7 @@ export const Overview: React.FC = () => {
     operational_routes: true,
     safety_observations: true,
     consumables: true,
+    shift_handover: true,
   });
 
   useEffect(() => {

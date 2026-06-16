@@ -193,6 +193,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     operational_routes: true,
     safety_observations: true,
     consumables: true,
+    shift_handover: true,
   });
 
   useEffect(() => {
@@ -210,7 +211,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   useEffect(() => {
     const defaultNav = [
-      { id: 'shift_handover', name: 'Passagem de Turno', href: '/shift-handover', icon: ArrowLeftRight, show: true },
+      { id: 'shift_handover', name: 'Passagem de Turno', href: '/shift-handover', icon: ArrowLeftRight, show: activeModules.shift_handover !== false },
       { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, show: !!isManager || !!isAdmin },
       { id: 'overview', name: 'Overview', href: '/overview', icon: Activity, show: !!isManager || !!isAdmin },
       { id: 'forklifts', name: 'Empilhadeiras', href: '/forklifts', icon: Truck, show: activeModules.forklifts !== false },

@@ -102,6 +102,7 @@ const Admin: React.FC = () => {
     schedule: true,
     operational_routes: true,
     safety_observations: true,
+    shift_handover: true,
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
@@ -1572,6 +1573,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {[
+              { id: 'shift_handover', label: 'Passagem de Turno', desc: 'Módulo de passagem de turno com controle de ocorrências, observações e destaques do turno.', icon: 'ClipboardList' },
               { id: 'dds', label: 'DDS Online', desc: 'Módulo de Diálogo Diário de Segurança com assinaturas e confirmação de presença.', icon: 'ShieldCheck' },
               { id: 'forklifts', label: 'Empilhadeiras', desc: 'Controle de checklists e inspeções de segurança de empilhadeiras em tempo real.', icon: 'Truck' },
               { id: 'wires', label: 'Módulo de Arames', desc: 'Controle de estoque, recebimento de bobinas e consumo de arames no processo.', icon: 'Factory' },

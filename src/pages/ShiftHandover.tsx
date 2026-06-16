@@ -71,7 +71,7 @@ interface HandoverReport {
 }
 
 export const ShiftHandover: React.FC = () => {
-  const { profile, user, isManager } = useAuth();
+  const { profile, user, isManager, isAdmin, isMaster } = useAuth();
 
   // Selected parameters
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -118,6 +118,7 @@ export const ShiftHandover: React.FC = () => {
     operational_routes: true,
     safety_observations: true,
     consumables: true,
+    shift_handover: true,
   });
 
   // Fetch active modules in real-time
@@ -464,24 +465,90 @@ export const ShiftHandover: React.FC = () => {
   // Check if current user is allowed to edit the selected report
   const canEdit = useMemo(() => {
     if (!user) return false;
-    if (isManager) return true; // Managers/Admins can always edit any report
     
-    // If the report doesn't exist yet, we can create it
+    const isCtrl = !!(isManager || isAdmin || isMaster);
+    if (isCtrl) return true; // Admins, Managers and Masters can always edit any report
+    
+    // If the report doesn't exist yet, we can create/edit it
     if (!currentHandoverReport) return true;
 
-    // Report exists: Check if it belongs to the current user
-    const isOwner = currentHandoverReport.createdBy === user.uid;
+    // Report exists: Check if it belongs to the current user (owner as creator)
+    const isOwner = !currentHandoverReport.createdBy || 
+                    currentHandoverReport.createdBy === user.uid || 
+                    currentHandoverReport.createdByEmail === user.email ||
+                    (currentHandoverReport.operatorIn && profile?.displayName && currentHandoverReport.operatorIn.toLowerCase().trim() === profile.displayName.toLowerCase().trim());
     if (!isOwner) return false;
     
-    // Check if the selected shift is the current, active shift
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${year}-${month}-${day}`;
+    // Calculate shift starting and closing times to determine valid editing window
+    const getShiftClosingTime = (dateStr: string, shiftVal: Shift): Date => {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      if (shiftVal === 'Turno 1') {
+        return new Date(year, month - 1, day, 8, 0, 0, 0);
+      } else if (shiftVal === 'Turno 2') {
+        return new Date(year, month - 1, day, 16, 0, 0, 0);
+      } else {
+        // Turno 3 ends at midnight, which is next day at 00:00:00
+        return new Date(year, month - 1, day + 1, 0, 0, 0, 0);
+      }
+    };
+
+    const getShiftStartTime = (dateStr: string, shiftVal: Shift): Date => {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      if (shiftVal === 'Turno 1') {
+        return new Date(year, month - 1, day, 0, 0, 0, 0);
+      } else if (shiftVal === 'Turno 2') {
+        return new Date(year, month - 1, day, 8, 0, 0, 0);
+      } else {
+        return new Date(year, month - 1, day, 16, 0, 0, 0);
+      }
+    };
+
+    const now = new Date();
+    const startTime = getShiftStartTime(selectedDate, selectedShift);
+    const closingTime = getShiftClosingTime(selectedDate, selectedShift);
+    const deadlineTime = new Date(closingTime.getTime() + 2 * 60 * 60 * 1000); // 2 hours after shift closes
+
+    // Allowed to edit during the shift and up to 2 hours after closes
+    return now >= startTime && now <= deadlineTime;
+  }, [user, isManager, isAdmin, isMaster, currentHandoverReport, selectedDate, selectedShift, profile]);
+
+  // Information about editing grace period to show in UI
+  const editGraceTimeInfo = useMemo(() => {
+    if (!currentHandoverReport || !user) return null;
     
-    return selectedDate === todayStr && selectedShift === getCurrentShift();
-  }, [user, isManager, currentHandoverReport, selectedDate, selectedShift]);
+    const isCtrl = !!(isManager || isAdmin || isMaster);
+    const isOwner = !currentHandoverReport.createdBy || 
+                    currentHandoverReport.createdBy === user.uid || 
+                    currentHandoverReport.createdByEmail === user.email ||
+                    (currentHandoverReport.operatorIn && profile?.displayName && currentHandoverReport.operatorIn.toLowerCase().trim() === profile.displayName.toLowerCase().trim());
+
+    const getShiftClosingTime = (dateStr: string, shiftVal: Shift): Date => {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      if (shiftVal === 'Turno 1') {
+        return new Date(year, month - 1, day, 8, 0, 0, 0);
+      } else if (shiftVal === 'Turno 2') {
+        return new Date(year, month - 1, day, 16, 0, 0, 0);
+      } else {
+        return new Date(year, month - 1, day + 1, 0, 0, 0, 0);
+      }
+    };
+
+    const closingTime = getShiftClosingTime(selectedDate, selectedShift);
+    const deadlineTime = new Date(closingTime.getTime() + 2 * 60 * 60 * 1000);
+    const now = new Date();
+    
+    const isPastShiftClose = now > closingTime;
+    const isWithin2Hours = now <= deadlineTime;
+    
+    return {
+      isCtrl,
+      isOwner,
+      isPastShiftClose,
+      isWithin2Hours,
+      deadlineFormat: deadlineTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      deadlineDate: deadlineTime.toLocaleDateString('pt-BR')
+    };
+  }, [currentHandoverReport, user, isManager, isAdmin, isMaster, selectedDate, selectedShift, profile]);
 
   // Populate form fields if a report exists for the selected shift and user opens editing
   useEffect(() => {
@@ -581,6 +648,25 @@ export const ShiftHandover: React.FC = () => {
       return dateStr;
     }
   };
+
+  if (activeModules.shift_handover === false) {
+    return (
+      <div className="max-w-md mx-auto my-12 text-center" id="shift-handover-disabled">
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-md flex flex-col items-center">
+          <div className="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-500 mb-4">
+            <ArrowLeftRight className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Módulo Desabilitado</h2>
+          <p className="text-sm text-slate-500 mt-2 font-semibold">
+            O módulo de Passagem de Turno foi temporariamente desativado pelo administrador do sistema.
+          </p>
+          <p className="text-xs text-slate-400 mt-4 leading-relaxed font-medium">
+            Se você precisar realizar registros de passagem de turno, solicite a habilitação do módulo na aba "Módulos" da Administração para continuar.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12" id="shift-handover-container">
@@ -892,13 +978,38 @@ export const ShiftHandover: React.FC = () => {
                       <CheckCircle className="w-3.5 h-3.5" /> Oficialmente Gravado
                     </span>
                     <h3 className="text-xl font-black text-slate-900 tracking-tight mt-2">Passagem de Turno Concluída</h3>
-                    <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Submetido por: {currentHandoverReport.createdByName || currentHandoverReport.createdByEmail}</p>
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-wider block mb-1">Submetido por: {currentHandoverReport.createdByName || currentHandoverReport.createdByEmail}</p>
+                    {editGraceTimeInfo && (
+                      <div className="text-[10px] font-extrabold tracking-wide mt-1.5 flex flex-wrap gap-2">
+                        {editGraceTimeInfo.isCtrl ? (
+                          <span className="text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg inline-block shadow-sm">
+                            🔧 Administrador: Edição Liberada Sem Restrição de Tempo
+                          </span>
+                        ) : editGraceTimeInfo.isOwner && editGraceTimeInfo.isPastShiftClose && editGraceTimeInfo.isWithin2Hours ? (
+                          <span className="text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 shadow-xs animate-pulse">
+                            ⏳ Tolerância Ativa: Edição liberada até {editGraceTimeInfo.deadlineFormat} do dia {editGraceTimeInfo.deadlineDate} (Limite de 2h pós-encerramento)
+                          </span>
+                        ) : editGraceTimeInfo.isOwner && !editGraceTimeInfo.isPastShiftClose ? (
+                          <span className="text-emerald-700 bg-emerald-50/80 border border-emerald-100 px-2.5 py-1 rounded-lg inline-block shadow-xs">
+                            ⏱️ Turno Ativo: Editável até 2h depois de encerrar (Disponível até {editGraceTimeInfo.deadlineFormat})
+                          </span>
+                        ) : editGraceTimeInfo.isOwner && !editGraceTimeInfo.isWithin2Hours ? (
+                          <span className="text-rose-750 bg-rose-50 border border-rose-150 px-2.5 py-1 rounded-lg inline-block shadow-xs text-rose-800">
+                            🔒 Expirado: O prazo de 2h pós-encerramento esgotou às {editGraceTimeInfo.deadlineFormat}. Apenas Administradores podem editar agora.
+                          </span>
+                        ) : (
+                          <span className="text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg inline-block shadow-xs">
+                            👤 Somente Leitura: Este relatório pertence ao operador "{currentHandoverReport.operatorIn}".
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {canEdit ? (
                     <button
                       onClick={() => setIsEditingExisting(true)}
-                      className="flex items-center gap-1 px-3.5 py-1.5 border border-slate-200 hover:bg-slate-50 active:scale-95 text-slate-600 text-xs font-black rounded-xl transition-all cursor-pointer"
+                      className="flex items-center gap-1.5 px-4.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 hover:shadow-md active:scale-95 text-white text-xs font-black rounded-xl transition-all cursor-pointer border border-indigo-500"
                     >
                       <Edit2 className="w-3.5 h-3.5" /> Editar Relatório
                     </button>
@@ -955,19 +1066,40 @@ export const ShiftHandover: React.FC = () => {
                   </div>
 
                   <div className="space-y-4">
-                    <div>
-                      <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">📝 Ocorrências, Observações e Destaques do Turno</h4>
-                      <p className="bg-slate-50 p-4 rounded-2xl text-sm leading-relaxed text-slate-700 whitespace-pre-wrap border border-slate-150 min-h-16 font-semibold">
+                    <div className="bg-slate-50 p-5 rounded-2xl border border-slate-150 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider">📝 Ocorrências, Observações e Destaques do Turno</h4>
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingExisting(true)}
+                            className="text-[10px] font-extrabold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline cursor-pointer"
+                          >
+                            <Edit2 className="w-3 h-3" /> Editar Texto
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-sm leading-relaxed text-slate-700 whitespace-pre-wrap font-semibold">
                         {currentHandoverReport.notes || 'Nenhuma ocorrência registrada.'}
                       </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="text-center pt-4 border-t border-slate-100">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-5 border-t border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-450 uppercase tracking-wider text-center sm:text-left">
                     Relatório gravado digitalmente às {currentHandoverReport.updatedAt ? safeToDate(currentHandoverReport.updatedAt)?.toLocaleTimeString('pt-BR') : safeToDate(currentHandoverReport.createdAt)?.toLocaleTimeString('pt-BR')} no dia {formatDateDisplay(currentHandoverReport.date)}
                   </p>
+                  
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingExisting(true)}
+                      className="w-full sm:w-auto px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer border border-indigo-550"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" /> Editar Conteúdo da Passagem
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1108,11 +1240,11 @@ export const ShiftHandover: React.FC = () => {
                 >
                   {submitting ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> Verificando Registro...
+                      <Loader2 className="w-4 h-4 animate-spin" /> {currentHandoverReport ? 'Salvando Alterações...' : 'Verificando Registro...'}
                     </>
                   ) : (
                     <>
-                      <Save className="w-4 h-4" /> Gravar Passagem de Turno
+                      <Save className="w-4 h-4" /> {currentHandoverReport ? 'Salvar Edição da Passagem de Turno' : 'Gravar Passagem de Turno'}
                     </>
                   )}
                 </button>

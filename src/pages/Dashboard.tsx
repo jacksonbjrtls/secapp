@@ -62,6 +62,7 @@ const Dashboard: React.FC = () => {
     operational_routes: true,
     safety_observations: true,
     consumables: true,
+    shift_handover: true,
   });
 
   const tabsList = useMemo(() => [
