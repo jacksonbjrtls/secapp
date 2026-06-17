@@ -62,14 +62,11 @@ export const isCoilMatch = (dbNum: string, scanned: string): boolean => {
 export const parseWireQRCode = (data: string): ParsedWireCoil | null => {
   if (!data) return null;
 
-  // Morlan logic
-  // Example: 0002882001706427      L396501  GD03040000125487009650000027000
-  // 0002882 -> 2,30
-  // 0002274 -> 3,00
-  // 0002273 -> 2,18
-  // 0002280 -> 2,30
-  // Weight sequence: 009650 -> 965 kg
-  // Unique ID: GD03040000125487
+  const dataUpper = data.trim().toUpperCase();
+
+  // Morlan logic (direct GD code or barcode sequence containing GD)
+  // Example full: 0002882001706427      L396501  GD03040000125487009650000027000
+  // Example direct unique ID: GD03040000154890
   
   if (data.startsWith('0002')) {
     const bitolaCode = data.substring(0, 7);
@@ -107,6 +104,39 @@ export const parseWireQRCode = (data: string): ParsedWireCoil | null => {
             weight = val;
             break;
           }
+        }
+      }
+    }
+
+    return {
+      coilNumber,
+      diameter,
+      weight,
+      supplier: 'Morlan'
+    };
+  }
+
+  // Handle direct GD code (e.g. GD03040000154890)
+  if (dataUpper.startsWith('GD') || /GD\d{10,20}/i.test(dataUpper)) {
+    const gdMatch = dataUpper.match(/GD([0-9]{14})/);
+    const coilNumber = gdMatch ? gdMatch[0] : dataUpper;
+    
+    // Attempt standard diameter extraction or default
+    let diameter = 2.30;
+    const diaMatch = dataUpper.match(/\b([1-4][,\.]\d{2})\b/);
+    if (diaMatch) {
+      diameter = parseFloat(diaMatch[1].replace(',', '.'));
+    }
+
+    // Attempt weight extraction or default
+    let weight = 1000;
+    const allNumbersMatch = dataUpper.match(/([0-9]{3,4})/g);
+    if (allNumbersMatch) {
+      for (const m of allNumbersMatch) {
+        const val = parseFloat(m);
+        if (val >= 100 && val <= 2500) {
+          weight = val;
+          break;
         }
       }
     }

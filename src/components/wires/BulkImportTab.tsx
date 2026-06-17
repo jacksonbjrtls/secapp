@@ -245,9 +245,15 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       const id = getField(mapping.id);
       const operator = getField(mapping.operator, 'Administrador');
       const rawDate = getField(mapping.date);
-      const supplierName = getField(mapping.supplier, 'Geral');
-      const rawStatus = getField(mapping.status);
       const coilNumber = getField(mapping.coilNumber);
+      let supplierName = getField(mapping.supplier, 'Geral');
+
+      // Auto-detect Morlan if coil number looks like a Morlan GD code
+      if (coilNumber && (coilNumber.toUpperCase().startsWith('GD') || /GD\d{10,20}/i.test(coilNumber))) {
+        supplierName = 'Morlan';
+      }
+
+      const rawStatus = getField(mapping.status);
       const rawDiameter = getField(mapping.diameter);
       const rawWeight = getField(mapping.weight);
       const nfNumber = getField(mapping.nfNumber);

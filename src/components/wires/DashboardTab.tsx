@@ -29,7 +29,8 @@ import {
   Search,
   Truck,
   X,
-  ShieldAlert
+  ShieldAlert,
+  Barcode
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -45,15 +46,107 @@ interface DashboardTabProps {
 
 export const DashboardTab: React.FC<DashboardTabProps> = ({ 
   batches, 
-  coils, 
+  coils: coilsProp, 
   suppliers, 
   lines,
   startDate,
   endDate,
   productionData
 }) => {
+  // Dynamically enrich or correct supplierName for every coil using supplier database or standard layout rules
+  const coils = useMemo(() => {
+    return coilsProp.map(c => {
+      let supplierName = '';
+      if (c.supplierId) {
+        supplierName = suppliers.find(s => s.id === c.supplierId)?.name || '';
+      }
+      // Derivar o fornecedor a partir do código se estiver em branco ou indefinido
+      if (!supplierName || supplierName === 'Desconhecido' || supplierName === 'Unknown') {
+        const num = c.coilNumber?.toUpperCase() || '';
+        if (num.startsWith('GD') || /GD\d{10,20}/i.test(num)) {
+          supplierName = 'Morlan';
+        } else if (/^\d{10}$/.test(num.trim())) {
+          supplierName = 'Belgo';
+        }
+      }
+      return {
+        ...c,
+        supplierName: supplierName || 'Desconhecido'
+      };
+    });
+  }, [coilsProp, suppliers]);
+
   const [filterSupplier, setFilterSupplier] = useState('');
   const [filterDiameter, setFilterDiameter] = useState<string>('');
+
+  // Local lists states for available vs consumed
+  const [coilSearch, setCoilSearch] = useState('');
+  const [coilListTab, setCoilListTab] = useState<'available' | 'consumed'>('available');
+  const [listFilterDiameter, setListFilterDiameter] = useState('');
+  const [listFilterSupplier, setListFilterSupplier] = useState('');
+
+  // 1. Dynamic list of available (in-stock) coils filtered by search term, diameter, and supplier
+  const filteredAvailableList = useMemo(() => {
+    let list = coils.filter(c => c.status !== 'consumed');
+    
+    if (coilSearch) {
+      const s = coilSearch.toLowerCase().trim();
+      list = list.filter(c => 
+        c.coilNumber.toLowerCase().includes(s) || 
+        (c.supplierName && c.supplierName.toLowerCase().includes(s)) ||
+        (c.storageBayName && c.storageBayName.toLowerCase().includes(s))
+      );
+    }
+    
+    if (listFilterDiameter) {
+      list = list.filter(c => c.diameter.toFixed(2) === Number(listFilterDiameter).toFixed(2));
+    }
+    
+    if (listFilterSupplier) {
+      list = list.filter(c => c.supplierId === listFilterSupplier);
+    }
+    
+    return list;
+  }, [coils, coilSearch, listFilterDiameter, listFilterSupplier]);
+
+  // 2. Dynamic list of consumed coils filtered by search term, diameter, and supplier
+  const filteredConsumedList = useMemo(() => {
+    let list = coils.filter(c => c.status === 'consumed');
+    
+    if (coilSearch) {
+      const s = coilSearch.toLowerCase().trim();
+      list = list.filter(c => 
+        c.coilNumber.toLowerCase().includes(s) || 
+        (c.consumedBy && c.consumedBy.toLowerCase().includes(s)) ||
+        (c.consumedIn && c.consumedIn.toLowerCase().includes(s)) ||
+        ((lines.find(l => l.id === c.currentLineId)?.name || '').toLowerCase().includes(s))
+      );
+    }
+    
+    if (listFilterDiameter) {
+      list = list.filter(c => c.diameter.toFixed(2) === Number(listFilterDiameter).toFixed(2));
+    }
+    
+    if (listFilterSupplier) {
+      list = list.filter(c => c.supplierId === listFilterSupplier);
+    }
+    
+    return list;
+  }, [coils, lines, coilSearch, listFilterDiameter, listFilterSupplier]);
+
+  // 3. Dynamic Recharts data for the active comparison chart
+  const listGaugeChartData = useMemo(() => {
+    const activeList = coilListTab === 'available' ? filteredAvailableList : filteredConsumedList;
+    const uniqueD = Array.from(new Set(activeList.map(c => c.diameter))).sort((a, b) => Number(a) - Number(b));
+    return uniqueD.map(d => {
+      const subset = activeList.filter(c => c.diameter === d);
+      return {
+        name: `${(d as number).toFixed(2)} mm`,
+        weight: subset.reduce((acc, c) => acc + (c.weight || 0), 0),
+        count: subset.length
+      };
+    });
+  }, [coilListTab, filteredAvailableList, filteredConsumedList]);
 
   // Analytics
   const filteredReceived = useMemo(() => {
@@ -429,9 +522,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10">
+      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-8 lg:gap-10">
         {/* Suppliers Pie - Left Column */}
-        <div className="lg:col-span-12 xl:col-span-4 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+        <div className="lg:col-span-12 2xl:col-span-4 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between mb-8">
             <h3 className="text-lg lg:text-xl font-black text-slate-900 flex items-center gap-2">
               <PieChartIcon className="w-5 h-5 text-emerald-600" />
@@ -479,7 +572,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Consumed by Line - Right Column (Wider) */}
-        <div className="lg:col-span-12 xl:col-span-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm flex flex-col">
+        <div className="lg:col-span-12 2xl:col-span-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm flex flex-col">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <h3 className="text-lg lg:text-xl font-black text-slate-900 flex items-center gap-2">
               <History className="w-5 h-5 text-blue-600" />
@@ -491,8 +584,8 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-grow">
-            <div className="lg:col-span-7 h-72 min-w-0">
+          <div className="grid grid-cols-1 2xl:grid-cols-12 gap-8 flex-grow">
+            <div className="2xl:col-span-8 h-72 min-w-0 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stats.byLine} margin={{ top: 20, right: 15, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -507,7 +600,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
               </ResponsiveContainer>
             </div>
 
-            <div className="lg:col-span-5 flex flex-col min-w-0">
+            <div className="2xl:col-span-4 flex flex-col min-w-0">
                <div className="bg-slate-50 rounded-2xl border border-slate-100 overflow-x-auto flex-grow max-w-full">
                   <table className="w-full text-left min-w-[340px]">
                     <thead className="bg-slate-100/50">
@@ -541,10 +634,10 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Diameters & Efficiency Section */}
-        <div className="lg:col-span-12 grid grid-cols-1 xl:grid-cols-12 gap-8 lg:gap-10">
+        <div className="lg:col-span-12 grid grid-cols-1 2xl:grid-cols-12 gap-8 lg:gap-10">
           
           {/* Diameters Bar */}
-          <div className="xl:col-span-5 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+          <div className="2xl:col-span-5 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
             <h3 className="text-lg lg:text-xl font-black text-slate-900 mb-8 flex items-center gap-2">
               <Filter className="w-5 h-5 text-amber-600" />
               Volume por Bitola (mm)
@@ -574,7 +667,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
 
           {/* Specific Consumption - THE MAIN KPIs */}
-          <div className="xl:col-span-7 bg-white p-8 rounded-3xl border-2 border-emerald-500/20 shadow-xl shadow-emerald-50 relative overflow-hidden group">
+          <div className="2xl:col-span-7 bg-white p-8 rounded-3xl border-2 border-emerald-500/20 shadow-xl shadow-emerald-50 relative overflow-hidden group">
              {/* Decorative Background Element */}
              <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-50 rounded-full blur-3xl opacity-40 -mr-32 -mt-32 group-hover:opacity-60 transition-opacity" />
              
@@ -733,6 +826,215 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
               </div>
            </div>
         </div>
+
+        {/* SEÇÃO ADICIONADA: PESQUISA, FILTROS E GRÁFICO DE BOBINAS DISPONÍVEIS E CONSUMIDAS */}
+        <div className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm mt-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
+            <div>
+              <h3 className="text-lg lg:text-xl font-black text-slate-900 flex items-center gap-2">
+                <Barcode className="w-5 h-5 text-indigo-600" />
+                Consulta e Análise de Bobinas
+              </h3>
+              <p className="text-xs text-slate-400 font-bold mt-1 font-sans">
+                Visualize os saldos, distribuições por bitola e fichas detalhadas de estoque vs histórico de consumo.
+              </p>
+            </div>
+            
+            {/* Tabs Selector */}
+            <div className="flex p-1 bg-slate-100 rounded-2xl self-start md:self-center border border-slate-200/50 space-x-1">
+              <button
+                type="button"
+                onClick={() => setCoilListTab('available')}
+                className={cn(
+                  "px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2",
+                  coilListTab === 'available'
+                    ? "bg-white text-indigo-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                <Package className="w-3.5 h-3.5" />
+                Estoque Disponível ({filteredAvailableList.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoilListTab('consumed')}
+                className={cn(
+                  "px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2",
+                  coilListTab === 'consumed'
+                    ? "bg-white text-indigo-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                <History className="w-3.5 h-3.5" />
+                Dado Baixa/Consumido ({filteredConsumedList.length})
+              </button>
+            </div>
+          </div>
+
+          {/* Local Filters Toolbar */}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 mb-6 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+            <div className="sm:col-span-6 relative">
+              <Search className="absolute left-3 top-3.5 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Buscar por código/tag, fornecedor, etc..."
+                value={coilSearch}
+                onChange={(e) => setCoilSearch(e.target.value)}
+                className="w-full pl-9 pr-9 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 placeholder:text-slate-400"
+              />
+              {coilSearch && (
+                <button 
+                  type="button"
+                  onClick={() => setCoilSearch('')}
+                  className="absolute right-3 top-3.5 text-slate-400 hover:text-slate-600 font-extrabold"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <div className="sm:col-span-3">
+              <select
+                value={listFilterDiameter}
+                onChange={(e) => setListFilterDiameter(e.target.value)}
+                className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Todas Bitolas</option>
+                {uniqueAvailableDiameters.map(d => (
+                  <option key={`list-dia-${d}`} value={d.toString()}>{d.toFixed(2)} mm</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="sm:col-span-3">
+              <select
+                value={listFilterSupplier}
+                onChange={(e) => setListFilterSupplier(e.target.value)}
+                className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Todos Fornecedores</option>
+                {suppliers.map(s => (
+                  <option key={`list-sup-${s.id}`} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 2xl:grid-cols-12 gap-6 items-start">
+            
+            {/* Dynamic visual breakdown chart */}
+            <div className="2xl:col-span-4 bg-slate-50/50 p-5 rounded-2xl border border-slate-100">
+              <h4 className="text-xs font-black text-slate-950 uppercase tracking-widest mb-4 flex items-center gap-1.5 font-sans">
+                <TrendingUp className="w-4 h-4 text-indigo-600" />
+                Peso Filtrado por Bitola (mm)
+              </h4>
+              
+              <div className="h-60 mt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={listGaugeChartData} margin={{ left: -15, right: 10, top: 10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 900 }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 9, fontWeight: 900 }} />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                      formatter={(val: any) => [`${Number(val).toLocaleString()} kg`]}
+                    />
+                    <Bar 
+                      dataKey="weight" 
+                      fill={coilListTab === 'available' ? "#6366f1" : "#f59e0b"} 
+                      radius={[8, 8, 0, 0]} 
+                      barSize={28}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between text-xs py-2 px-3 bg-white rounded-xl border border-slate-100">
+                <span className="font-bold text-slate-400">Peso Total na Seção:</span>
+                <span className="font-extrabold text-slate-800">
+                  {coilListTab === 'available' 
+                    ? filteredAvailableList.reduce((acc, c) => acc + (c.weight || 0), 0).toLocaleString() 
+                    : filteredConsumedList.reduce((acc, c) => acc + (c.weight || 0), 0).toLocaleString()
+                  } kg
+                </span>
+              </div>
+            </div>
+
+            {/* List Table Data Grid */}
+            <div className="2xl:col-span-8 overflow-x-auto min-w-0">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-slate-205 text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-100/50">
+                    <th className="py-2.5 px-3">Código / Tag</th>
+                    <th className="py-2.5 px-3 text-center">Bitola</th>
+                    <th className="py-2.5 px-3 text-right">Massa</th>
+                    <th className="py-2.5 px-3">Fornecedor</th>
+                    <th className="py-2.5 px-3 text-right">Local / Linha</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(coilListTab === 'available' ? filteredAvailableList : filteredConsumedList)
+                    .slice(0, 10)
+                    .map((item, idx) => {
+                      return (
+                        <tr key={`list-row-${item.id}-${idx}`} className="text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all">
+                          <td className="py-3 px-3 font-extrabold text-slate-900 flex items-center gap-2">
+                            <div className={cn(
+                              "w-2 h-2 rounded-full shrink-0",
+                              coilListTab === 'available' ? "bg-indigo-500 animate-pulse" : "bg-amber-500"
+                            )} />
+                            {item.coilNumber}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className="text-[11px] font-black bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                              {item.diameter.toFixed(2)} mm
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-right font-black text-slate-800 tabular-nums">
+                            {item.weight?.toLocaleString()} kg
+                          </td>
+                          <td className="py-3 px-3 text-slate-500 text-xs truncate max-w-[120px]" title={item.supplierName || 'Fornecedor Desconhecido'}>
+                            {item.supplierName || 'Desconhecido'}
+                          </td>
+                          <td className="py-3 px-3 text-right text-xs">
+                            {coilListTab === 'available' ? (
+                              <span className="inline-block px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-md font-extrabold">
+                                {item.storageBayName || 'Galpão'}
+                              </span>
+                            ) : (
+                              <div className="flex flex-col items-end leading-tight">
+                                <span className="font-extrabold text-slate-700">
+                                  {lines.find(l => l.id === item.currentLineId)?.name || item.consumedIn || 'Consumo'}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-bold">
+                                  {item.consumedAt ? new Date(item.consumedAt?.seconds ? item.consumedAt.seconds * 1000 : item.consumedAt).toLocaleDateString('pt-BR') : ''}
+                                </span>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  {(coilListTab === 'available' ? filteredAvailableList : filteredConsumedList).length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-slate-400 text-xs italic font-semibold">
+                        Nenhuma bobina corresponde aos filtros selecionados.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+
+              {(coilListTab === 'available' ? filteredAvailableList : filteredConsumedList).length > 10 && (
+                <div className="p-3 bg-slate-50 text-center font-bold text-[10px] text-slate-400 uppercase tracking-wider rounded-xl mt-3 border border-slate-100">
+                  Exibindo as primeiras 10 bobina(s) de um total de {(coilListTab === 'available' ? filteredAvailableList : filteredConsumedList).length} correspondentes.
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+
       </div>
     </div>
   );

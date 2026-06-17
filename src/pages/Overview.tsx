@@ -341,6 +341,22 @@ export const Overview: React.FC = () => {
     };
   }, [wireCoils, wireBatches, lines, todayStart, todayEnd]);
 
+  // Available Wire Coils in stock grouped by gauge (bitolas)
+  const coilsInStockByGauge = useMemo(() => {
+    const stockCoils = wireCoils.filter(c => c.status !== 'consumed');
+    const grouped: Record<string, { count: number; totalWeight: number; diameter: number }> = {};
+    stockCoils.forEach(c => {
+      const d = c.diameter || 0;
+      const dKey = d.toFixed(1);
+      if (!grouped[dKey]) {
+        grouped[dKey] = { count: 0, totalWeight: 0, diameter: d };
+      }
+      grouped[dKey].count += 1;
+      grouped[dKey].totalWeight += (c.weight || 0);
+    });
+    return Object.values(grouped).sort((a, b) => a.diameter - b.diameter);
+  }, [wireCoils]);
+
   // Consumables Stats
   const consumablesStats = useMemo(() => {
     const activeList = consumableItems.filter(i => i.active !== false);
@@ -1268,6 +1284,69 @@ export const Overview: React.FC = () => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Wire Control Available Stock by Gauge */}
+      {activeModules.wires !== false && (
+        <div className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm mb-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
+            <div>
+              <h3 className="text-lg font-black text-slate-100 font-sans flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse shrink-0" />
+                <span className="text-slate-900">Estoque Disponível por Bitolas</span>
+              </h3>
+              <p className="text-xs text-slate-400 font-bold mt-1">Saldos de arame trefilado físico em estoque atualmente por diâmetro.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 bg-slate-50 px-4 py-2.5 rounded-2xl border border-slate-100">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase font-black text-slate-400">Total Bobinas:</span>
+                <span className="text-sm font-black text-indigo-600">
+                  {wireCoils.filter(c => c.status !== 'consumed').length} uni
+                </span>
+              </div>
+              <div className="hidden sm:block w-px h-3 bg-slate-200" />
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase font-black text-slate-400">Peso Total:</span>
+                <span className="text-sm font-black text-emerald-600">
+                  {wireCoils.filter(c => c.status !== 'consumed').reduce((acc, c) => acc + (c.weight || 0), 0).toLocaleString()} kg
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {coilsInStockByGauge.map((item, idx) => {
+              const maxWeight = Math.max(...coilsInStockByGauge.map(g => g.totalWeight), 1);
+              const pct = (item.totalWeight / maxWeight) * 100;
+              return (
+                <div key={`gauge-box-${idx}`} className="p-4 bg-slate-50 border border-slate-150 rounded-2xl transition-all hover:border-indigo-200 hover:shadow-sm">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-xs font-black bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md">
+                      {item.diameter.toFixed(2)} mm
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-extrabold text-right">
+                      {item.count} {item.count === 1 ? 'bob' : 'bobs'}
+                    </span>
+                  </div>
+                  <p className="text-lg font-black text-slate-900 tabular-nums">
+                    {item.totalWeight.toLocaleString()} <span className="text-[10px] text-slate-400 font-bold uppercase">kg</span>
+                  </p>
+                  <div className="mt-3 h-1 bg-slate-200/60 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-indigo-500 rounded-full transition-all"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            {coilsInStockByGauge.length === 0 && (
+              <div className="col-span-full py-8 text-center text-slate-400 text-xs italic font-semibold">
+                Nenhuma bobina disponível em estoque no momento.
+              </div>
+            )}
+          </div>
         </div>
       )}
 
