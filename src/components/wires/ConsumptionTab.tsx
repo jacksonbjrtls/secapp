@@ -252,28 +252,59 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
     }
 
     try {
-      // 2. Busca no Firestore por múltiplos termos prováveis
       let matchedDoc: WireCoil | null = null;
-      const queryTerms = Array.from(new Set([
-        term.trim(),
-        searchTerm.trim(),
-        term.trim().replace(/\s+/g, ' ')
-      ]));
 
-      for (const qTerm of queryTerms) {
-        if (!qTerm) continue;
-        const q = query(
-          collection(db, 'wire_coils'), 
-          where('coilNumber', '==', qTerm)
+      // 2. Busca pelas 400 bobinas mais recentes no Firestore para rodar match local flexível
+      // Esta busca é 100% segura contra erros de índice no Firestore (usa apenas ordenação simples)
+      try {
+        const qRecent = query(
+          collection(db, 'wire_coils'),
+          orderBy('receivedAt', 'desc'),
+          limit(400)
         );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          matchedDoc = { id: snap.docs[0].id, ...snap.docs[0].data() } as WireCoil;
-          break;
+        const snapRecent = await getDocs(qRecent);
+        const foundRecent = snapRecent.docs
+          .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+          .find(c => isCoilMatch(c.coilNumber, term));
+        if (foundRecent) {
+          matchedDoc = foundRecent;
+        }
+      } catch (errRecent) {
+        console.warn("Index warning querying recent by date, trying safe standard query...", errRecent);
+        // Fallback para uma busca simples sem limites de ordenação caso o banco esteja limpo ou sem campo recebimento
+        const qAll = query(collection(db, 'wire_coils'), limit(150));
+        const snapAll = await getDocs(qAll);
+        const foundAll = snapAll.docs
+          .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+          .find(c => isCoilMatch(c.coilNumber, term));
+        if (foundAll) {
+          matchedDoc = foundAll;
         }
       }
 
-      // 3. Fallback de busca pela primeira parte estruturada (sem espaços adjacentes)
+      // 3. Fallback: Busca direta de termos exatos no Firestore para cobrir itens históricos que excederam os limites flexíveis
+      if (!matchedDoc) {
+        const queryTerms = Array.from(new Set([
+          term.trim(),
+          searchTerm.trim(),
+          term.trim().replace(/\s+/g, ' ')
+        ]));
+
+        for (const qTerm of queryTerms) {
+          if (!qTerm) continue;
+          const q = query(
+            collection(db, 'wire_coils'), 
+            where('coilNumber', '==', qTerm)
+          );
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            matchedDoc = { id: snap.docs[0].id, ...snap.docs[0].data() } as WireCoil;
+            break;
+          }
+        }
+      }
+
+      // 4. Fallback: Busca direta pela primeira parte estruturada (sem espaços adjacentes)
       if (!matchedDoc) {
         const parts = term.trim().split(/\s+/);
         if (parts.length > 1) {
@@ -289,20 +320,23 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
         }
       }
 
-      // 4. Fallback de busca em bobinas já consumidas recentemente usando lógica de match flexível
+      // 5. Fallback para bobinas já consumidas historicamente (caso não estejam entre as 400 mais recentes)
       if (!matchedDoc) {
-        const qConsumed = query(
-          collection(db, 'wire_coils'),
-          where('status', '==', 'consumed'),
-          orderBy('consumedAt', 'desc'),
-          limit(150)
-        );
-        const consumedSnap = await getDocs(qConsumed);
-        const foundConsumed = consumedSnap.docs
-          .map(d => ({ id: d.id, ...d.data() } as WireCoil))
-          .find(c => isCoilMatch(c.coilNumber, term));
-        if (foundConsumed) {
-          matchedDoc = foundConsumed;
+        try {
+          const qConsumed = query(
+            collection(db, 'wire_coils'),
+            orderBy('consumedAt', 'desc'),
+            limit(150)
+          );
+          const consumedSnap = await getDocs(qConsumed);
+          const foundConsumed = consumedSnap.docs
+            .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+            .find(c => isCoilMatch(c.coilNumber, term));
+          if (foundConsumed) {
+            matchedDoc = foundConsumed;
+          }
+        } catch (consumedErr) {
+          console.warn("Index warning or empty database query on consumed coils:", consumedErr);
         }
       }
 

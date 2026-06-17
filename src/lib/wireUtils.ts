@@ -13,34 +13,47 @@ export const isCoilMatch = (dbNum: string, scanned: string): boolean => {
 
   if (cleanDb === cleanScanned) return true;
 
-  // Check if one is a substring of the other (with a minimum safe length)
-  if (cleanDb.includes(cleanScanned) || cleanScanned.includes(cleanDb)) {
-    const shorterLen = Math.min(cleanDb.length, cleanScanned.length);
-    if (shorterLen >= 6) {
-      return true;
+  // Extract all numeric sequences of length >= 5
+  const getNumSegments = (s: string) => {
+    return s.match(/\d{5,35}/g) || [];
+  };
+
+  const dbSegs = getNumSegments(cleanDb);
+  const scannedSegs = getNumSegments(cleanScanned);
+
+  // If we have numeric segments in both, perform safe segment matching
+  if (dbSegs.length > 0 && scannedSegs.length > 0) {
+    // 1. Find the primary long identifier segment, if any (usually length >= 8, e.g. "0002273002394374" or "1060259863")
+    const longDbSeg = dbSegs.find(seg => seg.length >= 8);
+    const longScannedSeg = scannedSegs.find(seg => seg.length >= 8);
+    
+    if (longDbSeg && cleanScanned.includes(longDbSeg)) {
+      // They share the main catalog/lot/serial code!
+      // To prevent false matching across different items in the same lot, 
+      // check if the DB item has a secondary segment (like a 5 or 6 digit corrida: e.g. "837804")
+      const testSegs = dbSegs.filter(seg => seg !== longDbSeg && seg.length >= 5);
+      if (testSegs.length > 0) {
+        // True match only if the scanned code ALSO contains these secondary segments
+        const allTestPassed = testSegs.every(tSeg => cleanScanned.includes(tSeg));
+        if (allTestPassed) return true;
+      } else {
+        // DB code was generic (had no secondary part).
+        return true;
+      }
     }
   }
 
-  // Look for GD matches (Morlan unique IDs)
+  // Fallback substring check with a safety length threshold of 8 characters
+  if (cleanDb.includes(cleanScanned) && cleanScanned.length >= 8) return true;
+  if (cleanScanned.includes(cleanDb) && cleanDb.length >= 8) return true;
+
+  // GD code check for Morlan (Unique IDs)
   // Example: GD03040000125487
-  const gdRegex = /gd(\d{8,20})/;
+  const gdRegex = /gd(\d{10,20})/;
   const dbGd = cleanDb.match(gdRegex);
   const scannedGd = cleanScanned.match(gdRegex);
   if (dbGd && scannedGd && dbGd[1] === scannedGd[1]) {
     return true;
-  }
-
-  // Look for any long sequence of digits (8 or more) found in both
-  // E.g. "1060259863" in "1060259863 2,18 1620" vs "1060259863"
-  const digitsRegex = /\d{8,20}/g;
-  const dbDigits = cleanDb.match(digitsRegex) || [];
-  const scannedDigits = cleanScanned.match(digitsRegex) || [];
-
-  for (const dbDig of dbDigits) {
-    if (cleanScanned.includes(dbDig)) return true;
-  }
-  for (const scDig of scannedDigits) {
-    if (cleanDb.includes(scDig)) return true;
   }
 
   return false;
