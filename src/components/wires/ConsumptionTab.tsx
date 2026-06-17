@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
-import { parseWireQRCode } from '../../lib/wireUtils';
+import { parseWireQRCode, isCoilMatch } from '../../lib/wireUtils';
 import { QRCameraScanner } from './QRCameraScanner';
 import { getCurrentShift, getGroupForShift, Shift } from '../../lib/scaleUtils';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
@@ -242,25 +242,81 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
     const parsed = parseWireQRCode(term);
     const searchTerm = parsed ? parsed.coilNumber : term;
 
-    try {
-      const q = query(
-        collection(db, 'wire_coils'), 
-        where('coilNumber', '==', searchTerm)
-      );
-      const snap = await getDocs(q);
+    // 1. Primariamente, busca local no estado em tempo real de bobinas em estoque (received)
+    const localMatch = availableCoils.find(coil => isCoilMatch(coil.coilNumber, term));
+    if (localMatch) {
+      setFoundCoil(localMatch);
+      setSuccess('Bobina localizada em estoque!');
+      setLoading(false);
+      return;
+    }
 
-      if (snap.empty) {
+    try {
+      // 2. Busca no Firestore por múltiplos termos prováveis
+      let matchedDoc: WireCoil | null = null;
+      const queryTerms = Array.from(new Set([
+        term.trim(),
+        searchTerm.trim(),
+        term.trim().replace(/\s+/g, ' ')
+      ]));
+
+      for (const qTerm of queryTerms) {
+        if (!qTerm) continue;
+        const q = query(
+          collection(db, 'wire_coils'), 
+          where('coilNumber', '==', qTerm)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          matchedDoc = { id: snap.docs[0].id, ...snap.docs[0].data() } as WireCoil;
+          break;
+        }
+      }
+
+      // 3. Fallback de busca pela primeira parte estruturada (sem espaços adjacentes)
+      if (!matchedDoc) {
+        const parts = term.trim().split(/\s+/);
+        if (parts.length > 1) {
+          const firstPart = parts[0];
+          const q = query(
+            collection(db, 'wire_coils'),
+            where('coilNumber', '==', firstPart)
+          );
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            matchedDoc = { id: snap.docs[0].id, ...snap.docs[0].data() } as WireCoil;
+          }
+        }
+      }
+
+      // 4. Fallback de busca em bobinas já consumidas recentemente usando lógica de match flexível
+      if (!matchedDoc) {
+        const qConsumed = query(
+          collection(db, 'wire_coils'),
+          where('status', '==', 'consumed'),
+          orderBy('consumedAt', 'desc'),
+          limit(150)
+        );
+        const consumedSnap = await getDocs(qConsumed);
+        const foundConsumed = consumedSnap.docs
+          .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+          .find(c => isCoilMatch(c.coilNumber, term));
+        if (foundConsumed) {
+          matchedDoc = foundConsumed;
+        }
+      }
+
+      if (!matchedDoc) {
         setError('Bobina não encontrada no sistema. Verifique o recebimento.');
       } else {
-        const coilData = { id: snap.docs[0].id, ...snap.docs[0].data() } as WireCoil;
-        
-        if (coilData.status === 'consumed') {
-          const consumedDate = coilData.consumedAt?.seconds 
-            ? new Date(coilData.consumedAt.seconds * 1000).toLocaleString()
+        if (matchedDoc.status === 'consumed') {
+          const consumedDate = matchedDoc.consumedAt?.seconds 
+            ? new Date(matchedDoc.consumedAt.seconds * 1000).toLocaleString()
             : 'data desconhecida';
           setError(`Esta bobina já foi consumida em ${consumedDate}.`);
         } else {
-          setFoundCoil(coilData);
+          setFoundCoil(matchedDoc);
+          setSuccess('Bobina localizada!');
         }
       }
     } catch (err) {

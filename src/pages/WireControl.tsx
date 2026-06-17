@@ -48,6 +48,7 @@ import {
   Truck,
   Weight,
   FileInput,
+  FileSpreadsheet,
   History,
   MapPin
 } from 'lucide-react';
@@ -58,10 +59,11 @@ import { ConsumptionTab } from '../components/wires/ConsumptionTab';
 import { DashboardTab } from '../components/wires/DashboardTab';
 import { ReceivingTab } from '../components/wires/ReceivingTab';
 import { HistoryTab } from '../components/wires/HistoryTab';
+import { BulkImportTab } from '../components/wires/BulkImportTab';
 
 const WireControl: React.FC = () => {
   const { user, isApproved, isManager, isAdmin, isMaster } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'receiving' | 'consumption' | 'history' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'receiving' | 'consumption' | 'history' | 'config' | 'bulk_import'>('dashboard');
   const [showTabMenu, setShowTabMenu] = useState(false);
   
   // Filtering State
@@ -123,11 +125,11 @@ const WireControl: React.FC = () => {
       setStorageBays(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireStorageBay)));
     }, (error) => console.error("Error in wire_storage_bays listener:", error));
 
-    const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(50)), (snap) => {
+    const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc')), (snap) => {
       setBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireBatch)));
     }, (error) => console.error("Error in wire_batches listener:", error));
 
-    const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), orderBy('receivedAt', 'desc'), limit(300)), (snap) => {
+    const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), orderBy('receivedAt', 'desc')), (snap) => {
       setCoils(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireCoil)));
     }, (error) => console.error("Error in wire_coils listener:", error));
     
@@ -232,6 +234,19 @@ const WireControl: React.FC = () => {
                 <Settings className="w-4 h-4" /> Ajustes
               </button>
             )}
+            {(isAdmin || isMaster) && (
+              <button
+                onClick={() => setActiveTab('bulk_import')}
+                className={cn(
+                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                  activeTab === 'bulk_import' 
+                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
+                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                )}
+              >
+                <FileSpreadsheet className="w-4 h-4" /> Importar Massa
+              </button>
+            )}
           </div>
 
           {/* Mobile Tab Control - Visible on md and below */}
@@ -246,6 +261,7 @@ const WireControl: React.FC = () => {
                 {activeTab === 'consumption' && <><Barcode className="w-5 h-5 text-emerald-600" /> Consumo</>}
                 {activeTab === 'history' && <><History className="w-5 h-5 text-emerald-600" /> Histórico</>}
                 {activeTab === 'config' && <><Settings className="w-5 h-5 text-emerald-600" /> Ajustes</>}
+                {activeTab === 'bulk_import' && <><FileSpreadsheet className="w-5 h-5 text-emerald-600" /> Importar Massa</>}
               </div>
               <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTabMenu && "rotate-180")} />
             </button>
@@ -268,7 +284,8 @@ const WireControl: React.FC = () => {
                       { id: 'receiving', label: 'Recebimento', icon: PackagePlus, roles: [isManager, isAdmin, isMaster] },
                       { id: 'consumption', label: 'Registrar Consumo', icon: Barcode },
                       { id: 'history', label: 'Histórico de Lotes', icon: History, roles: [isManager, isAdmin, isMaster] },
-                      { id: 'config', label: 'Ajustes do Sistema', icon: Settings, roles: [isManager, isAdmin, isMaster] }
+                      { id: 'config', label: 'Ajustes do Sistema', icon: Settings, roles: [isManager, isAdmin, isMaster] },
+                      { id: 'bulk_import', label: 'Importação em Massa', icon: FileSpreadsheet, roles: [isAdmin, isMaster] }
                     ].map((tab: any) => {
                       if (tab.roles && !tab.roles.some(Boolean)) return null;
                       return (
@@ -356,6 +373,17 @@ const WireControl: React.FC = () => {
             exit={{ opacity: 0, y: -20 }}
           >
             <ConfigTab lines={lines} suppliers={suppliers} storageBays={storageBays} />
+          </motion.div>
+        )}
+
+        {activeTab === 'bulk_import' && (isAdmin || isMaster) && (
+          <motion.div
+            key="bulk_import"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+          >
+            <BulkImportTab suppliers={suppliers} storageBays={storageBays} />
           </motion.div>
         )}
         
