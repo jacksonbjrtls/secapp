@@ -88,6 +88,8 @@ export interface WireCoil {
   isDamaged?: boolean;
   storageBayId?: string;
   storageBayName?: string;
+  isAuditWriteOff?: boolean;
+  auditReason?: string;
 }
 
 export interface QualitySector {

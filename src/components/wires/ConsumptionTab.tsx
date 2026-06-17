@@ -347,7 +347,12 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
           const consumedDate = matchedDoc.consumedAt?.seconds 
             ? new Date(matchedDoc.consumedAt.seconds * 1000).toLocaleString()
             : 'data desconhecida';
-          setError(`Esta bobina já foi consumida em ${consumedDate}.`);
+          
+          if (matchedDoc.isAuditWriteOff) {
+            setError(`Esta bobina recebeu BAIXA VIA AUDITORIA em ${consumedDate} (Motivo: ${matchedDoc.auditReason || 'Divergência de Auditoria'}). Não está disponível para consumo.`);
+          } else {
+            setError(`Esta bobina já foi consumida em ${consumedDate}.`);
+          }
         } else {
           setFoundCoil(matchedDoc);
           setSuccess('Bobina localizada!');
@@ -382,6 +387,13 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
 
     setLoading(true);
     try {
+      if (foundCoil.status === 'consumed') {
+        setError('Esta bobina consta como consumida ou baixada via Auditoria e não pode ser consumida.');
+        setFoundCoil(null);
+        setLoading(false);
+        return;
+      }
+
       await updateDoc(doc(db, 'wire_coils', foundCoil.id), {
         status: 'consumed',
         currentLineId: selectedLine,
