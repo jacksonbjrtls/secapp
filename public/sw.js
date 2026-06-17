@@ -1,4 +1,4 @@
-const CACHE_NAME = 'secapp-v2';
+const CACHE_NAME = 'secapp-v3';
 const ASSETS = [
   '/',
   '/index.html',
