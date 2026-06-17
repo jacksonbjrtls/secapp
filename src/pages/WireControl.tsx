@@ -50,7 +50,8 @@ import {
   FileInput,
   FileSpreadsheet,
   History,
-  MapPin
+  MapPin,
+  ClipboardList
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -60,10 +61,11 @@ import { DashboardTab } from '../components/wires/DashboardTab';
 import { ReceivingTab } from '../components/wires/ReceivingTab';
 import { HistoryTab } from '../components/wires/HistoryTab';
 import { BulkImportTab } from '../components/wires/BulkImportTab';
+import { AuditTab } from '../components/wires/AuditTab';
 
 const WireControl: React.FC = () => {
   const { user, isApproved, isManager, isAdmin, isMaster } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'receiving' | 'consumption' | 'history' | 'config' | 'bulk_import'>('dashboard');
+  const [activeTab, setActiveTab ] = useState<'dashboard' | 'receiving' | 'consumption' | 'history' | 'config' | 'bulk_import' | 'audit'>('dashboard');
   const [showTabMenu, setShowTabMenu] = useState(false);
   
   // Filtering State
@@ -211,6 +213,17 @@ const WireControl: React.FC = () => {
               <Barcode className="w-4 h-4" /> Consumo
             </button>
             <button
+              onClick={() => setActiveTab('audit')}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                activeTab === 'audit' 
+                  ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
+                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+              )}
+            >
+              <ClipboardList className="w-4 h-4" /> Auditoria
+            </button>
+            <button
               onClick={() => setActiveTab('history')}
               className={cn(
                 "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
@@ -259,6 +272,7 @@ const WireControl: React.FC = () => {
                 {activeTab === 'dashboard' && <><LayoutDashboard className="w-5 h-5 text-emerald-600" /> Painel</>}
                 {activeTab === 'receiving' && <><PackagePlus className="w-5 h-5 text-emerald-600" /> Receber</>}
                 {activeTab === 'consumption' && <><Barcode className="w-5 h-5 text-emerald-600" /> Consumo</>}
+                {activeTab === 'audit' && <><ClipboardList className="w-5 h-5 text-emerald-600" /> Auditoria</>}
                 {activeTab === 'history' && <><History className="w-5 h-5 text-emerald-600" /> Histórico</>}
                 {activeTab === 'config' && <><Settings className="w-5 h-5 text-emerald-600" /> Ajustes</>}
                 {activeTab === 'bulk_import' && <><FileSpreadsheet className="w-5 h-5 text-emerald-600" /> Importar Massa</>}
@@ -283,6 +297,7 @@ const WireControl: React.FC = () => {
                       { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard },
                       { id: 'receiving', label: 'Recebimento', icon: PackagePlus, roles: [isManager, isAdmin, isMaster] },
                       { id: 'consumption', label: 'Registrar Consumo', icon: Barcode },
+                      { id: 'audit', label: 'Auditoria de Arames', icon: ClipboardList },
                       { id: 'history', label: 'Histórico de Lotes', icon: History, roles: [isManager, isAdmin, isMaster] },
                       { id: 'config', label: 'Ajustes do Sistema', icon: Settings, roles: [isManager, isAdmin, isMaster] },
                       { id: 'bulk_import', label: 'Importação em Massa', icon: FileSpreadsheet, roles: [isAdmin, isMaster] }
@@ -443,6 +458,15 @@ const WireControl: React.FC = () => {
             animate={{ opacity: 1, x: 0 }}
           >
             <ConsumptionTab lines={lines} />
+          </motion.div>
+        )}
+        {activeTab === 'audit' && (
+          <motion.div
+            key="audit"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+          >
+            <AuditTab coils={coils} suppliers={suppliers} storageBays={storageBays} />
           </motion.div>
         )}
       </AnimatePresence>
