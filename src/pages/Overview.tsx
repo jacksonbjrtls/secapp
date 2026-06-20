@@ -50,6 +50,7 @@ export const Overview: React.FC = () => {
   const [safetyObservations, setSafetyObservations] = useState<any[]>([]);
   const [consumableItems, setConsumableItems] = useState<any[]>([]);
   const [consumableLogs, setConsumableLogs] = useState<any[]>([]);
+  const [courses, setCourses] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
@@ -66,6 +67,7 @@ export const Overview: React.FC = () => {
     safety_observations: true,
     consumables: true,
     shift_handover: true,
+    certificates: true,
   });
 
   useEffect(() => {
@@ -209,6 +211,12 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'consumable_logs');
     });
 
+    const unsubCourses = onSnapshot(collection(db, 'training_courses'), (snap) => {
+      setCourses(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'training_courses');
+    });
+
     setLoading(false);
     setLastUpdated(new Date());
 
@@ -231,6 +239,7 @@ export const Overview: React.FC = () => {
       unsubSafetyObs();
       unsubConsumableItems();
       unsubConsumableLogs();
+      unsubCourses();
     };
   }, []);
 
@@ -1138,6 +1147,41 @@ export const Overview: React.FC = () => {
               <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
                 <span>Entradas: <strong className="text-slate-700">{consumablesStats.totalEntriesCount} hoje</strong></span>
                 <span className="text-slate-500 font-bold">{consumablesStats.totalConsumptionsCount} saídas</span>
+              </div>
+            </div>
+          )}
+
+          {/* Card 8: Treinamentos/Certificados */}
+          {activeModules.certificates !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-amber-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-0.5 rounded-md">Treinamentos</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Capacitação & Cursos</h3>
+                </div>
+                <div className="w-10 h-10 bg-amber-50/50 text-amber-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <Award className="w-5 h-5 text-amber-500" />
+                </div>
+              </div>
+
+              <div className="my-4 flex justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Treinamentos Registrados</p>
+                  <p className="text-2xl font-black text-slate-900 leading-tight">
+                    {courses.length} <span className="text-xs text-slate-400 font-bold">cursos</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Participações</p>
+                  <p className="text-2xl font-black text-right leading-tight text-slate-900">
+                    {courses.reduce((acc, c) => acc + (c.participants?.length || 0), 0)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
+                <span>Último: <strong className="text-slate-700">{courses.length > 0 ? (courses[courses.length - 1].title || courses[courses.length - 1].name) : 'Nenhum'}</strong></span>
+                <span className="text-slate-500 font-bold">Gerenciado na Secagem</span>
               </div>
             </div>
           )}

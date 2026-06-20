@@ -98,6 +98,7 @@ service cloud.firestore {
 
     function isUserBlocked() {
       return isSignedIn() && 
+             !isMaster() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
              (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('disabled', false) == true || 
               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', '') == 'blocked');
@@ -465,6 +466,14 @@ service cloud.firestore {
                       )
                     );
       allow delete: if isMaster() || (isManager() && isValidId(handoverId));
+    }
+
+    // Training Courses & Certificates
+    match /training_courses/{courseId} {
+      allow get, list: if isApproved();
+      allow create: if isManager() && isValidId(courseId);
+      allow update: if isManager() && isValidId(courseId);
+      allow delete: if isMaster() || (isManager() && isValidId(courseId));
     }
   }
 }

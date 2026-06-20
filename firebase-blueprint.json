@@ -659,6 +659,10 @@
     "/shift_handovers/{handoverId}": {
       "schema": "ShiftHandover",
       "description": "Information passed between shift operations."
+    },
+    "/training_courses/{courseId}": {
+      "schema": "TrainingCourse",
+      "description": "Training courses and operators certificates."
     }
   }
 }

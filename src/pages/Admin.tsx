@@ -103,6 +103,7 @@ const Admin: React.FC = () => {
     operational_routes: true,
     safety_observations: true,
     shift_handover: true,
+    certificates: true,
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
@@ -1582,6 +1583,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
               { id: 'operational_routes', label: 'Rotas Operacionais', desc: 'Criação de modelos de rota, inspeção de equipamentos com anexo de fotos e geração de observações.', icon: 'Activity' },
               { id: 'safety_observations', label: 'Observação de Segurança', desc: 'Mecanismo para que operadores possam reportar desvios de segurança e condições inseguras.', icon: 'ShieldAlert' },
               { id: 'consumables', label: 'Controle de Insumos', desc: 'Controle de estoque, entrada de produtos por unidade de medida e consumo de insumos (como tinta) por setor e linha.', icon: 'PackagePlus' },
+              { id: 'certificates', label: 'Treinamentos/Certificados', desc: 'Módulo de treinamentos de Secagem para emissão e controle de certificados de qualificação e presença.', icon: 'Award' },
             ].map((mod) => {
               const isEnabled = activeModules[mod.id] !== false;
               return (

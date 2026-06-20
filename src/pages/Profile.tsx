@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { updateProfile, updatePassword } from 'firebase/auth';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -14,7 +15,14 @@ import {
   CheckCircle2,
   Loader2,
   Upload,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Award,
+  Calendar,
+  Clock,
+  Eye,
+  Printer,
+  UserCheck,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -30,6 +38,141 @@ const Profile: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  const [courses, setCourses] = useState<any[]>([]);
+  const [coursesLoading, setCoursesLoading] = useState(true);
+
+  // States for certificate viewing/printing (synced style with Certificates.tsx)
+  const [viewingCourse, setViewingCourse] = useState<any | null>(null);
+  const [viewingOperatorName, setViewingOperatorName] = useState('');
+  const [certificateSide, setCertificateSide] = useState<'frente' | 'verso'>('frente');
+  const [isInIframe, setIsInIframe] = useState(false);
+
+  React.useEffect(() => {
+    setIsInIframe(window.self !== window.top);
+  }, []);
+
+  React.useEffect(() => {
+    const fetchUserCertificates = async () => {
+      if (!user?.uid) return;
+      try {
+        const querySnap = await getDocs(
+          query(collection(db, 'training_courses'), orderBy('createdAt', 'desc'))
+        );
+        const list = querySnap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() as any }))
+          .filter(c => c.participants?.includes(user.uid));
+        setCourses(list);
+      } catch (err) {
+        console.error('Erro ao buscar certificados no perfil:', err);
+      } finally {
+        setCoursesLoading(false);
+      }
+    };
+    fetchUserCertificates();
+  }, [user]);
+
+  const triggerDirectPrint = (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    try {
+      // Abre uma nova janela para contornar restrições de iframe
+      const printWindow = window.open('', '_blank', 'width=1100,height=800');
+      if (!printWindow) {
+        alert("Não foi possível abrir a janela de impressão. Por favor, permita popups para este site e tente novamente!");
+        return;
+      }
+
+      const certElement = document.querySelector('.print-only-container');
+      const html = certElement ? certElement.outerHTML : document.body.innerHTML;
+
+      // Pegar as fontes importadas e styles
+      const fontStyles = `
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+      `;
+
+      // Copiar os styleSheets
+      let stylesHtml = `<style>${fontStyles}</style>`;
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          const rules = Array.from(sheet.cssRules).map(rule => rule.cssText).join('\n');
+          stylesHtml += `<style>${rules}</style>`;
+        } catch (err) {
+          if (sheet.href) {
+            stylesHtml += `<link rel="stylesheet" href="${sheet.href}">`;
+          }
+        }
+      }
+
+      printWindow.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <title>Certificado - Eldorado Brasil</title>
+  ${stylesHtml}
+  <style>
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #0f172a !important; /* Cor de fundo correspondente */
+    }
+    /* Na tela da nova janela, vamos mostrar o certificado centralizado e bonito */
+    @media screen {
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        padding: 40px 20px;
+        gap: 40px;
+        overflow-y: auto;
+      }
+      .print-only-container {
+        display: flex !important;
+        flex-direction: column;
+        gap: 40px;
+        align-items: center;
+        position: static !important;
+        width: auto !important;
+        height: auto !important;
+      }
+      .certificate-print-page {
+        display: flex !important;
+        width: 297mm !important;
+        height: 210mm !important;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        background: white !important;
+        transform: scale(0.85);
+        transform-origin: top center;
+        margin-bottom: -30mm; /* Compensa o scale para as páginas não se sobreporem */
+      }
+      .certificate-print-page:last-child {
+        margin-bottom: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  ${html}
+</body>
+</html>`);
+
+      printWindow.document.close();
+      printWindow.focus();
+
+      // Aguarda as imagens carregarem e renderizar
+      setTimeout(() => {
+        printWindow.print();
+        printWindow.addEventListener('afterprint', () => {
+          printWindow.close();
+        });
+      }, 1000);
+
+    } catch (err) {
+      console.error("Print failed:", err);
+      alert("Ocorreu um erro ao gerar a impressão. Por favor, tente novamente.");
+    }
+  };
 
   // Clear messages automatically after 5 seconds
   React.useEffect(() => {
@@ -179,7 +322,78 @@ const Profile: React.FC = () => {
 
   return (
     <div className="max-w-2xl mx-auto space-y-8 pb-20">
-      <div>
+      {/* Print-Only Style Overlay */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        /* Hide print-only container on normal screens */
+        .print-only-container {
+          display: none !important;
+        }
+
+        @media print {
+          /* Hide \`#root\` and other screen elements completely */
+          #root,
+          .no-print {
+            display: none !important;
+            visibility: hidden !important;
+          }
+
+          body {
+            background: white !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+
+          /* Force display of the print-only container */
+          .print-only-container {
+            display: block !important;
+            visibility: visible !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 297mm !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
+          .print-only-container * {
+            visibility: visible !important;
+          }
+
+          /* Define layout of individual pages */
+          .certificate-print-page {
+            display: flex !important;
+            visibility: visible !important;
+            width: 297mm !important;
+            height: 210mm !important;
+            page-break-after: always !important;
+            break-after: page !important;
+            position: relative !important;
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            background: white !important;
+            background-color: white !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+
+          /* Avoid empty blank page at the end of output */
+          .certificate-print-page:last-child {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+
+          @page {
+            size: A4 landscape;
+            margin: 0;
+          }
+        }
+      ` }} />
+
+      <div className="no-print">
         <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Meu Perfil</h1>
         <p className="text-slate-500 mt-1">Gerencie suas informações pessoais e segurança da conta.</p>
       </div>
@@ -189,7 +403,7 @@ const Profile: React.FC = () => {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm overflow-hidden"
+          className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm overflow-hidden no-print"
         >
           <div className="flex items-center gap-4 mb-8">
             <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 border border-emerald-100 shrink-0">
@@ -330,7 +544,7 @@ const Profile: React.FC = () => {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm overflow-hidden"
+          className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm overflow-hidden no-print"
         >
           <div className="flex items-center gap-4 mb-8">
             <div className="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-600 border border-rose-100 shrink-0">
@@ -381,7 +595,523 @@ const Profile: React.FC = () => {
             </button>
           </form>
         </motion.div>
+
+        {/* Meus Certificados Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm overflow-hidden no-print"
+        >
+          <div className="flex items-center gap-4 mb-8">
+            <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 border border-emerald-100 shrink-0">
+              <Award className="w-8 h-8" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Meus Certificados</h2>
+              <p className="text-sm text-slate-500">Visualize seus certificados de treinamentos e qualificações aplicados na Secagem.</p>
+            </div>
+          </div>
+
+          {coursesLoading ? (
+            <div className="flex items-center justify-center py-12 gap-2">
+              <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
+              <span className="text-slate-500 text-sm font-bold animate-pulse">Buscando seus treinamentos...</span>
+            </div>
+          ) : courses.length === 0 ? (
+            <div className="text-center py-12 px-4 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+              <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center mx-auto mb-3 text-slate-400">
+                <Award className="w-6 h-6" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-700 mb-0.5">Nenhum certificado disponível</h3>
+              <p className="text-slate-500 text-xs max-w-sm mx-auto">
+                Seu usuário ainda não foi incluído como participante em nenhum curso. Entre em contato com o responsável técnico do treinamento para incluir seu nome!
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {courses.map((course) => (
+                <div 
+                  key={course.id}
+                  className="p-5 border border-slate-200 rounded-2xl bg-white hover:border-emerald-200 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+                >
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <span className="bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase px-2.5 py-1 rounded-md inline-block">
+                      {course.hours} hora(s) de qualificação
+                    </span>
+                    <h3 className="text-sm font-black text-slate-900 truncate">{course.title}</h3>
+                    <div className="flex items-center gap-4 text-xs text-slate-500 font-bold flex-wrap mt-1">
+                      <div className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Período: {course.period}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Instrutor: {course.instructor}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setViewingCourse(course);
+                      setViewingOperatorName(profile?.displayName || user?.displayName || user?.email || 'COLABORADOR');
+                      setCertificateSide('frente');
+                    }}
+                    className="px-4 py-2.5 bg-slate-50 hover:bg-emerald-50 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <Eye className="w-4 h-4" /> Visualizar
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
       </div>
+
+      {/* Viewing / Printing Certificate Modal */}
+      <AnimatePresence>
+        {viewingCourse && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50">
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 30 }}
+              className="bg-slate-900 rounded-[2.5rem] w-full max-w-[320mm] overflow-hidden shadow-2xl flex flex-col max-h-[96vh]"
+            >
+              {/* Controls bar */}
+              <div className="p-4 bg-slate-800 border-b border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 select-none text-white shrink-0 no-print">
+                <div className="flex items-center gap-3">
+                  <div className="bg-emerald-500 p-2 rounded-xl text-slate-900">
+                    <Award className="w-5 h-5 font-black" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black truncate max-w-xs sm:max-w-md">
+                      Certificado: {viewingOperatorName}
+                    </h4>
+                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                      {viewingCourse.title}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="bg-slate-950 p-1 rounded-xl flex gap-1 mr-2">
+                    <button
+                      onClick={() => setCertificateSide('frente')}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all cursor-pointer",
+                        certificateSide === 'frente' 
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "text-slate-400 hover:text-white"
+                      )}
+                    >
+                      Frente
+                    </button>
+                    <button
+                      onClick={() => setCertificateSide('verso')}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all cursor-pointer",
+                        certificateSide === 'verso' 
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "text-slate-400 hover:text-white"
+                      )}
+                    >
+                      Verso
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={triggerDirectPrint}
+                    className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl transition-all font-bold text-xs flex items-center gap-2 cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" /> Imprimir / PDF
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      setViewingCourse(null);
+                      setViewingOperatorName('');
+                    }}
+                    className="bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 px-4 py-2 rounded-xl transition-all font-bold text-xs cursor-pointer"
+                  >
+                    Sair
+                  </button>
+                </div>
+              </div>
+
+              {/* Landscape Sandbox Certificate display */}
+              <div className="bg-slate-950 flex-1 p-6 md:p-8 flex flex-col items-center justify-center overflow-auto">
+                {isInIframe && (
+                  <div className="mb-4 bg-amber-500/10 border border-amber-500/30 text-amber-200 rounded-2xl p-4 text-xs font-semibold leading-relaxed max-w-2xl mx-auto select-none flex items-start gap-2.5 no-print">
+                    <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Aviso do Sistema (Visualizador):</strong> Navegadores bloqueiam chamadas de impressão comandadas de dentro de painéis integrados (keyframes/iframes). Para imprimir e gerar o certificado com sucesso, clique no botão <strong>"Abrir em nova aba"</strong> no topo superior direito da tela e clique na mesma opção lá!
+                    </span>
+                  </div>
+                )}
+                <div className="certificate-print-area w-[297mm] h-[210mm] bg-white text-slate-900 border border-slate-200 shadow-2xl flex relative block shrink-0 select-none overflow-hidden font-sans">
+                  
+                  {certificateSide === 'frente' ? (
+                    /* ====== FRONT SIDE OF CERTIFICATE ====== */
+                    <div className="w-full h-full flex relative">
+                      
+                      {/* Left Geometric Accent Column */}
+                      <div className="w-[240px] bg-emerald-800 h-full flex flex-col justify-center items-center py-6 relative shadow-inner select-none shrink-0 overflow-hidden">
+                        {/* Upper yellow banner */}
+                        <div className="absolute top-0 left-0 w-0 h-0 border-t-[100px] border-t-yellow-400 border-r-[240px] border-r-transparent opacity-90 font-sans"></div>
+                        
+                        {/* Three custom treated images stacked vertically as perfect circle borders without any text or footer logos */}
+                        <div className="flex flex-col gap-5 items-center justify-center z-10 w-full px-4">
+                          <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative hover:scale-[1.05] transition-transform duration-300">
+                            <img 
+                              src="/logo_file/Imagem_Parte%20%C3%BAmida.png"
+                              alt="Parte Úmida"
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+
+                          <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative hover:scale-[1.05] transition-transform duration-300">
+                            <img 
+                              src="/logo_file/Imagem_Enfardamento%202.png"
+                              alt="Enfardamento 2"
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+
+                          <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative hover:scale-[1.05] transition-transform duration-300">
+                            <img 
+                              src="/logo_file/Imagem_Enfardamento%203.png"
+                              alt="Enfardamento 3"
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Lower yellow banner */}
+                        <div className="absolute bottom-0 right-0 w-0 h-0 border-b-[100px] border-b-yellow-400 border-l-[240px] border-l-transparent opacity-90 pointer-events-none"></div>
+                      </div>
+
+                      {/* Main Certificate Area */}
+                      <div className="flex-1 p-12 flex flex-col justify-between h-full bg-white relative">
+                        {/* Subtitle row at the top */}
+                        <div className="text-center w-full select-none mb-4 shrink-0 px-2 flex flex-col items-center">
+                          <span className="text-[10px] font-black tracking-[0.25em] text-emerald-800 uppercase font-sans">
+                            Eldorado Brasil Celulose S.A.
+                          </span>
+                          <span className="text-[8px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
+                            Unidade Industrial Três Lagoas • Processo de Secagem
+                          </span>
+                          <div className="h-16 flex items-center justify-center mt-3">
+                            <img 
+                              src="/logo_file/Logo_Eldorado.png" 
+                              alt="Eldorado" 
+                              className="h-14 object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Middle Text block */}
+                        <div className="text-center flex-1 flex flex-col justify-center px-4 self-center max-w-2xl my-auto">
+                          <h1 className="text-5xl font-extrabold text-emerald-900 tracking-tight uppercase mb-6 font-sans">
+                            CERTIFICADO
+                          </h1>
+                          
+                          <p className="text-base text-slate-600 font-semibold mb-4 leading-relaxed">
+                            A Eldorado Brasil Celulose S/A, certifica que
+                          </p>
+                          
+                          <h2 className="text-3xl font-black text-slate-900 tracking-tight uppercase mb-6 px-4 py-2 border-b-2 border-emerald-800 bg-slate-50 border-double">
+                            {viewingOperatorName}
+                          </h2>
+                          
+                          <p className="text-sm text-slate-700 leading-relaxed font-semibold">
+                            participou com êxito do treinamento de qualificação e aperfeiçoamento operacional de 
+                            <span className="block text-emerald-800 text-lg font-black mt-1 uppercase">
+                              {viewingCourse.title}
+                            </span>
+                          </p>
+
+                          <div className="flex items-center justify-center gap-8 mt-5 text-sm font-bold text-slate-600">
+                            <div>no período de <span className="font-extrabold text-slate-900">{viewingCourse.period}</span></div>
+                            <div className="w-1.5 h-1.5 bg-slate-300 rounded-full"></div>
+                            <div>com carga horária de <span className="font-extrabold text-slate-900">{viewingCourse.hours} hora(s)</span></div>
+                          </div>
+                        </div>
+
+                        {/* Bottom Signatures Row */}
+                        <div className="border-t border-slate-100 pt-8 mt-4 shrink-0 flex items-start justify-between px-4">
+                          {/* Instructor / Responsável Técnico signature */}
+                          <div className="text-center w-72 flex flex-col items-center">
+                            {/* Decorative handwritten placeholder signature */}
+                            <div className="h-14 flex items-center justify-center font-serif italic text-emerald-800/80 text-lg select-none">
+                              {viewingCourse.instructor.split(' ').slice(0, 3).join(' ')}
+                            </div>
+                            <div className="w-full border-t border-slate-400 mt-1 mb-2"></div>
+                            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
+                              Responsável Técnico
+                            </p>
+                            <p className="text-[11px] font-extrabold text-slate-800 mb-0.5">{viewingCourse.instructor}</p>
+                            <p className="text-[9px] text-slate-500 font-semibold max-w-[200px] truncate">{viewingCourse.instructorTitle}</p>
+                          </div>
+
+                          {/* Date info section */}
+                          <div className="flex flex-col items-center justify-end w-64 h-[100px] pb-3">
+                            <div className="text-center text-xs text-slate-500 font-bold font-sans">
+                              Três Lagoas (MS), {viewingCourse.period.split(' a ').slice(-1)[0]}
+                            </div>
+                          </div>
+
+                          {/* Collaborator signature placeholder (clean right sidebar, no logos) */}
+                          <div className="text-center w-72 flex flex-col items-center justify-end">
+                            <div className="h-14 flex items-center justify-center">
+                              {/* Empty space for signature */}
+                            </div>
+                            <div className="w-full border-t border-slate-400 mt-1 mb-2"></div>
+                            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
+                              Colaborador
+                            </p>
+                            <p className="text-[11px] font-extrabold text-slate-800 truncate max-w-[220px]">{viewingOperatorName}</p>
+                          </div>
+                        </div>
+
+                        {/* Safe lines layout frame decoration */}
+                        <div className="absolute top-4 left-4 right-4 bottom-4 border border-emerald-800/10 pointer-events-none rounded-xl"></div>
+                        <div className="absolute top-5 left-5 right-5 bottom-5 border border-emerald-800/5 pointer-events-none rounded-lg"></div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ====== BACK SIDE OF CERTIFICATE ====== */
+                    <div className="w-full h-full flex relative">
+                      <div className="flex-1 p-12 pr-16 flex flex-col justify-between h-full bg-white relative">
+                        <div>
+                          <h1 className="text-3xl font-black text-emerald-900 tracking-tight uppercase mb-2 select-none">
+                            CONTEÚDO PROGRAMÁTICO
+                          </h1>
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-0.5 mb-6">
+                            Programa de Conhecimentos Ministrados
+                          </p>
+
+                          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 min-h-[95mm] overflow-hidden whitespace-pre-wrap font-mono text-xs font-bold text-slate-700 leading-relaxed max-w-3xl">
+                            {viewingCourse.syllabus}
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between items-end border-t border-slate-100 pt-8 mt-4 shrink-0 max-w-3xl">
+                          <div>
+                            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Responsável pela aplicação</p>
+                            <p className="text-xs font-extrabold text-slate-800 mt-1">{viewingCourse.instructor}</p>
+                            <p className="text-[10px] text-slate-500 font-semibold">{viewingCourse.instructorTitle}</p>
+                          </div>
+                          
+                          <div className="text-right text-xs text-slate-400 font-bold select-none">
+                            Eldorado Brasil Celulose S.A. <br />
+                            Unidade Industrial Três Lagoas / Secagem
+                          </div>
+                        </div>
+
+                        <div className="absolute top-4 left-4 right-4 bottom-4 border border-emerald-800/10 pointer-events-none rounded-xl"></div>
+                        <div className="absolute top-5 left-5 right-5 bottom-5 border border-emerald-800/5 pointer-events-none rounded-lg"></div>
+                      </div>
+
+                      <div className="w-[124px] bg-emerald-800 h-full flex flex-col justify-between items-center py-8 relative shadow-inner select-none shrink-0 overflow-hidden">
+                        <div className="absolute top-0 right-0 w-0 h-0 border-t-[80px] border-t-yellow-400 border-l-[120px] border-l-transparent opacity-90"></div>
+                        
+                        <div className="flex flex-col gap-8 items-center justify-center z-10 w-full rotate-90 shrink-0 select-none opacity-20">
+                          <span className="text-white font-black tracking-widest text-[11px] uppercase whitespace-nowrap">
+                            Eldorado Dry-End Academy
+                          </span>
+                        </div>
+
+                        <div className="absolute bottom-0 left-0 w-0 h-0 border-b-[80px] border-b-yellow-400 border-r-[120px] border-r-transparent opacity-90"></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {viewingCourse && createPortal(
+        <div className="print-only-container">
+          {/* Page 1: Front */}
+          <div className="certificate-print-page font-sans">
+            <div className="w-full h-full flex relative">
+              {/* Left Geometric Design Accent Column */}
+              <div className="w-[240px] bg-emerald-800 h-full flex flex-col justify-center items-center py-6 relative shadow-inner select-none shrink-0 overflow-hidden">
+                <div className="absolute top-0 left-0 w-0 h-0 border-t-[100px] border-t-yellow-400 border-r-[240px] border-r-transparent opacity-90"></div>
+                
+                <div className="flex flex-col gap-5 items-center justify-center z-10 w-full px-4">
+                  <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative">
+                    <img 
+                      src="/logo_file/Imagem_Parte%20%C3%BAmida.png"
+                      alt="Parte Úmida"
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+
+                  <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative">
+                    <img 
+                      src="/logo_file/Imagem_Enfardamento%202.png"
+                      alt="Enfardamento 2"
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+
+                  <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative">
+                    <img 
+                      src="/logo_file/Imagem_Enfardamento%203.png"
+                      alt="Enfardamento 3"
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                </div>
+
+                <div className="absolute bottom-0 right-0 w-0 h-0 border-b-[100px] border-b-yellow-400 border-l-[240px] border-l-transparent opacity-90 pointer-events-none"></div>
+              </div>
+
+              {/* Main certificate text area */}
+              <div className="flex-1 p-12 flex flex-col justify-between h-full bg-white relative">
+                <div className="text-center w-full select-none mb-4 shrink-0 px-2 flex flex-col items-center">
+                  <span className="text-[10px] font-black tracking-[0.25em] text-emerald-800 uppercase font-sans">
+                    Eldorado Brasil Celulose S.A.
+                  </span>
+                  <span className="text-[8px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
+                    Unidade Industrial Três Lagoas • Processo de Secagem
+                  </span>
+                  <div className="h-16 flex items-center justify-center mt-3">
+                    <img 
+                      src="/logo_file/Logo_Eldorado.png" 
+                      alt="Eldorado" 
+                      className="h-14 object-contain"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                </div>
+
+                <div className="text-center flex-1 flex flex-col justify-center px-4 self-center max-w-2xl my-auto">
+                  <h1 className="text-5xl font-extrabold text-emerald-900 tracking-tight uppercase mb-6 font-sans">
+                    CERTIFICADO
+                  </h1>
+                  
+                  <p className="text-base text-slate-600 font-semibold mb-4 leading-relaxed">
+                    A Eldorado Brasil Celulose S/A, certifica que
+                  </p>
+                  
+                  <h2 className="text-3xl font-black text-slate-900 tracking-tight uppercase mb-6 px-4 py-2 border-b-2 border-emerald-800 bg-slate-50 border-double">
+                    {viewingOperatorName}
+                  </h2>
+                  
+                  <p className="text-sm text-slate-700 leading-relaxed font-semibold">
+                    participou com êxito do treinamento de qualificação e aperfeiçoamento operacional de 
+                    <span className="block text-emerald-800 text-lg font-black mt-1 uppercase">
+                      {viewingCourse.title}
+                    </span>
+                  </p>
+
+                  <div className="flex items-center justify-center gap-8 mt-5 text-sm font-bold text-slate-600">
+                    <div>no período de <span className="font-extrabold text-slate-900">{viewingCourse.period}</span></div>
+                    <div className="w-1.5 h-1.5 bg-slate-300 rounded-full"></div>
+                    <div>com carga horária de <span className="font-extrabold text-slate-900">{viewingCourse.hours} hora(s)</span></div>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-100 pt-8 mt-4 shrink-0 flex items-start justify-between px-4">
+                  <div className="text-center w-72 flex flex-col items-center">
+                    <div className="h-14 flex items-center justify-center font-serif italic text-emerald-800/80 text-lg select-none">
+                      {viewingCourse.instructor.split(' ').slice(0, 3).join(' ')}
+                    </div>
+                    <div className="w-full border-t border-slate-400 mt-1 mb-2"></div>
+                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
+                      Responsável Técnico
+                    </p>
+                    <p className="text-[11px] font-extrabold text-slate-800 mb-0.5">{viewingCourse.instructor}</p>
+                    <p className="text-[9px] text-slate-500 font-semibold max-w-[200px] truncate">{viewingCourse.instructorTitle}</p>
+                  </div>
+
+                  {/* Date info section */}
+                  <div className="flex flex-col items-center justify-end w-64 h-[100px] pb-3">
+                    <div className="text-center text-xs text-slate-500 font-bold font-sans">
+                      Três Lagoas (MS), {viewingCourse.period.split(' a ').slice(-1)[0]}
+                    </div>
+                  </div>
+
+                  <div className="text-center w-72 flex flex-col items-center justify-end">
+                    <div className="h-14 flex items-center justify-center"></div>
+                    <div className="w-full border-t border-slate-400 mt-1 mb-2"></div>
+                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
+                      Colaborador
+                    </p>
+                    <p className="text-[11px] font-extrabold text-slate-800 truncate max-w-[220px]">{viewingOperatorName}</p>
+                  </div>
+                </div>
+
+                <div className="absolute top-4 left-4 right-4 bottom-4 border border-emerald-800/10 pointer-events-none rounded-xl"></div>
+                <div className="absolute top-5 left-5 right-5 bottom-5 border border-emerald-800/5 pointer-events-none rounded-lg"></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Page 2: Back */}
+          <div className="certificate-print-page font-sans">
+            <div className="w-full h-full flex relative">
+              <div className="flex-1 p-12 pr-16 flex flex-col justify-between h-full bg-white relative">
+                <div>
+                  <h1 className="text-3xl font-black text-emerald-950 tracking-tight uppercase mb-2 select-none">
+                    CONTEÚDO PROGRAMÁTICO
+                  </h1>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-0.5 mb-6">
+                    Programa de Conhecimentos Ministrados
+                  </p>
+
+                  <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 min-h-[95mm] overflow-hidden whitespace-pre-wrap font-mono text-xs font-bold text-slate-700 leading-relaxed max-w-3xl">
+                    {viewingCourse.syllabus}
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-end border-t border-slate-100 pt-8 mt-4 shrink-0 max-w-3xl">
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Responsável pela aplicação</p>
+                    <p className="text-xs font-extrabold text-slate-800 mt-1">{viewingCourse.instructor}</p>
+                    <p className="text-[10px] text-slate-500 font-semibold">{viewingCourse.instructorTitle}</p>
+                  </div>
+                  
+                  <div className="text-right text-xs text-slate-400 font-bold select-none">
+                    Eldorado Brasil Celulose S.A. <br />
+                    Unidade Industrial Três Lagoas / Secagem
+                  </div>
+                </div>
+
+                <div className="absolute top-4 left-4 right-4 bottom-4 border border-emerald-800/10 pointer-events-none rounded-xl"></div>
+                <div className="absolute top-5 left-5 right-5 bottom-5 border border-emerald-800/5 pointer-events-none rounded-lg"></div>
+              </div>
+
+              <div className="w-[124px] bg-emerald-800 h-full flex flex-col justify-between items-center py-8 relative shadow-inner select-none shrink-0 overflow-hidden">
+                <div className="absolute top-0 right-0 w-0 h-0 border-t-[80px] border-t-yellow-400 border-l-[120px] border-l-transparent opacity-90"></div>
+                
+                <div className="flex flex-col gap-8 items-center justify-center z-10 w-full rotate-90 shrink-0 select-none opacity-20">
+                  <span className="text-white font-black tracking-widest text-[11px] uppercase whitespace-nowrap">
+                    Eldorado Dry-End Academy
+                  </span>
+                </div>
+
+                <div className="absolute bottom-0 left-0 w-0 h-0 border-b-[80px] border-b-yellow-400 border-r-[120px] border-r-transparent opacity-90"></div>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       <AnimatePresence>
         {error && (

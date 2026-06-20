@@ -196,3 +196,19 @@ export interface ConsumableLog {
   timestamp: any;
 }
 
+export interface TrainingCourse {
+  id: string;
+  title: string;
+  period: string;
+  hours: number;
+  syllabus: string;
+  instructor: string;
+  instructorTitle: string;
+  participants: string[];
+  createdAt: any;
+  updatedAt?: any;
+  createdBy: string;
+  createdByName?: string;
+}
+
+

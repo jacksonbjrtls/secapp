@@ -119,6 +119,7 @@ export const ShiftHandover: React.FC = () => {
     safety_observations: true,
     consumables: true,
     shift_handover: true,
+    certificates: true,
   });
 
   // Fetch active modules in real-time
