@@ -22,7 +22,9 @@ import {
   Eye,
   Printer,
   UserCheck,
-  X
+  X,
+  Maximize2,
+  Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -46,11 +48,41 @@ const Profile: React.FC = () => {
   const [viewingCourse, setViewingCourse] = useState<any | null>(null);
   const [viewingOperatorName, setViewingOperatorName] = useState('');
   const [certificateSide, setCertificateSide] = useState<'frente' | 'verso'>('frente');
+  const [certificateZoom, setCertificateZoom] = React.useState<'fit' | 'scroll'>('fit');
   const [isInIframe, setIsInIframe] = useState(false);
 
   React.useEffect(() => {
     setIsInIframe(window.self !== window.top);
   }, []);
+
+  // Resize listener for responsive preview certificate scale in mobile
+  const previewContainerRef = React.useRef<HTMLDivElement>(null);
+  const [previewContainerSize, setPreviewContainerSize] = React.useState({ width: 1122, height: 794 });
+
+  React.useEffect(() => {
+    if (!viewingCourse) return;
+    
+    // Initial dimensions fallbacks
+    if (previewContainerRef.current) {
+      setPreviewContainerSize({
+        width: previewContainerRef.current.clientWidth || 1122,
+        height: previewContainerRef.current.clientHeight || 794
+      });
+    }
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        const { width, height } = entry.contentRect;
+        setPreviewContainerSize({ width, height });
+      }
+    });
+
+    if (previewContainerRef.current) {
+      resizeObserver.observe(previewContainerRef.current);
+    }
+
+    return () => resizeObserver.disconnect();
+  }, [viewingCourse]);
 
   React.useEffect(() => {
     const fetchUserCertificates = async () => {
@@ -106,6 +138,8 @@ const Profile: React.FC = () => {
       printWindow.document.write(`<!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>Certificado - Eldorado Brasil</title>
   ${stylesHtml}
   <style>
@@ -121,18 +155,21 @@ const Profile: React.FC = () => {
         flex-direction: column;
         align-items: center;
         justify-content: flex-start;
-        padding: 40px 20px;
-        gap: 40px;
-        overflow-y: auto;
+        padding: 24px 12px !important;
+        gap: 24px !important;
+        overflow-y: auto !important;
+        box-sizing: border-box;
       }
       .print-only-container {
         display: flex !important;
         flex-direction: column;
-        gap: 40px;
-        align-items: center;
+        gap: 24px !important;
+        align-items: center !important;
         position: static !important;
-        width: auto !important;
+        width: 100% !important;
         height: auto !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
       }
       .certificate-print-page {
         display: flex !important;
@@ -142,12 +179,78 @@ const Profile: React.FC = () => {
         border-radius: 12px !important;
         overflow: hidden !important;
         background: white !important;
-        transform: scale(0.85);
+        background-color: white !important;
         transform-origin: top center;
-        margin-bottom: -30mm; /* Compensa o scale para as páginas não se sobreporem */
+        box-sizing: border-box;
+        flex-shrink: 0 !important;
+        
+        /* Escala padrão para desktop e telas amplas */
+        --scale: 0.85;
+        transform: scale(var(--scale)) !important;
+        /* Compensa o scale para as páginas não se sobreporem.
+           O tamanho visual ocupado passa a ser 210mm * var(--scale).
+           Portanto, subtraímos a diferença (210mm * (1 - var(--scale))) do margin-bottom.
+        */
+        margin-bottom: calc(-210mm * (1 - var(--scale))) !important;
+      }
+      
+      /* Escala adaptável baseada na largura da janela/dispositivo (celulares e tablets) */
+      @media (max-width: 1150px) {
+        .certificate-print-page {
+          --scale: calc((100vw - 24px) / 1122.52);
+        }
+      }
+      
+      .certificate-print-page:last-child {
+        margin-bottom: 0 !important;
+      }
+    }
+
+    /* Estilos definitivos para impressão e geração do PDF */
+    @media print {
+      body {
+        background: white !important;
+        background-color: white !important;
+        overflow: visible !important;
+      }
+      .print-only-container {
+        display: block !important;
+        visibility: visible !important;
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 297mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      .certificate-print-page {
+        display: flex !important;
+        visibility: visible !important;
+        width: 297mm !important;
+        height: 210mm !important;
+        page-break-after: always !important;
+        break-after: page !important;
+        position: relative !important;
+        box-shadow: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        background: white !important;
+        background-color: white !important;
+        transform: none !important; /* Sem rotação ou escala no papel impresso/PDF */
+        margin-bottom: 0 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
       .certificate-print-page:last-child {
-        margin-bottom: 0;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
+      @page {
+        size: A4 landscape;
+        margin: 0;
       }
     }
   </style>
@@ -696,8 +799,8 @@ const Profile: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <div className="bg-slate-950 p-1 rounded-xl flex gap-1 mr-2">
+                <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 lg:gap-3 w-full sm:w-auto">
+                  <div className="bg-slate-950 p-1 rounded-xl flex gap-1">
                     <button
                       onClick={() => setCertificateSide('frente')}
                       className={cn(
@@ -722,6 +825,32 @@ const Profile: React.FC = () => {
                     </button>
                   </div>
 
+                  {/* Zoom controls */}
+                  <div className="bg-slate-950 p-1 rounded-xl flex gap-1">
+                    <button
+                      onClick={() => setCertificateZoom('fit')}
+                      className={cn(
+                        "px-1.5 sm:px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-black uppercase transition-all flex items-center gap-1 cursor-pointer",
+                        certificateZoom === 'fit' 
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "text-slate-400 hover:text-white"
+                      )}
+                    >
+                      <Maximize2 className="w-3 h-3" /> Ajustar
+                    </button>
+                    <button
+                      onClick={() => setCertificateZoom('scroll')}
+                      className={cn(
+                        "px-1.5 sm:px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-black uppercase transition-all flex items-center gap-1 cursor-pointer",
+                        certificateZoom === 'scroll' 
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "text-slate-400 hover:text-white"
+                      )}
+                    >
+                      <Search className="w-3 h-3" /> Rolar (100%)
+                    </button>
+                  </div>
+
                   <button
                     onClick={triggerDirectPrint}
                     className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl transition-all font-bold text-xs flex items-center gap-2 cursor-pointer"
@@ -742,16 +871,58 @@ const Profile: React.FC = () => {
               </div>
 
               {/* Landscape Sandbox Certificate display */}
-              <div className="bg-slate-950 flex-1 p-6 md:p-8 flex flex-col items-center justify-center overflow-auto">
-                {isInIframe && (
-                  <div className="mb-4 bg-amber-500/10 border border-amber-500/30 text-amber-200 rounded-2xl p-4 text-xs font-semibold leading-relaxed max-w-2xl mx-auto select-none flex items-start gap-2.5 no-print">
-                    <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                    <span>
-                      <strong>Aviso do Sistema (Visualizador):</strong> Navegadores bloqueiam chamadas de impressão comandadas de dentro de painéis integrados (keyframes/iframes). Para imprimir e gerar o certificado com sucesso, clique no botão <strong>"Abrir em nova aba"</strong> no topo superior direito da tela e clique na mesma opção lá!
-                    </span>
-                  </div>
-                )}
-                <div className="certificate-print-area w-[297mm] h-[210mm] bg-white text-slate-900 border border-slate-200 shadow-2xl flex relative block shrink-0 select-none overflow-hidden font-sans">
+              {(() => {
+                const refWidth = 1122.52;
+                const refHeight = 793.70;
+                const paddingX = 24;
+                const paddingY = 24;
+                const availableWidth = Math.max(0, previewContainerSize.width - paddingX);
+                const availableHeight = Math.max(0, previewContainerSize.height - paddingY);
+                const scale = certificateZoom === 'fit'
+                  ? Math.min(availableWidth / refWidth, availableHeight / refHeight, 1)
+                  : Math.max(0.95, Math.min(availableWidth / refWidth, availableHeight / refHeight, 1));
+                return (
+                  <div 
+                    ref={previewContainerRef}
+                    className="bg-slate-950 flex-1 p-4 md:p-6 flex flex-col items-center justify-center overflow-auto min-h-[300px]"
+                  >
+                    {isInIframe && (
+                      <div className="mb-4 bg-amber-500/10 border border-amber-500/30 text-amber-200 rounded-2xl p-4 text-xs font-semibold leading-relaxed max-w-2xl mx-auto select-none flex items-start gap-2.5 no-print">
+                        <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                        <span>
+                          <strong>Aviso do Sistema (Visualizador):</strong> Navegadores bloqueiam chamadas de impressão comandadas de dentro de painéis integrados (keyframes/iframes). Para imprimir e gerar o certificado com sucesso, clique no botão <strong>"Abrir em nova aba"</strong> no topo superior direito da tela e clique na mesma opção lá!
+                        </span>
+                      </div>
+                    )}
+                    {certificateZoom === 'scroll' && (
+                      <div className="mb-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-2xl p-3.5 text-[11px] font-semibold leading-relaxed max-w-2xl mx-auto select-none flex items-center gap-2.5 no-print animate-pulse">
+                        <AlertCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>
+                          <strong>Modo Rolar Ativo:</strong> Arraste ou deslize horizontalmente para ver todo o certificado em tamanho real (100% nítido).
+                        </span>
+                      </div>
+                    )}
+                    <div 
+                      style={{
+                        width: `${refWidth * scale}px`,
+                        height: `${refHeight * scale}px`,
+                        position: 'relative',
+                        overflow: 'hidden',
+                      }}
+                      className="rounded-2xl shadow-2xl shrink-0 border border-white/5"
+                    >
+                      <div 
+                        style={{
+                          position: 'absolute',
+                          left: '50%',
+                          top: '50%',
+                          width: `${refWidth}px`,
+                          height: `${refHeight}px`,
+                          transform: `translate(-50%, -50%) scale(${scale})`,
+                          transformOrigin: 'center center',
+                        }}
+                        className="certificate-print-area bg-white text-slate-900 border border-slate-200 flex relative select-none overflow-hidden font-sans"
+                      >
                   
                   {certificateSide === 'frente' ? (
                     /* ====== FRONT SIDE OF CERTIFICATE ====== */
@@ -932,8 +1103,11 @@ const Profile: React.FC = () => {
                       </div>
                     </div>
                   )}
-                </div>
-              </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </motion.div>
           </div>
         )}
