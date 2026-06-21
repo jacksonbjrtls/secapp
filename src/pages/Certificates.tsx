@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { safeHtml2canvas } from '../lib/html2canvasShim';
+import jsPDF from 'jspdf';
 import { useAuth } from '../hooks/useAuth';
 import { db } from '../lib/firebase';
 import { 
@@ -33,7 +35,9 @@ import {
   Lock,
   ChevronRight,
   UserCheck,
-  AlertCircle
+  AlertCircle,
+  Download,
+  Loader2
 } from 'lucide-react';
 import { TrainingCourse } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -59,7 +63,7 @@ const DEFAULT_COURSES_TEMPLATES = [
     title: "Treinamento de Partida Segura e Operação do Secador de Celulose",
     syllabus: `Conteúdo programático - Conhecimentos:
 1. Fluxograma de vapor e condensado do secador;
-2. Controle de pressões, temperaturas e sopro de ar quente;
+2. Controle de pressões, temperaturas and sopro de ar quente;
 3. Alinhamento de folha de celulose e passagem de ponta;
 4. Controle de velocidades, tensão de telas e motores elétricos;
 5. Segurança em máquinas e equipamentos (NR 12);
@@ -104,48 +108,16 @@ const Certificates: React.FC = () => {
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
   const [userSearchTerm, setUserSearchTerm] = useState('');
 
-  // View Certificate state
-  const [viewingCourse, setViewingCourse] = useState<TrainingCourse | null>(null);
-  const [viewingOperatorName, setViewingOperatorName] = useState('');
-  const [certificateSide, setCertificateSide] = useState<'frente' | 'verso'>('frente');
-  const [certificateZoom, setCertificateZoom] = useState<'fit' | 'scroll'>('fit');
+  // View Certificate state - PDF Generation and Accordion Toggle
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState<string | null>(null);
+  const [activeCertificateForPdf, setActiveCertificateForPdf] = useState<{
+    course: TrainingCourse;
+    participantName: string;
+  } | null>(null);
+  const [expandedCourseParticipantsId, setExpandedCourseParticipantsId] = useState<string | null>(null);
 
   // Search/Filters for operator view and manage view
   const [searchText, setSearchText] = useState('');
-  const [isInIframe, setIsInIframe] = useState(false);
-
-  useEffect(() => {
-    setIsInIframe(window.self !== window.top);
-  }, []);
-
-  // Resize listener for responsive preview certificate scale in mobile
-  const previewContainerRef = useRef<HTMLDivElement>(null);
-  const [previewContainerSize, setPreviewContainerSize] = useState({ width: 1122, height: 794 });
-
-  useEffect(() => {
-    if (!viewingCourse) return;
-    
-    // Initial dimensions fallbacks
-    if (previewContainerRef.current) {
-      setPreviewContainerSize({
-        width: previewContainerRef.current.clientWidth || 1122,
-        height: previewContainerRef.current.clientHeight || 794
-      });
-    }
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (let entry of entries) {
-        const { width, height } = entry.contentRect;
-        setPreviewContainerSize({ width, height });
-      }
-    });
-
-    if (previewContainerRef.current) {
-      resizeObserver.observe(previewContainerRef.current);
-    }
-
-    return () => resizeObserver.disconnect();
-  }, [viewingCourse]);
 
   const canManage = isManager || isAdmin || isMaster;
 
@@ -315,253 +287,58 @@ const Certificates: React.FC = () => {
     course.instructor.toLowerCase().includes(searchText.toLowerCase())
   );
 
-  const triggerDirectPrint = (e?: React.MouseEvent) => {
-    if (e) e.preventDefault();
+  const handlePrint = async (course: TrainingCourse, participantName: string) => {
+    const loadingId = `${course.id}_${participantName}`;
+    setIsGeneratingPdf(loadingId);
     try {
-      // Abre uma nova janela para contornar restrições de iframe
-      const printWindow = window.open('', '_blank', 'width=1100,height=800');
-      if (!printWindow) {
-        alert("Não foi possível abrir a janela de impressão. Por favor, permita popups para este site e tente novamente!");
+      setActiveCertificateForPdf({ course, participantName });
+      
+      // Wait to let React mount and paint the elements in the hidden offscreen container
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      
+      const frontElement = document.getElementById('pdf-cert-front');
+      const backElement = document.getElementById('pdf-cert-back');
+      
+      if (!frontElement || !backElement) {
+        console.error('Elementos do certificado não localizados.');
         return;
       }
-
-      const certElement = document.querySelector('.print-only-container');
-      const html = certElement ? certElement.outerHTML : document.body.innerHTML;
-
-      // Pegar as fontes importadas e styles
-      const fontStyles = `
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
-      `;
-
-      // Copiar os styleSheets
-      let stylesHtml = `<style>${fontStyles}</style>`;
-      for (const sheet of Array.from(document.styleSheets)) {
-        try {
-          const rules = Array.from(sheet.cssRules).map(rule => rule.cssText).join('\n');
-          stylesHtml += `<style>${rules}</style>`;
-        } catch (err) {
-          if (sheet.href) {
-            stylesHtml += `<link rel="stylesheet" href="${sheet.href}">`;
-          }
-        }
-      }
-
-      printWindow.document.write(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
-  <title>Certificado - Eldorado Brasil</title>
-  ${stylesHtml}
-  <style>
-    body {
-      margin: 0 !important;
-      padding: 0 !important;
-      background: #0f172a !important; /* Cor de fundo correspondente */
-    }
-    /* Na tela da nova janela, vamos mostrar o certificado centralizado e bonito */
-    @media screen {
-      body {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: flex-start;
-        padding: 24px 12px !important;
-        gap: 24px !important;
-        overflow-y: auto !important;
-        box-sizing: border-box;
-      }
-      .print-only-container {
-        display: flex !important;
-        flex-direction: column;
-        gap: 24px !important;
-        align-items: center !important;
-        position: static !important;
-        width: 100% !important;
-        height: auto !important;
-        max-width: 100% !important;
-        box-sizing: border-box;
-      }
-      .certificate-print-page {
-        display: flex !important;
-        width: 297mm !important;
-        height: 210mm !important;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
-        border-radius: 12px !important;
-        overflow: hidden !important;
-        background: white !important;
-        background-color: white !important;
-        transform-origin: top center;
-        box-sizing: border-box;
-        flex-shrink: 0 !important;
-        
-        /* Escala padrão para desktop e telas amplas */
-        --scale: 0.85;
-        transform: scale(var(--scale)) !important;
-        /* Compensa o scale para as páginas não se sobreporem.
-           O tamanho visual ocupado passa a ser 210mm * var(--scale).
-           Portanto, subtraímos a diferença (210mm * (1 - var(--scale))) do margin-bottom.
-        */
-        margin-bottom: calc(-210mm * (1 - var(--scale))) !important;
-      }
       
-      /* Escala adaptável baseada na largura da janela/dispositivo (celulares e tablets) */
-      @media (max-width: 1150px) {
-        .certificate-print-page {
-          --scale: calc((100vw - 24px) / 1122.52);
-        }
-      }
+      const canvasFront = await safeHtml2canvas(frontElement, { 
+        scale: 2, 
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false
+      });
+      const imgFront = canvasFront.toDataURL('image/png');
       
-      .certificate-print-page:last-child {
-        margin-bottom: 0 !important;
-      }
-    }
-
-    /* Estilos definitivos para impressão e geração do PDF */
-    @media print {
-      body {
-        background: white !important;
-        background-color: white !important;
-        overflow: visible !important;
-      }
-      .print-only-container {
-        display: block !important;
-        visibility: visible !important;
-        position: absolute !important;
-        left: 0 !important;
-        top: 0 !important;
-        width: 297mm !important;
-        margin: 0 !important;
-        padding: 0 !important;
-      }
-      .certificate-print-page {
-        display: flex !important;
-        visibility: visible !important;
-        width: 297mm !important;
-        height: 210mm !important;
-        page-break-after: always !important;
-        break-after: page !important;
-        position: relative !important;
-        box-shadow: none !important;
-        border: none !important;
-        border-radius: 0 !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        overflow: hidden !important;
-        background: white !important;
-        background-color: white !important;
-        transform: none !important; /* Sem rotação ou escala no papel impresso/PDF */
-        margin-bottom: 0 !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      .certificate-print-page:last-child {
-        page-break-after: avoid !important;
-        break-after: avoid !important;
-      }
-      @page {
-        size: A4 landscape;
-        margin: 0;
-      }
-    }
-  </style>
-</head>
-<body>
-  ${html}
-</body>
-</html>`);
-
-      printWindow.document.close();
-      printWindow.focus();
-
-      // Aguarda as imagens carregarem e renderizar
-      setTimeout(() => {
-        printWindow.print();
-        printWindow.addEventListener('afterprint', () => {
-          printWindow.close();
-        });
-      }, 1000);
-
+      const canvasBack = await safeHtml2canvas(backElement, { 
+        scale: 2, 
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false
+      });
+      const imgBack = canvasBack.toDataURL('image/png');
+      
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      
+      pdf.addImage(imgFront, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.addPage();
+      pdf.addImage(imgBack, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      
+      pdf.save(`Certificado_${participantName.replace(/\s+/g, '_')}.pdf`);
     } catch (err) {
-      console.error("Print failed:", err);
-      alert("Ocorreu um erro ao gerar a impressão. Por favor, tente novamente.");
+      console.error('Falha ao gerar certificado em PDF:', err);
+    } finally {
+      setIsGeneratingPdf(null);
+      setActiveCertificateForPdf(null);
     }
   };
 
   return (
     <div className="p-4 md:p-8 bg-slate-50 min-h-screen">
-      {/* Print-Only Style Overlay */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        /* Hide print-only container on normal screens */
-        .print-only-container {
-          display: none !important;
-        }
-
-        @media print {
-          /* Hide \`#root\` and other screen elements completely */
-          #root,
-          .no-print {
-            display: none !important;
-            visibility: hidden !important;
-          }
-
-          body {
-            background: white !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            overflow: visible !important;
-          }
-
-          /* Force display of the print-only container */
-          .print-only-container {
-            display: block !important;
-            visibility: visible !important;
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 297mm !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-
-          .print-only-container * {
-            visibility: visible !important;
-          }
-
-          /* Define layout of individual pages */
-          .certificate-print-page {
-            display: flex !important;
-            visibility: visible !important;
-            width: 297mm !important;
-            height: 210mm !important;
-            page-break-after: always !important;
-            break-after: page !important;
-            position: relative !important;
-            box-shadow: none !important;
-            border: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            overflow: hidden !important;
-            background: white !important;
-            background-color: white !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-
-          /* Avoid empty blank page at the end of output */
-          .certificate-print-page:last-child {
-            page-break-after: avoid !important;
-            break-after: avoid !important;
-          }
-
-          @page {
-            size: A4 landscape;
-            margin: 0;
-          }
-        }
-      ` }} />
-
-      {/* Header section */}
       <div className="max-w-7xl mx-auto mb-8 no-print">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -680,14 +457,20 @@ const Certificates: React.FC = () => {
                     </div>
 
                     <button
-                      onClick={() => {
-                        setViewingCourse(course);
-                        setViewingOperatorName(profile?.displayName || 'COLABORADOR');
-                        setCertificateSide('frente');
-                      }}
-                      className="w-full bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors font-bold text-xs py-3.5 rounded-2xl flex items-center justify-center gap-2"
+                      disabled={isGeneratingPdf !== null}
+                      onClick={() => handlePrint(course, profile?.displayName || 'COLABORADOR')}
+                      className="w-full bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors font-bold text-xs py-3.5 rounded-2xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                     >
-                      <Eye className="w-4 h-4" /> Visualizar Certificado
+                      {isGeneratingPdf === `${course.id}_${profile?.displayName || 'COLABORADOR'}` ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                          Gerando PDF...
+                        </>
+                      ) : (
+                        <>
+                          <Printer className="w-4 h-4" /> Imprimir / PDF
+                        </>
+                      )}
                     </button>
                   </div>
                 ))}
@@ -739,65 +522,121 @@ const Certificates: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 text-slate-700 text-sm font-semibold">
-                  {filteredManageCourses.map((course) => (
-                    <tr key={course.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="py-4 px-4 max-w-sm">
-                        <div className="font-extrabold text-slate-900 line-clamp-1">{course.title}</div>
-                        <div className="text-[10px] text-slate-400 mt-1 line-clamp-2 max-h-8">
-                          {course.syllabus?.replace(/[\r\n]+/g, ' ')}
-                        </div>
-                      </td>
-                      <td className="py-4 px-4">
-                        <div className="text-sm font-extrabold text-slate-800">{course.instructor}</div>
-                        <div className="text-[10px] text-slate-400 font-bold">{course.instructorTitle}</div>
-                      </td>
-                      <td className="py-4 px-4 text-xs font-semibold">
-                        <div className="text-slate-800">{course.period}</div>
-                        <div className="text-[10px] text-emerald-600 font-extrabold mt-0.5 uppercase tracking-wide">
-                          {course.hours} h de Carga
-                        </div>
-                      </td>
-                      <td className="py-4 px-4 text-center font-black text-slate-800">
-                        {course.participants?.length || 0}
-                      </td>
-                      <td className="py-4 px-4 text-right space-x-1 whitespace-nowrap">
-                        <button
-                          onClick={() => {
-                            setViewingCourse(course);
-                            setViewingOperatorName(
-                              registeredUsers.find(u => course.participants?.includes(u.id))?.displayName || 'ESCOLHA UM COLABORADOR'
-                            );
-                            setCertificateSide('frente');
-                          }}
-                          title="Visualizar Certificados"
-                          className="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors inline-block"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleCloneAsRecycling(course)}
-                          title="Renovar / Clonar Treinamento (Reciclagem)"
-                          className="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors inline-block"
-                        >
-                          <Copy className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleEditCourse(course)}
-                          title="Editar Treinamento"
-                          className="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors inline-block"
-                        >
-                          <FileText className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteCourse(course.id)}
-                          title="Excluir Treinamento"
-                          className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors inline-block"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredManageCourses.map((course) => {
+                    const isExpanded = expandedCourseParticipantsId === course.id;
+                    return (
+                      <React.Fragment key={course.id}>
+                        <tr className="hover:bg-slate-50/50 transition-colors border-b border-slate-50">
+                          <td className="py-4 px-4 max-w-sm">
+                            <div className="font-extrabold text-slate-900 line-clamp-1">{course.title}</div>
+                            <div className="text-[10px] text-slate-400 mt-1 line-clamp-2 max-h-8">
+                              {course.syllabus?.replace(/[\r\n]+/g, ' ')}
+                            </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="text-sm font-extrabold text-slate-800">{course.instructor}</div>
+                            <div className="text-[10px] text-slate-400 font-bold">{course.instructorTitle}</div>
+                          </td>
+                          <td className="py-4 px-4 text-xs font-semibold">
+                            <div className="text-slate-800">{course.period}</div>
+                            <div className="text-[10px] text-emerald-600 font-extrabold mt-0.5 uppercase tracking-wide">
+                              {course.hours} h de Carga
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-center font-black text-slate-800">
+                            {course.participants?.length || 0}
+                          </td>
+                          <td className="py-4 px-4 text-right space-x-1 whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExpandedCourseParticipantsId(isExpanded ? null : course.id);
+                              }}
+                              title="Visualizar Certificados dos Colaboradores"
+                              className={cn(
+                                "p-2 rounded-lg transition-colors inline-block cursor-pointer",
+                                isExpanded
+                                  ? "bg-emerald-100 text-emerald-800 font-bold"
+                                  : "text-slate-400 hover:text-emerald-700 hover:bg-emerald-50"
+                              )}
+                            >
+                              <UserCheck className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCloneAsRecycling(course)}
+                              title="Renovar / Clonar Treinamento (Reciclagem)"
+                              className="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors inline-block cursor-pointer"
+                            >
+                              <Copy className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEditCourse(course)}
+                              title="Editar Treinamento"
+                              className="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors inline-block cursor-pointer"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCourse(course.id)}
+                              title="Excluir Treinamento"
+                              className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors inline-block cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="bg-slate-50/50">
+                            <td colSpan={5} className="py-3 px-6">
+                              <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
+                                <div className="text-[10px] font-black tracking-wider text-slate-400 uppercase">
+                                  Selecione o operador para gerar o PDF: ({course.participants?.length || 0})
+                                </div>
+                                {(!course.participants || course.participants.length === 0) ? (
+                                  <div className="text-xs text-slate-400 font-medium py-2">
+                                    Nenhum colaborador registrado neste treinamento.
+                                  </div>
+                                ) : (
+                                  <div className="divide-y divide-slate-100 max-h-60 overflow-y-auto">
+                                    {registeredUsers
+                                      .filter(u => course.participants?.includes(u.id))
+                                      .map(operator => (
+                                        <div key={operator.id} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
+                                          <div className="flex items-center gap-2">
+                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                                            <span className="text-xs font-bold text-slate-800">{operator.displayName}</span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => handlePrint(course, operator.displayName)}
+                                            disabled={isGeneratingPdf !== null}
+                                            className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                          >
+                                            {isGeneratingPdf === `${course.id}_${operator.displayName}` ? (
+                                              <>
+                                                <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
+                                                Gerando...
+                                              </>
+                                            ) : (
+                                              <>
+                                                <Printer className="w-3 h-3" /> PDF
+                                              </>
+                                            )}
+                                          </button>
+                                        </div>
+                                      ))}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1021,548 +860,506 @@ const Certificates: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* Viewing / Printing Certificate Modal */}
-      <AnimatePresence>
-        {viewingCourse && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50">
-            <motion.div
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 30 }}
-              className="bg-slate-900 rounded-[2.5rem] w-full max-w-[320mm] overflow-hidden shadow-2xl flex flex-col max-h-[96vh]"
-            >
-              {/* Controls bar */}
-              <div className="p-4 bg-slate-800 border-b border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 select-none text-white shrink-0 no-print">
-                <div className="flex items-center gap-3">
-                  <div className="bg-emerald-500 p-2 rounded-xl text-slate-900">
-                    <Award className="w-5 h-5 font-black" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black truncate max-w-xs sm:max-w-md">
-                      Certificado: {viewingOperatorName}
-                    </h4>
-                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
-                      {viewingCourse.title}
-                    </p>
-                  </div>
-                </div>
 
-                {/* Switch between front/back and print actions */}
-                <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 lg:gap-3 w-full sm:w-auto">
-                  <div className="bg-slate-950 p-1 rounded-xl flex gap-1">
-                    <button
-                      onClick={() => setCertificateSide('frente')}
-                      className={cn(
-                        "px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all",
-                        certificateSide === 'frente' 
-                          ? "bg-emerald-600 text-white shadow-sm"
-                          : "text-slate-400 hover:text-white"
-                      )}
-                    >
-                      Frente
-                    </button>
-                    <button
-                      onClick={() => setCertificateSide('verso')}
-                      className={cn(
-                        "px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all",
-                        certificateSide === 'verso' 
-                          ? "bg-emerald-600 text-white shadow-sm"
-                          : "text-slate-400 hover:text-white"
-                      )}
-                    >
-                      Verso
-                    </button>
-                  </div>
+      {/* ═══════════════════════════════════════════
+          GERADOR DE PDF — Contêiner oculto fora de tela
+          Layout fiel ao PDF de referência Eldorado Brasil
+      ═══════════════════════════════════════════ */}
+      {activeCertificateForPdf && (
+        <div
+          style={{
+            position: 'absolute',
+            left: '-9999px',
+            top: '-9999px',
+            width: '1122.52px',
+            height: '1587.4px',
+            overflow: 'hidden',
+            pointerEvents: 'none',
+          }}
+          className="no-print"
+        >
 
-                  {/* Zoom controls */}
-                  <div className="bg-slate-950 p-1 rounded-xl flex gap-1">
-                    <button
-                      onClick={() => setCertificateZoom('fit')}
-                      className={cn(
-                        "px-1.5 sm:px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-black uppercase transition-all flex items-center gap-1",
-                        certificateZoom === 'fit' 
-                          ? "bg-emerald-600 text-white shadow-sm"
-                          : "text-slate-400 hover:text-white"
-                      )}
-                    >
-                      <Maximize2 className="w-3 h-3" /> Ajustar
-                    </button>
-                    <button
-                      onClick={() => setCertificateZoom('scroll')}
-                      className={cn(
-                        "px-1.5 sm:px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-black uppercase transition-all flex items-center gap-1",
-                        certificateZoom === 'scroll' 
-                          ? "bg-emerald-600 text-white shadow-sm"
-                          : "text-slate-400 hover:text-white"
-                      )}
-                    >
-                      <Search className="w-3 h-3" /> Rolar (100%)
-                    </button>
-                  </div>
+          {/* ══════════════════════════════════
+              PÁGINA 1 — FRENTE
+          ══════════════════════════════════ */}
+          <div
+            id="pdf-cert-front"
+            style={{
+              width: '1122.52px',
+              height: '793.70px',
+              position: 'relative',
+              overflow: 'hidden',
+              background: '#ffffff',
+              fontFamily: "'Inter', 'Segoe UI', Arial, sans-serif",
+            }}
+          >
+            {/* ── Coluna lateral esquerda verde ── */}
+            <div style={{
+              position: 'absolute',
+              top: 0, left: 0,
+              width: '218px',
+              height: '793.70px',
+              background: '#0d5c2e',
+              overflow: 'hidden',
+            }}>
+              {/* Triângulo amarelo — canto superior esquerdo */}
+              <div style={{
+                position: 'absolute', top: 0, left: 0,
+                width: 0, height: 0,
+                borderTop: '100px solid #f0c000',
+                borderRight: '218px solid transparent',
+              }} />
+              {/* Triângulo amarelo — canto inferior direito */}
+              <div style={{
+                position: 'absolute', bottom: 0, right: 0,
+                width: 0, height: 0,
+                borderBottom: '100px solid #f0c000',
+                borderLeft: '218px solid transparent',
+              }} />
 
-                  {canManage && viewingCourse.participants.length > 1 && (
-                    <div className="flex items-center gap-1.5">
-                      <label className="text-xs text-slate-400 font-black uppercase">Colaborador:</label>
-                      <select
-                        value={viewingOperatorName}
-                        onChange={(e) => setViewingOperatorName(e.target.value)}
-                        className="bg-slate-950 text-white border border-slate-700/50 rounded-lg px-2.5 py-1.5 text-xs font-bold focus:outline-none"
-                      >
-                        {registeredUsers
-                          .filter(u => viewingCourse.participants.includes(u.id))
-                          .map(u => (
-                            <option key={u.id} value={u.displayName}>
-                              {u.displayName}
-                            </option>
-                          ))
-                        }
-                      </select>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={triggerDirectPrint}
-                    className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl transition-all font-bold text-xs flex items-center gap-2"
-                  >
-                    <Printer className="w-4 h-4" /> Imprimir / PDF
-                  </button>
-                  
-                  <button
-                    onClick={() => {
-                      setViewingCourse(null);
-                      setViewingOperatorName('');
+              {/* 3 fotos circulares — espaçadas verticalmente (100% Redondas e Maiores) */}
+              <div style={{
+                position: 'absolute',
+                top: '120px', left: 0, right: 0, bottom: '120px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'space-around',
+              }}>
+                {[
+                  '/logo_file/Imagem_Parte%20%C3%BAmida.png',
+                  '/logo_file/Imagem_Enfardamento%202.png',
+                  '/logo_file/Imagem_Enfardamento%203.png',
+                ].map((src, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      width: '136px',
+                      height: '136px',
+                      minWidth: '136px',
+                      minHeight: '136px',
+                      maxWidth: '136px',
+                      maxHeight: '136px',
+                      aspectRatio: '1/1',
+                      borderRadius: '50%',
+                      overflow: 'hidden',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                      flexGrow: 0,
+                      border: '3px solid rgba(255,255,255,0.25)',
+                      boxShadow: '0 3px 12px rgba(0,0,0,0.35)',
+                      boxSizing: 'border-box',
                     }}
-                    className="bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 px-4 py-2 rounded-xl transition-all font-bold text-xs"
                   >
-                    Sair
-                  </button>
-                </div>
-              </div>
-
-              {/* Landscape Sandbox Certificate display */}
-              {(() => {
-                const refWidth = 1122.52;
-                const refHeight = 793.70;
-                const paddingX = 24;
-                const paddingY = 24;
-                const availableWidth = Math.max(0, previewContainerSize.width - paddingX);
-                const availableHeight = Math.max(0, previewContainerSize.height - paddingY);
-                const scale = certificateZoom === 'fit'
-                  ? Math.min(availableWidth / refWidth, availableHeight / refHeight, 1)
-                  : Math.max(0.95, Math.min(availableWidth / refWidth, availableHeight / refHeight, 1));
-                return (
-                  <div 
-                    ref={previewContainerRef}
-                    className="bg-slate-950 flex-1 p-4 md:p-6 flex flex-col items-center justify-center overflow-auto min-h-[300px]"
-                  >
-                    {isInIframe && (
-                      <div className="mb-4 bg-amber-500/10 border border-amber-500/30 text-amber-200 rounded-2xl p-4 text-xs font-semibold leading-relaxed max-w-2xl mx-auto select-none flex items-start gap-2.5 no-print">
-                        <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Aviso do Sistema (Visualizador):</strong> Navegadores bloqueiam chamadas de impressão comandadas de dentro de painéis integrados (keyframes/iframes). Para imprimir e gerar o certificado com sucesso, clique no botão <strong>"Abrir em nova aba"</strong> no topo superior direito da tela e clique na mesma opção lá!
-                        </span>
-                      </div>
-                    )}
-                    {certificateZoom === 'scroll' && (
-                      <div className="mb-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-2xl p-3.5 text-[11px] font-semibold leading-relaxed max-w-2xl mx-auto select-none flex items-center gap-2.5 no-print animate-pulse">
-                        <AlertCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span>
-                          <strong>Modo Rolar Ativo:</strong> Arraste ou deslize horizontalmente para ver todo o certificado em tamanho real (100% nítido).
-                        </span>
-                      </div>
-                    )}
-                    <div 
+                    <img
+                      src={src}
+                      alt=""
+                      referrerPolicy="no-referrer"
                       style={{
-                        width: `${refWidth * scale}px`,
-                        height: `${refHeight * scale}px`,
-                        position: 'relative',
-                        overflow: 'hidden',
+                        display: 'block',
+                        width: '130px',
+                        height: '130px',
+                        minWidth: '130px',
+                        minHeight: '130px',
+                        maxWidth: '130px',
+                        maxHeight: '130px',
+                        aspectRatio: '1/1',
+                        objectFit: 'cover',
+                        borderRadius: '50%',
+                        boxSizing: 'border-box',
                       }}
-                      className="rounded-2xl shadow-2xl shrink-0 border border-white/5"
-                    >
-                      <div 
-                        style={{
-                          position: 'absolute',
-                          left: '50%',
-                          top: '50%',
-                          width: `${refWidth}px`,
-                          height: `${refHeight}px`,
-                          transform: `translate(-50%, -50%) scale(${scale})`,
-                          transformOrigin: 'center center',
-                        }}
-                        className="certificate-print-area bg-white text-slate-900 border border-slate-200 flex relative select-none overflow-hidden font-sans"
-                      >
-                  
-                  {certificateSide === 'frente' ? (
-                    /* ====== FRONT SIDE OF CERTIFICATE ====== */
-                    <div className="w-full h-full flex relative">
-                      
-                      {/* Left Geometric Design Accent Column */}
-                      <div className="w-[240px] bg-emerald-800 h-full flex flex-col justify-center items-center py-6 relative shadow-inner select-none shrink-0 overflow-hidden">
-                        {/* Elegant yellow accent chevron */}
-                        <div className="absolute top-0 left-0 w-0 h-0 border-t-[100px] border-t-yellow-400 border-r-[240px] border-r-transparent opacity-90"></div>
-                        
-                        {/* Three custom treated images stacked vertically as perfect circle borders without any text or footer logos */}
-                        <div className="flex flex-col gap-5 items-center justify-center z-10 w-full px-4">
-                          <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative hover:scale-[1.05] transition-transform duration-300">
-                            <img 
-                              src="/logo_file/Imagem_Parte%20%C3%BAmida.png"
-                              alt="Parte Úmida"
-                              referrerPolicy="no-referrer"
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-
-                          <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative hover:scale-[1.05] transition-transform duration-300">
-                            <img 
-                              src="/logo_file/Imagem_Enfardamento%202.png"
-                              alt="Enfardamento 2"
-                              referrerPolicy="no-referrer"
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-
-                          <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative hover:scale-[1.05] transition-transform duration-300">
-                            <img 
-                              src="/logo_file/Imagem_Enfardamento%203.png"
-                              alt="Enfardamento 3"
-                              referrerPolicy="no-referrer"
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Bottom yellow geometrical corner chevron */}
-                        <div className="absolute bottom-0 right-0 w-0 h-0 border-b-[100px] border-b-yellow-400 border-l-[240px] border-l-transparent opacity-90 pointer-events-none"></div>
-                      </div>
-
-                      {/* Main certificate text area */}
-                      <div className="flex-1 p-12 flex flex-col justify-between h-full bg-white relative">
-                        {/* Subtitle row at the top */}
-                        <div className="text-center w-full select-none mb-4 shrink-0 px-2 flex flex-col items-center">
-                          <span className="text-[10px] font-black tracking-[0.25em] text-emerald-800 uppercase font-sans">
-                            Eldorado Brasil Celulose S.A.
-                          </span>
-                          <span className="text-[8px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
-                            Unidade Industrial Três Lagoas • Processo de Secagem
-                          </span>
-                          <div className="h-16 flex items-center justify-center mt-3">
-                            <img 
-                              src="/logo_file/Logo_Eldorado.png" 
-                              alt="Eldorado" 
-                              className="h-14 object-contain"
-                              referrerPolicy="no-referrer"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Main Center Body */}
-                        <div className="text-center flex-1 flex flex-col justify-center px-4 self-center max-w-2xl my-auto">
-                          <h1 className="text-5xl font-extrabold text-emerald-900 tracking-tight uppercase mb-6 font-sans">
-                            CERTIFICADO
-                          </h1>
-                          
-                          <p className="text-base text-slate-600 font-semibold mb-4 leading-relaxed">
-                            A Eldorado Brasil Celulose S/A, certifica que
-                          </p>
-                          
-                          <h2 className="text-3xl font-black text-slate-900 tracking-tight uppercase mb-6 px-4 py-2 border-b-2 border-emerald-800 bg-slate-50 border-double">
-                            {viewingOperatorName}
-                          </h2>
-                          
-                          <p className="text-sm text-slate-700 leading-relaxed font-semibold">
-                            participou com êxito do treinamento de qualificação e aperfeiçoamento operacional de 
-                            <span className="block text-emerald-800 text-lg font-black mt-1 uppercase">
-                              {viewingCourse.title}
-                            </span>
-                          </p>
-
-                          <div className="flex items-center justify-center gap-8 mt-5 text-sm font-bold text-slate-600">
-                            <div>no período de <span className="font-extrabold text-slate-900">{viewingCourse.period}</span></div>
-                            <div className="w-1.5 h-1.5 bg-slate-300 rounded-full"></div>
-                            <div>com carga horária de <span className="font-extrabold text-slate-900">{viewingCourse.hours} hora(s)</span></div>
-                          </div>
-                        </div>
-
-                        {/* Bottom Row: Signatures and Date */}
-                        <div className="border-t border-slate-100 pt-8 mt-4 shrink-0 flex items-start justify-between px-4">
-                          {/* Instructor / Responsável Técnico signature */}
-                          <div className="text-center w-72 flex flex-col items-center">
-                            {/* Decorative handwritten placeholder signature */}
-                            <div className="h-14 flex items-center justify-center font-serif italic text-emerald-800/80 text-lg select-none">
-                              {viewingCourse.instructor.split(' ').slice(0, 3).join(' ')}
-                            </div>
-                            <div className="w-full border-t border-slate-400 mt-1 mb-2"></div>
-                            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
-                              Responsável Técnico
-                            </p>
-                            <p className="text-[11px] font-extrabold text-slate-800 mb-0.5">{viewingCourse.instructor}</p>
-                            <p className="text-[9px] text-slate-500 font-semibold max-w-[200px] truncate">{viewingCourse.instructorTitle}</p>
-                          </div>
-
-                          {/* Date info section */}
-                          <div className="flex flex-col items-center justify-end w-64 h-[100px] pb-3">
-                            <div className="text-center text-xs text-slate-500 font-bold font-sans">
-                              Três Lagoas (MS), {viewingCourse.period.split(' a ').slice(-1)[0]}
-                            </div>
-                          </div>
-
-                          {/* Collaborator signature placeholder (clean right sidebar, no logos) */}
-                          <div className="text-center w-72 flex flex-col items-center justify-end">
-                            <div className="h-14 flex items-center justify-center">
-                              {/* Empty space for signature */}
-                            </div>
-                            <div className="w-full border-t border-slate-400 mt-1 mb-2"></div>
-                            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
-                              Colaborador
-                            </p>
-                            <p className="text-[11px] font-extrabold text-slate-800 truncate max-w-[220px]">{viewingOperatorName}</p>
-                          </div>
-                        </div>
-
-                        {/* Beautiful frame lines */}
-                        <div className="absolute top-4 left-4 right-4 bottom-4 border border-emerald-800/10 pointer-events-none rounded-xl"></div>
-                        <div className="absolute top-5 left-5 right-5 bottom-5 border border-emerald-800/5 pointer-events-none rounded-lg"></div>
-                      </div>
-                    </div>
-                  ) : (
-                    /* ====== BACK SIDE OF CERTIFICATE (CONTEÚDOS) ====== */
-                    <div className="w-full h-full flex relative">
-                      
-                      {/* Main Syllabus text area */}
-                      <div className="flex-1 p-12 pr-16 flex flex-col justify-between h-full bg-white relative">
-                        <div>
-                          <h1 className="text-3xl font-black text-emerald-900 tracking-tight uppercase mb-2 select-none">
-                            CONTEÚDO PROGRAMÁTICO
-                          </h1>
-                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-0.5 mb-6">
-                            Programa de Conhecimentos Ministrados
-                          </p>
-
-                          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 min-h-[95mm] overflow-hidden whitespace-pre-wrap font-mono text-xs font-bold text-slate-700 leading-relaxed max-w-3xl">
-                            {viewingCourse.syllabus}
-                          </div>
-                        </div>
-
-                        {/* Signatures recap */}
-                        <div className="flex justify-between items-end border-t border-slate-100 pt-8 mt-4 shrink-0 max-w-3xl">
-                          <div>
-                            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Responsável pela aplicação</p>
-                            <p className="text-xs font-extrabold text-slate-800 mt-1">{viewingCourse.instructor}</p>
-                            <p className="text-[10px] text-slate-500 font-semibold">{viewingCourse.instructorTitle}</p>
-                          </div>
-                          
-                          <div className="text-right text-xs text-slate-400 font-bold select-none">
-                            Eldorado Brasil Celulose S.A. <br />
-                            Unidade Industrial Três Lagoas / Secagem
-                          </div>
-                        </div>
-
-                        {/* Beautiful frame lines */}
-                        <div className="absolute top-4 left-4 right-4 bottom-4 border border-emerald-800/10 pointer-events-none rounded-xl"></div>
-                        <div className="absolute top-5 left-5 right-5 bottom-5 border border-emerald-800/5 pointer-events-none rounded-lg"></div>
-                      </div>
-
-                      {/* Right Design Accent on Back */}
-                      <div className="w-[124px] bg-emerald-800 h-full flex flex-col justify-between items-center py-8 relative shadow-inner select-none shrink-0 overflow-hidden">
-                        {/* Upper geometrical yellow triangle */}
-                        <div className="absolute top-0 right-0 w-0 h-0 border-t-[80px] border-t-yellow-400 border-l-[120px] border-l-transparent opacity-90"></div>
-                        
-                        <div className="flex flex-col gap-8 items-center justify-center z-10 w-full rotate-90 shrink-0 select-none opacity-20">
-                          <span className="text-white font-black tracking-widest text-[11px] uppercase whitespace-nowrap">
-                            Eldorado Dry-End Academy
-                          </span>
-                        </div>
-
-                        {/* Under geometrical yellow triangle */}
-                        <div className="absolute bottom-0 left-0 w-0 h-0 border-b-[80px] border-b-yellow-400 border-r-[120px] border-r-transparent opacity-90"></div>
-                      </div>
-
-                    </div>
-                  )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {viewingCourse && createPortal(
-        <div className="print-only-container">
-          {/* Page 1: Front */}
-          <div className="certificate-print-page font-sans">
-            <div className="w-full h-full flex relative">
-              {/* Left Geometric Design Accent Column */}
-              <div className="w-[240px] bg-emerald-800 h-full flex flex-col justify-center items-center py-6 relative shadow-inner select-none shrink-0 overflow-hidden">
-                <div className="absolute top-0 left-0 w-0 h-0 border-t-[100px] border-t-yellow-400 border-r-[240px] border-r-transparent opacity-90"></div>
-                
-                <div className="flex flex-col gap-5 items-center justify-center z-10 w-full px-4">
-                  <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative">
-                    <img 
-                      src="/logo_file/Imagem_Parte%20%C3%BAmida.png"
-                      alt="Parte Úmida"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
                     />
                   </div>
+                ))}
+              </div>
+            </div>
 
-                  <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative">
-                    <img 
-                      src="/logo_file/Imagem_Enfardamento%202.png"
-                      alt="Enfardamento 2"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
+            {/* ── Área principal (branca) ── */}
+            <div style={{
+              position: 'absolute',
+              top: 0, left: '218px',
+              width: '904.52px',
+              height: '793.70px',
+              background: '#ffffff',
+              overflow: 'hidden',
+            }}>
+              {/* Borda fina interna */}
+              <div style={{
+                position: 'absolute',
+                top: '10px', left: '10px', right: '10px', bottom: '10px',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                pointerEvents: 'none',
+              }} />
 
-                  <div className="w-[140px] h-[140px] rounded-full shadow-md shadow-black/30 overflow-hidden shrink-0 relative">
-                    <img 
-                      src="/logo_file/Imagem_Enfardamento%203.png"
-                      alt="Enfardamento 3"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
+              {/* ── Cabeçalho ── */}
+              <div style={{
+                textAlign: 'center',
+                paddingTop: '22px',
+                paddingLeft: '60px',
+                paddingRight: '60px',
+              }}>
+                <div style={{
+                  fontSize: '9.5px',
+                  fontWeight: 900,
+                  letterSpacing: '0.28em',
+                  color: '#1e293b',
+                  textTransform: 'uppercase',
+                }}>
+                  Eldorado Brasil Celulose S.A.
                 </div>
-
-                <div className="absolute bottom-0 right-0 w-0 h-0 border-b-[100px] border-b-yellow-400 border-l-[240px] border-l-transparent opacity-90 pointer-events-none"></div>
+                <div style={{
+                  fontSize: '7.5px',
+                  fontWeight: 600,
+                  letterSpacing: '0.18em',
+                  color: '#94a3b8',
+                  textTransform: 'uppercase',
+                  marginTop: '2px',
+                }}>
+                  Unidade Industrial Três Lagoas &bull; Processo de Secagem
+                </div>
+                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'center' }}>
+                  <img
+                    src="/logo_file/Logo_Eldorado.png"
+                    alt="Eldorado Brasil"
+                    referrerPolicy="no-referrer"
+                    style={{
+                      height: '52px',
+                      display: 'block',
+                      objectFit: 'contain',
+                    }}
+                  />
+                </div>
+                {/* Linha divisória */}
+                <div style={{
+                  width: '55%',
+                  height: '1px',
+                  background: '#e2e8f0',
+                  margin: '12px auto 0',
+                }} />
               </div>
 
-              {/* Main certificate text area */}
-              <div className="flex-1 p-12 flex flex-col justify-between h-full bg-white relative">
-                <div className="text-center w-full select-none mb-4 shrink-0 px-2 flex flex-col items-center">
-                  <span className="text-[10px] font-black tracking-[0.25em] text-emerald-800 uppercase font-sans">
-                    Eldorado Brasil Celulose S.A.
-                  </span>
-                  <span className="text-[8px] font-bold tracking-widest text-slate-400 uppercase mt-0.5">
-                    Unidade Industrial Três Lagoas • Processo de Secagem
-                  </span>
-                  <div className="h-16 flex items-center justify-center mt-3">
-                    <img 
-                      src="/logo_file/Logo_Eldorado.png" 
-                      alt="Eldorado" 
-                      className="h-14 object-contain"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                </div>
+              {/* ── Corpo central ── */}
+              <div style={{
+                textAlign: 'center',
+                padding: '65px 70px 0',
+              }}>
+                <h1 style={{
+                  fontSize: '52px',
+                  fontWeight: 900,
+                  color: '#0d5c2e',
+                  letterSpacing: '0.12em',
+                  textTransform: 'uppercase',
+                  margin: '0 0 10px 0',
+                  lineHeight: 1,
+                }}>
+                  CERTIFICADO
+                </h1>
 
-                <div className="text-center flex-1 flex flex-col justify-center px-4 self-center max-w-2xl my-auto">
-                  <h1 className="text-5xl font-extrabold text-emerald-900 tracking-tight uppercase mb-6 font-sans">
-                    CERTIFICADO
-                  </h1>
-                  
-                  <p className="text-base text-slate-600 font-semibold mb-4 leading-relaxed">
-                    A Eldorado Brasil Celulose S/A, certifica que
-                  </p>
-                  
-                  <h2 className="text-3xl font-black text-slate-900 tracking-tight uppercase mb-6 px-4 py-2 border-b-2 border-emerald-800 bg-slate-50 border-double">
-                    {viewingOperatorName}
+                <p style={{
+                  fontSize: '11.5px',
+                  color: '#64748b',
+                  fontWeight: 500,
+                  margin: '0 0 10px 0',
+                  fontStyle: 'italic',
+                }}>
+                  A Eldorado Brasil Celulose S/A, certifica que
+                </p>
+
+                {/* Nome do colaborador */}
+                <div style={{
+                  display: 'inline-block',
+                  borderBottom: '2.5px solid #0d5c2e',
+                  paddingBottom: '6px',
+                  marginBottom: '14px',
+                  minWidth: '65%',
+                }}>
+                  <h2 style={{
+                    fontSize: '28px',
+                    fontWeight: 900,
+                    color: '#1e293b',
+                    letterSpacing: '0.03em',
+                    textTransform: 'uppercase',
+                    margin: 0,
+                    lineHeight: 1.2,
+                  }}>
+                    {activeCertificateForPdf.participantName}
                   </h2>
-                  
-                  <p className="text-sm text-slate-700 leading-relaxed font-semibold">
-                    participou com êxito do treinamento de qualificação e aperfeiçoamento operacional de 
-                    <span className="block text-emerald-800 text-lg font-black mt-1 uppercase">
-                      {viewingCourse.title}
-                    </span>
-                  </p>
+                </div>
 
-                  <div className="flex items-center justify-center gap-8 mt-5 text-sm font-bold text-slate-600">
-                    <div>no período de <span className="font-extrabold text-slate-900">{viewingCourse.period}</span></div>
-                    <div className="w-1.5 h-1.5 bg-slate-300 rounded-full"></div>
-                    <div>com carga horária de <span className="font-extrabold text-slate-900">{viewingCourse.hours} hora(s)</span></div>
+                <p style={{
+                  fontSize: '11.5px',
+                  color: '#475569',
+                  fontWeight: 500,
+                  margin: '0 0 6px 0',
+                  lineHeight: 1.5,
+                  display: 'block',
+                }}>
+                  participou com êxito do treinamento de qualificação e aperfeiçoamento operacional de
+                </p>
+
+                <p style={{
+                  fontSize: '14.5px',
+                  fontWeight: 900,
+                  color: '#0d5c2e',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                  margin: '0 0 12px 0',
+                  lineHeight: 1.3,
+                }}>
+                  {activeCertificateForPdf.course.title}
+                </p>
+
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  color: '#475569',
+                }}>
+                  no período de&nbsp;
+                  <strong style={{ color: '#1e293b', fontWeight: 800 }}>
+                    {activeCertificateForPdf.course.period}
+                  </strong>
+                  &nbsp;&nbsp;&bull;&nbsp;&nbsp;
+                  com carga horária de&nbsp;
+                  <strong style={{ color: '#1e293b', fontWeight: 800 }}>
+                    {activeCertificateForPdf.course.hours} hora(s)
+                  </strong>
+                </div>
+              </div>
+
+              {/* ── Rodapé com assinaturas — position:absolute garante que não corta (Alturas Ajustadas e Margem Sobscrita Adicionada) ── */}
+              <div style={{
+                position: 'absolute',
+                bottom: '32px',
+                left: 0, right: 0,
+                padding: '10px 52px 0',
+                borderTop: '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'flex-end',
+                justifyContent: 'space-between',
+              }}>
+
+                {/* Coluna esquerda — Responsável Técnico */}
+                <div style={{ width: '250px', textAlign: 'center' }}>
+                  {/* Nome em itálico (estilo assinatura) */}
+                  <div style={{
+                    fontSize: '14px',
+                    fontStyle: 'italic',
+                    color: '#0d5c2e',
+                    fontFamily: 'Georgia, "Times New Roman", serif',
+                    marginBottom: '3px',
+                    lineHeight: 1.2,
+                  }}>
+                    {activeCertificateForPdf.course.instructor.split(' ').slice(0, 3).join(' ')}
+                  </div>
+                  <div style={{ borderTop: '1px solid #94a3b8', marginBottom: '4px' }} />
+                  <div style={{
+                    fontSize: '7.5px',
+                    fontWeight: 900,
+                    color: '#94a3b8',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.18em',
+                    marginBottom: '3px',
+                  }}>
+                    Responsável Técnico
+                  </div>
+                  <div style={{ fontSize: '10px', fontWeight: 800, color: '#1e293b', lineHeight: 1.3 }}>
+                    {activeCertificateForPdf.course.instructor}
+                  </div>
+                  <div style={{ fontSize: '8px', fontWeight: 500, color: '#64748b', marginTop: '1px', lineHeight: 1.3 }}>
+                    {activeCertificateForPdf.course.instructorTitle}
                   </div>
                 </div>
 
-                <div className="border-t border-slate-100 pt-8 mt-4 shrink-0 flex items-start justify-between px-4">
-                  <div className="text-center w-72 flex flex-col items-center">
-                    <div className="h-14 flex items-center justify-center font-serif italic text-emerald-800/80 text-lg select-none">
-                      {viewingCourse.instructor.split(' ').slice(0, 3).join(' ')}
-                    </div>
-                    <div className="w-full border-t border-slate-400 mt-1 mb-2"></div>
-                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
-                      Responsável Técnico
-                    </p>
-                    <p className="text-[11px] font-extrabold text-slate-800 mb-0.5">{viewingCourse.instructor}</p>
-                    <p className="text-[9px] text-slate-500 font-semibold max-w-[200px] truncate">{viewingCourse.instructorTitle}</p>
-                  </div>
+                {/* Centro — Cidade e data */}
+                <div style={{
+                  textAlign: 'center',
+                  fontSize: '10.5px',
+                  fontWeight: 600,
+                  color: '#475569',
+                  paddingBottom: '4px',
+                }}>
+                  Três Lagoas (MS),&nbsp;
+                  {activeCertificateForPdf.course.period.split(' a ').slice(-1)[0]}
+                </div>
 
-                  {/* Date info section */}
-                  <div className="flex flex-col items-center justify-end w-64 h-[100px] pb-3">
-                    <div className="text-center text-xs text-slate-500 font-bold font-sans">
-                      Três Lagoas (MS), {viewingCourse.period.split(' a ').slice(-1)[0]}
-                    </div>
+                {/* Coluna direita — Colaborador */}
+                <div style={{ width: '250px', textAlign: 'center' }}>
+                  <div style={{ minHeight: '22px', marginBottom: '3px' }} />
+                  <div style={{ borderTop: '1px solid #94a3b8', marginBottom: '4px' }} />
+                  <div style={{
+                    fontSize: '7.5px',
+                    fontWeight: 900,
+                    color: '#94a3b8',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.18em',
+                    marginBottom: '3px',
+                  }}>
+                    Colaborador
                   </div>
-
-                  <div className="text-center w-72 flex flex-col items-center justify-end">
-                    <div className="h-14 flex items-center justify-center"></div>
-                    <div className="w-full border-t border-slate-400 mt-1 mb-2"></div>
-                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
-                      Colaborador
-                    </p>
-                    <p className="text-[11px] font-extrabold text-slate-800 truncate max-w-[220px]">{viewingOperatorName}</p>
+                  <div style={{ fontSize: '10px', fontWeight: 800, color: '#1e293b', lineHeight: 1.3 }}>
+                    {activeCertificateForPdf.participantName}
+                  </div>
+                  <div style={{ fontSize: '8px', fontWeight: 500, color: '#64748b', marginTop: '1px' }}>
+                    Eldorado Brasil Celulose S.A.
                   </div>
                 </div>
 
-                <div className="absolute top-4 left-4 right-4 bottom-4 border border-emerald-800/10 pointer-events-none rounded-xl"></div>
-                <div className="absolute top-5 left-5 right-5 bottom-5 border border-emerald-800/5 pointer-events-none rounded-lg"></div>
               </div>
             </div>
           </div>
 
-          {/* Page 2: Back */}
-          <div className="certificate-print-page font-sans">
-            <div className="w-full h-full flex relative">
-              <div className="flex-1 p-12 pr-16 flex flex-col justify-between h-full bg-white relative">
+          {/* ══════════════════════════════════
+              PÁGINA 2 — VERSO
+          ══════════════════════════════════ */}
+          <div
+            id="pdf-cert-back"
+            style={{
+              width: '1122.52px',
+              height: '793.70px',
+              position: 'relative',
+              overflow: 'hidden',
+              background: '#ffffff',
+              fontFamily: "'Inter', 'Segoe UI', Arial, sans-serif",
+            }}
+          >
+            {/* Borda fina interna */}
+            <div style={{
+              position: 'absolute',
+              top: '10px', left: '10px', right: '10px', bottom: '10px',
+              border: '1px solid #d1d5db',
+              borderRadius: '4px',
+              pointerEvents: 'none',
+            }} />
+
+            {/* ── Conteúdo principal ── */}
+            <div style={{
+              position: 'absolute',
+              top: 0, left: 0, right: '110px', bottom: 0,
+              padding: '42px 52px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}>
+              <div>
+                {/* Título */}
+                <h1 style={{
+                  fontSize: '26px',
+                  fontWeight: 900,
+                  color: '#0d5c2e',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  margin: '0 0 4px 0',
+                  lineHeight: 1,
+                }}>
+                  Conteúdo Programático
+                </h1>
+                <p style={{
+                  fontSize: '8px',
+                  fontWeight: 700,
+                  color: '#94a3b8',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.22em',
+                  margin: '0 0 22px 0',
+                }}>
+                  Programa de Conhecimentos Ministrados
+                </p>
+
+                {/* Card do conteúdo */}
+                <div style={{
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  padding: '20px 26px',
+                  maxHeight: '520px',
+                  overflow: 'hidden',
+                }}>
+                  <pre style={{
+                    fontFamily: "'Courier New', Courier, monospace",
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: '#334155',
+                    lineHeight: 1.75,
+                    margin: 0,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}>
+                    {activeCertificateForPdf.course.syllabus}
+                  </pre>
+                </div>
+              </div>
+
+              {/* Rodapé do verso */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-end',
+                borderTop: '1px solid #e2e8f0',
+                paddingTop: '12px',
+              }}>
                 <div>
-                  <h1 className="text-3xl font-black text-emerald-900 tracking-tight uppercase mb-2 select-none">
-                    CONTEÚDO PROGRAMÁTICO
-                  </h1>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-0.5 mb-6">
-                    Programa de Conhecimentos Ministrados
-                  </p>
-
-                  <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 min-h-[95mm] overflow-hidden whitespace-pre-wrap font-mono text-xs font-bold text-slate-700 leading-relaxed max-w-3xl">
-                    {viewingCourse.syllabus}
+                  <div style={{
+                    fontSize: '7.5px',
+                    fontWeight: 900,
+                    color: '#94a3b8',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.18em',
+                    marginBottom: '3px',
+                  }}>
+                    Responsável pela aplicação
+                  </div>
+                  <div style={{ fontSize: '11px', fontWeight: 800, color: '#1e293b' }}>
+                    {activeCertificateForPdf.course.instructor}
+                  </div>
+                  <div style={{ fontSize: '9px', fontWeight: 500, color: '#64748b', marginTop: '1px' }}>
+                    {activeCertificateForPdf.course.instructorTitle}
                   </div>
                 </div>
-
-                <div className="flex justify-between items-end border-t border-slate-100 pt-8 mt-4 shrink-0 max-w-3xl">
-                  <div>
-                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Responsável pela aplicação</p>
-                    <p className="text-xs font-extrabold text-slate-800 mt-1">{viewingCourse.instructor}</p>
-                    <p className="text-[10px] text-slate-500 font-semibold">{viewingCourse.instructorTitle}</p>
-                  </div>
-                  
-                  <div className="text-right text-xs text-slate-400 font-bold select-none">
-                    Eldorado Brasil Celulose S.A. <br />
-                    Unidade Industrial Três Lagoas / Secagem
-                  </div>
+                <div style={{
+                  textAlign: 'right',
+                  fontSize: '9.5px',
+                  fontWeight: 700,
+                  color: '#64748b',
+                  lineHeight: 1.7,
+                }}>
+                  Eldorado Brasil Celulose S.A.<br />
+                  Unidade Industrial Três Lagoas / Secagem
                 </div>
-
-                <div className="absolute top-4 left-4 right-4 bottom-4 border border-emerald-800/10 pointer-events-none rounded-xl"></div>
-                <div className="absolute top-5 left-5 right-5 bottom-5 border border-emerald-800/5 pointer-events-none rounded-lg"></div>
-              </div>
-
-              <div className="w-[124px] bg-emerald-800 h-full flex flex-col justify-between items-center py-8 relative shadow-inner select-none shrink-0 overflow-hidden">
-                <div className="absolute top-0 right-0 w-0 h-0 border-t-[80px] border-t-yellow-400 border-l-[120px] border-l-transparent opacity-90"></div>
-                
-                <div className="flex flex-col gap-8 items-center justify-center z-10 w-full rotate-90 shrink-0 select-none opacity-20">
-                  <span className="text-white font-black tracking-widest text-[11px] uppercase whitespace-nowrap">
-                    Eldorado Dry-End Academy
-                  </span>
-                </div>
-
-                <div className="absolute bottom-0 left-0 w-0 h-0 border-b-[80px] border-b-yellow-400 border-r-[120px] border-r-transparent opacity-90"></div>
               </div>
             </div>
+
+             {/* ── Faixa lateral direita verde ── */}
+            <div style={{
+              position: 'absolute',
+              top: 0, right: 0,
+              width: '110px',
+              height: '793.70px',
+              background: '#0d5c2e',
+              overflow: 'hidden',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              {/* Triângulo amarelo — canto superior direito */}
+              <div style={{
+                position: 'absolute', top: 0, right: 0,
+                width: 0, height: 0,
+                borderTop: '80px solid #f0c000',
+                borderLeft: '110px solid transparent',
+              }} />
+              {/* Triângulo amarelo — canto inferior esquerdo */}
+              <div style={{
+                position: 'absolute', bottom: 0, left: 0,
+                width: 0, height: 0,
+                borderBottom: '80px solid #f0c000',
+                borderRight: '110px solid transparent',
+              }} />
+            </div>
           </div>
-        </div>,
-        document.body
+
+        </div>
       )}
     </div>
   );
