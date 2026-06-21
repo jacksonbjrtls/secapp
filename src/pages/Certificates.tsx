@@ -1044,7 +1044,7 @@ const Certificates: React.FC = () => {
               {/* ── Corpo central ── */}
               <div style={{
                 textAlign: 'center',
-                padding: '65px 70px 0',
+                padding: '105px 70px 0',
               }}>
                 <h1 style={{
                   fontSize: '52px',
@@ -1052,17 +1052,17 @@ const Certificates: React.FC = () => {
                   color: '#0d5c2e',
                   letterSpacing: '0.12em',
                   textTransform: 'uppercase',
-                  margin: '0 0 10px 0',
+                  margin: '0 0 12px 0',
                   lineHeight: 1,
                 }}>
                   CERTIFICADO
                 </h1>
 
                 <p style={{
-                  fontSize: '11.5px',
+                  fontSize: '14px',
                   color: '#64748b',
                   fontWeight: 500,
-                  margin: '0 0 10px 0',
+                  margin: '0 0 12px 0',
                   fontStyle: 'italic',
                 }}>
                   A Eldorado Brasil Celulose S/A, certifica que
@@ -1072,12 +1072,12 @@ const Certificates: React.FC = () => {
                 <div style={{
                   display: 'inline-block',
                   borderBottom: '2.5px solid #0d5c2e',
-                  paddingBottom: '6px',
-                  marginBottom: '14px',
+                  paddingBottom: '8px',
+                  marginBottom: '16px',
                   minWidth: '65%',
                 }}>
                   <h2 style={{
-                    fontSize: '28px',
+                    fontSize: '34px',
                     fontWeight: 900,
                     color: '#1e293b',
                     letterSpacing: '0.03em',
@@ -1090,10 +1090,10 @@ const Certificates: React.FC = () => {
                 </div>
 
                 <p style={{
-                  fontSize: '11.5px',
+                  fontSize: '14px',
                   color: '#475569',
                   fontWeight: 500,
-                  margin: '0 0 6px 0',
+                  margin: '0 0 8px 0',
                   lineHeight: 1.5,
                   display: 'block',
                 }}>
@@ -1101,19 +1101,19 @@ const Certificates: React.FC = () => {
                 </p>
 
                 <p style={{
-                  fontSize: '14.5px',
+                  fontSize: '17.5px',
                   fontWeight: 900,
                   color: '#0d5c2e',
                   textTransform: 'uppercase',
                   letterSpacing: '0.04em',
-                  margin: '0 0 12px 0',
+                  margin: '0 0 15px 0',
                   lineHeight: 1.3,
                 }}>
                   {activeCertificateForPdf.course.title}
                 </p>
 
                 <div style={{
-                  fontSize: '11px',
+                  fontSize: '13px',
                   fontWeight: 500,
                   color: '#475569',
                 }}>

@@ -1362,27 +1362,27 @@ const Profile: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="text-center flex-1 flex flex-col justify-center px-4 self-center max-w-2xl my-auto">
+                <div className="text-center flex-1 flex flex-col justify-center px-4 self-center max-w-2xl my-auto pt-10">
                   <h1 className="text-4xl font-extrabold text-emerald-900 tracking-tight uppercase mb-2 font-sans">
                     CERTIFICADO
                   </h1>
                   
-                  <p className="text-sm text-slate-600 font-semibold mb-1.5 leading-relaxed">
+                  <p className="text-base text-slate-600 font-semibold mb-2 leading-relaxed">
                     A Eldorado Brasil Celulose S/A, certifica que
                   </p>
                   
-                  <h2 className="text-2xl font-black text-slate-900 tracking-tight uppercase mb-2 px-4 py-1.5 border-b-2 border-emerald-800 bg-slate-50 border-double">
+                  <h2 className="text-[32px] font-black text-slate-900 tracking-tight uppercase mb-3 px-4 py-1.5 border-b-2 border-emerald-800 bg-slate-50 border-double">
                     {activeCertificateForPdf.participantName}
                   </h2>
                   
-                  <p className="text-sm text-slate-700 leading-relaxed font-semibold">
+                  <p className="text-base text-slate-700 leading-relaxed font-semibold">
                     participou com êxito do treinamento de qualificação e aperfeiçoamento operacional de 
-                    <span className="block text-emerald-800 text-base font-black mt-0.5 uppercase">
+                    <span className="block text-emerald-800 text-lg font-black mt-1.5 uppercase">
                       {activeCertificateForPdf.course.title}
                     </span>
                   </p>
 
-                  <div className="flex items-center justify-center gap-8 mt-2 text-xs font-bold text-slate-600">
+                  <div className="flex items-center justify-center gap-8 mt-4 text-sm font-bold text-slate-600">
                     <div>no período de <span className="font-extrabold text-slate-900">{activeCertificateForPdf.course.period}</span></div>
                     <div className="w-1.5 h-1.5 bg-slate-300 rounded-full"></div>
                     <div>com carga horária de <span className="font-extrabold text-slate-900">{activeCertificateForPdf.course.hours} hora(s)</span></div>
