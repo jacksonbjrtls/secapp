@@ -1983,13 +1983,7 @@ const OperationalRoutes: React.FC = () => {
         <motion.div 
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          className={cn(
-            "bg-slate-50 overflow-hidden flex flex-col transition-all duration-300",
-            "fixed inset-0 z-[100] w-full h-[100dvh] rounded-none border-none shadow-none md:relative md:inset-auto md:z-0 md:w-full md:rounded-[2.5rem] md:border md:border-slate-200 md:shadow-xl md:mx-auto",
-            routeStep === 'active_inspection' 
-              ? "md:max-w-4xl md:h-[calc(100vh-100px)] md:max-h-[calc(100vh-100px)]" 
-              : "md:max-w-2xl md:h-auto md:max-h-[calc(100vh-100px)]"
-          )}
+          className="bg-slate-50 overflow-hidden flex flex-col transition-all duration-300 fixed inset-0 z-[100] w-full h-[100dvh] rounded-none border-none shadow-none"
         >
           {/* VISUAL BRANDED FOREST GREEN HEADER BAR (Matches screenshots exactly) */}
           <div className="bg-[#0d6e4f] text-white p-6 relative flex flex-col items-center justify-center text-center shrink-0">

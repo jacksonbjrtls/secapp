@@ -41,7 +41,7 @@ import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 
 const Reports: React.FC = () => {
   const { isManager, isAdmin, isMaster } = useAuth();
-  const [reportType, setReportType] = useState<'dds' | 'forklift' | 'wire_receiving' | 'wire_consumption' | 'quality' | 'user_ray_x'>('dds');
+  const [reportType, setReportType] = useState<'dds' | 'forklift' | 'wire_receiving' | 'wire_consumption' | 'quality' | 'user_ray_x' | 'pending_equipments'>('dds');
   const [data, setData] = useState<any[]>([]);
   const [forkliftData, setForkliftData] = useState<any[]>([]);
   const [wireReceivingData, setWireReceivingData] = useState<any[]>([]);
@@ -246,12 +246,13 @@ const Reports: React.FC = () => {
         });
         setQualityData(qualityResults);
 
+        // Fetch route submissions for pending equipment reports and ray-x
+        const routesSnap = await getDocs(collection(db, 'route_submissions'));
+        const routesList = routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setRouteSubmissionsData(routesList);
+
         // Fetch user ray-x evaluation analytical data conditionally
         if (isAdmin || isMaster) {
-          const routesSnap = await getDocs(collection(db, 'route_submissions'));
-          const routesList = routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setRouteSubmissionsData(routesList);
-
           const safetySnap = await getDocs(collection(db, 'safety_observations'));
           const safetyList = safetySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           setSafetyObservationsData(safetyList);
@@ -312,6 +313,42 @@ const Reports: React.FC = () => {
     else if (reportType === 'wire_receiving') dataSource = wireReceivingData;
     else if (reportType === 'wire_consumption') dataSource = wireConsumptionData;
     else if (reportType === 'quality') dataSource = qualityData;
+    else if (reportType === 'pending_equipments') {
+      const pendingList: any[] = [];
+      routeSubmissionsData.forEach(sub => {
+        if (sub.responses && Array.isArray(sub.responses)) {
+          sub.responses.forEach((resp: any) => {
+            if (resp.status === 'not_ok') {
+              pendingList.push({
+                id: `${sub.id}_${resp.equipmentId}`,
+                submissionId: sub.id,
+                date: safeToDate(sub.createdAt) || new Date(),
+                tag: resp.equipmentTag || resp.equipmentId || 'S/T',
+                name: resp.equipmentName || 'Equipamento',
+                line: sub.lineName || sub.templateName || 'Geral',
+                area: sub.areaName || 'Área',
+                sector: sub.sectorName || 'Setor',
+                operator: sub.operatorName || 'Operador',
+                diagnostic: resp.diagnostic || '',
+                notes: resp.notes || '',
+                reason: resp.diagnostic || resp.notes || 'Anomalia não detalhada',
+                schedule: resp.schedule || '',
+                sapNote: resp.sapNote || '',
+                actionTaken: resp.actionTaken || '',
+                responsibleCenter: resp.responsibleCenter || '',
+                inspectionType: resp.inspectionType || '',
+                photoUrl: resp.photoUrl || '',
+                videoUrl: resp.videoUrl || '',
+                timestamp: safeToDate(sub.createdAt) || new Date(),
+                shift: sub.shift || '-',
+                group: sub.team || sub.group || '-',
+              });
+            }
+          });
+        }
+      });
+      dataSource = pendingList;
+    }
     
     return dataSource.filter(item => {
       let matchUser = true;
@@ -325,6 +362,12 @@ const Reports: React.FC = () => {
         matchUser = (!filterUser || item.nfNumber.toLowerCase().includes(filterUser.toLowerCase()) || item.supplierName.toLowerCase().includes(filterUser.toLowerCase()));
       } else if (reportType === 'wire_consumption') {
         matchUser = (!filterUser || item.coilNumber.toLowerCase().includes(filterUser.toLowerCase()) || (item.consumedBy || '').toLowerCase().includes(filterUser.toLowerCase()));
+      } else if (reportType === 'pending_equipments') {
+        matchUser = (!filterUser || 
+                     item.name.toLowerCase().includes(filterUser.toLowerCase()) || 
+                     item.tag.toLowerCase().includes(filterUser.toLowerCase()) ||
+                     item.operator.toLowerCase().includes(filterUser.toLowerCase()) ||
+                     item.reason.toLowerCase().includes(filterUser.toLowerCase()));
       }
       
       let matchThemeOrStatus = true;
@@ -335,14 +378,14 @@ const Reports: React.FC = () => {
       }
       
       let matchShift = true;
-      if (reportType === 'dds' || reportType === 'forklift') {
+      if (reportType === 'dds' || reportType === 'forklift' || reportType === 'pending_equipments') {
         matchShift = filterShift === 'all' || item.shift === filterShift;
       } else if (reportType === 'wire_consumption') {
         matchShift = filterShift === 'all' || item.consumedShift === filterShift;
       }
 
       let matchGroup = true;
-      if (reportType === 'dds' || reportType === 'forklift') {
+      if (reportType === 'dds' || reportType === 'forklift' || reportType === 'pending_equipments') {
         matchGroup = filterGroup === 'all' || item.group === filterGroup;
       } else if (reportType === 'wire_consumption') {
         matchGroup = filterGroup === 'all' || item.consumedByGroup === filterGroup;
@@ -351,6 +394,15 @@ const Reports: React.FC = () => {
       let matchLine = true;
       if (reportType === 'wire_consumption') {
         matchLine = filterLine === 'all' || item.currentLineId === filterLine;
+      } else if (reportType === 'pending_equipments') {
+        if (filterLine !== 'all') {
+          const selectedLineObj = lines.find(l => l.id === filterLine);
+          if (selectedLineObj) {
+            matchLine = item.line.toLowerCase() === selectedLineObj.name.toLowerCase();
+          } else {
+            matchLine = item.line.toLowerCase().includes(filterLine.toLowerCase());
+          }
+        }
       } else if (reportType === 'quality') {
         if (filterLine === 'all') {
           matchLine = true;
@@ -389,7 +441,7 @@ const Reports: React.FC = () => {
 
       return matchUser && matchThemeOrStatus && matchShift && matchGroup && matchLine && matchMood && matchDate;
     });
-  }, [data, forkliftData, wireReceivingData, wireConsumptionData, reportType, filterUser, filterTheme, filterShift, filterGroup, filterLine, filterMood, filterStatus, filterDateStart, filterDateEnd]);
+  }, [data, forkliftData, wireReceivingData, wireConsumptionData, qualityData, routeSubmissionsData, lines, reportType, filterUser, filterTheme, filterShift, filterGroup, filterLine, filterMood, filterStatus, filterDateStart, filterDateEnd]);
 
   const selectedUserData = useMemo(() => {
     if (!selectedRayXUser) return null;
@@ -483,13 +535,14 @@ const Reports: React.FC = () => {
     else if (reportType === 'wire_receiving') title = 'RELATÓRIO RECEBIMENTO DE ARAME';
     else if (reportType === 'wire_consumption') title = 'RELATÓRIO CONSUMO DE ARAME';
     else if (reportType === 'quality') title = 'RELATÓRIO QUALIDADE DE PROCESSO';
+    else if (reportType === 'pending_equipments') title = 'EQUIPAMENTOS COM PENDÊNCIAS';
     
     // Header styling - Standardized Emerald Theme
     doc.setFillColor(5, 150, 105); // emerald-600
     doc.rect(0, 0, pageWidth, 35, 'F');
     
     doc.setTextColor(255, 255, 255);
-    doc.setFontSize(18);
+    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
     doc.text(title, 14, 20);
     
@@ -539,6 +592,18 @@ const Reports: React.FC = () => {
         lines.find(l => l.id === item.lineId)?.name || qualitySectors.find(s => s.id === item.sectorId)?.name || 'Todos',
         item.shift,
         item.responses.length,
+        item.timestamp.toLocaleString('pt-BR')
+      ]);
+    } else if (reportType === 'pending_equipments') {
+      head = [['Tag', 'Equipamento', 'Linha', 'Motivo da Pendência', 'Operador', 'Programação', 'Nº SAP', 'Data Identificação']];
+      tableData = filteredData.map(item => [
+        item.tag,
+        item.name,
+        item.line,
+        item.reason + (item.notes ? `\nObs: ${item.notes}` : ''),
+        item.operator,
+        item.schedule || '-',
+        item.sapNote || '-',
         item.timestamp.toLocaleString('pt-BR')
       ]);
     } else {
@@ -647,6 +712,23 @@ const Reports: React.FC = () => {
           `"${qualitySectors.find(s => s.id === item.sectorId)?.name || 'Todos'}"`,
           `"${item.shift}"`,
           `"${item.responses.length}"`,
+          `"${item.timestamp.toISOString()}"`
+        ]);
+      } else if (reportType === 'pending_equipments') {
+        headers = ['Tag', 'Equipamento', 'Linha', 'Setor', 'Area', 'Motivo', 'Observacao', 'Operador', 'Programacao', 'Nota SAP', 'Acao Realizada', 'Centro Responsavel', 'Data Identificacao'];
+        rows = filteredData.map(item => [
+          `"${item.tag}"`,
+          `"${item.name}"`,
+          `"${item.line}"`,
+          `"${item.sector}"`,
+          `"${item.area}"`,
+          `"${item.reason}"`,
+          `"${item.notes || ''}"`,
+          `"${item.operator}"`,
+          `"${item.schedule || ''}"`,
+          `"${item.sapNote || ''}"`,
+          `"${item.actionTaken || ''}"`,
+          `"${item.responsibleCenter || ''}"`,
           `"${item.timestamp.toISOString()}"`
         ]);
       } else {
@@ -776,6 +858,7 @@ const Reports: React.FC = () => {
   };
 
   const [selectedForkliftCheck, setSelectedForkliftCheck] = useState<any | null>(null);
+  const [selectedPendingEquipment, setSelectedPendingEquipment] = useState<any | null>(null);
   const [editingConsumption, setEditingConsumption] = useState<any | null>(null);
   const [editForm, setEditForm] = useState({ line: '', shift: '', group: '' });
   const [isSaving, setIsSaving] = useState(false);
@@ -866,6 +949,7 @@ const Reports: React.FC = () => {
             {reportType === 'wire_receiving' && <><FileText className="w-5 h-5 text-emerald-600" /> Recebimento</>}
             {reportType === 'wire_consumption' && <><Factory className="w-5 h-5 text-emerald-600" /> Consumo</>}
             {reportType === 'quality' && <><ClipboardCheck className="w-5 h-5 text-emerald-600" /> Qualidade</>}
+            {reportType === 'pending_equipments' && <><AlertTriangle className="w-5 h-5 text-emerald-600" /> Equipamentos c/ Pendência</>}
             {reportType === 'user_ray_x' && <><UserIcon className="w-5 h-5 text-emerald-600" /> Raio-X Colaborador</>}
             <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTypeMenu && "rotate-180")} />
           </button>
@@ -927,6 +1011,15 @@ const Reports: React.FC = () => {
                     )}
                   >
                     <ClipboardCheck className="w-4 h-4" /> Qualidade
+                  </button>
+                  <button
+                    onClick={() => { setReportType('pending_equipments'); setShowTypeMenu(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all border-t border-slate-100 mt-1 pt-2",
+                      reportType === 'pending_equipments' ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                    )}
+                  >
+                    <AlertTriangle className="w-4 h-4 text-rose-500" /> Equipamentos c/ Pendência
                   </button>
                   {(isAdmin || isMaster) && (
                     <button
@@ -1135,7 +1228,8 @@ const Reports: React.FC = () => {
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">
                   {reportType === 'dds' ? 'Colaborador / Executante' : 
                    reportType === 'forklift' ? 'Condutor / Equipamento' :
-                   reportType === 'wire_receiving' ? 'NF / Fornecedor' : 'Bobina / Usuário'}
+                   reportType === 'wire_receiving' ? 'NF / Fornecedor' : 
+                   reportType === 'pending_equipments' ? 'Equipamento / Tag' : 'Bobina / Usuário'}
                 </label>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
@@ -1146,7 +1240,8 @@ const Reports: React.FC = () => {
                     placeholder={
                       reportType === 'dds' ? "Buscar nome..." : 
                       reportType === 'forklift' ? "Nome ou Nº Equipamento..." :
-                      reportType === 'wire_receiving' ? "NF ou Fornecedor..." : "ID Bobina ou Usuário..."
+                      reportType === 'wire_receiving' ? "NF ou Fornecedor..." : 
+                      reportType === 'pending_equipments' ? "Buscar por tag ou nome..." : "ID Bobina ou Usuário..."
                     }
                     className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
                   />
@@ -1235,7 +1330,7 @@ const Reports: React.FC = () => {
                 </div>
               )}
 
-              {(reportType === 'dds' || reportType === 'forklift' || reportType === 'wire_consumption') && (
+              {(reportType === 'dds' || reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'pending_equipments') && (
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Letra</label>
                   <div className="relative">
@@ -1256,7 +1351,7 @@ const Reports: React.FC = () => {
                 </div>
               )}
 
-              {reportType === 'wire_consumption' && (
+              {(reportType === 'wire_consumption' || reportType === 'pending_equipments') && (
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Linha de Produção</label>
                   <div className="relative">
@@ -1700,6 +1795,13 @@ const Reports: React.FC = () => {
                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Checklist / Setor</th>
                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Respostas</th>
                       </>
+                    ) : reportType === 'pending_equipments' ? (
+                      <>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Tag / Equipamento</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Linha</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Motivo / Observação</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Operador</th>
+                      </>
                     ) : (
                     <>
                       <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Bobina</th>
@@ -1709,7 +1811,7 @@ const Reports: React.FC = () => {
                     </>
                   )}
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Data/Hora</th>
-                  {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality') && (
+                  {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments') && (
                     <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Ações</th>
                   )}
                 </tr>
@@ -1888,6 +1990,48 @@ const Reports: React.FC = () => {
                             </p>
                           </td>
                         </>
+                      ) : reportType === 'pending_equipments' ? (
+                        <>
+                          <td className="px-6 py-4">
+                            <span className="inline-block px-2.5 py-1 bg-rose-50 text-rose-700 text-[10px] font-black rounded uppercase border border-rose-200">
+                              {item.tag || 'S/T'}
+                            </span>
+                            <p className="text-sm font-bold text-slate-900 mt-1">{item.name}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-semibold text-slate-700">{item.line}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none mt-1">
+                              {item.area || 'Geral'}
+                            </p>
+                          </td>
+                          <td className="px-6 py-4 max-w-xs">
+                            <div className="text-xs space-y-1">
+                              <p className="font-extrabold text-[#0d6e4f] uppercase tracking-wider text-[9px]">
+                                {item.diagnostic || 'ANOMALIA IDENTIFICADA'}
+                              </p>
+                              <p className="text-slate-600 font-medium truncate" title={item.notes}>
+                                {item.notes || 'Sem observações adicionais.'}
+                              </p>
+                              {(item.schedule || item.sapNote) && (
+                                <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-slate-100">
+                                  {item.schedule && (
+                                    <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-[9px] font-black uppercase">
+                                      Prog: {item.schedule}
+                                    </span>
+                                  )}
+                                  {item.sapNote && (
+                                    <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded text-[9px] font-black uppercase">
+                                      SAP: {item.sapNote}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-xs font-semibold text-slate-600">
+                            {item.operator}
+                          </td>
+                        </>
                       ) : (
                       <>
                         <td className="px-6 py-4">
@@ -1928,7 +2072,7 @@ const Reports: React.FC = () => {
                       <p className="text-sm font-bold text-slate-900">{item.timestamp.toLocaleDateString('pt-BR')}</p>
                       <p className="text-[10px] text-slate-400 font-medium">{item.timestamp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
                     </td>
-                    {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality') && (
+                    {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments') && (
                       <td className="px-6 py-4 text-right">
                         {reportType === 'forklift' ? (
                           <button 
@@ -1945,6 +2089,14 @@ const Reports: React.FC = () => {
                             title="Editar Dados"
                           >
                             <TrendingUp className="w-5 h-5" />
+                          </button>
+                        ) : reportType === 'pending_equipments' ? (
+                          <button 
+                            onClick={() => setSelectedPendingEquipment(item)}
+                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="Ver Detalhes da Anomalia"
+                          >
+                            <Search className="w-5 h-5" />
                           </button>
                         ) : (
                            <button 
@@ -2275,6 +2427,131 @@ const Reports: React.FC = () => {
                 <button 
                   onClick={() => setSelectedForkliftCheck(null)}
                   className="px-8 py-4 bg-white border border-slate-200 text-slate-400 font-black uppercase tracking-widest text-xs rounded-2xl hover:bg-slate-50 transition-all"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {selectedPendingEquipment && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedPendingEquipment(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-rose-600 rounded-2xl flex items-center justify-center shadow-lg shadow-rose-200">
+                    <AlertTriangle className="w-8 h-8 text-white animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">Equipamento com Pendência</h3>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Identificado em {format(selectedPendingEquipment.timestamp, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedPendingEquipment(null)}
+                  className="p-3 hover:bg-slate-200/50 rounded-2xl transition-colors text-slate-400"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-6">
+                {/* Visual Identity Grid */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Tag do Equipamento</p>
+                    <span className="inline-block px-3 py-1 bg-slate-200 text-slate-800 text-xs font-black rounded uppercase">
+                      {selectedPendingEquipment.tag || 'Sem Tag'}
+                    </span>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Nome do Equipamento</p>
+                    <p className="text-sm font-black text-slate-800 uppercase">{selectedPendingEquipment.name}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Linha</p>
+                    <p className="text-sm font-bold text-slate-700">{selectedPendingEquipment.line}</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Área / Setor</p>
+                    <p className="text-xs font-bold text-slate-700">{selectedPendingEquipment.area || selectedPendingEquipment.sector || 'Geral'}</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Responsável</p>
+                    <p className="text-xs font-bold text-slate-700 truncate" title={selectedPendingEquipment.operator}>{selectedPendingEquipment.operator}</p>
+                  </div>
+                </div>
+
+                {/* Problem definition section */}
+                <div className="bg-red-50/50 p-6 rounded-[2rem] border border-red-100 space-y-2">
+                  <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center gap-1.5 font-bold">
+                    <AlertTriangle className="w-4 h-4" /> Problema Identificado
+                  </p>
+                  <p className="text-sm font-extrabold text-slate-800">
+                    {selectedPendingEquipment.reason}
+                  </p>
+                  {selectedPendingEquipment.notes && (
+                    <div className="mt-4 pt-4 border-t border-red-100 text-slate-700 text-xs font-medium italic whitespace-pre-wrap">
+                      "{selectedPendingEquipment.notes}"
+                    </div>
+                  )}
+                </div>
+
+                {/* Chronograma and technical feedback */}
+                {(selectedPendingEquipment.schedule || selectedPendingEquipment.sapNote || selectedPendingEquipment.actionTaken || selectedPendingEquipment.responsibleCenter) && (
+                  <div className="space-y-4 pt-2">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">Cronograma & Informações Técnicas</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      {selectedPendingEquipment.schedule && (
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Previsão Manutenção</p>
+                          <p className="text-xs font-black text-[#0d6e4f] uppercase">{selectedPendingEquipment.schedule}</p>
+                        </div>
+                      )}
+                      {selectedPendingEquipment.sapNote && (
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Nota SAP / Ordem</p>
+                          <p className="text-xs font-black text-slate-700">{selectedPendingEquipment.sapNote}</p>
+                        </div>
+                      )}
+                      {selectedPendingEquipment.responsibleCenter && (
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Centro Responsável</p>
+                          <p className="text-xs font-bold text-slate-700">{selectedPendingEquipment.responsibleCenter}</p>
+                        </div>
+                      )}
+                      {selectedPendingEquipment.actionTaken && (
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Ação Preventiva Realizada</p>
+                          <p className="text-xs font-bold text-slate-700 truncate" title={selectedPendingEquipment.actionTaken}>{selectedPendingEquipment.actionTaken}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-8 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+                <button 
+                  onClick={() => setSelectedPendingEquipment(null)}
+                  className="px-8 py-3 bg-white border border-slate-200 text-slate-500 font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-slate-50 transition-all shadow-sm"
                 >
                   Fechar
                 </button>

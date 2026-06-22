@@ -254,12 +254,9 @@ const SafetyObservations: React.FC = () => {
   // Pre-filled quick selection operator names (Real operators configured under settings can be used)
   const defaultOperators = useMemo<string[]>(() => [], []);
 
-  // Memoized dynamic Plant Areas mapped from Firestore settings
+  // Memoized dynamic Plant Areas mapped from Firestore settings, merging defaults with any custom items
   const activePlantAreas = useMemo(() => {
-    if (plantAreas.length > 0) {
-      return plantAreas.map(a => a.name);
-    }
-    return [
+    const defaults = [
       "Produção",
       "Expedição",
       "Manutenção Mecânica",
@@ -272,6 +269,13 @@ const SafetyObservations: React.FC = () => {
       "Engenharia de Processos",
       "Sala de Controle (COI)"
     ];
+    const unique = new Set(defaults);
+    plantAreas.forEach(a => {
+      if (a.name && a.name.trim()) {
+        unique.add(a.name.trim());
+      }
+    });
+    return Array.from(unique);
   }, [plantAreas]);
 
   // Merge current users with default operators
@@ -1376,17 +1380,20 @@ const SafetyObservations: React.FC = () => {
                       {/* Area of Observer */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-black text-slate-300 uppercase tracking-widest ml-1 font-bold text-slate-400">ÁREA DO OBSERVADOR *</label>
-                        <select
+                        <input
+                          type="text"
                           required
+                          list="observer-areas-datalist"
+                          placeholder="Escolha ou digite a área do observador..."
                           value={checklistForm.observerArea}
                           onChange={(e) => setChecklistForm(prev => ({ ...prev, observerArea: e.target.value }))}
                           className="w-full text-xs font-semibold px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        >
-                          <option value="">Selecionar...</option>
+                        />
+                        <datalist id="observer-areas-datalist">
                           {activePlantAreas.map((a, idx) => (
-                            <option key={`observer-area-${a}-${idx}`} value={a}>{a}</option>
+                            <option key={`observer-area-dl-${a}-${idx}`} value={a} />
                           ))}
-                        </select>
+                        </datalist>
                       </div>
                     </div>
                   </div>
@@ -1414,17 +1421,20 @@ const SafetyObservations: React.FC = () => {
                       {/* Area of Observed operator */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">ÁREA DO OBSERVADO *</label>
-                        <select
+                        <input
+                          type="text"
                           required
+                          list="observed-areas-datalist"
+                          placeholder="Escolha ou digite a área do observado..."
                           value={checklistForm.observedArea}
                           onChange={(e) => setChecklistForm(prev => ({ ...prev, observedArea: e.target.value }))}
                           className="w-full text-xs font-semibold px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        >
-                          <option value="">Selecionar...</option>
+                        />
+                        <datalist id="observed-areas-datalist">
                           {activePlantAreas.map((a, idx) => (
-                            <option key={`observed-area-${a}-${idx}`} value={a}>{a}</option>
+                            <option key={`observed-area-dl-${a}-${idx}`} value={a} />
                           ))}
-                        </select>
+                        </datalist>
                       </div>
                     </div>
                   </div>
@@ -1663,7 +1673,7 @@ const SafetyObservations: React.FC = () => {
                 onClick={() => {
                   setConfigModal({
                     isOpen: true,
-                    type: configSubTab,
+                    type: configSubTab === 'categories' ? 'category' : configSubTab === 'areas' ? 'area' : 'operator',
                     id: undefined,
                     value: ''
                   });
