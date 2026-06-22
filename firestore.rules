@@ -132,7 +132,7 @@ service cloud.firestore {
                           isMasterDoc(request.resource.data)
                         )
                       ) || isAdmin()
-                    ) && request.resource.data.createdAt == request.time;
+                    ) && (request.resource.data.createdAt == request.time || request.resource.data.createdAt is timestamp);
 
       allow update: if isSignedIn() && (
                       // 1. User updating their own profile
@@ -140,12 +140,12 @@ service cloud.firestore {
                         // Master users can update more fields on themselves if they wish, 
                         // but we protect the core identity fields for everyone else.
                         (isMaster() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status', 'email', 'isMaster', 'disabled', 'isEmailVerifiedOverride', 'createdAt'])) &&
-                        request.resource.data.updatedAt == request.time) ||
+                        (request.resource.data.updatedAt == request.time || request.resource.data.updatedAt is timestamp)) ||
                       // 2. Admin/Master updates
                       ((isAdmin() || isMaster()) && 
                         // CRITICAL: NO ONE (not even admins) can update a Master Account except the Master themselves
                         (!isMasterDoc(resource.data) || isMaster()) &&
-                        request.resource.data.updatedAt == request.time)
+                        (request.resource.data.updatedAt == request.time || request.resource.data.updatedAt is timestamp))
                     );
       
       allow delete: if isMaster() || (isAdmin() && (!isMasterDoc(resource.data)));
@@ -255,10 +255,10 @@ service cloud.firestore {
                           (resource != null && resource.data.conductorId == request.auth.uid));
     }
 
-    // Global Settings
-    match /settings/global {
+    // Settings
+    match /settings/{settingsId} {
       allow read: if isSignedIn();
-      allow create, update: if isManager();
+      allow create, update: if isApproved() && isNotDisabled() && (settingsId != 'global' || isManager());
       allow delete: if isMaster() || isManager();
     }
 

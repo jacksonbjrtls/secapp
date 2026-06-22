@@ -313,8 +313,8 @@ export const parseCSVEquipments = (text: string, linesList: ProductionLine[], se
 const OperationalRoutes: React.FC = () => {
   const { user, profile, isManager, isAdmin, isMaster } = useAuth();
   
-  // Tabs: 'my_routes' | 'new_route' | 'manage_templates' | 'metrics'
-  const [activeTab, setActiveTab] = useState<'my_routes' | 'new_route' | 'manage_templates' | 'metrics'>('my_routes');
+  // Tabs: 'my_routes' | 'new_route' | 'manage_templates' | 'metrics' | 'deviation_settings'
+  const [activeTab, setActiveTab] = useState<'my_routes' | 'new_route' | 'manage_templates' | 'metrics' | 'deviation_settings'>('my_routes');
 
   // Firestore States
   const [templates, setTemplates] = useState<RouteTemplate[]>([]);
@@ -530,6 +530,84 @@ const OperationalRoutes: React.FC = () => {
     sapNote: string;
   }>>({});
 
+  // Dynamically registered options for deviations
+  const [responsibleCenters, setResponsibleCenters] = useState<string[]>([
+    'Mecânica', 'Elétrica', 'Instrumentação', 'Caldeiraria', 'Civil'
+  ]);
+  const [schedules, setSchedules] = useState<string[]>([
+    'Rotina', 'PP', 'PG'
+  ]);
+
+  // UI inputs for registering options
+  const [newResponsibleCenterInput, setNewResponsibleCenterInput] = useState('');
+  const [newScheduleInput, setNewScheduleInput] = useState('');
+
+  const handleAddResponsibleCenter = async () => {
+    const clean = newResponsibleCenterInput.trim();
+    if (!clean) return;
+    if (responsibleCenters.includes(clean)) {
+      setNewResponsibleCenterInput('');
+      return;
+    }
+    const newList = [...responsibleCenters, clean];
+    setResponsibleCenters(newList);
+    setNewResponsibleCenterInput('');
+    try {
+      await setDoc(doc(db, 'settings', 'operational_route_options'), {
+        responsibleCenters: newList,
+        schedules: schedules
+      }, { merge: true });
+    } catch (e) {
+      console.error("Erro ao cadastrar centro responsável:", e);
+    }
+  };
+
+  const handleRemoveResponsibleCenter = async (centerToRemove: string) => {
+    const newList = responsibleCenters.filter(c => c !== centerToRemove);
+    setResponsibleCenters(newList);
+    try {
+      await setDoc(doc(db, 'settings', 'operational_route_options'), {
+        responsibleCenters: newList,
+        schedules: schedules
+      }, { merge: true });
+    } catch (e) {
+      console.error("Erro ao remover centro responsável:", e);
+    }
+  };
+
+  const handleAddSchedule = async () => {
+    const clean = newScheduleInput.trim();
+    if (!clean) return;
+    if (schedules.includes(clean)) {
+      setNewScheduleInput('');
+      return;
+    }
+    const newList = [...schedules, clean];
+    setSchedules(newList);
+    setNewScheduleInput('');
+    try {
+      await setDoc(doc(db, 'settings', 'operational_route_options'), {
+        responsibleCenters: responsibleCenters,
+        schedules: newList
+      }, { merge: true });
+    } catch (e) {
+      console.error("Erro ao cadastrar programação:", e);
+    }
+  };
+
+  const handleRemoveSchedule = async (scheduleToRemove: string) => {
+    const newList = schedules.filter(s => s !== scheduleToRemove);
+    setSchedules(newList);
+    try {
+      await setDoc(doc(db, 'settings', 'operational_route_options'), {
+        responsibleCenters: responsibleCenters,
+        schedules: newList
+      }, { merge: true });
+    } catch (e) {
+      console.error("Erro ao remover programação:", e);
+    }
+  };
+
   // States for justification modal of routes not executed (Step 3)
   const [isJustifyModalOpen, setIsJustifyModalOpen] = useState(false);
   const [justificationText, setJustificationText] = useState('');
@@ -655,6 +733,31 @@ const OperationalRoutes: React.FC = () => {
     });
     return () => unsub();
   }, []);
+
+  // Subscribe to dynamic deviation options (Centro Responsável & Programação) in Firestore settings
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(db, 'settings', 'operational_route_options'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.responsibleCenters && Array.isArray(data.responsibleCenters)) {
+          setResponsibleCenters(data.responsibleCenters);
+        }
+        if (data.schedules && Array.isArray(data.schedules)) {
+          setSchedules(data.schedules);
+        }
+      } else {
+        // Automatically initialize default settings if they do not exist
+        setDoc(doc(db, 'settings', 'operational_route_options'), {
+          responsibleCenters: ['Mecânica', 'Elétrica', 'Instrumentação', 'Caldeiraria', 'Civil'],
+          schedules: ['Rotina', 'PP', 'PG']
+        }).catch(err => console.error("Error creating default options document:", err));
+      }
+    }, (err) => {
+      console.error("Error subscribing to operational_route_options settings:", err);
+    });
+    return () => unsub();
+  }, [user]);
 
   // Auto-save route draft to Firestore on changes
   useEffect(() => {
@@ -1643,6 +1746,21 @@ const OperationalRoutes: React.FC = () => {
               Modelos Rota
             </button>
           )}
+          {isManager && (
+            <button 
+              onClick={() => {
+                setSelectedTemplate(null);
+                setRouteResponses({});
+                setActiveTab('deviation_settings');
+              }}
+              className={cn(
+                "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", 
+                activeTab === 'deviation_settings' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
+              )}
+            >
+              Opções Desvios
+            </button>
+          )}
           <button 
             onClick={() => {
               setSelectedTemplate(null);
@@ -2587,6 +2705,22 @@ const OperationalRoutes: React.FC = () => {
                                                   
                                                   if (autoStatus === 'not_ok') {
                                                     setAnomalyDetailingEqId(eq.id);
+                                                    setDetailingResponses(prev => {
+                                                      if (prev[eq.id]) return prev;
+                                                      return {
+                                                        ...prev,
+                                                        [eq.id]: {
+                                                          inspectionType: 'Desvio Rota',
+                                                          diagnostic: 'Não Conformidade',
+                                                          notes: '',
+                                                          photoUrl: '',
+                                                          actionTaken: 'Atendimento de Desvio',
+                                                          responsibleCenter: '',
+                                                          schedule: '',
+                                                          sapNote: ''
+                                                        }
+                                                      };
+                                                    });
                                                   }
                                                 }}
                                                 className={cn(
@@ -2642,6 +2776,22 @@ const OperationalRoutes: React.FC = () => {
                                               
                                               if (autoStatus === 'not_ok') {
                                                 setAnomalyDetailingEqId(eq.id);
+                                                setDetailingResponses(prev => {
+                                                  if (prev[eq.id]) return prev;
+                                                  return {
+                                                    ...prev,
+                                                    [eq.id]: {
+                                                      inspectionType: 'Desvio Rota',
+                                                      diagnostic: 'Não Conformidade',
+                                                      notes: '',
+                                                      photoUrl: '',
+                                                      actionTaken: 'Atendimento de Desvio',
+                                                      responsibleCenter: '',
+                                                      schedule: '',
+                                                      sapNote: ''
+                                                    }
+                                                  };
+                                                });
                                               }
                                             }}
                                             className={cn(
@@ -2686,6 +2836,22 @@ const OperationalRoutes: React.FC = () => {
                                                   }));
                                                   if (autoStatus === 'not_ok') {
                                                     setAnomalyDetailingEqId(eq.id);
+                                                    setDetailingResponses(prev => {
+                                                      if (prev[eq.id]) return prev;
+                                                      return {
+                                                        ...prev,
+                                                        [eq.id]: {
+                                                          inspectionType: 'Desvio Rota',
+                                                          diagnostic: 'Não Conformidade',
+                                                          notes: '',
+                                                          photoUrl: '',
+                                                          actionTaken: 'Atendimento de Desvio',
+                                                          responsibleCenter: '',
+                                                          schedule: '',
+                                                          sapNote: ''
+                                                        }
+                                                      };
+                                                    });
                                                   }
                                                 }}
                                                 className={cn(
@@ -2843,115 +3009,253 @@ const OperationalRoutes: React.FC = () => {
                                     );
                                   })()}
 
-                                  {/* Custom notes text comment inside dropdown */}
-                                  <div className="border-t border-slate-100 pt-3 mt-1 space-y-1">
-                                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Notas / Detalhamento:</span>
-                                    <textarea
-                                      placeholder="Escreva observações adicionais para este item, observações técnicas ou detalhes do status..."
-                                      disabled={isReadOnlyRoute}
-                                      value={resp.notes || ''}
-                                      rows={3}
-                                      onChange={(e) => {
-                                        setRouteResponses(prev => ({
-                                          ...prev,
-                                          [eq.id]: { ...prev[eq.id], notes: e.target.value }
-                                        }));
-                                      }}
-                                      className={cn(
-                                        "w-full border rounded-xl px-3 py-2 font-semibold text-slate-700 outline-none text-xs resize-none",
-                                        isReadOnlyRoute ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" : "bg-slate-50 border-slate-200 focus:ring-1 focus:ring-[#0d6e4f]"
-                                      )}
-                                    />
-                                  </div>
+                                  {/* Section: Non-conformity Details (appear only if not ok) */}
+                                  {resp.status === 'not_ok' && (
+                                    <div className="border-t border-rose-100 bg-rose-50/20 p-4 rounded-2xl space-y-4 mt-2">
+                                      <div className="flex items-center gap-1.5 text-rose-800">
+                                        <AlertTriangle className="w-4 h-4 text-rose-600 animate-pulse" />
+                                        <span className="text-[10px] font-black uppercase tracking-wider">Detalhamento de Não Conformidade</span>
+                                      </div>
 
-                                  {/* Section: Multimedia Attachment (Photo / Short Video) - Space Saving & Professional */}
-                                  <div className="border-t border-slate-100 pt-3 mt-1.5 flex items-center justify-between gap-4">
-                                    <div className="text-left">
-                                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider flex items-center gap-1 select-none">
-                                        <Camera className="w-3.5 h-3.5 text-slate-400" /> Mídia de Evidência:
-                                      </span>
-                                      <p className="text-[9px] text-slate-400 font-semibold mt-0.5">
-                                        Anexe foto/vídeo curto do equipamento
-                                      </p>
-                                    </div>
+                                      {/* Custom notes text comment inside dropdown */}
+                                      <div className="space-y-1">
+                                        <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Notas / Detalhamento:</span>
+                                        <textarea
+                                          placeholder="Escreva observações adicionais para este item, observações técnicas ou detalhes do status..."
+                                          disabled={isReadOnlyRoute}
+                                          value={resp.notes || ''}
+                                          rows={3}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setRouteResponses(prev => ({
+                                              ...prev,
+                                              [eq.id]: { ...prev[eq.id], notes: val }
+                                            }));
+                                            setDetailingResponses(prev => ({
+                                              ...prev,
+                                              [eq.id]: {
+                                                ...(prev[eq.id] || {
+                                                  inspectionType: 'Desvio Rota',
+                                                  diagnostic: 'Não Conformidade',
+                                                  notes: '',
+                                                  photoUrl: '',
+                                                  actionTaken: 'Atendimento de Desvio',
+                                                  responsibleCenter: '',
+                                                  schedule: '',
+                                                  sapNote: ''
+                                                }),
+                                                notes: val
+                                              }
+                                            }));
+                                          }}
+                                          className={cn(
+                                            "w-full border rounded-xl px-3 py-2 font-semibold text-slate-700 outline-none text-xs resize-none",
+                                            isReadOnlyRoute ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" : "bg-white border-slate-200 focus:ring-1 focus:ring-[#0d6e4f]"
+                                          )}
+                                        />
+                                      </div>
 
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      {resp.photoUrl || resp.videoUrl ? (
-                                        <div className="relative group border border-slate-200 rounded-xl overflow-hidden bg-slate-50 flex items-center justify-center w-11 h-11 shadow-xs transition-all hover:border-emerald-500">
-                                          {resp.photoUrl && (
-                                            <img 
-                                              src={resp.photoUrl} 
-                                              alt="Mídia" 
-                                              className="w-full h-full object-cover cursor-pointer"
-                                              onClick={() => setLightboxMedia({ url: resp.photoUrl!, type: 'image' })}
-                                              title="Clique para ampliar"
-                                            />
-                                          )}
-                                          {resp.videoUrl && (
-                                            <div 
-                                              className="w-full h-full bg-slate-950 flex items-center justify-center relative cursor-pointer"
-                                              onClick={() => setLightboxMedia({ url: resp.videoUrl!, type: 'video' })}
-                                              title="Clique para reproduzir vídeo"
-                                            >
-                                              <Video className="w-3.5 h-3.5 text-white" />
-                                            </div>
-                                          )}
-                                          
-                                          {!isReadOnlyRoute && (
-                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                              <button
-                                                type="button"
-                                                onClick={() => handleClearEquipmentMedia(eq.id)}
-                                                className="p-0.5 bg-rose-600 text-white rounded-full transition-colors cursor-pointer"
-                                                title="Remover anexo"
-                                              >
-                                                <X className="w-2.5 h-2.5" />
-                                              </button>
-                                            </div>
-                                          )}
+                                      {/* Section: Multimedia Attachment (Photo / Short Video) - Space Saving & Professional */}
+                                      <div className="flex items-center justify-between gap-4 py-2 border-y border-rose-100/50">
+                                        <div className="text-left">
+                                          <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider flex items-center gap-1 select-none">
+                                            <Camera className="w-3.5 h-3.5 text-slate-400" /> Mídia de Evidência:
+                                          </span>
+                                          <p className="text-[9px] text-slate-400 font-semibold mt-0.5">
+                                            Anexe foto/vídeo curto do equipamento
+                                          </p>
                                         </div>
-                                      ) : (
-                                        <>
-                                          {!isReadOnlyRoute ? (
-                                            <div className="flex items-center gap-1.5">
-                                              {/* CAMERA DIRECT PHOTO BUTTON */}
-                                              <label 
-                                                className="w-9 h-9 border border-slate-200 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50/10 rounded-xl flex items-center justify-center transition-all cursor-pointer shadow-xs" 
-                                                title="Tirar Foto Direto da Câmera"
-                                              >
-                                                <Camera className="w-4 h-4 text-slate-500 hover:text-emerald-600" />
-                                                <input
-                                                  type="file"
-                                                  accept="image/*"
-                                                  capture="environment"
-                                                  onChange={(e) => handleFileChange(eq.id, e)}
-                                                  className="hidden"
-                                                />
-                                              </label>
 
-                                              {/* FILE SELECTOR (CLIPPER / PAPERCLIP) */}
-                                              <label 
-                                                className="w-9 h-9 border border-slate-200 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50/10 rounded-xl flex items-center justify-center transition-all cursor-pointer shadow-xs"
-                                                title="Anexar Arquivo (Foto ou Vídeo da Galeria)"
-                                              >
-                                                <Paperclip className="w-4 h-4 text-slate-500 hover:text-emerald-600" />
-                                                <input
-                                                  type="file"
-                                                  accept="image/*,video/*"
-                                                  onChange={(e) => handleFileChange(eq.id, e)}
-                                                  className="hidden"
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          {resp.photoUrl || resp.videoUrl ? (
+                                            <div className="relative group border border-slate-200 rounded-xl overflow-hidden bg-slate-50 flex items-center justify-center w-11 h-11 shadow-xs transition-all hover:border-emerald-500">
+                                              {resp.photoUrl && (
+                                                <img 
+                                                  src={resp.photoUrl} 
+                                                  alt="Mídia" 
+                                                  className="w-full h-full object-cover cursor-pointer"
+                                                  onClick={() => setLightboxMedia({ url: resp.photoUrl!, type: 'image' })}
+                                                  title="Clique para ampliar"
                                                 />
-                                              </label>
+                                              )}
+                                              {resp.videoUrl && (
+                                                <div 
+                                                  className="w-full h-full bg-slate-950 flex items-center justify-center relative cursor-pointer"
+                                                  onClick={() => setLightboxMedia({ url: resp.videoUrl!, type: 'video' })}
+                                                  title="Clique para reproduzir vídeo"
+                                                >
+                                                  <Video className="w-3.5 h-3.5 text-white" />
+                                                </div>
+                                              )}
+                                              
+                                              {!isReadOnlyRoute && (
+                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleClearEquipmentMedia(eq.id)}
+                                                    className="p-0.5 bg-rose-600 text-white rounded-full transition-colors cursor-pointer"
+                                                    title="Remover anexo"
+                                                  >
+                                                    <X className="w-2.5 h-2.5" />
+                                                  </button>
+                                                </div>
+                                              )}
                                             </div>
                                           ) : (
-                                            <span className="text-[10px] text-slate-400 font-semibold italic">
-                                              Nenhuma mídia
-                                            </span>
+                                            <>
+                                              {!isReadOnlyRoute ? (
+                                                <div className="flex items-center gap-1.5">
+                                                  {/* CAMERA DIRECT PHOTO BUTTON */}
+                                                  <label 
+                                                    className="w-9 h-9 border border-slate-200 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50/10 rounded-xl flex items-center justify-center transition-all cursor-pointer shadow-xs" 
+                                                    title="Tirar Foto Direto da Câmera"
+                                                  >
+                                                    <Camera className="w-4 h-4 text-slate-500 hover:text-emerald-600" />
+                                                    <input
+                                                      type="file"
+                                                      accept="image/*"
+                                                      capture="environment"
+                                                      onChange={(e) => handleFileChange(eq.id, e)}
+                                                      className="hidden"
+                                                    />
+                                                  </label>
+
+                                                  {/* FILE SELECTOR (CLIPPER / PAPERCLIP) */}
+                                                  <label 
+                                                    className="w-9 h-9 border border-slate-200 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50/10 rounded-xl flex items-center justify-center transition-all cursor-pointer shadow-xs"
+                                                    title="Anexar Arquivo (Foto ou Vídeo da Galeria)"
+                                                  >
+                                                    <Paperclip className="w-4 h-4 text-slate-500 hover:text-emerald-600" />
+                                                    <input
+                                                      type="file"
+                                                      accept="image/*,video/*"
+                                                      onChange={(e) => handleFileChange(eq.id, e)}
+                                                      className="hidden"
+                                                    />
+                                                  </label>
+                                                </div>
+                                              ) : (
+                                                <span className="text-[10px] text-slate-400 font-semibold italic">
+                                                  Nenhuma mídia
+                                                </span>
+                                              )}
+                                            </>
                                           )}
-                                        </>
-                                      )}
+                                        </div>
+                                      </div>
+
+                                      {/* NEW FIELDS: NOTA SAP, CENTRO RESPONSÁVEL, PROGRAMAÇÃO */}
+                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        {/* Nota SAP */}
+                                        <div className="space-y-1 text-left">
+                                          <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Nota SAP:</span>
+                                          <input
+                                            type="text"
+                                            placeholder="Ex: 1234567..."
+                                            disabled={isReadOnlyRoute}
+                                            value={detailingResponses[eq.id]?.sapNote || ''}
+                                            onChange={(e) => {
+                                              const val = e.target.value;
+                                              setDetailingResponses(prev => ({
+                                                ...prev,
+                                                [eq.id]: {
+                                                  ...(prev[eq.id] || {
+                                                    inspectionType: 'Desvio Rota',
+                                                    diagnostic: 'Não Conformidade',
+                                                    notes: resp.notes || '',
+                                                    photoUrl: resp.photoUrl || '',
+                                                    actionTaken: 'Atendimento de Desvio',
+                                                    responsibleCenter: '',
+                                                    schedule: '',
+                                                    sapNote: ''
+                                                  }),
+                                                  sapNote: val
+                                                }
+                                              }));
+                                            }}
+                                            className={cn(
+                                              "w-full border rounded-xl px-3 py-2 font-bold text-slate-700 outline-none text-xs",
+                                              isReadOnlyRoute ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" : "bg-white border-slate-200 focus:ring-1 focus:ring-[#0d6e4f]"
+                                            )}
+                                          />
+                                        </div>
+
+                                        {/* Centro Responsável */}
+                                        <div className="space-y-1 text-left">
+                                          <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Centro Responsável:</span>
+                                          <select
+                                            disabled={isReadOnlyRoute}
+                                            value={detailingResponses[eq.id]?.responsibleCenter || ''}
+                                            onChange={(e) => {
+                                              const val = e.target.value;
+                                              setDetailingResponses(prev => ({
+                                                ...prev,
+                                                [eq.id]: {
+                                                  ...(prev[eq.id] || {
+                                                    inspectionType: 'Desvio Rota',
+                                                    diagnostic: 'Não Conformidade',
+                                                    notes: resp.notes || '',
+                                                    photoUrl: resp.photoUrl || '',
+                                                    actionTaken: 'Atendimento de Desvio',
+                                                    responsibleCenter: '',
+                                                    schedule: '',
+                                                    sapNote: ''
+                                                  }),
+                                                  responsibleCenter: val
+                                                }
+                                              }));
+                                            }}
+                                            className={cn(
+                                              "w-full border rounded-xl px-3 py-2 font-bold text-slate-700 outline-none text-xs",
+                                              isReadOnlyRoute ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" : "bg-white border-slate-200 focus:ring-1 focus:ring-[#0d6e4f]"
+                                            )}
+                                          >
+                                            <option value="">Selecione...</option>
+                                            {responsibleCenters.map(center => (
+                                              <option key={center} value={center}>{center}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        {/* Programação */}
+                                        <div className="space-y-1 text-left">
+                                          <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Programação:</span>
+                                          <select
+                                            disabled={isReadOnlyRoute}
+                                            value={detailingResponses[eq.id]?.schedule || ''}
+                                            onChange={(e) => {
+                                              const val = e.target.value;
+                                              setDetailingResponses(prev => ({
+                                                ...prev,
+                                                [eq.id]: {
+                                                  ...(prev[eq.id] || {
+                                                    inspectionType: 'Desvio Rota',
+                                                    diagnostic: 'Não Conformidade',
+                                                    notes: resp.notes || '',
+                                                    photoUrl: resp.photoUrl || '',
+                                                    actionTaken: 'Atendimento de Desvio',
+                                                    responsibleCenter: '',
+                                                    schedule: '',
+                                                    sapNote: ''
+                                                  }),
+                                                  schedule: val
+                                                }
+                                              }));
+                                            }}
+                                            className={cn(
+                                              "w-full border rounded-xl px-3 py-2 font-bold text-slate-700 outline-none text-xs",
+                                              isReadOnlyRoute ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" : "bg-white border-slate-200 focus:ring-1 focus:ring-[#0d6e4f]"
+                                            )}
+                                          >
+                                            <option value="">Selecione...</option>
+                                            {schedules.map(sch => (
+                                              <option key={sch} value={sch}>{sch}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      </div>
                                     </div>
-                                  </div>
+                                  )}
 
                                   {/* CONFIRM BUTTON */}
                                   <button
@@ -3125,6 +3429,134 @@ const OperationalRoutes: React.FC = () => {
                 Nenhum modelo cadastrado. Comece criando um novo modelo!
               </div>
             )}
+          </div>
+        </div>
+      ) : activeTab === 'deviation_settings' ? (
+        <div className="space-y-6">
+          {/* CONFIGURAÇÃO DE CENTROS/PROGRAMAÇÃO DE DESVIOS */}
+          <div className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-xs space-y-6 animate-fade-in">
+            <div>
+              <h3 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-[#0d6e4f]" /> Configurações de Desvios de Inspeção
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 font-semibold">
+                Cadastre e gerencie as opções disponíveis para os campos Centro Responsável e Programação no fechamento de Não Conformidades.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-2">
+              {/* Box 1: Centro Responsável */}
+              <div className="bg-slate-50/50 p-6 rounded-[2rem] border border-slate-150 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Centro Responsável</span>
+                  <span className="text-[9px] font-black uppercase bg-emerald-50 text-[#0d6e4f] px-2 py-0.5 rounded-full border border-emerald-100">
+                    {responsibleCenters.length} Cadastrados
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 max-h-[140px] overflow-y-auto pb-1">
+                  {responsibleCenters.map(center => (
+                    <div
+                      key={center}
+                      className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-xl text-[11px]"
+                    >
+                      <span>{center}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveResponsibleCenter(center)}
+                        className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                        title={`Remover ${center}`}
+                      >
+                        <X className="w-3.5 h-3.5 shrink-0" />
+                      </button>
+                    </div>
+                  ))}
+                  {responsibleCenters.length === 0 && (
+                    <p className="text-xs text-slate-400 font-medium italic py-2">Nenhum centro cadastrado.</p>
+                  )}
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Instalações, Inspeções..."
+                    value={newResponsibleCenterInput}
+                    onChange={(e) => setNewResponsibleCenterInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddResponsibleCenter();
+                      }
+                    }}
+                    className="flex-1 text-xs px-3.5 py-2.5 border border-slate-200 bg-white rounded-xl outline-none font-bold text-slate-700 focus:ring-1 focus:ring-[#0d6e4f]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddResponsibleCenter}
+                    className="bg-slate-900 hover:bg-slate-800 text-white px-4 rounded-xl flex items-center justify-center transition-colors cursor-pointer"
+                    title="Adicionar Novo Centro"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Box 2: Programação */}
+              <div className="bg-slate-50/50 p-6 rounded-[2rem] border border-slate-150 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Programação</span>
+                  <span className="text-[9px] font-black uppercase bg-emerald-50 text-[#0d6e4f] px-2 py-0.5 rounded-full border border-emerald-100">
+                    {schedules.length} Cadastrados
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 max-h-[140px] overflow-y-auto pb-1">
+                  {schedules.map(sch => (
+                    <div
+                      key={sch}
+                      className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-xl text-[11px]"
+                    >
+                      <span>{sch}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveSchedule(sch)}
+                        className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                        title={`Remover ${sch}`}
+                      >
+                        <X className="w-3.5 h-3.5 shrink-0" />
+                      </button>
+                    </div>
+                  ))}
+                  {schedules.length === 0 && (
+                    <p className="text-xs text-slate-400 font-medium italic py-2">Nenhuma programação cadastrada.</p>
+                  )}
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Semanal, Crítico..."
+                    value={newScheduleInput}
+                    onChange={(e) => setNewScheduleInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddSchedule();
+                      }
+                    }}
+                    className="flex-1 text-xs px-3.5 py-2.5 border border-slate-200 bg-white rounded-xl outline-none font-bold text-slate-700 focus:ring-1 focus:ring-[#0d6e4f]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddSchedule}
+                    className="bg-slate-900 hover:bg-slate-800 text-white px-4 rounded-xl flex items-center justify-center transition-colors cursor-pointer"
+                    title="Adicionar Nova Programação"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       ) : (

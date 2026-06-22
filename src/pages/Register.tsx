@@ -139,6 +139,7 @@ const Register: React.FC = () => {
         role: initialRole,
         status: initialStatus,
         isMaster: isActuallyMaster,
+        disabled: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
