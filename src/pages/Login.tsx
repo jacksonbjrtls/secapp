@@ -327,8 +327,16 @@ const Login: React.FC = () => {
         setTimeout(() => setIsForgotPassword(false), 8000);
       } catch (authErr: any) {
         console.warn('Direct password reset failed, trying custom API backup:', authErr);
+        
+        // If user does not exist in standard Auth, no point in calling backup
+        if (authErr.code === 'auth/user-not-found' || authErr.message?.includes('user-not-found')) {
+          setError('Este e-mail não está cadastrado no sistema SecApp.');
+          setLoading(false);
+          return;
+        }
+
         // Fallback to backend API
-        await fetch('/api/send-custom-auth-email', {
+        const response = await fetch('/api/send-custom-auth-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -336,12 +344,27 @@ const Login: React.FC = () => {
             email: email.toLowerCase().trim()
           })
         });
+
+        const resData = await response.json().catch(() => ({}));
+        if (!response.ok || resData.success === false) {
+          const errMsg = resData.error || 'Falha no backup de envio de e-mails.';
+          throw new Error(errMsg);
+        }
+
         setMessage('E-mail de redefinição enviado via backup de e-mail! Verifique sua caixa de entrada.');
         setTimeout(() => setIsForgotPassword(false), 8500);
       }
     } catch (err: any) {
       console.error('Reset error:', err);
-      setError('Erro ao enviar e-mail de redefinição. Verifique se o endereço está correto.');
+      let displayError = 'Erro ao enviar e-mail de redefinição. Verifique se o endereço está correto e cadastrado.';
+      if (err.message && err.message.includes('não configurado')) {
+        displayError = 'O serviço de e-mail de backup não está configurado. Por favor, abra o SecApp em uma nova aba para permitir que o Firebase envie a redefinição padrão diretamente para seu navegador.';
+      } else if (err.message && err.message.includes('encontrado')) {
+        displayError = 'Este e-mail não está cadastrado no sistema SecApp.';
+      } else if (err.message) {
+        displayError = err.message;
+      }
+      setError(displayError);
     } finally {
       setLoading(false);
     }
@@ -508,8 +531,18 @@ const Login: React.FC = () => {
               </div>
 
               {error && (
-                <div className="text-red-500 text-sm bg-red-50 p-3 rounded-lg border border-red-100">
-                  {error}
+                <div className="space-y-2">
+                  <div className="text-red-500 text-sm bg-red-50 p-3 rounded-lg border border-red-100">
+                    {error}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => window.open(window.location.href, '_blank')}
+                    className="w-full py-2 px-4 bg-slate-100 text-slate-700 text-[10px] font-bold uppercase tracking-widest rounded-lg hover:bg-slate-200 transition-colors flex items-center justify-center gap-2 mb-2"
+                  >
+                    <ArrowLeft className="w-3 h-3 rotate-180" />
+                    Abrir em nova aba para redefinir
+                  </button>
                 </div>
               )}
 

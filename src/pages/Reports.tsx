@@ -317,10 +317,10 @@ const Reports: React.FC = () => {
       const pendingList: any[] = [];
       routeSubmissionsData.forEach(sub => {
         if (sub.responses && Array.isArray(sub.responses)) {
-          sub.responses.forEach((resp: any) => {
+          sub.responses.forEach((resp: any, respIdx: number) => {
             if (resp.status === 'not_ok') {
               pendingList.push({
-                id: `${sub.id}_${resp.equipmentId}`,
+                id: `${sub.id}_${resp.equipmentId || 'noeq'}_${respIdx}`,
                 submissionId: sub.id,
                 date: safeToDate(sub.createdAt) || new Date(),
                 tag: resp.equipmentTag || resp.equipmentId || 'S/T',

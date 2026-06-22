@@ -1912,7 +1912,7 @@ const OperationalRoutes: React.FC = () => {
                   const failResponsesCount = sub.responses.filter(r => r.status === 'not_ok').length;
 
                   return (
-                    <div key={sub.id || `sub-${idx}`} className={cn(
+                    <div key={`${sub.id || 'sub'}-${idx}`} className={cn(
                       "bg-white p-6 rounded-2xl border shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all",
                       sub.isOfflinePending 
                         ? "border-amber-200 bg-amber-50/10 hover:border-amber-300" 
