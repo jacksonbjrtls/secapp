@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
 import { safeToDate, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { decryptValue } from '../lib/crypto';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
 import { 
   Activity, 
@@ -97,26 +98,40 @@ export const Overview: React.FC = () => {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-      const filtered = snap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() as any }))
-        .filter(user => {
-          const userEmail = user.email?.toLowerCase().trim() || '';
-          return !MASTER_EMAILS.includes(userEmail);
-        });
+    const unsubUsers = onSnapshot(collection(db, 'users'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.displayName);
+        const decEmail = await decryptValue(data.email);
+        return { id: doc.id, ...data, displayName: decName, email: decEmail };
+      }));
+      const filtered = mapped.filter(user => {
+        const userEmail = user.email?.toLowerCase().trim() || '';
+        return !MASTER_EMAILS.includes(userEmail);
+      });
       setUsers(filtered);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'users');
     });
 
-    const unsubSessions = onSnapshot(collection(db, 'dds_sessions'), (snap) => {
-      setDdsSessions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubSessions = onSnapshot(collection(db, 'dds_sessions'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setDdsSessions(mapped);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
     });
 
-    const unsubSignatures = onSnapshot(collection(db, 'dds_signatures'), (snap) => {
-      setDdsSignatures(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubSignatures = onSnapshot(collection(db, 'dds_signatures'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setDdsSignatures(mapped);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
     });
@@ -127,8 +142,13 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'forklifts');
     });
 
-    const unsubForkChecklists = onSnapshot(collection(db, 'forklift_checklists'), (snap) => {
-      setForkliftChecklists(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubForkChecklists = onSnapshot(collection(db, 'forklift_checklists'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.conductorName);
+        return { id: doc.id, ...data, conductorName: decName };
+      }));
+      setForkliftChecklists(mapped);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'forklift_checklists');
     });
@@ -139,14 +159,24 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'forklift_check_items');
     });
 
-    const unsubQualSub = onSnapshot(collection(db, 'quality_checklist_submissions'), (snap) => {
-      setQualitySubmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubQualSub = onSnapshot(collection(db, 'quality_checklist_submissions'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setQualitySubmissions(mapped);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'quality_checklist_submissions');
     });
 
-    const unsubOm = onSnapshot(collection(db, 'quality_checklist_omissions'), (snap) => {
-      setQualityOmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubOm = onSnapshot(collection(db, 'quality_checklist_omissions'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setQualityOmissions(mapped);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'quality_checklist_omissions');
     });
@@ -187,14 +217,24 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'production_lines');
     });
 
-    const unsubRoutes = onSnapshot(collection(db, 'route_submissions'), (snap) => {
-      setRouteSubmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubRoutes = onSnapshot(collection(db, 'route_submissions'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setRouteSubmissions(mapped);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'route_submissions');
     });
 
-    const unsubSafetyObs = onSnapshot(collection(db, 'safety_observations'), (snap) => {
-      setSafetyObservations(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubSafetyObs = onSnapshot(collection(db, 'safety_observations'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setSafetyObservations(mapped);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'safety_observations');
     });
@@ -205,8 +245,13 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'consumable_items');
     });
 
-    const unsubConsumableLogs = onSnapshot(collection(db, 'consumable_logs'), (snap) => {
-      setConsumableLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const unsubConsumableLogs = onSnapshot(collection(db, 'consumable_logs'), async (snap) => {
+      const mapped = await Promise.all(snap.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setConsumableLogs(mapped);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'consumable_logs');
     });
@@ -855,7 +900,7 @@ export const Overview: React.FC = () => {
                     cx="72"
                     cy="72"
                     r="50"
-                    stroke={healthIndex > 85 ? '#10b981' : healthIndex > 65 ? '#f59e0b' : '#ef4444'}
+                    stroke={healthIndex >= 90 ? '#10b981' : healthIndex >= 75 ? '#f59e0b' : '#ef4444'}
                     strokeWidth="10"
                     fill="transparent"
                     strokeDasharray={2 * Math.PI * 50}

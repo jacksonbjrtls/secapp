@@ -62,6 +62,27 @@
         </ul>
       </div>
 
+      <!-- Container do QR Code (exibido apenas nos slides com qrCode) -->
+      <div id="slide-qr-container" class="hidden flex-col md:flex-row items-center gap-8 bg-slate-900/40 p-6 rounded-2xl border border-slate-900/80 my-4">
+        <div class="relative bg-white p-3 rounded-2xl shadow-xl flex items-center justify-center shrink-0 w-44 h-44 border border-emerald-500/20">
+          <!-- QR Code gerado dinamicamente no padrão de cor verde escuro -->
+          <img id="slide-qr-img" src="" alt="QR Code de Acesso" class="w-full h-full object-contain" />
+          <!-- Logo centralizado SecApp -->
+          <div class="absolute bg-white px-2 py-1 rounded shadow-md border border-slate-200 flex items-center justify-center" style="width: 70px; height: 32px; left: 50%; top: 50%; transform: translate(-50%, -50%);">
+            <span class="text-[11px] font-black text-emerald-700 tracking-tight">SecApp</span>
+          </div>
+        </div>
+        <div class="space-y-3 text-center md:text-left flex-1">
+          <p class="text-emerald-400 font-bold text-sm tracking-wider uppercase">Link de Acesso Direto:</p>
+          <a href="https://secapp-ten.vercel.app/" target="_blank" class="block text-2xl md:text-3xl font-black text-white hover:text-emerald-400 transition-colors break-all underline decoration-emerald-500/50 underline-offset-4">
+            secapp-ten.vercel.app
+          </a>
+          <p class="text-xs text-slate-400 leading-relaxed max-w-md">
+            Aponte a câmera do seu celular para o QR Code acima para acessar o SecApp instantaneamente, ou clique no link direto. O sistema é 100% PWA e pode ser instalado na sua tela inicial!
+          </p>
+        </div>
+      </div>
+
       <div id="slide-highlight-container" class="pt-6 border-t border-slate-900 flex justify-between items-center">
         <div>
           <p id="highlight-title" class="text-[10px] font-black text-slate-500 uppercase tracking-widest">DESTAQUE</p>
@@ -259,6 +280,24 @@
           title: "Próximos Passos",
           value: "Integração contínua e expansão para novas frentes de trabalho"
         }
+      },
+      {
+        id: 11,
+        title: "Como Acessar o SecApp",
+        subtitle: "Conecte-se de Qualquer Dispositivo em Campo ou no Escritório",
+        category: "Acesso",
+        description: "A plataforma está disponível em nuvem e homologada para uso imediato em computadores, tablets ou celulares, contando com tecnologia offline-first para as frentes de trabalho.",
+        bullets: [
+          "Link Direto Oficial: <a href='https://secapp-ten.vercel.app/' target='_blank' class='text-emerald-400 font-bold hover:underline'>https://secapp-ten.vercel.app/</a>",
+          "Suporte PWA: instale como aplicativo nativo diretamente pela barra de endereços do seu navegador.",
+          "SST & Qualidade integrados em tempo real com controle de acesso rigoroso por cargo e aprovação.",
+          "Segurança Militar: dados de colaboradores criptografados e blindados conforme os termos da LGPD."
+        ],
+        techHighlight: {
+          title: "Disponibilidade",
+          value: "Serviço Ativo e Homologado em Produção"
+        },
+        qrCode: "https://secapp-ten.vercel.app/"
       }
     ];
 
@@ -293,6 +332,17 @@
         document.getElementById('highlight-value').innerText = slide.techHighlight.value;
       } else {
         highlightContainer.style.display = 'none';
+      }
+
+      // Update QR Code visibility and source
+      const qrContainer = document.getElementById('slide-qr-container');
+      const qrImg = document.getElementById('slide-qr-img');
+      if (slide.qrCode) {
+        qrContainer.style.display = 'flex';
+        // Generate high quality green (color code 15803d) QR code
+        qrImg.src = "https://api.qrserver.com/v1/create-qr-code/?size=250x250&color=15803d&data=" + encodeURIComponent(slide.qrCode);
+      } else {
+        qrContainer.style.display = 'none';
       }
     }
 

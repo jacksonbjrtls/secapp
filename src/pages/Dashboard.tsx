@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { collection, query, limit, getDocs, orderBy, onSnapshot, where, Timestamp, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { decryptValue } from '../lib/crypto';
 import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { Metric } from '../types';
@@ -163,8 +164,12 @@ const Dashboard: React.FC = () => {
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const sessions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const sessions = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
       setAllSessions(sessions);
 
       // Update current day status
@@ -232,8 +237,12 @@ const Dashboard: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'forklifts');
     });
 
-    const unsubChecklists = onSnapshot(collection(db, 'forklift_checklists'), (snapshot) => {
-      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    const unsubChecklists = onSnapshot(collection(db, 'forklift_checklists'), async (snapshot) => {
+      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.conductorName);
+        return { id: doc.id, ...data, conductorName: decName };
+      }));
       setForkliftHistory(docs);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'forklift_checklists');
@@ -246,8 +255,13 @@ const Dashboard: React.FC = () => {
     });
 
     // Quality Listeners
-    const unsubQualSubmissions = onSnapshot(collection(db, 'quality_checklist_submissions'), (snapshot) => {
-      setQualitySubmissions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    const unsubQualSubmissions = onSnapshot(collection(db, 'quality_checklist_submissions'), async (snapshot) => {
+      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setQualitySubmissions(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'quality_checklist_submissions'));
 
     const unsubQualTemplates = onSnapshot(collection(db, 'quality_checklist_templates'), (snapshot) => {
@@ -271,24 +285,39 @@ const Dashboard: React.FC = () => {
       setLines(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'production_lines'));
 
-    const unsubRoutesSub = onSnapshot(collection(db, 'route_submissions'), (snapshot) => {
-      setRoutesSubmissions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    const unsubRoutesSub = onSnapshot(collection(db, 'route_submissions'), async (snapshot) => {
+      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setRoutesSubmissions(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'route_submissions'));
 
     const unsubRoutesTmpl = onSnapshot(collection(db, 'route_templates'), (snapshot) => {
       setRoutesTemplates(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'route_templates'));
 
-    const unsubSafetyObs = onSnapshot(collection(db, 'safety_observations'), (snapshot) => {
-      setSafetyObservations(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    const unsubSafetyObs = onSnapshot(collection(db, 'safety_observations'), async (snapshot) => {
+      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setSafetyObservations(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'safety_observations'));
 
     const unsubConsumableItems = onSnapshot(collection(db, 'consumable_items'), (snapshot) => {
       setConsumableItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_items'));
 
-    const unsubConsumableLogs = onSnapshot(collection(db, 'consumable_logs'), (snapshot) => {
-      setConsumableLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    const unsubConsumableLogs = onSnapshot(collection(db, 'consumable_logs'), async (snapshot) => {
+      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
+      setConsumableLogs(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_logs'));
 
     return () => {

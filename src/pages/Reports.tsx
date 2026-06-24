@@ -41,6 +41,20 @@ import { cn, safeToDate } from '../lib/utils';
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 
 const Reports: React.FC = () => {
+
+  // Helper to sanitize Portuguese accented characters for jsPDF text drawing
+  const sanitizePdfText = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return String(text)
+      .replace(/[áàâãäÁÀÂÃÄ]/g, 'a')
+      .replace(/[éèêëÉÈÊË]/g, 'e')
+      .replace(/[íìîïÍÌÎÏ]/g, 'i')
+      .replace(/[óòôõöÓÒÔÕÖ]/g, 'o')
+      .replace(/[úùûüÚÙÛÜ]/g, 'u')
+      .replace(/[çÇ]/g, 'c')
+      .replace(/[ñÑ]/g, 'n');
+  };
+
   const { isManager, isAdmin, isMaster } = useAuth();
   const [reportType, setReportType] = useState<'dds' | 'forklift' | 'wire_receiving' | 'wire_consumption' | 'quality' | 'user_ray_x' | 'pending_equipments'>('dds');
   const [data, setData] = useState<any[]>([]);
@@ -547,13 +561,13 @@ const Reports: React.FC = () => {
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text(title, 14, 20);
+    doc.text(sanitizePdfText(title), 14, 20);
     
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(190, 242, 219); // emerald-100ish for secondary text on emerald bg
-    doc.text(`Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 14, 28);
-    doc.text(`Filtros: ${filterUser || 'Todos'} | Turno: ${filterShift} | Letra: ${filterGroup}`, pageWidth - 14, 28, { align: 'right' });
+    doc.text(sanitizePdfText(`Gerado em: ${format(new Date(), "dd/MM/yyyy 'as' HH:mm", { locale: ptBR })}`), 14, 28);
+    doc.text(sanitizePdfText(`Filtros: ${filterUser || 'Todos'} | Turno: ${filterShift} | Letra: ${filterGroup}`), pageWidth - 14, 28, { align: 'right' });
     
     let head: any[], tableData: any[];
     if (reportType === 'dds') {
@@ -625,8 +639,8 @@ const Reports: React.FC = () => {
 
     autoTable(doc, {
       startY: 40,
-      head: head,
-      body: tableData,
+      head: head ? head.map((row: any) => row.map((cell: any) => sanitizePdfText(cell))) : [],
+      body: tableData ? tableData.map((row: any) => row.map((cell: any) => sanitizePdfText(cell))) : [],
       theme: 'striped',
       headStyles: { 
         fillColor: [241, 245, 249], // slate-100
@@ -638,7 +652,7 @@ const Reports: React.FC = () => {
       alternateRowStyles: { fillColor: [248, 250, 252] }, // slate-50
       didParseCell: (data) => {
         if (reportType === 'forklift' && data.section === 'body' && data.column.index === 4) {
-          if (data.cell.raw === 'NÃO CONFORME') {
+          if (data.cell.raw === 'NAO CONFORME') {
             data.cell.styles.textColor = [225, 29, 72]; // rose-600
             data.cell.styles.fontStyle = 'bold';
           } else {
@@ -776,22 +790,23 @@ const Reports: React.FC = () => {
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(22);
     doc.setFont('helvetica', 'bold');
-    doc.text(`INSPEÇÃO # ${check.forkliftNumber}`, 14, 25);
+    doc.text(sanitizePdfText(`INSPECAO # ${check.forkliftNumber}`), 14, 25);
     
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Data: ${format(check.timestamp, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 14, 33);
+    doc.text(sanitizePdfText(`Data: ${format(check.timestamp, "dd/MM/yyyy 'as' HH:mm", { locale: ptBR })}`), 14, 33);
 
     // Info Table
     const infoData = [
-      ['Equipamento:', check.forkliftNumber, 'Status:', check.status === 'normal' ? 'CONFORME' : 'NÃO CONFORME'],
+      ['Equipamento:', check.forkliftNumber, 'Status:', check.status === 'normal' ? 'CONFORME' : 'NAO CONFORME'],
       ['Condutor:', check.conductorName, 'Turno:', check.shift],
       ['Grupo (Letra):', check.group, 'ID:', check.id]
     ];
+    const sanitizedInfoData = infoData.map((row: any) => row.map((cell: any) => sanitizePdfText(cell)));
 
     autoTable(doc, {
       startY: 45,
-      body: infoData,
+      body: sanitizedInfoData,
       theme: 'plain',
       styles: { fontSize: 9, cellPadding: 2 },
       columnStyles: {
@@ -806,7 +821,7 @@ const Reports: React.FC = () => {
     doc.setTextColor(15, 23, 42); // slate-900
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
-    doc.text('Itens de Verificação', 14, (doc as any).lastAutoTable.finalY + 15);
+    doc.text('Itens de Verificacao', 14, (doc as any).lastAutoTable.finalY + 15);
 
     // Filter checkItemsList to only show active items OR items that have a result in this check
     // Actually, usually we show all items that are assigned to this checklist
@@ -815,14 +830,15 @@ const Reports: React.FC = () => {
       if (!res) return null; // Skip items that don't have results in this specific check
       
       const label = item.name;
-      let valueStr = res.value === true ? 'SIM' : res.value === false ? 'NÃO' : String(res.value);
+      let valueStr = res.value === true ? 'SIM' : res.value === false ? 'NAO' : String(res.value);
       return [label, valueStr, res.status === 'normal' ? 'NORMAL' : 'ANORMAL'];
     }).filter(Boolean);
+    const sanitizedCheckItemsData = checkItemsData.map((row: any) => row.map((cell: any) => sanitizePdfText(cell)));
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 20,
-      head: [['Item da Verificação', 'Resposta', 'Status']],
-      body: checkItemsData,
+      head: [['Item da Verificacao', 'Resposta', 'Status']],
+      body: sanitizedCheckItemsData,
       headStyles: { 
         fillColor: [241, 245, 249], 
         textColor: [71, 85, 105],
@@ -848,12 +864,12 @@ const Reports: React.FC = () => {
     if (check.notes) {
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text('Observações', 14, (doc as any).lastAutoTable.finalY + 15);
+      doc.text('Observacoes', 14, (doc as any).lastAutoTable.finalY + 15);
       
       doc.setFontSize(10);
       doc.setFont('helvetica', 'italic');
       doc.setTextColor(100, 116, 139); // slate-500
-      const splitNotes = doc.splitTextToSize(check.notes, pageWidth - 28);
+      const splitNotes = doc.splitTextToSize(sanitizePdfText(check.notes), pageWidth - 28);
       doc.text(splitNotes, 14, (doc as any).lastAutoTable.finalY + 22);
     }
 

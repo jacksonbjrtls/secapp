@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { decryptValue } from '../lib/crypto';
 import { safeToDate, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { getCurrentShift, getGroupForShift, Shift, Group } from '../lib/scaleUtils';
@@ -201,71 +202,86 @@ export const ShiftHandover: React.FC = () => {
   useEffect(() => {
     setLoadingMetrics(true);
 
-    const unsubForklifts = onSnapshot(collection(db, 'forklift_checklists'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(doc => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
+    const unsubForklifts = onSnapshot(collection(db, 'forklift_checklists'), async (snapshot) => {
+      const list = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.conductorName);
+        return { id: doc.id, ...data, conductorName: decName };
+      }));
       setForkliftChecklists(list);
     }, (error) => {
       console.warn('Erro ao carregar checklists de empilhadeiras:', error);
     });
 
-    const unsubQuality = onSnapshot(collection(db, 'quality_checklist_submissions'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(doc => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
+    const unsubQuality = onSnapshot(collection(db, 'quality_checklist_submissions'), async (snapshot) => {
+      const list = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
       setQualitySubmissions(list);
     }, (error) => {
       console.warn('Erro ao carregar submissões de qualidade:', error);
     });
 
-    const unsubRoutes = onSnapshot(collection(db, 'route_submissions'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(doc => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
+    const unsubRoutes = onSnapshot(collection(db, 'route_submissions'), async (snapshot) => {
+      const list = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
       setRouteSubmissions(list);
     }, (error) => {
       console.warn('Erro ao carregar rotas operacionais:', error);
     });
 
-    const unsubSafety = onSnapshot(collection(db, 'safety_observations'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(doc => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
+    const unsubSafety = onSnapshot(collection(db, 'safety_observations'), async (snapshot) => {
+      const list = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
       setSafetyObservations(list);
     }, (error) => {
       console.warn('Erro ao carregar observações de segurança:', error);
     });
 
-    const unsubDds = onSnapshot(collection(db, 'dds_sessions'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(doc => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
+    const unsubDds = onSnapshot(collection(db, 'dds_sessions'), async (snapshot) => {
+      const list = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
       setDdsSessions(list);
     }, (error) => {
       console.warn('Erro ao carregar sessões dds:', error);
     });
 
-    const unsubSignatures = onSnapshot(collection(db, 'dds_signatures'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(doc => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
+    const unsubSignatures = onSnapshot(collection(db, 'dds_signatures'), async (snapshot) => {
+      const list = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
       setAllDdsSignatures(list);
     }, (error) => {
       console.warn('Erro ao carregar assinaturas dds:', error);
     });
 
-    const unsubHandovers = onSnapshot(collection(db, 'shift_handovers'), (snapshot) => {
-      const list: HandoverReport[] = [];
-      snapshot.forEach(doc => {
-        list.push({ id: doc.id, ...doc.data() } as HandoverReport);
-      });
+    const unsubHandovers = onSnapshot(collection(db, 'shift_handovers'), async (snapshot) => {
+      const list = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decIn = await decryptValue(data.operatorIn);
+        const decOut = await decryptValue(data.operatorOut);
+        const decCreatedByName = await decryptValue(data.createdByName);
+        return { 
+          id: doc.id, 
+          ...data, 
+          operatorIn: decIn, 
+          operatorOut: decOut, 
+          createdByName: decCreatedByName 
+        } as HandoverReport;
+      }));
       setHandovers(list);
       setLoadingMetrics(false);
     }, (error) => {
@@ -273,11 +289,12 @@ export const ShiftHandover: React.FC = () => {
       setLoadingMetrics(false);
     });
 
-    const unsubConsumables = onSnapshot(collection(db, 'consumable_logs'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(doc => {
-        list.push({ id: doc.id, ...doc.data() });
-      });
+    const unsubConsumables = onSnapshot(collection(db, 'consumable_logs'), async (snapshot) => {
+      const list = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        return { id: doc.id, ...data, userName: decName };
+      }));
       setConsumableLogs(list);
     }, (error) => {
       console.warn('Erro ao carregar logs de insumos:', error);

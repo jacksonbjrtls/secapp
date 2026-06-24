@@ -142,3 +142,18 @@ Esta apresentação foi estruturada para ser facilmente lida ou importada para f
   - Tranquilidade jurídica e conformidade regulatória total com auditorias externas e a fiscalização ativa do Ministério do Trabalho.
   - Segurança da informação blindada contra ataques cibernéticos e perdas indesejadas de dados confidenciais.
 * **Métrica de Destaque:** Fusão perfeita de inovação tecnológica, produtividade e governança em campo.
+
+---
+
+### Slide 11: Como Acessar a Plataforma SecApp
+* **Título:** Como Acessar o SecApp
+* **Subtítulo:** Conecte-se de Qualquer Dispositivo em Campo ou no Escritório
+* **Categoria:** Acesso
+* **Descrição:** A plataforma está disponível em nuvem e homologada para uso imediato em computadores, tablets ou celulares, contando com tecnologia offline-first para as frentes de trabalho.
+* **Destaques:**
+  - Link de Produção: [secapp-ten.vercel.app](https://secapp-ten.vercel.app/)
+  - Suporte PWA: instale como aplicativo nativo diretamente pela barra de endereços do seu navegador.
+  - SST & Qualidade integrados em tempo real com controle de acesso rigoroso por cargo e aprovação.
+  - Segurança Militar: dados de colaboradores criptografados e blindados conforme os termos da LGPD.
+* **Métrica de Destaque:** Link oficial: secapp-ten.vercel.app (QR Code verde de acesso em anexo)
+

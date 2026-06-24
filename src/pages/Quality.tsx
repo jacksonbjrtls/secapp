@@ -28,6 +28,8 @@ import {
   QualityChecklistOptionSet
 } from '../types';
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 import { getCurrentShift, getGroupForShift, Shift } from '../lib/scaleUtils';
 import { 
@@ -50,7 +52,9 @@ import {
   Hash,
   ToggleLeft,
   LayoutGrid,
-  Layers
+  Layers,
+  Printer,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
@@ -58,6 +62,94 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 
 // Tabs
 type QualityTab = 'perform' | 'templates' | 'sectors' | 'options' | 'omissions' | 'dashboard';
+
+const getOptionColorClasses = (option: string, isSelected: boolean) => {
+  const optLower = option.toLowerCase();
+  
+  // Limpo / Limpa
+  if (optLower === 'limpo' || optLower === 'limpa' || optLower === 'conforme' || optLower === 'ok') {
+    return isSelected
+      ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100"
+      : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50/20";
+  }
+  
+  // Pouco sujo / levemente amarelo
+  if (optLower.includes('pouco sujo') || optLower.includes('pouco suja') || optLower.includes('levemente sujo') || optLower.includes('levemente suja') || optLower.includes('pouco')) {
+    return isSelected
+      ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-yellow-400 border-yellow-400 text-yellow-950 shadow-md shadow-yellow-100"
+      : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-yellow-600 hover:border-yellow-300 hover:bg-yellow-50/20";
+  }
+  
+  // Sujo / amarelo forte
+  if (optLower === 'sujo' || optLower === 'suja' || optLower.includes('amarelo forte')) {
+    return isSelected
+      ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-amber-500 border-amber-500 text-white shadow-md shadow-amber-100"
+      : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-amber-600 hover:border-amber-300 hover:bg-amber-50/20";
+  }
+  
+  // Muito sujo
+  if (optLower.includes('muito sujo') || optLower.includes('muito suja') || optLower === 'não conforme' || optLower === 'nao conforme' || optLower === 'nok') {
+    return isSelected
+      ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-red-600 border-red-600 text-white shadow-md shadow-red-100"
+      : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-red-600 hover:border-red-300 hover:bg-red-50/20";
+  }
+  
+  // Fallback for any other option
+  return isSelected
+    ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100"
+    : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-slate-500 hover:border-emerald-300";
+};
+
+const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
+  if (value === undefined || value === null) return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-slate-500 text-white";
+  const valStr = String(value).toLowerCase();
+  
+  // Limpo
+  if (valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
+    return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-emerald-500 text-white shadow-sm shadow-emerald-100";
+  }
+  
+  // Pouco sujo / levemente amarelo
+  if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('levemente sujo') || valStr.includes('levemente suja') || valStr.includes('pouco')) {
+    return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50";
+  }
+  
+  // Sujo / amarelo forte
+  if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo forte')) {
+    return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-amber-500 text-white shadow-sm shadow-amber-50";
+  }
+  
+  // Muito sujo
+  if (valStr.includes('muito sujo') || valStr.includes('muito suja') || valStr === 'not_ok' || valStr === 'não conforme' || valStr === 'nao conforme' || valStr === 'nok') {
+    return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-rose-600 text-white shadow-md shadow-rose-100";
+  }
+  
+  // Fallback depending on compliant
+  return isCompliant 
+    ? "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-emerald-500 text-white" 
+    : "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-rose-500 text-white";
+};
+
+const getIconColorClasses = (value: any, isCompliant: boolean) => {
+  if (value === undefined || value === null) return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-slate-50 text-slate-600";
+  const valStr = String(value).toLowerCase();
+  
+  if (valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
+    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-emerald-50 text-emerald-600";
+  }
+  if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('levemente sujo') || valStr.includes('levemente suja') || valStr.includes('pouco')) {
+    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-yellow-50 text-yellow-600 border border-yellow-200";
+  }
+  if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo forte')) {
+    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-amber-50 text-amber-600 border border-amber-200";
+  }
+  if (valStr.includes('muito sujo') || valStr.includes('muito suja') || valStr === 'not_ok' || valStr === 'não conforme' || valStr === 'nao conforme' || valStr === 'nok') {
+    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-rose-50 text-rose-600";
+  }
+  return isCompliant 
+    ? "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-emerald-50 text-emerald-600" 
+    : "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-rose-50 text-rose-600";
+};
 
 const Quality: React.FC = () => {
   const { user, profile, isManager, isAdmin, isMaster } = useAuth();
@@ -139,8 +231,86 @@ const Quality: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    const unsubTemplates = onSnapshot(collection(db, 'quality_checklist_templates'), (snapshot) => {
-      setTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualityChecklistTemplate)));
+    const unsubTemplates = onSnapshot(collection(db, 'quality_checklist_templates'), async (snapshot) => {
+      const fetchedTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualityChecklistTemplate));
+      setTemplates(fetchedTemplates);
+      
+      const hasDryerTemplate = fetchedTemplates.some(t => t.name.toLowerCase().includes('limpeza') || t.name.toLowerCase().includes('secador'));
+      if (!hasDryerTemplate) {
+        try {
+          const sectorsSnap = await getDocs(collection(db, 'quality_sectors'));
+          const sectorsList = sectorsSnap.docs.map(d => ({ id: d.id, ...d.data() } as QualitySector));
+          let targetSectorId = 'all';
+          const secagemSec = sectorsList.find(s => s.name.toLowerCase().includes('secagem') || s.name.toLowerCase().includes('secador'));
+          if (secagemSec) {
+            targetSectorId = secagemSec.id;
+          }
+          
+          const optionsSnap = await getDocs(collection(db, 'quality_checklist_options'));
+          const optionsList = optionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as QualityChecklistOptionSet));
+          const optSet = optionsList.find(o => o.name.toLowerCase().includes('limpeza') || o.name.toLowerCase().includes('secador'));
+          
+          if (optSet) {
+            const items = [];
+            for (let door = 0; door < 24; door++) {
+              for (const level of ['A', 'B', 'C', 'D']) {
+                items.push({
+                  id: `door_${door}_level_${level.toLowerCase()}`,
+                  label: `Porta ${door} - Nivel ${level}`,
+                  type: "condition",
+                  required: false,
+                  conditionOptionsId: optSet.id,
+                  allowObservation: true
+                });
+              }
+            }
+            await addDoc(collection(db, 'quality_checklist_templates'), {
+              name: "Inspeção de Limpeza do Secador",
+              description: "Monitoramento de conformidade da limpeza do secador de celulose em 4 níveis de criticidade por porta.",
+              sectorId: targetSectorId,
+              frequencyPerShift: 1,
+              active: true,
+              createdBy: user?.uid || 'system',
+              createdAt: serverTimestamp(),
+              items: items
+            });
+            console.log("Seeded Dryer Cleanliness template with 96 items successfully.");
+          }
+        } catch (err) {
+          console.error("Error auto-seeding template:", err);
+        }
+      } else {
+        // If it exists but has very few items (e.g. only 1), expand it to 96 items
+        const dryerTemplate = fetchedTemplates.find(t => t.name.toLowerCase().includes('limpeza') || t.name.toLowerCase().includes('secador'));
+        if (dryerTemplate && dryerTemplate.items.length < 5) {
+          try {
+            const optionsSnap = await getDocs(collection(db, 'quality_checklist_options'));
+            const optionsList = optionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as QualityChecklistOptionSet));
+            const optSet = optionsList.find(o => o.name.toLowerCase().includes('limpeza') || o.name.toLowerCase().includes('secador'));
+            if (optSet) {
+              const items = [];
+              for (let door = 0; door < 24; door++) {
+                for (const level of ['A', 'B', 'C', 'D']) {
+                  items.push({
+                    id: `door_${door}_level_${level.toLowerCase()}`,
+                    label: `Porta ${door} - Nivel ${level}`,
+                    type: "condition",
+                    required: false,
+                    conditionOptionsId: optSet.id,
+                    allowObservation: true
+                  });
+                }
+              }
+              await updateDoc(doc(db, 'quality_checklist_templates', dryerTemplate.id), {
+                items: items
+              });
+              console.log("Successfully updated existing dryer template to 96 items.");
+            }
+          } catch (err) {
+            console.error("Error expanding existing dryer template:", err);
+          }
+        }
+      }
     }, (error) => console.error("Error in quality_checklist_templates listener:", error));
 
     const unsubLines = onSnapshot(collection(db, 'production_lines'), (snapshot) => {
@@ -151,14 +321,56 @@ const Quality: React.FC = () => {
       setLines(activeLines);
     }, (error) => console.error("Error in production_lines listener (quality):", error));
 
-    const unsubSectors = onSnapshot(collection(db, 'quality_sectors'), (snapshot) => {
+    const unsubSectors = onSnapshot(collection(db, 'quality_sectors'), async (snapshot) => {
       const activeSectors = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualitySector));
       activeSectors.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       setSectors(activeSectors);
+
+      const hasDryerSector = activeSectors.some(s => s.name.toLowerCase().includes('secagem') || s.name.toLowerCase().includes('secador'));
+      if (!hasDryerSector) {
+        try {
+          await addDoc(collection(db, 'quality_sectors'), {
+            name: "Secagem e Acabamento",
+            lineIds: [],
+            active: true,
+            createdAt: serverTimestamp()
+          });
+        } catch (err) {
+          console.error("Error auto-seeding sector:", err);
+        }
+      }
     }, (error) => console.error("Error in quality_sectors listener:", error));
 
-    const unsubOptionSets = onSnapshot(collection(db, 'quality_checklist_options'), (snapshot) => {
-      setOptionSets(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualityChecklistOptionSet)));
+    const unsubOptionSets = onSnapshot(collection(db, 'quality_checklist_options'), async (snapshot) => {
+      const fetchedOptionSets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualityChecklistOptionSet));
+      setOptionSets(fetchedOptionSets);
+
+      const hasDryerLimpeza = fetchedOptionSets.some(os => os.name.toLowerCase().includes('limpeza'));
+      if (!hasDryerLimpeza) {
+        try {
+          await addDoc(collection(db, 'quality_checklist_options'), {
+            name: "Nível de Limpeza de Secador",
+            options: ["Pouco Sujo", "Sujo", "Tamponado"],
+            active: true,
+            createdAt: serverTimestamp()
+          });
+          console.log("Seeded Nível de Limpeza de Secador option set.");
+        } catch (err) {
+          console.error("Error auto-seeding option set:", err);
+        }
+      } else {
+        const dryerOs = fetchedOptionSets.find(os => os.name.toLowerCase().includes('limpeza'));
+        if (dryerOs && (!dryerOs.options.includes('Tamponado') || dryerOs.options.includes('Limpo') || dryerOs.options.includes('Muito Sujo') || dryerOs.options.length !== 3)) {
+          try {
+            await updateDoc(doc(db, 'quality_checklist_options', dryerOs.id), {
+              options: ["Pouco Sujo", "Sujo", "Tamponado"]
+            });
+            console.log("Updated existing option set to Pouco Sujo, Sujo, Tamponado.");
+          } catch (err) {
+            console.error("Error updating existing options:", err);
+          }
+        }
+      }
     }, (error) => console.error("Error in quality_checklist_options listener:", error));
 
     const baseSubQuery = collection(db, 'quality_checklist_submissions');
@@ -717,7 +929,445 @@ const Quality: React.FC = () => {
     return (compliantItemsCount / totalItemsChecked) * 100;
   };
 
+  
+  // Helper to sanitize Portuguese accented characters for jsPDF text drawing
+  const sanitizePdfText = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return String(text)
+      .replace(/[áàâãäÁÀÂÃÄ]/g, 'a')
+      .replace(/[éèêëÉÈÊË]/g, 'e')
+      .replace(/[íìîïÍÌÎÏ]/g, 'i')
+      .replace(/[óòôõöÓÒÔÕÖ]/g, 'o')
+      .replace(/[úùûüÚÙÛÜ]/g, 'u')
+      .replace(/[çÇ]/g, 'c')
+      .replace(/[ñÑ]/g, 'n');
+  };
+
   const complianceRate = calculateComplianceRate();
+
+  // Function to generate and download PDF of a quality inspection submission
+  const generateSubmissionPDF = (sub: QualityChecklistSubmission) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
+    const template = templates.find(t => t.id === sub.templateId);
+    const sectorName = sectors.find(s => s.id === sub.sectorId)?.name || 'Todos os Setores';
+    const lineName = lines.find(l => l.id === sub.lineId)?.name || 'N/A';
+    const isDryer = template?.name.toLowerCase().includes('limpeza') || template?.name.toLowerCase().includes('secador');
+    
+    // Header - Standardized Emerald Theme
+    doc.setFillColor(5, 150, 105); // emerald-600
+    doc.rect(0, 0, pageWidth, 40, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text(sanitizePdfText(template?.name || 'INSPEÇÃO DE QUALIDADE'), 14, 25);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(190, 242, 219); // light emerald
+    const dateStr = safeToDate(sub.createdAt)?.toLocaleString('pt-BR') || '';
+    doc.text(`Gerado em: ${dateStr}`, 14, 33);
+    
+    // Info Table
+    const infoData = [
+      ['Colaborador:', sanitizePdfText(sub.userName), 'Setor/Setor de Qualidade:', sanitizePdfText(sectorName)],
+      ['Turno:', sanitizePdfText(sub.shift), 'Linha Inspecionada:', sanitizePdfText(lineName)],
+      ['ID do Registro:', sub.id || 'N/A', 'Data de Criação:', dateStr]
+    ];
+    
+    autoTable(doc, {
+      startY: 45,
+      body: infoData,
+      theme: 'plain',
+      styles: { fontSize: 9, cellPadding: 2 },
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 35 },
+        1: { cellWidth: 60 },
+        2: { fontStyle: 'bold', cellWidth: 45 },
+        3: { fontStyle: 'bold' }
+      }
+    });
+    
+    // Title for checklist items
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Respostas Coletadas / Itens da Inspeção', 14, (doc as any).lastAutoTable.finalY + 15);
+    
+    // Checklist Items
+    const itemsData = sub.responses.map((resp, idx) => {
+      const item = template?.items.find(it => it.id === resp.itemId);
+      const compliant = template ? isResponseCompliant(resp.itemId, resp.value, template) : true;
+      const optSetName = item?.type === 'condition' 
+        ? sanitizePdfText(optionSets.find(os => os.id === item.conditionOptionsId)?.name || 'OK/NOK')
+        : 'N/A';
+      
+      const patternStr = item?.type === 'condition' ? `Opções (${optSetName})` :
+                         item?.type === 'number' ? 'Numérico' :
+                         item?.type === 'range' ? 'Range (Baixo/Alto)' :
+                         item?.type === 'barcode' ? 'Código / QR' :
+                         item?.type === 'text' ? 'Texto Livre' : 'N/A';
+                         
+      let valStr = String(resp.value);
+      if (resp.value === 'ok') valStr = 'CONFORME (OK)';
+      if (resp.value === 'not_ok') valStr = 'NÃO CONFORME (NOK)';
+      
+      const obsStr = resp.observation ? `Obs: ${resp.observation}` : '';
+      const displayVal = obsStr ? `${valStr}\n${obsStr}` : valStr;
+      
+      return [
+        idx + 1,
+        sanitizePdfText(item?.label || 'Item Removido'),
+        sanitizePdfText(patternStr),
+        sanitizePdfText(displayVal),
+        compliant ? 'CONFORME' : 'NAO CONFORME'
+      ];
+    });
+    
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [['#', 'Item de Inspecao', 'Padrao / Tipo', 'Resposta / Observacao', 'Avaliacao']],
+      body: itemsData,
+      headStyles: { 
+        fillColor: [241, 245, 249], 
+        textColor: [71, 85, 105],
+        fontStyle: 'bold'
+      },
+      styles: { fontSize: 9 },
+      columnStyles: {
+        0: { cellWidth: 10, halign: 'center' },
+        1: { cellWidth: 60 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 50 },
+        4: { halign: 'center', fontStyle: 'bold' }
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 4) {
+          if (data.cell.raw === 'NAO CONFORME') {
+            data.cell.styles.textColor = [225, 29, 72]; // rose-600
+          } else {
+            data.cell.styles.textColor = [5, 150, 105]; // emerald-600
+          }
+        }
+      }
+    });
+    
+    if (isDryer) {
+      doc.addPage();
+      
+      // Page 2 Header
+      doc.setFillColor(5, 150, 105); // emerald-600
+      doc.rect(0, 0, pageWidth, 25, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('MAPEAMENTO VISUAL DE LIMPEZA DO SECADOR', 14, 16);
+
+      // Section 1: Statistical Summary (Status de Limpeza)
+      let currentY = 35;
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Status de Limpeza do Secador (Geral)', 14, currentY);
+
+      let pocoSujoCount = 0;
+      let sujoCount = 0;
+      let tamponadoCount = 0;
+      let totalCount = 0;
+
+      sub.responses.forEach(resp => {
+        if (resp.value) {
+          const valStr = String(resp.value).toLowerCase();
+          if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+            pocoSujoCount++;
+            totalCount++;
+          } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo')) {
+            sujoCount++;
+            totalCount++;
+          } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+            tamponadoCount++;
+            totalCount++;
+          }
+        }
+      });
+      
+      const totalDryerResponses = totalCount || 1;
+      const pctPocoSujo = ((pocoSujoCount / totalDryerResponses) * 100).toFixed(1);
+      const pctSujo = ((sujoCount / totalDryerResponses) * 100).toFixed(1);
+      const pctTamponado = ((tamponadoCount / totalDryerResponses) * 100).toFixed(1);
+
+      const statsData = [
+        ['Pouco Sujo (Verde)', `${pocoSujoCount} de ${totalDryerResponses}`, `${pctPocoSujo}%`, 'Inspeção Conforme / Pouco Acúmulo'],
+        ['Sujo (Amarelo)', `${sujoCount} de ${totalDryerResponses}`, `${pctSujo}%`, 'Necessita Limpeza em Breve'],
+        ['Tamponado (Vermelho)', `${tamponadoCount} de ${totalDryerResponses}`, `${pctTamponado}%`, 'Intervenção Imediata / Obstruído']
+      ];
+
+      autoTable(doc, {
+        startY: currentY + 4,
+        head: [['Classificação', 'Registros', 'Percentual', 'Status Operacional']],
+        body: statsData,
+        theme: 'striped',
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [241, 245, 249], textColor: [71, 85, 105], fontStyle: 'bold' },
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 0) {
+            if (data.cell.raw.toString().includes('Pouco Sujo')) {
+              data.cell.styles.textColor = [16, 185, 129]; // green
+              data.cell.styles.fontStyle = 'bold';
+            } else if (data.cell.raw.toString().includes('Sujo')) {
+              data.cell.styles.textColor = [245, 158, 11]; // yellow/amber
+              data.cell.styles.fontStyle = 'bold';
+            } else if (data.cell.raw.toString().includes('Tamponado')) {
+              data.cell.styles.textColor = [239, 68, 68]; // red
+              data.cell.styles.fontStyle = 'bold';
+            }
+          }
+        }
+      });
+
+      currentY = (doc as any).lastAutoTable.finalY + 12;
+
+      // Draw Dryer Grid helper
+      const drawDryerGrid = (
+        title: string, 
+        doors: number[], 
+        startYPos: number
+      ) => {
+        doc.setTextColor(15, 23, 42); // slate-900
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.text(sanitizePdfText(title), 14, startYPos);
+
+        const cellWidth = 13;
+        const cellHeight = 7;
+        const labelWidth = 22;
+        const gridStartX = 14;
+        const gridStartY = startYPos + 4;
+
+        // Draw Header row (PORTAS, and door numbers)
+        doc.setFillColor(219, 234, 254); // blue-100 (light blue)
+        doc.rect(gridStartX, gridStartY, labelWidth + doors.length * cellWidth, cellHeight, 'F');
+        
+        doc.setTextColor(30, 41, 59); // slate-800
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.text('PORTAS', gridStartX + 2, gridStartY + 5);
+
+        doors.forEach((doorNum, colIdx) => {
+          const x = gridStartX + labelWidth + colIdx * cellWidth;
+          doc.text(String(doorNum), x + cellWidth / 2, gridStartY + 5, { align: 'center' });
+        });
+
+        // Draw rows for Nível A, B, C, D
+        const levels = ['A', 'B', 'C', 'D'];
+        levels.forEach((level, rowIdx) => {
+          const y = gridStartY + (rowIdx + 1) * cellHeight;
+          
+          // Label column
+          doc.setFillColor(219, 234, 254); // blue-100
+          doc.rect(gridStartX, y, labelWidth, cellHeight, 'F');
+          doc.setTextColor(30, 41, 59);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`Nivel ${level}`, gridStartX + 2, y + 5);
+
+          doors.forEach((doorNum, colIdx) => {
+            const x = gridStartX + labelWidth + colIdx * cellWidth;
+            
+            // Get the response for this specific door and level
+            const respId = `door_${doorNum}_level_${level.toLowerCase()}`;
+            const response = sub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${doorNum}_level_${level.toLowerCase()}`));
+            
+            const valStr = response ? String(response.value).toLowerCase() : '';
+            
+            let fillColor = [255, 255, 255]; // white (default)
+            let textColor = [30, 41, 59];
+            let valLabel = '';
+
+            if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+              fillColor = [16, 185, 129]; // Green (Pouco sujo)
+              textColor = [255, 255, 255];
+              valLabel = '3';
+            } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo')) {
+              fillColor = [245, 158, 11]; // Yellow (Sujo)
+              textColor = [255, 255, 255];
+              valLabel = '2';
+            } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+              fillColor = [239, 68, 68]; // Red (Tamponado)
+              textColor = [255, 255, 255];
+              valLabel = '1';
+            }
+
+            // Draw cell background
+            doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+            doc.rect(x, y, cellWidth, cellHeight, 'F');
+
+            // Draw cell border
+            doc.setDrawColor(148, 163, 184); // slate-400
+            doc.setLineWidth(0.1);
+            doc.rect(x, y, cellWidth, cellHeight, 'D');
+
+            // Draw cell value label (1, 2, 3)
+            if (valLabel) {
+              doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+              doc.setFont('helvetica', 'bold');
+              doc.setFontSize(8);
+              doc.text(valLabel, x + cellWidth / 2, y + 5, { align: 'center' });
+            }
+          });
+        });
+
+        // Draw border around the entire label col
+        doc.setDrawColor(148, 163, 184);
+        doc.setLineWidth(0.2);
+        doc.rect(gridStartX, gridStartY, labelWidth, cellHeight * 5, 'D');
+
+        return gridStartY + cellHeight * 5 + 6; // Return next Y position
+      };
+
+      // Section 2: Comando Side (Even Doors)
+      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22];
+      currentY = drawDryerGrid('Secador MS1 - Lado de Comando (Portas Pares)', evenDoors, currentY);
+
+      // Section 3: Acionamento Side (Odd Doors)
+      const oddDoors = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23];
+      currentY = drawDryerGrid('Secador MS1 - Lado de Acionamento (Portas Ímpares)', oddDoors, currentY);
+
+      // Legend
+      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Legenda de Classificação de Sujidade:', 14, currentY);
+
+      doc.setFillColor(16, 185, 129); // Green
+      doc.rect(14, currentY + 2, 6, 4, 'F');
+      doc.setTextColor(30, 41, 59);
+      doc.text('Pouco Sujo (Código 3) - Verde', 22, currentY + 5);
+
+      doc.setFillColor(245, 158, 11); // Yellow
+      doc.rect(80, currentY + 2, 6, 4, 'F');
+      doc.text('Sujo (Código 2) - Amarelo', 88, currentY + 5);
+
+      doc.setFillColor(239, 68, 68); // Red
+      doc.rect(140, currentY + 2, 6, 4, 'F');
+      doc.text('Tamponado (Código 1) - Vermelho', 148, currentY + 5);
+    }
+    
+    const fileName = `inspecao_qualidade_${sanitizePdfText(sub.userName).replace(/\s+/g, '_')}_${safeToDate(sub.createdAt)?.getTime()}.pdf`;
+    doc.save(fileName);
+  };
+
+  // Calculate dryer cleaning levels statistics
+  const dryerStats = (() => {
+    let limpo = 0;
+    let poucoSujo = 0;
+    let sujo = 0;
+    let muitoSujo = 0;
+    
+    submissions.forEach(sub => {
+      sub.responses.forEach(resp => {
+        if (resp.value) {
+          const valLower = String(resp.value).toLowerCase();
+          if (valLower === 'limpo' || valLower === 'limpa' || valLower === 'conforme' || valLower === 'ok') {
+            limpo++;
+          } else if (valLower.includes('pouco sujo') || valLower.includes('pouco suja') || valLower.includes('levemente sujo') || valLower.includes('levemente suja') || valLower.includes('pouco')) {
+            poucoSujo++;
+          } else if (valLower === 'sujo' || valLower === 'suja' || valLower.includes('amarelo forte')) {
+            sujo++;
+          } else if (valLower.includes('muito sujo') || valLower.includes('muito suja') || valLower === 'not_ok' || valLower === 'nok' || valLower.includes('não conforme') || valLower.includes('nao conforme') || valLower === 'não' || valLower === 'nao') {
+            muitoSujo++;
+          }
+        }
+      });
+    });
+    
+    const total = limpo + poucoSujo + sujo + muitoSujo;
+    return { limpo, poucoSujo, sujo, muitoSujo, total };
+  })();
+
+  // Group responses by door/port item
+  const doorGroupedResponses = (() => {
+    const groups: Record<string, { 
+      itemId: string; 
+      label: string; 
+      templateName: string;
+      latestValue: string; 
+      latestDate: Date | null;
+      latestUser: string;
+      counts: { limpo: number; poucoSujo: number; sujo: number; muitoSujo: number; total: number };
+      history: { date: Date | null; value: string; user: string; shift: string }[];
+    }> = {};
+    
+    const sortedSubs = [...submissions].sort((a, b) => {
+      const dateA = safeToDate(a.createdAt)?.getTime() || 0;
+      const dateB = safeToDate(b.createdAt)?.getTime() || 0;
+      return dateA - dateB;
+    });
+    
+    sortedSubs.forEach(sub => {
+      const template = templates.find(t => t.id === sub.templateId);
+      const isDryerOrLimpeza = template?.name.toLowerCase().includes('limpeza') || template?.name.toLowerCase().includes('secador');
+      
+      sub.responses.forEach(resp => {
+        const item = template?.items.find(it => it.id === resp.itemId);
+        if (!item) return;
+        
+        const isPorta = item.label.toLowerCase().includes('porta') || item.label.toLowerCase().includes('limpeza') || isDryerOrLimpeza;
+        if (!isPorta || item.type !== 'condition') return;
+        
+        const itemId = resp.itemId;
+        const label = item.label;
+        const valStr = String(resp.value);
+        const subDate = safeToDate(sub.createdAt);
+        
+        if (!groups[itemId]) {
+          groups[itemId] = {
+            itemId,
+            label,
+            templateName: template.name,
+            latestValue: valStr,
+            latestDate: subDate,
+            latestUser: sub.userName,
+            counts: { limpo: 0, poucoSujo: 0, sujo: 0, muitoSujo: 0, total: 0 },
+            history: []
+          };
+        }
+        
+        groups[itemId].latestValue = valStr;
+        groups[itemId].latestDate = subDate;
+        groups[itemId].latestUser = sub.userName;
+        
+        const valLower = valStr.toLowerCase();
+        if (valLower === 'limpo' || valLower === 'limpa' || valLower === 'conforme' || valLower === 'ok') {
+          groups[itemId].counts.limpo++;
+        } else if (valLower.includes('pouco sujo') || valLower.includes('pouco suja') || valLower.includes('levemente sujo') || valLower.includes('levemente suja') || valLower.includes('pouco')) {
+          groups[itemId].counts.poucoSujo++;
+        } else if (valLower === 'sujo' || valLower === 'suja' || valLower.includes('amarelo forte')) {
+          groups[itemId].counts.sujo++;
+        } else if (valLower.includes('muito sujo') || valLower.includes('muito suja') || valLower === 'not_ok' || valLower === 'nok' || valLower.includes('não conforme') || valLower.includes('nao conforme') || valLower === 'não' || valLower === 'nao') {
+          groups[itemId].counts.muitoSujo++;
+        }
+        groups[itemId].counts.total++;
+        
+        groups[itemId].history.push({
+          date: subDate,
+          value: valStr,
+          user: sub.userName,
+          shift: sub.shift
+        });
+      });
+    });
+    
+    Object.values(groups).forEach(g => {
+      g.history.sort((a, b) => {
+        const timeA = a.date?.getTime() || 0;
+        const timeB = b.date?.getTime() || 0;
+        return timeB - timeA;
+      });
+    });
+    
+    return Object.values(groups);
+  })();
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -1096,12 +1746,7 @@ const Quality: React.FC = () => {
                                             setResponses(prev => ({ ...prev, [item.id]: opt }));
                                             setTimeout(advanceToNext, 250);
                                           }}
-                                          className={cn(
-                                            "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all",
-                                            responses[item.id] === opt 
-                                              ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100" 
-                                              : "bg-white border-slate-200 text-slate-500 hover:border-emerald-300"
-                                          )}
+                                          className={getOptionColorClasses(opt, responses[item.id] === opt)}
                                         >
                                           {opt}
                                         </button>
@@ -1999,7 +2644,7 @@ const Quality: React.FC = () => {
                          >
                             <Trash2 className="w-5 h-5" />
                           </button>
-                       </div>
+                          </div>
                      </div>
                      <h3 className="text-xl font-black text-slate-900 mb-2">{sector.name}</h3>
                      <div className="space-y-2">
@@ -2419,10 +3064,10 @@ const Quality: React.FC = () => {
                   <p className="text-3xl font-black text-amber-600">{omissions.length}</p>
                </div>
                <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Modelos Ativos</p>
-                  <p className="text-3xl font-black text-blue-600">{templates.filter(t => t.active).length}</p>
-               </div>
-             </div>
+                   <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Modelos Ativos</p>
+                   <p className="text-3xl font-black text-blue-600">{templates.filter(t => t.active).length}</p>
+                </div>
+              </div>
 
              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
                 <div className="flex items-center justify-between mb-8">
@@ -2465,11 +3110,19 @@ const Quality: React.FC = () => {
                            </button>
                          )}
                          <button 
-                           onClick={() => setViewingSubmission(sub)}
-                           className="p-2 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                         >
-                           <FileText className="w-5 h-5" />
-                         </button>
+                            onClick={() => generateSubmissionPDF(sub)}
+                            className="p-2 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                            title="Baixar PDF da Inspeção"
+                          >
+                            <Printer className="w-5 h-5" />
+                          </button>
+                          <button 
+                            onClick={() => setViewingSubmission(sub)}
+                            className="p-2 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                            title="Visualizar Detalhes"
+                          >
+                            <FileText className="w-5 h-5" />
+                          </button>
                       </div>
                     </div>
                   ))}
@@ -2737,16 +3390,13 @@ const Quality: React.FC = () => {
                     <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-4">
                       <div className="flex items-center justify-between gap-4">
                        <div className="flex items-center gap-4">
-                         <div className={cn(
-                           "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm",
-                           compliant ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
-                         )}>
+                         <div className={getIconColorClasses(resp.value, compliant)}>
                            {idx + 1}
                          </div>
                          <div>
                            <p className="text-sm font-bold text-slate-900">{item?.label || 'Item Removido'}</p>
                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                             {item?.type === 'condition' ? 'Opções (OK/NOK)' :
+                             {item?.type === 'condition' ? `Opções (${optionSets.find(os => os.id === item.conditionOptionsId)?.name || 'OK/NOK' || 'OK/NOK'})` :
                               item?.type === 'number' ? 'Numérico' :
                               item?.type === 'range' ? 'Range (Baixo/Alto)' :
                               item?.type === 'barcode' ? 'Código / QR' :
@@ -2756,10 +3406,7 @@ const Quality: React.FC = () => {
                          </div>
                        </div>
                        <div className="text-right">
-                         <div className={cn(
-                           "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block",
-                           compliant ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
-                         )}>
+                         <div className={getBadgeColorClasses(resp.value, compliant)}>
                            {item?.type === 'text' ? 'TEXTO REGISTRADO' : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : resp.value))}
                           </div>
                        </div>
@@ -2788,12 +3435,18 @@ const Quality: React.FC = () => {
                 */})}
               </div>
 
-              <div className="mt-10">
+              <div className="mt-10 flex flex-col sm:flex-row gap-3">
+                 <button
+                   onClick={() => generateSubmissionPDF(viewingSubmission)}
+                   className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
+                 >
+                   <Printer className="w-5 h-5" /> Exportar PDF
+                 </button>
                  <button
                    onClick={() => setViewingSubmission(null)}
-                   className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl hover:bg-slate-800 transition-all shadow-xl shadow-slate-200"
+                   className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black rounded-2xl transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
                  >
-                   CONCLUIR VISUALIZAÇÃO
+                   Fechar
                  </button>
               </div>
             </motion.div>

@@ -418,7 +418,19 @@ const Login: React.FC = () => {
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-10 px-6 shadow-2xl rounded-3xl sm:px-12 border border-white/20">
+        <div className="bg-white py-8 px-6 shadow-2xl rounded-3xl sm:px-12 border border-white/20">
+          
+          {/* Corporate Internal Use Banner */}
+          <div className="mb-6 bg-slate-50 border border-slate-100 p-3.5 rounded-xl flex items-start gap-3 text-left">
+            <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <h4 className="text-[10px] font-bold text-slate-800 uppercase tracking-widest">Portal Corporativo Interno</h4>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Este sistema destina-se ao uso exclusivo e autorizado de colaboradores e parceiros da <strong>Eldorado Brasil Celulose</strong>. Todos os dados são protegidos por criptografia militar de ponta e em total conformidade com a LGPD.
+              </p>
+            </div>
+          </div>
+
           {requiresVerification ? (
             <div className="space-y-6">
                <div className="bg-amber-50 border border-amber-100 p-6 rounded-2xl flex flex-col items-center text-center gap-4">
