@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apresentação: SecApp - SST & Qualidade</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    /* Custom Scrollbar Styles for slide contents */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.3);
+      border-radius: 8px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(16, 185, 129, 0.3);
+      border-radius: 8px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: rgba(16, 185, 129, 0.6);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between overflow-x-hidden select-none">
+  
+  <!-- Header -->
+  <header class="p-6 border-b border-slate-900 bg-slate-950/80 backdrop-blur flex justify-between items-center shrink-0">
+    <div class="flex items-center gap-3">
+      <div class="bg-emerald-500 w-3 h-3 rounded-full animate-pulse"></div>
+      <span class="text-xs font-black tracking-widest text-slate-300 uppercase">SECAPP &bull; SISTEMA INTEGRADO SST & QUALIDADE</span>
+    </div>
+    <span id="category-badge" class="px-3 py-1 bg-slate-900 text-emerald-400 text-[10px] font-black uppercase rounded-full border border-slate-800">
+      GERAL
+    </span>
+  </header>
+
+  <!-- Slide Display Container (with scrolling wrapper) -->
+  <main class="flex-1 max-w-5xl mx-auto w-full p-6 md:p-8 flex flex-col justify-center overflow-hidden">
+    <!-- Active Slide Window with custom scrollbars if the height overflows -->
+    <div class="max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar space-y-6 md:space-y-8 py-2">
+      <div id="slide-header">
+        <h2 id="slide-number" class="text-emerald-500 font-mono text-sm font-bold tracking-widest uppercase">SLIDE 01</h2>
+        <h1 id="slide-title" class="text-4xl md:text-5xl font-black text-white mt-1 tracking-tight leading-tight">SecApp</h1>
+        <p id="slide-subtitle" class="text-lg md:text-xl font-medium text-slate-400 mt-2">Apresentação Estratégica & Técnica do Sistema Integrado</p>
+      </div>
+
+      <p id="slide-desc" class="text-slate-300 text-sm md:text-base leading-relaxed bg-slate-900/40 p-5 md:p-6 rounded-2xl border border-slate-900">
+        Plataforma digital unificada desenvolvida para otimizar os processos de Segurança do Trabalho (SST), Controle de Qualidade e Gestão Operacional, garantindo conformidade regulatória estrita e blindagem absoluta de dados (LGPD).
+      </p>
+
+      <div class="space-y-3">
+        <p class="text-xs font-black text-slate-500 uppercase tracking-widest">Destaques e Funcionalidades:</p>
+        <ul id="slide-bullets" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Dynamically inserted bullets -->
+        </ul>
+      </div>
+
+      <div id="slide-highlight-container" class="pt-6 border-t border-slate-900 flex justify-between items-center">
+        <div>
+          <p id="highlight-title" class="text-[10px] font-black text-slate-500 uppercase tracking-widest">DESTAQUE</p>
+          <p id="highlight-value" class="text-base font-black text-emerald-400 mt-0.5">Destaque Técnico</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Controls Footer -->
+  <footer class="p-6 border-t border-slate-900 bg-slate-950 flex flex-col sm:flex-row justify-between items-center gap-4 shrink-0">
+    <div class="text-xs text-slate-500 text-center sm:text-left">
+      Use as <strong>Setas Esquerda/Direita</strong> ou <strong>Espaço</strong> para navegar. Caso o conteúdo seja maior que a tela, role para baixo.
+    </div>
+    
+    <div class="flex items-center gap-4">
+      <button onclick="prevSlide()" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all border border-slate-800 text-xs font-bold active:scale-95">
+        &larr; Anterior
+      </button>
+      <span id="slide-counter" class="text-sm font-mono font-bold text-slate-400">1 / 10</span>
+      <button onclick="nextSlide()" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all border border-slate-800 text-xs font-bold active:scale-95">
+        Próximo &rarr;
+      </button>
+    </div>
+  </footer>
+
+  <script>
+    const slides = [
+      {
+        id: 1,
+        title: "SecApp",
+        subtitle: "Apresentação Estratégica & Técnica do Sistema Integrado",
+        category: "Geral",
+        description: "Plataforma digital unificada desenvolvida para otimizar os processos de Segurança do Trabalho (SST), Controle de Qualidade e Gestão Operacional, garantindo conformidade regulatória estrita e blindagem absoluta de dados (LGPD).",
+        bullets: [
+          "Digitalização ponta a ponta: redução de 98% no uso de papel e eliminação de arquivos físicos.",
+          "Acesso em tempo real em campo por dispositivos móveis (PWA - Progressive Web App).",
+          "Rastreabilidade total das inspeções, assinaturas eletrônicas e checklists operacionais.",
+          "Arquitetura moderna escalável com suporte offline para operação contínua."
+        ],
+        techHighlight: {
+          title: "Impacto Operacional",
+          value: "Conformidade e Rastreabilidade de 100% nas NRs vigentes"
+        }
+      },
+      {
+        id: 2,
+        title: "Arquitetura & Engenharia de Dados",
+        subtitle: "A Tecnologia por Trás da Eficiência",
+        category: "Geral",
+        description: "O SecApp opera em uma estrutura full-stack otimizada, combinando a rapidez do processamento no cliente com a robustez e segurança da computação em nuvem em tempo real.",
+        bullets: [
+          "Front-end reativo com React, TypeScript e Tailwind CSS para alto desempenho e fluidez visual.",
+          "Banco de dados NoSQL escalável de tempo real (Google Cloud Firestore) com sincronização imediata.",
+          "Infraestrutura de microsserviços seguros baseados em Node.js rodando sob protocolo seguro HTTPS.",
+          "Suporte a PWA para instalação instantânea como aplicativo nativo em Android, iOS e computadores."
+        ],
+        techHighlight: {
+          title: "Desempenho",
+          value: "Tempo de resposta de carregamento < 1.2 segundos"
+        }
+      },
+      {
+        id: 3,
+        title: "Controle de Empilhadeiras & SST",
+        subtitle: "Prevenção de Acidentes e Gestão Mandatória de Equipamentos (NR-11)",
+        category: "SST",
+        description: "Módulo avançado para inspeção diária pré-operacional de empilhadeiras. Garante que nenhuma máquina opere sob condição de risco ou falha mecânica crônica.",
+        bullets: [
+          "Checklist obrigatório de início de turno cobrindo freios, direção, vazamentos e sistema de elevação.",
+          "Bloqueio eletrônico de empilhadeiras no sistema caso falhas críticas sejam detectadas.",
+          "Emissão de alertas visuais instantâneos para a equipe de manutenção mecânica e liderança.",
+          "Assinatura digitalizada e identificação do condutor responsável, gerando lastro jurídico de uso."
+        ],
+        techHighlight: {
+          title: "Segurança Ativa",
+          value: "Bloqueio automático de equipamentos em condições críticas"
+        }
+      },
+      {
+        id: 4,
+        title: "DDS Online com Assinatura por QR Code",
+        subtitle: "Modernização do Diálogo Diário de Segurança",
+        category: "SST",
+        description: "Acaba com o preenchimento manual de listas de presença físicas de DDS, permitindo coleta instantânea de assinaturas de forma remota, veloz e segura.",
+        bullets: [
+          "Publicação digital de temas diários de SST para consulta direta na plataforma.",
+          "Assinatura eletrônica instantânea de operadores via leitura de QR Code dinâmico pelo próprio celular.",
+          "Validação opcional por Passcode diário gerado automaticamente, evitando fraudes de presença.",
+          "Mecanismo de Inteligência Artificial para geração e importação automática de pautas e atas de DDS."
+        ],
+        techHighlight: {
+          title: "Eficiência",
+          value: "Tempo médio de assinatura por colaborador reduzido para 5 segundos"
+        }
+      },
+      {
+        id: 5,
+        title: "Controle de Insumos & Bobinas de Arame",
+        subtitle: "Gestão Quantitativa e Rastreabilidade Física do Processo Industrial",
+        category: "Qualidade",
+        description: "Monitoramento minucioso do recebimento, consumo e pesagem de bobinas de arame de amarração e insumos críticos para evitar paradas na produção.",
+        bullets: [
+          "Registro de bobinas com número de lote, peso inicial, fabricante e especificações técnicas.",
+          "Importação em lote otimizada por planilhas CSV para entrada massiva de bobinas.",
+          "Controle dinâmico de consumo que calcula o desperdício, peso residual e rendimento por turno.",
+          "Gráficos interativos e alertas automáticos de estoque mínimo para compras proativas."
+        ],
+        techHighlight: {
+          title: "Precisão",
+          value: "Rastreabilidade completa de cada quilo de arame utilizado"
+        }
+      },
+      {
+        id: 6,
+        title: "Inspeção de Qualidade & Omissões",
+        subtitle: "Assegurando o Padrão de Excelência na Linha de Produção",
+        category: "Qualidade",
+        description: "Módulo completo para auditorias de qualidade baseadas em templates flexíveis parametrizados de acordo com a linha de produção e setor.",
+        bullets: [
+          "Templates dinâmicos de auditoria customizáveis pelo painel administrativo por setor e turno.",
+          "Fluxo obrigatório de Justificativa de Omissões: obriga o auditor a explicar o porquê de itens não avaliados.",
+          "Pontuação automática de conformidade e pesos de gravidade atribuídos a falhas na inspeção.",
+          "Registro fotográfico e upload de mídias de não-conformidade diretamente na nuvem."
+        ],
+        techHighlight: {
+          title: "Garantia de Qualidade",
+          value: "Zero inspeções deixadas sem resposta ou justificativa oficial"
+        }
+      },
+      {
+        id: 7,
+        title: "Criptografia Avançada & LGPD",
+        subtitle: "Segurança de Dados em Nível Militar e Conformidade Legal",
+        category: "Segurança",
+        description: "O SecApp adota políticas estritas de proteção de dados para blindar Informações de Identificação Pessoal (PII) de colaboradores, excedendo os requisitos da LGPD.",
+        bullets: [
+          "Criptografia de Ponta no Firestore: dados sensíveis como emails e nomes de usuários são salvos criptografados.",
+          "Algoritmo RC4 Stream Cipher com derivação salgada de chaves, tornando os dados ilegíveis em caso de vazamento.",
+          "Hashes Determinísticos Unidirecionais (emailHash) criados localmente para permitir buscas sem descriptografar.",
+          "Armazenamento de senhas via hash de segurança de autenticação do Google Firebase."
+        ],
+        techHighlight: {
+          title: "Conformidade LGPD",
+          value: "Criptografia simétrica com chaves dinâmicas para PII"
+        }
+      },
+      {
+        id: 8,
+        title: "Segurança no Banco de Dados: Firestore Rules",
+        subtitle: "Controle Absoluto de Acesso e Prevenção de Injeções",
+        category: "Segurança",
+        description: "A segurança do banco de dados não depende apenas de código no app, mas sim de regras de segurança rígidas executadas no próprio servidor do Google Firestore.",
+        bullets: [
+          "Validação de perfil ativa: usuários não aprovados (status 'pending') têm leitura e escrita estritamente negadas.",
+          "Proteção de dados cruzados: operadores só podem ler ou alterar seus próprios registros pessoais.",
+          "Controle de hierarquia: apenas cargos de 'admin' ou 'manager' podem acessar relatórios agregados e logs do sistema.",
+          "Prevenção de modificações indesejadas de logs históricos de segurança e logins."
+        ],
+        techHighlight: {
+          title: "Segurança de Acesso",
+          value: "Regras de Firestore ativas impedem qualquer leitura não autorizada"
+        }
+      },
+      {
+        id: 9,
+        title: "Painel de Controle BI & Analytics",
+        subtitle: "Inteligência Operacional para Tomada de Decisão",
+        category: "BI & Admin",
+        description: "Transforma a grande massa de dados coletados em campo em inteligência de negócios consolidada para diretores, gerentes e coordenadores.",
+        bullets: [
+          "Painel de Gerenciamento de Usuários: aprovação, alteração de cargos (Admin, Manager, Operator, Viewer) e suspensão.",
+          "Indicadores de Performance (KPIs) de qualidade, conformidade média de empilhadeiras e adesão de equipes.",
+          "Série temporal e gráficos dinâmicos de tendência interativos utilizando a biblioteca Recharts.",
+          "Geração de relatórios analíticos unificados com cruzamento inteligente de turnos e setores em tempo real."
+        ],
+        techHighlight: {
+          title: "Business Intelligence",
+          value: "Exportação em 1 clique de relatórios executivos em formato PDF e CSV"
+        }
+      },
+      {
+        id: 10,
+        title: "Conclusão: Modernidade, Segurança e Sustentabilidade",
+        subtitle: "O Futuro da Gestão Industrial e SST com o SecApp",
+        category: "BI & Admin",
+        description: "O SecApp representa a fusão perfeita entre alta produtividade operacional no chão de fábrica e conformidade robusta com governança corporativa moderna.",
+        bullets: [
+          "Operação 100% livre de papel (Paperless): ganho ecológico, redução de custos e espaço físico.",
+          "Aumento drástico na velocidade de correção de falhas de equipamentos com os alertas de SST.",
+          "Tranquilidade jurídica e conformidade regulatória total com auditorias externas e do Ministério do Trabalho.",
+          "Segurança da informação blindada contra acessos não autorizados e vazamentos indesejados de dados sensíveis."
+        ],
+        techHighlight: {
+          title: "Próximos Passos",
+          value: "Integração contínua e expansão para novas frentes de trabalho"
+        }
+      }
+    ];
+
+    let currentIdx = 0;
+
+    function updateSlide() {
+      const slide = slides[currentIdx];
+      
+      // Update Texts
+      document.getElementById('slide-number').innerText = "SLIDE " + String(currentIdx + 1).padStart(2, '0');
+      document.getElementById('slide-title').innerText = slide.title;
+      document.getElementById('slide-subtitle').innerText = slide.subtitle || "";
+      document.getElementById('slide-desc').innerText = slide.description;
+      document.getElementById('category-badge').innerText = slide.category.toUpperCase();
+      document.getElementById('slide-counter').innerText = (currentIdx + 1) + " / " + slides.length;
+
+      // Update Bullets
+      const bulletsList = document.getElementById('slide-bullets');
+      bulletsList.innerHTML = "";
+      slide.bullets.forEach(bullet => {
+        const li = document.createElement('li');
+        li.className = "flex items-start gap-3 bg-slate-900/20 p-4 rounded-xl border border-slate-900/50 hover:border-slate-800 transition-all";
+        li.innerHTML = '<span class="text-emerald-500 font-extrabold select-none mt-0.5">&bull;</span><span class="text-xs text-slate-300 leading-relaxed font-medium">' + bullet + '</span>';
+        bulletsList.appendChild(li);
+      });
+
+      // Update Tech Highlight
+      const highlightContainer = document.getElementById('slide-highlight-container');
+      if (slide.techHighlight) {
+        highlightContainer.style.display = 'flex';
+        document.getElementById('highlight-title').innerText = slide.techHighlight.title.toUpperCase();
+        document.getElementById('highlight-value').innerText = slide.techHighlight.value;
+      } else {
+        highlightContainer.style.display = 'none';
+      }
+    }
+
+    function nextSlide() {
+      currentIdx = (currentIdx + 1) % slides.length;
+      updateSlide();
+    }
+
+    function prevSlide() {
+      currentIdx = (currentIdx - 1 + slides.length) % slides.length;
+      updateSlide();
+    }
+
+    // Keyboard handlers
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+        nextSlide();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        prevSlide();
+      }
+    });
+
+    // Initialize
+    updateSlide();
+  </script>
+</body>
+</html>

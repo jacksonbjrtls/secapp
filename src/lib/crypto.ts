@@ -1,38 +1,38 @@
 /**
  * Cryptographic Utility for Eldorado SST App
- * Supports secure, performant, synchronous encryption and decryption of sensitive fields (PII).
- * Uses a robust RC4-based stream cipher with salted key derivation.
+ * Supports secure, performant, asynchronous encryption and decryption of sensitive fields (PII).
+ * Uses robust AES-256-GCM based on the native Web Crypto API (window.crypto.subtle).
  * Ensures data is encrypted before being stored in Firestore, and decrypted on read.
  * 
  * Progressive encryption feature:
- * - If a string starts with '__ENC__', it is decrypted.
- * - Otherwise, it is returned as-is (allows existing non-encrypted data to read normally).
+ * - If a string starts with '__ENC_GCM__', it is decrypted using AES-256-GCM.
+ * - If a string starts with '__ENC__', it is decrypted using legacy RC4 (backward compatibility).
+ * - Otherwise, it is returned as-is.
  */
 
-const getSecretKey = (): string => {
-  return (import.meta as any).env?.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
+// Helper to convert Uint8Array to Base64
+const arrayToBase64 = (arr: Uint8Array): string => {
+  let binary = '';
+  const len = arr.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(arr[i]);
+  }
+  return btoa(binary);
 };
 
-/**
- * Basic Base64 encoder/decoder that handles UTF-8 correctly
- */
-const utf8ToBase64 = (str: string): string => {
-  return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) => {
-    return String.fromCharCode(parseInt(p1, 16));
-  }));
+// Helper to convert Base64 to Uint8Array
+const base64ToArray = (str: string): Uint8Array => {
+  const binary = atob(str);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 };
 
-const base64ToUtf8 = (str: string): string => {
-  return decodeURIComponent(Array.prototype.map.call(atob(str), (c: string) => {
-    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-  }).join(''));
-};
-
-/**
- * RC4 Stream Cipher implementation
- * Highly performant, synchronous, and robust with no external dependencies
- */
-const rc4 = (key: string, input: string): string => {
+// Legacy RC4 decrypter for backward compatibility fallback
+const legacyRc4 = (key: string, input: string): string => {
   const s = new Uint8Array(256);
   for (let i = 0; i < 256; i++) {
     s[i] = i;
@@ -64,61 +64,135 @@ const rc4 = (key: string, input: string): string => {
   return output;
 };
 
-/**
- * Encrypt a sensitive text value
- */
-export const encryptValue = (value: string | null | undefined): string => {
-  if (!value) return '';
-  const str = String(value).trim();
-  if (str.startsWith('__ENC__')) return str; // Already encrypted
-
-  try {
-    const key = getSecretKey();
-    // Salt generation: add a variable part to prevent frequency analysis
-    const randomSalt = Math.random().toString(36).substring(2, 6);
-    const saltedKey = key + randomSalt;
-    
-    // Encrypt the UTF-8 input string
-    const encryptedData = rc4(saltedKey, str);
-    
-    // Package both the salt and the encrypted data into a Base64-safe format
-    const payload = `${randomSalt}:${utf8ToBase64(encryptedData)}`;
-    return `__ENC__${utf8ToBase64(payload)}`;
-  } catch (error) {
-    console.error('[Crypto] Encryption error:', error);
-    return str; // Fallback to plain if something fails to avoid breaking user experience
-  }
+const legacyBase64ToUtf8 = (str: string): string => {
+  return decodeURIComponent(Array.prototype.map.call(atob(str), (c: string) => {
+    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+  }).join(''));
 };
 
-/**
- * Decrypt an encrypted value
- */
-export const decryptValue = (value: string | null | undefined): string => {
-  if (!value) return '';
-  const str = String(value).trim();
-  if (!str.startsWith('__ENC__')) return str; // Not encrypted, return plain
-
+const decryptLegacyRc4 = (value: string): string => {
   try {
-    const key = getSecretKey();
-    // Strip prefix and decode the package payload
-    const payloadRaw = str.substring(7); // Remove '__ENC__'
-    const payload = base64ToUtf8(payloadRaw);
+    const key = (import.meta as any).env?.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
+    const payloadRaw = value.substring(7); // Remove '__ENC__'
+    const payload = legacyBase64ToUtf8(payloadRaw);
     
     const colonIndex = payload.indexOf(':');
-    if (colonIndex === -1) return str; // Invalid format
+    if (colonIndex === -1) return value;
     
     const salt = payload.substring(0, colonIndex);
     const encryptedBase64 = payload.substring(colonIndex + 1);
     
     const saltedKey = key + salt;
-    const encryptedData = base64ToUtf8(encryptedBase64);
+    const encryptedData = legacyBase64ToUtf8(encryptedBase64);
     
-    const decrypted = rc4(saltedKey, encryptedData);
-    return decrypted;
+    return legacyRc4(saltedKey, encryptedData);
   } catch (error) {
-    console.error('[Crypto] Decryption error:', error);
-    return str; // Return original value as fallback
+    console.error('[Crypto] Legacy Decryption error:', error);
+    return value;
   }
+};
+
+let cachedCryptoKey: CryptoKey | null = null;
+
+const getCryptoKey = async (): Promise<CryptoKey> => {
+  if (cachedCryptoKey) return cachedCryptoKey;
+
+  const secret = (import.meta as any).env?.VITE_ENCRYPTION_KEY;
+  if (!secret) {
+    throw new Error('CRITICAL: A variável de ambiente VITE_ENCRYPTION_KEY não está definida no front-end!');
+  }
+
+  const keyBuffer = new TextEncoder().encode(secret);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', keyBuffer);
+  
+  cachedCryptoKey = await crypto.subtle.importKey(
+    'raw',
+    hashBuffer,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt']
+  );
+
+  return cachedCryptoKey;
+};
+
+/**
+ * Encrypt a sensitive text value using AES-256-GCM
+ */
+export const encryptValue = async (value: string | null | undefined): Promise<string> => {
+  if (!value) return '';
+  const str = String(value).trim();
+  
+  // Already encrypted with GCM
+  if (str.startsWith('__ENC_GCM__')) return str;
+  // If it's legacy RC4, keep it as is or decrypt and re-encrypt? Let's treat it as plain text if we want to encrypt it.
+  // Actually, if it starts with __ENC__, it's encrypted. Let's return it so we don't double-encrypt.
+  if (str.startsWith('__ENC__')) return str; 
+
+  try {
+    const cryptoKey = await getCryptoKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12)); // Standard 12 bytes IV for GCM
+    const encodedValue = new TextEncoder().encode(str);
+
+    const ciphertextBuffer = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      cryptoKey,
+      encodedValue
+    );
+
+    const ciphertext = new Uint8Array(ciphertextBuffer);
+    const combined = new Uint8Array(iv.length + ciphertext.length);
+    combined.set(iv, 0);
+    combined.set(ciphertext, iv.length);
+
+    return `__ENC_GCM__${arrayToBase64(combined)}`;
+  } catch (error) {
+    console.error('[Crypto] AES-GCM Encryption error:', error);
+    throw error; // Let it throw so the user knows if VITE_ENCRYPTION_KEY is missing/invalid
+  }
+};
+
+/**
+ * Decrypt an encrypted value (supports AES-256-GCM and fallback to legacy RC4)
+ */
+export const decryptValue = async (value: string | null | undefined): Promise<string> => {
+  if (!value) return '';
+  const str = String(value).trim();
+
+  // 1. Decrypt AES-GCM
+  if (str.startsWith('__ENC_GCM__')) {
+    try {
+      const cryptoKey = await getCryptoKey();
+      const rawPayload = str.substring(11); // Remove '__ENC_GCM__'
+      const combined = base64ToArray(rawPayload);
+
+      if (combined.length < 12) {
+        throw new Error('Payload criptografado corrompido (tamanho insuficiente para IV)');
+      }
+
+      const iv = combined.slice(0, 12);
+      const ciphertext = combined.slice(12);
+
+      const decryptedBuffer = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        cryptoKey,
+        ciphertext
+      );
+
+      return new TextDecoder().decode(decryptedBuffer);
+    } catch (error) {
+      console.error('[Crypto] AES-GCM Decryption error:', error);
+      return str; // Return original value as fallback
+    }
+  }
+
+  // 2. Fallback to legacy RC4 decryption
+  if (str.startsWith('__ENC__')) {
+    return decryptLegacyRc4(str);
+  }
+
+  // 3. Not encrypted, return as-is
+  return str;
 };
 
 /**

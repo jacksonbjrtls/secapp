@@ -493,11 +493,11 @@ const Admin: React.FC = () => {
       const usersSnap = await getDocs(collection(db, 'users'));
       const domainsSnap = await getDocs(query(collection(db, 'allowed_domains'), orderBy('createdAt', 'desc')));
       
-      const usersList = usersSnap.docs
-        .map(doc => {
+      const usersList = (await Promise.all(usersSnap.docs
+        .map(async (doc) => {
           const data = doc.data() as any;
-          const decryptedEmail = decryptValue(data.email);
-          const decryptedDisplayName = decryptValue(data.displayName);
+          const decryptedEmail = await decryptValue(data.email);
+          const decryptedDisplayName = await decryptValue(data.displayName);
           const isUserMaster = MASTER_EMAILS.includes(decryptedEmail?.toLowerCase() || '');
           return { 
             uid: doc.id, 
@@ -506,7 +506,7 @@ const Admin: React.FC = () => {
             displayName: decryptedDisplayName,
             isMaster: isUserMaster 
           } as UserProfile;
-        })
+        })))
         .filter(user => !user.isMaster);
       setUsers(usersList);
       setDomains(domainsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AllowedDomain)));
@@ -639,9 +639,13 @@ const Admin: React.FC = () => {
 
       // 2. Send Custom Welcome Email via Gmail API (instead of direct Firebase email)
       try {
+        const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
         await fetch('/api/send-custom-auth-email', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${adminToken}`
+          },
           body: JSON.stringify({
             type: 'welcome',
             email: newUser.email,
@@ -654,10 +658,12 @@ const Admin: React.FC = () => {
 
       // 3. Create User Profile in Firestore
       const addedUserEmail = newUser.email.toLowerCase().trim();
+      const encryptedEmail = await encryptValue(addedUserEmail);
+      const encryptedName = await encryptValue(newUser.name);
       await setDoc(doc(db, 'users', user.uid), {
-        email: encryptValue(addedUserEmail),
+        email: encryptedEmail,
         emailHash: hashEmailForSearch(addedUserEmail),
-        displayName: encryptValue(newUser.name),
+        displayName: encryptedName,
         role: newUser.role,
         status: 'approved',
         mustChangePassword: true,
@@ -686,18 +692,24 @@ const Admin: React.FC = () => {
           if (userSnap.empty) {
             // Recreate profile for existing Auth user!
             try {
+              const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
               const res = await fetch('/api/admin/get-auth-user', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${adminToken}`
+                },
                 body: JSON.stringify({ email: newUser.email })
               });
               const data = await res.json();
               if (data.success && data.uid) {
                 // Yes, we got the UID! Now let's create the Firestore user profile
+                const encCheckEmail = await encryptValue(checkEmailLower);
+                const encNewUserName = await encryptValue(newUser.name || data.displayName || 'Usuário');
                 await setDoc(doc(db, 'users', data.uid), {
-                  email: encryptValue(checkEmailLower),
+                  email: encCheckEmail,
                   emailHash: hashEmailForSearch(checkEmailLower),
-                  displayName: encryptValue(newUser.name || data.displayName || 'Usuário'),
+                  displayName: encNewUserName,
                   role: newUser.role,
                   status: 'approved',
                   mustChangePassword: false, // Keep existing password
@@ -955,10 +967,14 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
     if (!user.email) return;
     setSendingEmailId(user.uid);
     try {
+      const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
       // We call our server API to send a custom email using secagemapp@gmail.com
       const res = await fetch('/api/send-custom-auth-email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`
+        },
         body: JSON.stringify({
           type: 'verification',
           email: user.email,

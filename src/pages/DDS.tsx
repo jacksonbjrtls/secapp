@@ -286,15 +286,16 @@ const DDS: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
     });
 
-    const unsubSignatures = onSnapshot(qSignatures, (snapshot) => {
-      const allSigs = snapshot.docs.map(doc => {
+    const unsubSignatures = onSnapshot(qSignatures, async (snapshot) => {
+      const allSigs = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
         return {
           id: doc.id,
           ...data,
-          userName: decryptValue(data.userName)
+          userName: decName
         };
-      });
+      }));
       setAllSignaturesList(allSigs);
       setTotalSignaturesMonth(allSigs.length);
       
@@ -483,14 +484,15 @@ const DDS: React.FC = () => {
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const signatures = snapshot.docs.map(doc => {
+      const signatures = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
         return {
           id: doc.id,
           ...data,
-          userName: decryptValue(data.userName)
+          userName: decName
         };
-      });
+      }));
       
       // If sessionTitle is missing (backward compatibility), fetch it
       const historyWithTitles = await Promise.all(signatures.map(async (sig: any) => {
@@ -530,15 +532,16 @@ const DDS: React.FC = () => {
       orderBy('timestamp', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const sigs = snapshot.docs.map(doc => {
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const sigs = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
         return {
           id: doc.id,
           ...data,
-          userName: decryptValue(data.userName)
+          userName: decName
         };
-      });
+      }));
       setSessionSignatures(sigs);
       setSignaturesLoading(false);
     }, (err) => {
@@ -706,9 +709,13 @@ const DDS: React.FC = () => {
     setAiResult(null);
 
     try {
+      const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
       const response = await fetch('/api/gemini/process-dds', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ text: aiText })
       });
       const data = await response.json();
@@ -788,11 +795,12 @@ const DDS: React.FC = () => {
         const mappedMood = ratingMap[p.avaliacao] || 'happy';
 
         if (p.avaliacao !== 'Ausente') {
+          const encName = await encryptValue(p.nome || 'Colaborador');
           return setDoc(doc(db, 'dds_signatures', sigDocId), {
             sessionId: sessionDocRef.id,
             sessionTitle: meta.assunto || 'DDS Importado via IA',
             userId: `imported_user_${idx}`,
-            userName: encryptValue(p.nome || 'Colaborador'),
+            userName: encName,
             timestamp: serverTimestamp(),
             passcode: generatedPasscode,
             mood: mappedMood,
@@ -848,12 +856,13 @@ const DDS: React.FC = () => {
       
       const docId = `${auth.currentUser.uid}_${activeSession.id}`;
       
+      const encName = await encryptValue(profile?.displayName || 'Usuário');
       // Use setDoc with a predictable ID to prevent duplicates
       await setDoc(doc(db, 'dds_signatures', docId), {
         sessionId: activeSession.id,
         sessionTitle: activeSession.title, // Denormalize for history view
         userId: auth.currentUser.uid,
-        userName: encryptValue(profile?.displayName || 'Usuário'),
+        userName: encName,
         timestamp: serverTimestamp(),
         passcode: passcode, // Rules will check this
         mood: mood

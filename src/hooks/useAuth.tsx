@@ -103,15 +103,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (user) {
         const profileRef = doc(db, 'users', user.uid);
-        unsubProfile = onSnapshot(profileRef, (doc) => {
+        unsubProfile = onSnapshot(profileRef, async (doc) => {
           if (doc.exists()) {
             const data = doc.data();
             console.log('[useAuth] Profile loaded:', { uid: doc.id, status: data.status, role: data.role });
+            const decryptedDisplayName = await decryptValue(data.displayName);
+            const decryptedEmail = await decryptValue(data.email);
             setProfile({
               uid: doc.id,
               ...data,
-              displayName: decryptValue(data.displayName),
-              email: decryptValue(data.email),
+              displayName: decryptedDisplayName,
+              email: decryptedEmail,
             } as UserProfile);
           } else {
             console.log('[useAuth] Profile document does not exist for UID:', user.uid);

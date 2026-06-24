@@ -164,29 +164,33 @@ const Quality: React.FC = () => {
     const baseSubQuery = collection(db, 'quality_checklist_submissions');
     const subQuery = query(baseSubQuery, orderBy('createdAt', 'desc'));
 
-    const unsubSubmissions = onSnapshot(subQuery, (snapshot) => {
-      setSubmissions(snapshot.docs.map(doc => {
+    const unsubSubmissions = onSnapshot(subQuery, async (snapshot) => {
+      const mapped = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
         return {
           id: doc.id,
           ...data,
-          userName: decryptValue(data.userName)
+          userName: decName
         } as QualityChecklistSubmission;
       }));
+      setSubmissions(mapped);
     }, (error) => console.error("Error in quality_checklist_submissions listener:", error));
 
     const baseOmQuery = collection(db, 'quality_checklist_omissions');
     const omQuery = query(baseOmQuery, orderBy('createdAt', 'desc'));
 
-    const unsubOmissions = onSnapshot(omQuery, (snapshot) => {
-      setOmissions(snapshot.docs.map(doc => {
+    const unsubOmissions = onSnapshot(omQuery, async (snapshot) => {
+      const mapped = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
         return {
           id: doc.id,
           ...data,
-          userName: decryptValue(data.userName)
+          userName: decName
         } as QualityChecklistOmission;
       }));
+      setOmissions(mapped);
     }, (error) => console.error("Error in quality_checklist_omissions listener:", error));
 
     setLoading(false);
@@ -496,12 +500,13 @@ const Quality: React.FC = () => {
       onConfirm: async () => {
         closeModal();
         try {
+          const encName = await encryptValue(profile.displayName || user.email);
           await addDoc(collection(db, 'quality_checklist_submissions'), {
             templateId: fillingTemplate.id,
             sectorId: fillingTemplate.sectorId,
             lineId: targetLineId,
             userId: user.uid,
-            userName: encryptValue(profile.displayName || user.email),
+            userName: encName,
             shift: shiftIdentifier, // Format: "A - Turno 1"
             responses: Object.entries(responses).map(([itemId, value]) => ({ 
               itemId, 
@@ -617,9 +622,10 @@ const Quality: React.FC = () => {
 
     try {
       const authorName = profile?.displayName || user.displayName || user.email || 'Usuário';
+      const encName = await encryptValue(authorName);
       await addDoc(collection(db, 'quality_checklist_omissions'), {
         userId: user.uid,
-        userName: encryptValue(authorName),
+        userName: encName,
         templateId: justifyingOmission.template.id,
         templateName: justifyingOmission.template.name,
         lineId: justifyingOmission.lineId || '',

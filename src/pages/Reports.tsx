@@ -115,7 +115,7 @@ const Reports: React.FC = () => {
         });
 
         const currentOrphans: string[] = [];
-        const ddsResults = signaturesSnap.docs.map(doc => {
+        const ddsResults = await Promise.all(signaturesSnap.docs.map(async (doc) => {
           const sig = doc.data();
           const session = sessions[sig.sessionId];
           
@@ -123,10 +123,11 @@ const Reports: React.FC = () => {
             currentOrphans.push(doc.id);
           }
 
+          const decName = await decryptValue(sig.userName);
           return {
             id: doc.id,
             sessionId: sig.sessionId,
-            userName: decryptValue(sig.userName) || 'Desconhecido',
+            userName: decName || 'Desconhecido',
             sessionTitle: sig.sessionTitle || session?.title || 'Sessão Removida (Órfão)',
             shift: session?.shift || '-',
             group: session?.group || '-',
@@ -135,7 +136,7 @@ const Reports: React.FC = () => {
             timestamp: safeToDate(sig.timestamp) || new Date(),
             isOrphan: !session
           };
-        });
+        }));
         
         setOrphanIds(currentOrphans);
         setData(ddsResults);
@@ -230,8 +231,9 @@ const Reports: React.FC = () => {
         const sectorsList = sectorsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         setQualitySectors(sectorsList);
 
-        const qualityResults = qualitySnap.docs.map(doc => {
+        const qualityResults = await Promise.all(qualitySnap.docs.map(async (doc) => {
           const sub = doc.data();
+          const decName = await decryptValue(sub.userName);
           return {
             id: doc.id,
             templateId: sub.templateId,
@@ -239,12 +241,12 @@ const Reports: React.FC = () => {
             sectorId: sub.sectorId,
             lineId: sub.lineId,
             userId: sub.userId,
-            userName: decryptValue(sub.userName),
+            userName: decName,
             shift: sub.shift,
             responses: sub.responses || [],
             timestamp: safeToDate(sub.createdAt) || new Date()
           };
-        });
+        }));
         setQualityData(qualityResults);
 
         // Fetch route submissions for pending equipment reports and ray-x

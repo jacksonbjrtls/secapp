@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
@@ -8,6 +8,7 @@ import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 import firebaseConfig from "./firebase-applet-config.json";
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -64,6 +65,86 @@ const getEmailTemplate = (personName: string, forkliftNumber: string, conductorN
   </div>
 `;
 
+interface AuthenticatedRequest extends Request {
+  user?: {
+    uid: string;
+    email?: string;
+    [key: string]: any;
+  };
+}
+
+const requireAuth = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Não autorizado" });
+  }
+
+  const token = authHeader.split("Bearer ")[1];
+  try {
+    const decodedToken = await getAuth().verifyIdToken(token);
+    req.user = decodedToken;
+    next();
+  } catch (error) {
+    console.error("Token verification failed:", error);
+    return res.status(401).json({ error: "Não autorizado" });
+  }
+};
+
+const requireAdmin = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  await requireAuth(req, res, async () => {
+    try {
+      const uid = req.user?.uid;
+      const email = req.user?.email;
+
+      if (!uid) {
+        return res.status(401).json({ error: "Não autorizado" });
+      }
+
+      // 1. Check if user is a Master Email
+      const MASTER_EMAILS = [
+        'jacksonbjr@gmail.com',
+        'jackson.junior@eldoradobrasil.com.br',
+        'jackson.junior@eldoradobrasil.com'
+      ];
+      const isMaster = email ? MASTER_EMAILS.includes(email.toLowerCase()) : false;
+
+      if (isMaster) {
+        return next();
+      }
+
+      // 2. Allow if the user is calling notify-new-user for their own email registration
+      if (req.path === "/api/admin/notify-new-user" && req.body?.userEmail?.toLowerCase() === email?.toLowerCase()) {
+        return next();
+      }
+
+      // 3. Check Firestore user document
+      const dbFirestore = getFirestore(undefined, (firebaseConfig as any).firestoreDatabaseId || "(default)");
+      const userDoc = await dbFirestore.collection("users").doc(uid).get();
+
+      if (!userDoc.exists) {
+        return res.status(403).json({ error: "Acesso negado: Perfil não encontrado" });
+      }
+
+      const userData = userDoc.data();
+      const role = userData?.role;
+      const status = userData?.status;
+
+      if (status !== "approved") {
+        return res.status(403).json({ error: "Acesso negado: Usuário pendente ou bloqueado" });
+      }
+
+      if (role !== "admin") {
+        return res.status(403).json({ error: "Acesso negado: Permissão insuficiente" });
+      }
+
+      next();
+    } catch (err) {
+      console.error("Error checking admin privileges:", err);
+      return res.status(500).json({ error: "Erro interno ao validar permissões" });
+    }
+  });
+};
+
 async function startServer() {
   // Safe default initialization supporting multiple bundler and ESM environments
   const expressFunc = (typeof express === "function" ? express : (express as any).default) as any;
@@ -89,7 +170,7 @@ async function startServer() {
   }
 
   // API Route to send email
-  app.post("/api/send-notification", async (req, res) => {
+  app.post("/api/send-notification", requireAuth, async (req, res) => {
     try {
       const { recipients, forkliftNumber, conductorName, failures = [] } = req.body;
       
@@ -185,7 +266,7 @@ async function startServer() {
   });
 
   // API Route to notify admin about new user registration
-  app.post("/api/admin/notify-new-user", async (req, res) => {
+  app.post("/api/admin/notify-new-user", requireAdmin, async (req, res) => {
     try {
       const { userEmail, displayName } = req.body;
       
@@ -246,7 +327,12 @@ async function startServer() {
   });
 
   // API Route for custom auth emails (verification/welcome/password reset instructions)
-  app.post("/api/send-custom-auth-email", async (req, res) => {
+  app.post("/api/send-custom-auth-email", (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (req.body?.type === "password_reset") {
+      return next();
+    }
+    return requireAuth(req, res, next);
+  }, async (req, res) => {
     try {
       if (getApps().length === 0) {
         return res.status(500).json({ success: false, error: "Serviço de autenticação administratória indisponível (Firebase não inicializado)." });
@@ -356,7 +442,7 @@ async function startServer() {
   });
 
   // API Route to retrieve user from secondary/primary Firebase Auth by email to repair missing Firestore profiles
-  app.post("/api/admin/get-auth-user", async (req, res) => {
+  app.post("/api/admin/get-auth-user", requireAdmin, async (req, res) => {
     try {
       if (getApps().length === 0) {
         return res.status(500).json({ success: false, error: "Serviço de autenticação administratória indisponível (Firebase não inicializado)." });
@@ -392,7 +478,7 @@ async function startServer() {
   });
 
   // API Route to process DDS raw data using Gemini API
-  app.post("/api/gemini/process-dds", async (req, res) => {
+  app.post("/api/gemini/process-dds", requireAuth, async (req, res) => {
     try {
       const { text } = req.body;
       if (!text) {

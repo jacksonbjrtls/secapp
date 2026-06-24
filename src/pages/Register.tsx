@@ -91,6 +91,7 @@ const Register: React.FC = () => {
       // Create user
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
+      const token = await user.getIdToken();
 
       // 1. Send verification email via direct Firebase Client SDK (preferred and always works)
       let emailError = false;
@@ -101,7 +102,10 @@ const Register: React.FC = () => {
         try {
           await fetch('/api/send-custom-auth-email', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
             body: JSON.stringify({
               type: 'verification',
               email: email.toLowerCase().trim(),
@@ -118,7 +122,10 @@ const Register: React.FC = () => {
       try {
         await fetch('/api/admin/notify-new-user', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({ 
             userEmail: email.toLowerCase().trim(),
             displayName: isMaster ? 'Jackson Bomfim da Silva Júnior' : displayName
@@ -138,10 +145,12 @@ const Register: React.FC = () => {
       const initialRole = isActuallyMaster ? 'admin' : 'viewer';
 
       const cleanEmail = email.toLowerCase().trim();
+      const encEmail = await encryptValue(cleanEmail);
+      const encDisplayName = await encryptValue(userDisplayName);
       await setDoc(doc(db, 'users', user.uid), {
-        email: encryptValue(cleanEmail),
+        email: encEmail,
         emailHash: hashEmailForSearch(cleanEmail),
-        displayName: encryptValue(userDisplayName),
+        displayName: encDisplayName,
         role: initialRole,
         status: initialStatus,
         isMaster: isActuallyMaster,

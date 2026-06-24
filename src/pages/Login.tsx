@@ -117,10 +117,12 @@ const Login: React.FC = () => {
         
         if (!userDoc.exists()) {
           // If the profile does not exist (e.g. created in Auth but no Firestore record), create it
+          const encEmail = await encryptValue(emailLower);
+          const encDisplayName = await encryptValue(user.displayName || emailLower.split('@')[0]);
           await setDoc(userDocRef, {
-            email: encryptValue(emailLower),
+            email: encEmail,
             emailHash: hashEmailForSearch(emailLower),
-            displayName: encryptValue(user.displayName || emailLower.split('@')[0]),
+            displayName: encDisplayName,
             role: isMaster ? 'admin' : 'viewer',
             isMaster: isMaster,
             status: isMaster ? 'approved' : 'pending',
@@ -220,10 +222,12 @@ const Login: React.FC = () => {
         }
 
         // Auto-approve if it's the master
+        const encEmail = await encryptValue(user.email);
+        const encDisplayName = await encryptValue(user.displayName || 'Usuário Google');
         await setDoc(doc(db, 'users', user.uid), {
-          email: encryptValue(user.email),
+          email: encEmail,
           emailHash: hashEmailForSearch(user.email),
-          displayName: encryptValue(user.displayName || 'Usuário Google'),
+          displayName: encDisplayName,
           role: isMaster ? 'admin' : 'viewer',
           isMaster: isMaster,
           status: isMaster ? 'approved' : 'pending',
@@ -281,9 +285,13 @@ const Login: React.FC = () => {
     } catch (err: any) {
        console.error('Direct verification error, trying backup API:', err);
        try {
+         const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
          await fetch('/api/send-custom-auth-email', {
            method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
+           headers: { 
+             'Content-Type': 'application/json',
+             'Authorization': `Bearer ${token}`
+           },
            body: JSON.stringify({
              type: 'verification',
              email: auth.currentUser.email,
