@@ -104,23 +104,18 @@ const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
   if (value === undefined || value === null) return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-slate-500 text-white";
   const valStr = String(value).toLowerCase();
   
-  // Limpo
-  if (valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
+  // Pouco sujo / conforme
+  if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('pouco') || valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
     return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-emerald-500 text-white shadow-sm shadow-emerald-100";
   }
   
-  // Pouco sujo / levemente amarelo
-  if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('levemente sujo') || valStr.includes('levemente suja') || valStr.includes('pouco')) {
+  // Sujo / amarelo / amarelado
+  if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
     return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50";
   }
   
-  // Sujo / amarelo forte
-  if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo forte')) {
-    return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-amber-500 text-white shadow-sm shadow-amber-50";
-  }
-  
-  // Muito sujo
-  if (valStr.includes('muito sujo') || valStr.includes('muito suja') || valStr === 'not_ok' || valStr === 'não conforme' || valStr === 'nao conforme' || valStr === 'nok') {
+  // Tamponado / vermelho / muito sujo
+  if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr.includes('muito sujo') || valStr.includes('muito suja') || valStr === 'not_ok' || valStr === 'não conforme' || valStr === 'nao conforme' || valStr === 'nok' || valStr === 'vermelho') {
     return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-rose-600 text-white shadow-md shadow-rose-100";
   }
   
@@ -134,17 +129,14 @@ const getIconColorClasses = (value: any, isCompliant: boolean) => {
   if (value === undefined || value === null) return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-slate-50 text-slate-600";
   const valStr = String(value).toLowerCase();
   
-  if (valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
-    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-emerald-50 text-emerald-600";
+  if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('pouco') || valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
+    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-emerald-50 text-emerald-600 border border-emerald-200";
   }
-  if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('levemente sujo') || valStr.includes('levemente suja') || valStr.includes('pouco')) {
+  if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
     return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-yellow-50 text-yellow-600 border border-yellow-200";
   }
-  if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo forte')) {
-    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-amber-50 text-amber-600 border border-amber-200";
-  }
-  if (valStr.includes('muito sujo') || valStr.includes('muito suja') || valStr === 'not_ok' || valStr === 'não conforme' || valStr === 'nao conforme' || valStr === 'nok') {
-    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-rose-50 text-rose-600";
+  if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr.includes('muito sujo') || valStr.includes('muito suja') || valStr === 'not_ok' || valStr === 'não conforme' || valStr === 'nao conforme' || valStr === 'nok' || valStr === 'vermelho') {
+    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-rose-50 text-rose-600 border border-rose-200";
   }
   return isCompliant 
     ? "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-emerald-50 text-emerald-600" 
@@ -873,6 +865,17 @@ const Quality: React.FC = () => {
   const isResponseCompliant = (itemId: string, value: any, template: QualityChecklistTemplate) => {
     const item = template.items.find(i => i.id === itemId);
     if (!item) return true;
+
+    const isDryer = template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador');
+    if (isDryer && value) {
+      const lowerVal = String(value).toLowerCase();
+      if (lowerVal.includes('pouco') || lowerVal === 'pouco sujo' || lowerVal === 'pouco suja' || lowerVal.includes('limp')) {
+        return true;
+      }
+      if (lowerVal.includes('suj') || lowerVal.includes('tamponado') || lowerVal.includes('tamponada') || lowerVal.includes('vermelho')) {
+        return false;
+      }
+    }
 
     if (item.type === 'condition') {
       // If custom options are used
