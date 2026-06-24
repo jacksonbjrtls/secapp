@@ -21,6 +21,8 @@ import {
 import { validateEmailDomain } from '../lib/domainUtils';
 import { ShieldCheck, Loader2, Mail, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { Logo } from '../components/ui/Logo';
+import { PrivacyPolicyModal } from '../components/ui/PrivacyPolicyModal';
+import { encryptValue, hashEmailForSearch } from '../lib/crypto';
 
 import { MASTER_EMAILS } from '../constants';
 import { recordUserLogin } from '../lib/loginLogger';
@@ -35,6 +37,7 @@ const Login: React.FC = () => {
   const [requiresVerification, setRequiresVerification] = useState(false);
   const [allowedDomains, setAllowedDomains] = useState<string[]>([]);
   const [domainsLoading, setDomainsLoading] = useState(true);
+  const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
   const navigate = useNavigate();
 
   const isDomainAllowed = React.useMemo(() => {
@@ -115,8 +118,9 @@ const Login: React.FC = () => {
         if (!userDoc.exists()) {
           // If the profile does not exist (e.g. created in Auth but no Firestore record), create it
           await setDoc(userDocRef, {
-            email: emailLower,
-            displayName: user.displayName || emailLower.split('@')[0],
+            email: encryptValue(emailLower),
+            emailHash: hashEmailForSearch(emailLower),
+            displayName: encryptValue(user.displayName || emailLower.split('@')[0]),
             role: isMaster ? 'admin' : 'viewer',
             isMaster: isMaster,
             status: isMaster ? 'approved' : 'pending',
@@ -145,27 +149,44 @@ const Login: React.FC = () => {
 
       navigate('/');
     } catch (err: any) {
-      const errStr = String(err);
+      let errStrLower = '';
+      try {
+        errStrLower = JSON.stringify(err).toLowerCase();
+      } catch (e) {
+        errStrLower = String(err).toLowerCase();
+      }
+
       const isInvalidCred = err?.code === 'auth/invalid-credential' || 
                             err?.code === 'auth/wrong-password' || 
-                            err?.message?.includes('invalid-credential') || 
-                            err?.message?.includes('wrong-password') || 
-                            errStr.includes('invalid-credential') || 
-                            errStr.includes('wrong-password') || 
-                            errStr.includes('invalid-credential');
+                            err?.message?.toLowerCase()?.includes('invalid-credential') || 
+                            err?.message?.toLowerCase()?.includes('wrong-password') || 
+                            errStrLower.includes('invalid-credential') || 
+                            errStrLower.includes('wrong-password') || 
+                            errStrLower.includes('invalid_credential') || 
+                            errStrLower.includes('wrong_password');
 
       const isUserNotFound = err?.code === 'auth/user-not-found' || 
-                             err?.message?.includes('user-not-found') || 
-                             errStr.includes('user-not-found');
+                             err?.message?.toLowerCase()?.includes('user-not-found') || 
+                             errStrLower.includes('user-not-found') ||
+                             errStrLower.includes('user_not_found');
 
-      if (isInvalidCred) {
-        setError('E-mail ou senha incorretos. Caso já tenha se cadastrado, você pode redefinir sua senha clicando em "Esqueceu a senha?" acima. Caso não tenha uma conta, clique em "Registrar-se" abaixo.');
-      } else if (isUserNotFound) {
-        setError('Usuário não encontrado. Você já criou sua conta no link "Registrar-se"?');
+      const isTooManyRequests = err?.code === 'auth/too-many-requests' ||
+                                errStrLower.includes('too-many-requests') ||
+                                errStrLower.includes('too_many_requests');
+
+      if (isInvalidCred || isUserNotFound) {
+        setError('E-mail ou senha incorretos. Por favor, verifique suas credenciais e tente novamente.');
+        setEmail('');
+        setPassword('');
+        console.warn('Tentativa de login malsucedida: Credenciais inválidas ou usuário não cadastrado.');
+      } else if (isTooManyRequests) {
+        setError('Muitas tentativas malsucedidas de login. Sua conta foi temporariamente bloqueada. Tente novamente mais tarde ou redefina sua senha.');
+        console.warn('Tentativa de login bloqueada temporariamente devido a muitas requisições.');
       } else {
-        setError(`Erro ao entrar: ${err.message || err.code || 'Verifique sua conexão e tente novamente.'}`);
+        const readableMessage = err.message || err.code || 'Verifique sua conexão e tente novamente.';
+        setError(`Erro ao entrar: ${readableMessage}`);
+        console.error('Erro inesperado de login:', err);
       }
-      console.error(err);
     } finally {
       if (!requiresVerification) {
         setLoading(false);
@@ -200,8 +221,9 @@ const Login: React.FC = () => {
 
         // Auto-approve if it's the master
         await setDoc(doc(db, 'users', user.uid), {
-          email: user.email,
-          displayName: user.displayName || 'Usuário Google',
+          email: encryptValue(user.email),
+          emailHash: hashEmailForSearch(user.email),
+          displayName: encryptValue(user.displayName || 'Usuário Google'),
           role: isMaster ? 'admin' : 'viewer',
           isMaster: isMaster,
           status: isMaster ? 'approved' : 'pending',
@@ -580,7 +602,21 @@ const Login: React.FC = () => {
             </p>
           </div>
         </div>
+        
+        {/* Footer Privacy Link (LGPD) */}
+        <div className="mt-8 text-center text-xs text-slate-400">
+          <button 
+            type="button" 
+            onClick={() => setPrivacyModalOpen(true)} 
+            className="underline hover:text-slate-300 transition-colors cursor-pointer"
+          >
+            Política de Privacidade e Proteção de Dados (LGPD)
+          </button>
+        </div>
       </div>
+
+      {/* Privacy Policy Modal */}
+      <PrivacyPolicyModal isOpen={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
     </div>
   );
 };

@@ -33,6 +33,7 @@ import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore'
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from '../ui/Logo';
+import { PrivacyPolicyModal } from '../ui/PrivacyPolicyModal';
 import {
   DndContext, 
   closestCenter,
@@ -117,6 +118,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isAppInstalled, setIsAppInstalled] = useState(false);
   const [activeInstallTab, setActiveInstallTab] = useState<'ios' | 'android' | 'desktop'>('android');
   const [copied, setCopied] = useState(false);
+  const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
 
   useEffect(() => {
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
@@ -409,6 +411,17 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   <LogOut className="w-4 h-4" />
                   Sair
                 </button>
+
+                {/* LGPD Privacy Link */}
+                <div className="mt-4 pt-4 border-t border-slate-100 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setPrivacyModalOpen(true)}
+                    className="text-[11px] font-semibold text-slate-400 hover:text-emerald-600 transition-colors cursor-pointer underline underline-offset-2"
+                  >
+                    Política de Privacidade (LGPD)
+                  </button>
+                </div>
               </div>
             </div>
           </motion.aside>
@@ -624,6 +637,8 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
         )}
       </AnimatePresence>
+      {/* Privacy Policy Modal */}
+      <PrivacyPolicyModal isOpen={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
     </div>
   );
 };

@@ -19,6 +19,7 @@ import { db, auth } from '../lib/firebase';
 import { UserProfile, AllowedDomain, UserRole, UserStatus } from '../types';
 import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { encryptValue, decryptValue, hashEmailForSearch } from '../lib/crypto';
 import { useAuth } from '../hooks/useAuth';
 import { 
   Users, 
@@ -495,8 +496,16 @@ const Admin: React.FC = () => {
       const usersList = usersSnap.docs
         .map(doc => {
           const data = doc.data() as any;
-          const isUserMaster = MASTER_EMAILS.includes(data.email?.toLowerCase() || '');
-          return { uid: doc.id, ...data, isMaster: isUserMaster } as UserProfile;
+          const decryptedEmail = decryptValue(data.email);
+          const decryptedDisplayName = decryptValue(data.displayName);
+          const isUserMaster = MASTER_EMAILS.includes(decryptedEmail?.toLowerCase() || '');
+          return { 
+            uid: doc.id, 
+            ...data, 
+            email: decryptedEmail,
+            displayName: decryptedDisplayName,
+            isMaster: isUserMaster 
+          } as UserProfile;
         })
         .filter(user => !user.isMaster);
       setUsers(usersList);
@@ -610,7 +619,7 @@ const Admin: React.FC = () => {
 
     // Check for duplicate email in Firestore
     const emailLower = newUser.email.toLowerCase().trim();
-    const emailQuery = query(collection(db, 'users'), where('email', '==', emailLower), limit(1));
+    const emailQuery = query(collection(db, 'users'), where('emailHash', '==', hashEmailForSearch(emailLower)), limit(1));
     const querySnapshot = await getDocs(emailQuery);
     if (!querySnapshot.empty) {
       setError("Este e-mail já possui um cadastro ativo no sistema.");
@@ -644,9 +653,11 @@ const Admin: React.FC = () => {
       }
 
       // 3. Create User Profile in Firestore
+      const addedUserEmail = newUser.email.toLowerCase().trim();
       await setDoc(doc(db, 'users', user.uid), {
-        email: newUser.email,
-        displayName: newUser.name,
+        email: encryptValue(addedUserEmail),
+        emailHash: hashEmailForSearch(addedUserEmail),
+        displayName: encryptValue(newUser.name),
         role: newUser.role,
         status: 'approved',
         mustChangePassword: true,
@@ -670,7 +681,8 @@ const Admin: React.FC = () => {
       if (isEmailInUse) {
         // Check if user exists in Firestore
         try {
-          const userSnap = await getDocs(query(collection(db, 'users'), where('email', '==', newUser.email.toLowerCase().trim())));
+          const checkEmailLower = newUser.email.toLowerCase().trim();
+          const userSnap = await getDocs(query(collection(db, 'users'), where('emailHash', '==', hashEmailForSearch(checkEmailLower))));
           if (userSnap.empty) {
             // Recreate profile for existing Auth user!
             try {
@@ -683,8 +695,9 @@ const Admin: React.FC = () => {
               if (data.success && data.uid) {
                 // Yes, we got the UID! Now let's create the Firestore user profile
                 await setDoc(doc(db, 'users', data.uid), {
-                  email: newUser.email.toLowerCase().trim(),
-                  displayName: newUser.name || data.displayName || 'Usuário',
+                  email: encryptValue(checkEmailLower),
+                  emailHash: hashEmailForSearch(checkEmailLower),
+                  displayName: encryptValue(newUser.name || data.displayName || 'Usuário'),
                   role: newUser.role,
                   status: 'approved',
                   mustChangePassword: false, // Keep existing password

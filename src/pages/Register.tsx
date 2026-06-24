@@ -7,6 +7,8 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { validateEmailDomain } from '../lib/domainUtils';
 import { ShieldCheck, Loader2, AlertCircle, AlertTriangle, MailCheck } from 'lucide-react';
 import { Logo } from '../components/ui/Logo';
+import { PrivacyPolicyModal } from '../components/ui/PrivacyPolicyModal';
+import { encryptValue, hashEmailForSearch } from '../lib/crypto';
 
 import { MASTER_EMAILS } from '../constants';
 
@@ -20,6 +22,8 @@ const Register: React.FC = () => {
   const [verificationSent, setVerificationSent] = useState(false);
   const [allowedDomains, setAllowedDomains] = useState<string[]>([]);
   const [domainsLoading, setDomainsLoading] = useState(true);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
   const navigate = useNavigate();
 
   const isDomainAllowed = React.useMemo(() => {
@@ -133,9 +137,11 @@ const Register: React.FC = () => {
       const initialStatus = isActuallyMaster ? 'approved' : 'pending';
       const initialRole = isActuallyMaster ? 'admin' : 'viewer';
 
+      const cleanEmail = email.toLowerCase().trim();
       await setDoc(doc(db, 'users', user.uid), {
-        email: email.toLowerCase().trim(),
-        displayName: userDisplayName,
+        email: encryptValue(cleanEmail),
+        emailHash: hashEmailForSearch(cleanEmail),
+        displayName: encryptValue(userDisplayName),
         role: initialRole,
         status: initialStatus,
         isMaster: isActuallyMaster,
@@ -301,9 +307,31 @@ const Register: React.FC = () => {
               </div>
             )}
 
+            {/* Explicit Consent Checkbox (LGPD) */}
+            <div className="flex items-start gap-2.5 bg-slate-50 border border-slate-150 p-3 rounded-xl">
+              <input
+                id="acceptedTerms"
+                type="checkbox"
+                required
+                className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded mt-0.5"
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+              />
+              <label htmlFor="acceptedTerms" className="text-xs text-gray-600 font-semibold leading-relaxed">
+                Li e concordo que meus dados de identificação e assinatura digital de segurança do trabalho serão tratados pelo sistema para fins de cumprimento das Normas Regulamentadoras (SST).{' '}
+                <button
+                  type="button"
+                  onClick={() => setPrivacyModalOpen(true)}
+                  className="text-emerald-600 font-bold hover:underline underline-offset-2 inline-block cursor-pointer"
+                >
+                  Ver Política de Privacidade
+                </button>
+              </label>
+            </div>
+
             <button
               type="submit"
-              disabled={loading || !isDomainAllowed}
+              disabled={loading || !isDomainAllowed || !acceptedTerms}
               className="w-full flex justify-center py-3 px-4 rounded-xl shadow-lg shadow-emerald-900/20 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-widest"
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Registrar'}
@@ -320,6 +348,9 @@ const Register: React.FC = () => {
           </div>
         </div>
       </div>
+      
+      {/* Privacy Policy Modal */}
+      <PrivacyPolicyModal isOpen={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
     </div>
   );
 };

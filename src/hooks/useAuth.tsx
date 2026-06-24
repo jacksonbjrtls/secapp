@@ -5,6 +5,7 @@ import { auth, db } from '../lib/firebase';
 import { UserProfile } from '../types';
 import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { decryptValue } from '../lib/crypto';
 
 interface AuthContextType {
   user: User | null;
@@ -106,7 +107,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (doc.exists()) {
             const data = doc.data();
             console.log('[useAuth] Profile loaded:', { uid: doc.id, status: data.status, role: data.role });
-            setProfile({ uid: doc.id, ...data } as UserProfile);
+            setProfile({
+              uid: doc.id,
+              ...data,
+              displayName: decryptValue(data.displayName),
+              email: decryptValue(data.email),
+            } as UserProfile);
           } else {
             console.log('[useAuth] Profile document does not exist for UID:', user.uid);
             setProfile(null);

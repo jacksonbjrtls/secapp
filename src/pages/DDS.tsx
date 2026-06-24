@@ -20,6 +20,7 @@ import {
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
+import { encryptValue, decryptValue } from '../lib/crypto';
 import { Html5Qrcode } from "html5-qrcode";
 import { 
   Edit2,
@@ -286,7 +287,14 @@ const DDS: React.FC = () => {
     });
 
     const unsubSignatures = onSnapshot(qSignatures, (snapshot) => {
-      const allSigs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const allSigs = snapshot.docs.map(doc => {
+        const data = doc.data() as any;
+        return {
+          id: doc.id,
+          ...data,
+          userName: decryptValue(data.userName)
+        };
+      });
       setAllSignaturesList(allSigs);
       setTotalSignaturesMonth(allSigs.length);
       
@@ -475,7 +483,14 @@ const DDS: React.FC = () => {
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const signatures = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const signatures = snapshot.docs.map(doc => {
+        const data = doc.data() as any;
+        return {
+          id: doc.id,
+          ...data,
+          userName: decryptValue(data.userName)
+        };
+      });
       
       // If sessionTitle is missing (backward compatibility), fetch it
       const historyWithTitles = await Promise.all(signatures.map(async (sig: any) => {
@@ -516,7 +531,14 @@ const DDS: React.FC = () => {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const sigs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const sigs = snapshot.docs.map(doc => {
+        const data = doc.data() as any;
+        return {
+          id: doc.id,
+          ...data,
+          userName: decryptValue(data.userName)
+        };
+      });
       setSessionSignatures(sigs);
       setSignaturesLoading(false);
     }, (err) => {
@@ -770,7 +792,7 @@ const DDS: React.FC = () => {
             sessionId: sessionDocRef.id,
             sessionTitle: meta.assunto || 'DDS Importado via IA',
             userId: `imported_user_${idx}`,
-            userName: p.nome || 'Colaborador',
+            userName: encryptValue(p.nome || 'Colaborador'),
             timestamp: serverTimestamp(),
             passcode: generatedPasscode,
             mood: mappedMood,
@@ -831,7 +853,7 @@ const DDS: React.FC = () => {
         sessionId: activeSession.id,
         sessionTitle: activeSession.title, // Denormalize for history view
         userId: auth.currentUser.uid,
-        userName: profile?.displayName || 'Usuário',
+        userName: encryptValue(profile?.displayName || 'Usuário'),
         timestamp: serverTimestamp(),
         passcode: passcode, // Rules will check this
         mood: mood

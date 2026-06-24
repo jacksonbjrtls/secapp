@@ -4,6 +4,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { decryptValue } from '../lib/crypto';
 import { 
   Smile,
   Meh,
@@ -125,7 +126,7 @@ const Reports: React.FC = () => {
           return {
             id: doc.id,
             sessionId: sig.sessionId,
-            userName: sig.userName || 'Desconhecido',
+            userName: decryptValue(sig.userName) || 'Desconhecido',
             sessionTitle: sig.sessionTitle || session?.title || 'Sessão Removida (Órfão)',
             shift: session?.shift || '-',
             group: session?.group || '-',
@@ -238,7 +239,7 @@ const Reports: React.FC = () => {
             sectorId: sub.sectorId,
             lineId: sub.lineId,
             userId: sub.userId,
-            userName: sub.userName,
+            userName: decryptValue(sub.userName),
             shift: sub.shift,
             responses: sub.responses || [],
             timestamp: safeToDate(sub.createdAt) || new Date()
