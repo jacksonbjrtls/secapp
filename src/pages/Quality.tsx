@@ -202,6 +202,7 @@ const Quality: React.FC = () => {
   const [sectorToDelete, setSectorToDelete] = useState<QualitySector | null>(null);
   const [optionSetToDelete, setOptionSetToDelete] = useState<any | null>(null);
   const [lineToDelete, setLineToDelete] = useState<ProductionLine | null>(null);
+  const [selectedDryerSubId, setSelectedDryerSubId] = useState<string>('');
 
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
@@ -219,6 +220,18 @@ const Quality: React.FC = () => {
   });
 
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
+
+  useEffect(() => {
+    const dryerSubs = submissions.filter(sub => {
+      const template = templates.find(t => t.id === sub.templateId);
+      return template?.name.toLowerCase().includes('limpeza') || template?.name.toLowerCase().includes('secador');
+    });
+    if (dryerSubs.length > 0) {
+      if (!selectedDryerSubId || !dryerSubs.some(s => s.id === selectedDryerSubId)) {
+        setSelectedDryerSubId(dryerSubs[0].id);
+      }
+    }
+  }, [submissions, templates, selectedDryerSubId]);
 
   useEffect(() => {
     if (!user) return;
@@ -937,13 +950,20 @@ const Quality: React.FC = () => {
   const sanitizePdfText = (text: string | null | undefined): string => {
     if (!text) return '';
     return String(text)
-      .replace(/[áàâãäÁÀÂÃÄ]/g, 'a')
-      .replace(/[éèêëÉÈÊË]/g, 'e')
-      .replace(/[íìîïÍÌÎÏ]/g, 'i')
-      .replace(/[óòôõöÓÒÔÕÖ]/g, 'o')
-      .replace(/[úùûüÚÙÛÜ]/g, 'u')
-      .replace(/[çÇ]/g, 'c')
-      .replace(/[ñÑ]/g, 'n');
+      .replace(/[áàâãä]/g, 'a')
+      .replace(/[ÁÀÂÃÄ]/g, 'A')
+      .replace(/[éèêë]/g, 'e')
+      .replace(/[ÉÈÊË]/g, 'E')
+      .replace(/[íìîï]/g, 'i')
+      .replace(/[ÍÌÎÏ]/g, 'I')
+      .replace(/[óòôõö]/g, 'o')
+      .replace(/[ÓÒÔÕÖ]/g, 'O')
+      .replace(/[úùûü]/g, 'u')
+      .replace(/[ÚÙÛÜ]/g, 'U')
+      .replace(/[ç]/g, 'c')
+      .replace(/[Ç]/g, 'C')
+      .replace(/[ñ]/g, 'n')
+      .replace(/[Ñ]/g, 'N');
   };
 
   const complianceRate = calculateComplianceRate();
@@ -1065,14 +1085,14 @@ const Quality: React.FC = () => {
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
-      doc.text('MAPEAMENTO VISUAL DE LIMPEZA DO SECADOR', 14, 16);
+      doc.text(sanitizePdfText('MAPEAMENTO VISUAL DE LIMPEZA DO SECADOR'), 14, 16);
 
       // Section 1: Statistical Summary (Status de Limpeza)
       let currentY = 35;
       doc.setTextColor(15, 23, 42); // slate-900
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text('Status de Limpeza do Secador (Geral)', 14, currentY);
+      doc.text(sanitizePdfText('Status de Limpeza do Secador (Geral)'), 14, currentY);
 
       let pocoSujoCount = 0;
       let sujoCount = 0;
@@ -1101,14 +1121,14 @@ const Quality: React.FC = () => {
       const pctTamponado = ((tamponadoCount / totalDryerResponses) * 100).toFixed(1);
 
       const statsData = [
-        ['Pouco Sujo (Verde)', `${pocoSujoCount} de ${totalDryerResponses}`, `${pctPocoSujo}%`, 'Inspeção Conforme / Pouco Acúmulo'],
-        ['Sujo (Amarelo)', `${sujoCount} de ${totalDryerResponses}`, `${pctSujo}%`, 'Necessita Limpeza em Breve'],
-        ['Tamponado (Vermelho)', `${tamponadoCount} de ${totalDryerResponses}`, `${pctTamponado}%`, 'Intervenção Imediata / Obstruído']
+        [sanitizePdfText('Pouco Sujo (Verde)'), `${pocoSujoCount} de ${totalDryerResponses}`, `${pctPocoSujo}%`, sanitizePdfText('Inspecao Conforme / Pouco Acumulo')],
+        [sanitizePdfText('Sujo (Amarelo)'), `${sujoCount} de ${totalDryerResponses}`, `${pctSujo}%`, sanitizePdfText('Necessita Limpeza em Breve')],
+        [sanitizePdfText('Tamponado (Vermelho)'), `${tamponadoCount} de ${totalDryerResponses}`, `${pctTamponado}%`, sanitizePdfText('Intervencao Imediata / Obstruido')]
       ];
 
       autoTable(doc, {
         startY: currentY + 4,
-        head: [['Classificação', 'Registros', 'Percentual', 'Status Operacional']],
+        head: [[sanitizePdfText('Classificacao'), sanitizePdfText('Registros'), sanitizePdfText('Percentual'), sanitizePdfText('Status Operacional')]],
         body: statsData,
         theme: 'striped',
         styles: { fontSize: 9 },
@@ -1159,7 +1179,7 @@ const Quality: React.FC = () => {
 
         doors.forEach((doorNum, colIdx) => {
           const x = gridStartX + labelWidth + colIdx * cellWidth;
-          doc.text(String(doorNum), x + cellWidth / 2, gridStartY + 5, { align: 'center' });
+          doc.text(String(doorNum).padStart(2, '0'), x + cellWidth / 2, gridStartY + 5, { align: 'center' });
         });
 
         // Draw rows for Nível A, B, C, D
@@ -1229,7 +1249,7 @@ const Quality: React.FC = () => {
       };
 
       // Section 2: Comando Side (Even Doors)
-      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22];
+      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 00];
       currentY = drawDryerGrid('Secador MS1 - Lado de Comando (Portas Pares)', evenDoors, currentY);
 
       // Section 3: Acionamento Side (Odd Doors)
@@ -1240,20 +1260,20 @@ const Quality: React.FC = () => {
       doc.setTextColor(71, 85, 105);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      doc.text('Legenda de Classificação de Sujidade:', 14, currentY);
+      doc.text(sanitizePdfText('Legenda de Classificação de Sujidade:'), 14, currentY);
 
       doc.setFillColor(16, 185, 129); // Green
       doc.rect(14, currentY + 2, 6, 4, 'F');
       doc.setTextColor(30, 41, 59);
-      doc.text('Pouco Sujo (Código 3) - Verde', 22, currentY + 5);
+      doc.text(sanitizePdfText('Pouco Sujo (Codigo 3) - Verde'), 22, currentY + 5);
 
       doc.setFillColor(245, 158, 11); // Yellow
       doc.rect(80, currentY + 2, 6, 4, 'F');
-      doc.text('Sujo (Código 2) - Amarelo', 88, currentY + 5);
+      doc.text(sanitizePdfText('Sujo (Codigo 2) - Amarelo'), 88, currentY + 5);
 
       doc.setFillColor(239, 68, 68); // Red
       doc.rect(140, currentY + 2, 6, 4, 'F');
-      doc.text('Tamponado (Código 1) - Vermelho', 148, currentY + 5);
+      doc.text(sanitizePdfText('Tamponado (Codigo 1) - Vermelho'), 148, currentY + 5);
     }
     
     const fileName = `inspecao_qualidade_${sanitizePdfText(sub.userName).replace(/\s+/g, '_')}_${safeToDate(sub.createdAt)?.getTime()}.pdf`;
@@ -1371,6 +1391,13 @@ const Quality: React.FC = () => {
     
     return Object.values(groups);
   })();
+
+  const dryerSubmissions = submissions.filter(sub => {
+    const template = templates.find(t => t.id === sub.templateId);
+    return template?.name.toLowerCase().includes('limpeza') || template?.name.toLowerCase().includes('secador');
+  });
+
+  const activeDryerSub = dryerSubmissions.find(s => s.id === selectedDryerSubId) || dryerSubmissions[0];
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -3071,6 +3098,269 @@ const Quality: React.FC = () => {
                    <p className="text-3xl font-black text-blue-600">{templates.filter(t => t.active).length}</p>
                 </div>
               </div>
+
+              {dryerSubmissions.length > 0 && activeDryerSub && (
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                    <div>
+                      <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                        <LayoutGrid className="w-6 h-6 text-emerald-600" />
+                        Mapeamento de Limpeza do Secador (Visual)
+                      </h3>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">
+                        Monitoramento de sujidade por porta e nível do secador MS1
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="text-xs font-black text-slate-400 uppercase tracking-wider text-slate-500">Histórico de Inspeção:</label>
+                      <select
+                        value={selectedDryerSubId}
+                        onChange={(e) => setSelectedDryerSubId(e.target.value)}
+                        className="px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl outline-none text-xs font-bold transition-all text-slate-800"
+                      >
+                        {dryerSubmissions.map(sub => {
+                          const dateObj = safeToDate(sub.createdAt);
+                          const dateStr = dateObj ? dateObj.toLocaleDateString('pt-BR') : 'Data Indefinida';
+                          const timeStr = dateObj ? dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+                          return (
+                            <option key={sub.id} value={sub.id}>
+                              {dateStr} às {timeStr} ({sub.shift}) - {sub.userName}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Summary of statistics of the selected inspection */}
+                  {(() => {
+                    let totalValids = 0;
+                    let greenCount = 0;
+                    let yellowCount = 0;
+                    let redCount = 0;
+
+                    activeDryerSub.responses.forEach(resp => {
+                      const valStr = String(resp.value).toLowerCase();
+                      if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+                        greenCount++;
+                        totalValids++;
+                      } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+                        yellowCount++;
+                        totalValids++;
+                      } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+                        redCount++;
+                        totalValids++;
+                      }
+                    });
+
+                    const pctGreen = totalValids > 0 ? ((greenCount / totalValids) * 100).toFixed(1) : '0';
+                    const pctYellow = totalValids > 0 ? ((yellowCount / totalValids) * 100).toFixed(1) : '0';
+                    const pctRed = totalValids > 0 ? ((redCount / totalValids) * 100).toFixed(1) : '0';
+
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest">Pouco Sujo (Código 3)</p>
+                            <p className="text-2xl font-black text-emerald-600 mt-1">{greenCount} <span className="text-xs font-bold text-emerald-500">({pctGreen}%)</span></p>
+                            <p className="text-[10px] font-medium text-emerald-700 mt-0.5">Conforme / Pouco Acúmulo</p>
+                          </div>
+                          <span className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-black text-sm animate-none">3</span>
+                        </div>
+
+                        <div className="bg-yellow-50/50 border border-yellow-200 p-4 rounded-2xl flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-yellow-800 uppercase tracking-widest">Sujo (Código 2)</p>
+                            <p className="text-2xl font-black text-yellow-600 mt-1">{yellowCount} <span className="text-xs font-bold text-yellow-500">({pctYellow}%)</span></p>
+                            <p className="text-[10px] font-medium text-yellow-700 mt-0.5">Crítico / Necessita Limpeza</p>
+                          </div>
+                          <span className="w-8 h-8 rounded-full bg-yellow-400 text-yellow-950 flex items-center justify-center font-black text-sm border border-yellow-500 animate-none">2</span>
+                        </div>
+
+                        <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-rose-800 uppercase tracking-widest">Tamponado (Código 1)</p>
+                            <p className="text-2xl font-black text-rose-600 mt-1">{redCount} <span className="text-xs font-bold text-rose-500">({pctRed}%)</span></p>
+                            <p className="text-[10px] font-medium text-rose-700 mt-0.5">Crítico / Obstruído</p>
+                          </div>
+                          <span className="w-8 h-8 rounded-full bg-rose-600 text-white flex items-center justify-center font-black text-sm animate-pulse">1</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Even Doors (Lado Comando) */}
+                  {(() => {
+                    const evenDoors = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 0];
+                    const levels = ['A', 'B', 'C', 'D'];
+                    return (
+                      <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-extrabold text-xs text-slate-700 uppercase tracking-wider">
+                            Secador MS1 - Lado de Comando (Portas Pares)
+                          </h4>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Vista Frontal</span>
+                        </div>
+                        <div className="overflow-x-auto pb-2">
+                          <div className="min-w-[480px] space-y-2">
+                            {/* Doors Header */}
+                            <div className="grid grid-cols-[85px_repeat(12,1fr)] gap-1.5 items-center">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-right pr-2">PORTAS</span>
+                              {evenDoors.map(door => (
+                                <span key={door} className="text-center font-black text-slate-600 text-xs py-1.5 bg-slate-100 rounded-lg">
+                                  {String(door).padStart(2, '0')}
+                                </span>
+                              ))}
+                            </div>
+                            {/* Level Rows */}
+                            {levels.map(level => (
+                              <div key={level} className="grid grid-cols-[85px_repeat(12,1fr)] gap-1.5 items-center">
+                                <span className="font-extrabold text-slate-600 text-[11px] py-1 px-2 bg-slate-100/70 rounded-lg text-right pr-3">
+                                  Nível {level}
+                                </span>
+                                {evenDoors.map(door => {
+                                  const respId = `door_${door}_level_${level.toLowerCase()}`;
+                                  const resp = activeDryerSub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${door}_level_${level.toLowerCase()}`));
+                                  const valStr = resp ? String(resp.value).toLowerCase() : '';
+
+                                  let bgClass = "bg-slate-100/50 border border-slate-200 text-slate-400";
+                                  let code = "-";
+                                  let titleTip = `Porta ${door} - Nível ${level}: Não Inspecionado`;
+
+                                  if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+                                    bgClass = "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black";
+                                    code = "3";
+                                    titleTip = `Porta ${door} - Nível ${level}: Pouco Sujo (Código 3)`;
+                                  } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+                                    bgClass = "bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50 font-black";
+                                    code = "2";
+                                    titleTip = `Porta ${door} - Nível ${level}: Sujo (Código 2)`;
+                                  } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+                                    bgClass = "bg-rose-600 text-white shadow-md shadow-rose-100 font-black";
+                                    code = "1";
+                                    titleTip = `Porta ${door} - Nível ${level}: Tamponado (Código 1)`;
+                                  }
+
+                                  if (resp?.observation) {
+                                    titleTip += ` | Obs: ${resp.observation}`;
+                                  }
+
+                                  return (
+                                    <div
+                                      key={door}
+                                      title={titleTip}
+                                      className={`h-9 flex items-center justify-center text-xs rounded-xl transition-all duration-300 cursor-help hover:scale-105 ${bgClass}`}
+                                    >
+                                      {code}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Odd Doors (Lado Acionamento) */}
+                  {(() => {
+                    const oddDoors = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23];
+                    const levels = ['A', 'B', 'C', 'D'];
+                    return (
+                      <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-extrabold text-xs text-slate-700 uppercase tracking-wider">
+                            Secador MS1 - Lado de Acionamento (Portas Ímpares)
+                          </h4>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Vista Frontal</span>
+                        </div>
+                        <div className="overflow-x-auto pb-2">
+                          <div className="min-w-[480px] space-y-2">
+                            {/* Doors Header */}
+                            <div className="grid grid-cols-[85px_repeat(12,1fr)] gap-1.5 items-center">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-right pr-2">PORTAS</span>
+                              {oddDoors.map(door => (
+                                <span key={door} className="text-center font-black text-slate-600 text-xs py-1.5 bg-slate-100 rounded-lg">
+                                  {String(door).padStart(2, '0')}
+                                </span>
+                              ))}
+                            </div>
+                            {/* Level Rows */}
+                            {levels.map(level => (
+                              <div key={level} className="grid grid-cols-[85px_repeat(12,1fr)] gap-1.5 items-center">
+                                <span className="font-extrabold text-slate-600 text-[11px] py-1 px-2 bg-slate-100/70 rounded-lg text-right pr-3">
+                                  Nível {level}
+                                </span>
+                                {oddDoors.map(door => {
+                                  const respId = `door_${door}_level_${level.toLowerCase()}`;
+                                  const resp = activeDryerSub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${door}_level_${level.toLowerCase()}`));
+                                  const valStr = resp ? String(resp.value).toLowerCase() : '';
+
+                                  let bgClass = "bg-slate-100/50 border border-slate-200 text-slate-400";
+                                  let code = "-";
+                                  let titleTip = `Porta ${door} - Nível ${level}: Não Inspecionado`;
+
+                                  if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+                                    bgClass = "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black";
+                                    code = "3";
+                                    titleTip = `Porta ${door} - Nível ${level}: Pouco Sujo (Código 3)`;
+                                  } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+                                    bgClass = "bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50 font-black";
+                                    code = "2";
+                                    titleTip = `Porta ${door} - Nível ${level}: Sujo (Código 2)`;
+                                  } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+                                    bgClass = "bg-rose-600 text-white shadow-md shadow-rose-100 font-black";
+                                    code = "1";
+                                    titleTip = `Porta ${door} - Nível ${level}: Tamponado (Código 1)`;
+                                  }
+
+                                  if (resp?.observation) {
+                                    titleTip += ` | Obs: ${resp.observation}`;
+                                  }
+
+                                  return (
+                                    <div
+                                      key={door}
+                                      title={titleTip}
+                                      className={`h-9 flex items-center justify-center text-xs rounded-xl transition-all duration-300 cursor-help hover:scale-105 ${bgClass}`}
+                                    >
+                                      {code}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Legend of cleanliness evaluation criteria */}
+                  <div className="bg-slate-50 p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-xs">
+                    <div className="flex flex-wrap items-center gap-6">
+                      <span className="font-extrabold text-slate-500 uppercase tracking-wider">Critério de Avaliação:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="w-4 h-4 bg-emerald-500 rounded-md shadow-sm"></span>
+                        <span className="font-bold text-slate-700">Pouco Sujo (Conforme)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-4 h-4 bg-yellow-400 rounded-md border border-yellow-500 shadow-sm"></span>
+                        <span className="font-bold text-slate-700">Sujo (Não Conforme Crítico)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-4 h-4 bg-rose-600 rounded-md shadow-md"></span>
+                        <span className="font-bold text-slate-700">Tamponado (Não Conforme Crítico)</span>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-semibold italic">
+                      * Passe o mouse sobre os quadradinhos para ver as observações e detalhes.
+                    </p>
+                  </div>
+                </div>
+              )}
 
              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
                 <div className="flex items-center justify-between mb-8">

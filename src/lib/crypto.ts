@@ -72,7 +72,6 @@ const legacyBase64ToUtf8 = (str: string): string => {
 
 const decryptLegacyRc4 = (value: string): string => {
   try {
-    const key = (import.meta as any).env?.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
     const payloadRaw = value.substring(7); // Remove '__ENC__'
     const payload = legacyBase64ToUtf8(payloadRaw);
     
@@ -82,10 +81,38 @@ const decryptLegacyRc4 = (value: string): string => {
     const salt = payload.substring(0, colonIndex);
     const encryptedBase64 = payload.substring(colonIndex + 1);
     
-    const saltedKey = key + salt;
     const encryptedData = legacyBase64ToUtf8(encryptedBase64);
     
-    return legacyRc4(saltedKey, encryptedData);
+    const tryDecryptWithKey = (k: string): string => {
+      const saltedKey = k + salt;
+      return legacyRc4(saltedKey, encryptedData);
+    };
+
+    const envKey = (import.meta as any).env?.VITE_ENCRYPTION_KEY;
+    let decrypted = '';
+
+    // Helper to check if a string contains garbage chars
+    const isGarbage = (str: string): boolean => {
+      if (!str) return true;
+      // Standard allowed characters in human names and emails (including Portuguese accents, @, dot, space, common punctuation)
+      const allowedRegex = /^[a-zA-Z0-9\s@\.\-_'’áàâãäéèêëíìîïóòôõöúùûüçñÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ]+$/;
+      return !allowedRegex.test(str);
+    };
+
+    if (envKey) {
+      decrypted = tryDecryptWithKey(envKey);
+    }
+
+    if (!envKey || isGarbage(decrypted)) {
+      const fallbackDecrypted = tryDecryptWithKey('EldoradoSSTSecureKey2026');
+      if (!isGarbage(fallbackDecrypted)) {
+        decrypted = fallbackDecrypted;
+      } else if (!decrypted) {
+        decrypted = fallbackDecrypted;
+      }
+    }
+    
+    return decrypted || value;
   } catch (error) {
     console.error('[Crypto] Legacy Decryption error:', error);
     return value;
