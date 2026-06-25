@@ -12,7 +12,8 @@ import {
   orderBy,
   getDocs,
   getDoc,
-  deleteDoc
+  deleteDoc,
+  setDoc
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -73,31 +74,130 @@ const getOptionColorClasses = (option: string, isSelected: boolean) => {
       : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50/20";
   }
   
-  // Pouco sujo / levemente amarelo
+  // Pouco sujo / levemente amarelo / pouco suja
   if (optLower.includes('pouco sujo') || optLower.includes('pouco suja') || optLower.includes('levemente sujo') || optLower.includes('levemente suja') || optLower.includes('pouco')) {
+    return isSelected
+      ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-emerald-500 border-emerald-500 text-white shadow-md shadow-emerald-100"
+      : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50/20";
+  }
+  
+  // Sujo / amarelo / amarelado / suj
+  if (optLower === 'sujo' || optLower === 'suja' || optLower.includes('amarelo') || optLower.includes('suj')) {
     return isSelected
       ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-yellow-400 border-yellow-400 text-yellow-950 shadow-md shadow-yellow-100"
       : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-yellow-600 hover:border-yellow-300 hover:bg-yellow-50/20";
   }
   
-  // Sujo / amarelo forte
-  if (optLower === 'sujo' || optLower === 'suja' || optLower.includes('amarelo forte')) {
+  // Tamponado / vermelho / muito sujo
+  if (optLower.includes('tamponado') || optLower.includes('tamponada') || optLower.includes('muito sujo') || optLower.includes('muito suja') || optLower === 'não conforme' || optLower === 'nao conforme' || optLower === 'nok') {
     return isSelected
-      ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-amber-500 border-amber-500 text-white shadow-md shadow-amber-100"
-      : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-amber-600 hover:border-amber-300 hover:bg-amber-50/20";
+      ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100"
+      : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-rose-600 hover:border-rose-300 hover:bg-rose-50/20";
   }
   
-  // Muito sujo
-  if (optLower.includes('muito sujo') || optLower.includes('muito suja') || optLower === 'não conforme' || optLower === 'nao conforme' || optLower === 'nok') {
-    return isSelected
-      ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-red-600 border-red-600 text-white shadow-md shadow-red-100"
-      : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-red-600 hover:border-red-300 hover:bg-red-50/20";
-  }
-  
-  // Fallback for any other option
+// Fallback for any other option
   return isSelected
     ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100"
     : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-slate-500 hover:border-emerald-300";
+};
+
+const getRadiatorColorClass = (status: string | undefined, fallbackClass: string = "bg-slate-200/60") => {
+  if (!status) return fallbackClass;
+  const s = status.toLowerCase();
+  if (s.includes('pouco') || s === 'pouco sujo' || s === 'pouco suja') {
+    return "bg-emerald-500";
+  } else if (s === 'sujo' || s === 'suja' || s.includes('amarelo') || s.includes('suj')) {
+    return "bg-yellow-400";
+  } else if (s.includes('tamponado') || s.includes('tamponada') || s === 'vermelho') {
+    return "bg-rose-600";
+  }
+  return fallbackClass;
+};
+
+const getOverallStatusInfo = (value: any) => {
+  if (!value) {
+    return { 
+      code: "-", 
+      bgClass: "bg-slate-100/50 border border-slate-200 text-slate-400", 
+      bgClassForSub: "bg-slate-200/60", 
+      textClassForLabel: "text-slate-500", 
+      label: "Não Inspecionado" 
+    };
+  }
+  
+  if (typeof value === 'object' && value !== null) {
+    const statuses = Object.values(value) as string[];
+    const hasTamponado = statuses.some(s => s.toLowerCase().includes('tamponado') || s.toLowerCase().includes('vermelho'));
+    const hasSujo = statuses.some(s => s.toLowerCase() === 'sujo' || s.toLowerCase() === 'suja' || s.toLowerCase().includes('suj'));
+    const hasPoucoSujo = statuses.some(s => s.toLowerCase().includes('pouco'));
+
+    if (hasTamponado) {
+      return { 
+        code: "1", 
+        bgClass: "bg-rose-600 text-white shadow-md shadow-rose-100 font-black", 
+        bgClassForSub: "bg-rose-600", 
+        textClassForLabel: "text-rose-700", 
+        label: "Tamponado (Código 1)" 
+      };
+    } else if (hasSujo) {
+      return { 
+        code: "2", 
+        bgClass: "bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50 font-black", 
+        bgClassForSub: "bg-yellow-400", 
+        textClassForLabel: "text-yellow-700", 
+        label: "Sujo (Código 2)" 
+      };
+    } else if (hasPoucoSujo) {
+      return { 
+        code: "3", 
+        bgClass: "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black", 
+        bgClassForSub: "bg-emerald-500", 
+        textClassForLabel: "text-emerald-700", 
+        label: "Pouco Sujo (Código 3)" 
+      };
+    }
+    return { 
+      code: "-", 
+      bgClass: "bg-slate-100/50 border border-slate-200 text-slate-400", 
+      bgClassForSub: "bg-slate-200/60", 
+      textClassForLabel: "text-slate-500", 
+      label: "Não Inspecionado" 
+    };
+  }
+
+  const valStr = String(value).toLowerCase();
+  if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+    return { 
+      code: "3", 
+      bgClass: "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black", 
+      bgClassForSub: "bg-emerald-500", 
+      textClassForLabel: "text-emerald-700", 
+      label: "Pouco Sujo (Código 3)" 
+    };
+  } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+    return { 
+      code: "2", 
+      bgClass: "bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50 font-black", 
+      bgClassForSub: "bg-yellow-400", 
+      textClassForLabel: "text-yellow-700", 
+      label: "Sujo (Código 2)" 
+    };
+  } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+    return { 
+      code: "1", 
+      bgClass: "bg-rose-600 text-white shadow-md shadow-rose-100 font-black", 
+      bgClassForSub: "bg-rose-600", 
+      textClassForLabel: "text-rose-700", 
+      label: "Tamponado (Código 1)" 
+    };
+  }
+  return { 
+    code: "-", 
+    bgClass: "bg-slate-100/50 border border-slate-200 text-slate-400", 
+    bgClassForSub: "bg-slate-200/60", 
+    textClassForLabel: "text-slate-500", 
+    label: "Não Inspecionado" 
+  };
 };
 
 const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
@@ -592,6 +692,8 @@ const Quality: React.FC = () => {
   const [submissionLineId, setSubmissionLineId] = useState<string>('');
   const [activeScanner, setActiveScanner] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isDraftLoaded, setIsDraftLoaded] = useState<boolean>(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     let scanner: Html5Qrcode | null = null;
@@ -637,6 +739,33 @@ const Quality: React.FC = () => {
       };
     }
   }, [activeScanner]);
+
+  // Auto-save quality checklist draft
+  useEffect(() => {
+    if (!fillingTemplate || !user) return;
+    
+    // Only save draft if there are some responses or observations or line selected
+    if (Object.keys(responses).length === 0 && Object.keys(observations).length === 0 && !submissionLineId) return;
+
+    const timeoutId = setTimeout(async () => {
+      const draftId = `${user.uid}_${fillingTemplate.id}`;
+      try {
+        await setDoc(doc(db, 'quality_checklist_drafts', draftId), {
+          templateId: fillingTemplate.id,
+          userId: user.uid,
+          responses,
+          observations,
+          submissionLineId,
+          updatedAt: new Date()
+        });
+        setDraftSavedAt(new Date());
+      } catch (err) {
+        console.error("Erro ao salvar rascunho de checklist:", err);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timeoutId);
+  }, [responses, observations, submissionLineId, fillingTemplate, user]);
 
   const generateRangeOptions = (min?: number, max?: number, step?: number) => {
     if (min === undefined || max === undefined) return [];
@@ -733,10 +862,19 @@ const Quality: React.FC = () => {
             createdAt: serverTimestamp()
           });
           
+          try {
+            const draftId = `${user.uid}_${fillingTemplate.id}`;
+            await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
+          } catch (e) {
+            console.warn("Erro ao deletar rascunho de checklist:", e);
+          }
+          
           setFillingTemplate(null);
           setResponses({});
           setObservations({});
           setSubmissionLineId('');
+          setIsDraftLoaded(false);
+          setDraftSavedAt(null);
           
           setModalConfig({
             isOpen: true,
@@ -1032,9 +1170,25 @@ const Quality: React.FC = () => {
                          item?.type === 'barcode' ? 'Código / QR' :
                          item?.type === 'text' ? 'Texto Livre' : 'N/A';
                          
-      let valStr = String(resp.value);
-      if (resp.value === 'ok') valStr = 'CONFORME (OK)';
-      if (resp.value === 'not_ok') valStr = 'NÃO CONFORME (NOK)';
+      let valStr = '';
+      if (resp.value && typeof resp.value === 'object') {
+        const valObj = resp.value as any;
+        if ('left' in valObj || 'right' in valObj) {
+          const l = valObj.left || 'Pouco Sujo';
+          const r = valObj.right || 'Pouco Sujo';
+          valStr = `Esq: ${l} | Dir: ${r}`;
+        } else {
+          const lt = valObj.left_top || 'Pouco Sujo';
+          const rt = valObj.right_top || 'Pouco Sujo';
+          const lb = valObj.left_bottom || 'Pouco Sujo';
+          const rb = valObj.right_bottom || 'Pouco Sujo';
+          valStr = `Esq. Sup: ${lt} | Dir. Sup: ${rt}\nEsq. Inf: ${lb} | Dir. Inf: ${rb}`;
+        }
+      } else {
+        valStr = String(resp.value);
+        if (resp.value === 'ok') valStr = 'CONFORME (OK)';
+        if (resp.value === 'not_ok') valStr = 'NÃO CONFORME (NOK)';
+      }
       
       const obsStr = resp.observation ? `Obs: ${resp.observation}` : '';
       const displayVal = obsStr ? `${valStr}\n${obsStr}` : valStr;
@@ -1101,16 +1255,32 @@ const Quality: React.FC = () => {
 
       sub.responses.forEach(resp => {
         if (resp.value) {
-          const valStr = String(resp.value).toLowerCase();
-          if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
-            pocoSujoCount++;
-            totalCount++;
-          } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo')) {
-            sujoCount++;
-            totalCount++;
-          } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
-            tamponadoCount++;
-            totalCount++;
+          if (typeof resp.value === 'object' && resp.value !== null) {
+            Object.values(resp.value).forEach(val => {
+              const valStr = String(val).toLowerCase();
+              if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+                pocoSujoCount++;
+                totalCount++;
+              } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+                sujoCount++;
+                totalCount++;
+              } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+                tamponadoCount++;
+                totalCount++;
+              }
+            });
+          } else {
+            const valStr = String(resp.value).toLowerCase();
+            if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+              pocoSujoCount++;
+              totalCount++;
+            } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+              sujoCount++;
+              totalCount++;
+            } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+              tamponadoCount++;
+              totalCount++;
+            }
           }
         }
       });
@@ -1198,45 +1368,100 @@ const Quality: React.FC = () => {
           doors.forEach((doorNum, colIdx) => {
             const x = gridStartX + labelWidth + colIdx * cellWidth;
             
-            // Get the response for this specific door and level
+            // Get the response for this specific door and level (using strict exact matching)
             const respId = `door_${doorNum}_level_${level.toLowerCase()}`;
-            const response = sub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${doorNum}_level_${level.toLowerCase()}`));
+            const response = sub.responses.find(r => r.itemId === respId);
             
-            const valStr = response ? String(response.value).toLowerCase() : '';
+            const valObj = (response && typeof response.value === 'object' && response.value !== null) ? response.value : null;
+            const valStr = response ? (valObj ? "" : String(response.value).toLowerCase()) : '';
             
             let fillColor = [255, 255, 255]; // white (default)
-            let textColor = [30, 41, 59];
-            let valLabel = '';
 
-            if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
-              fillColor = [16, 185, 129]; // Green (Pouco sujo)
-              textColor = [255, 255, 255];
-              valLabel = '3';
-            } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo')) {
-              fillColor = [245, 158, 11]; // Yellow (Sujo)
-              textColor = [255, 255, 255];
-              valLabel = '2';
-            } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
-              fillColor = [239, 68, 68]; // Red (Tamponado)
-              textColor = [255, 255, 255];
-              valLabel = '1';
+            const getPdfColorForStatus = (status: string | undefined, defaultColor = [255, 255, 255]) => {
+              if (!status) return defaultColor;
+              const s = status.toLowerCase();
+              if (s.includes('pouco') || s === 'pouco sujo' || s === 'pouco suja') return [16, 185, 129]; // Green
+              if (s === 'sujo' || s === 'suja' || s.includes('amarelo') || s.includes('suj')) return [245, 158, 11]; // Yellow
+              if (s.includes('tamponado') || s.includes('tamponada') || s === 'vermelho') return [239, 68, 68]; // Red
+              return defaultColor;
+            };
+
+            if (!valObj) {
+              if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+                fillColor = [16, 185, 129]; // Green (Pouco sujo)
+              } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo')) {
+                fillColor = [245, 158, 11]; // Yellow (Sujo)
+              } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+                fillColor = [239, 68, 68]; // Red (Tamponado)
+              }
             }
 
-            // Draw cell background
-            doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
-            doc.rect(x, y, cellWidth, cellHeight, 'F');
+            const isSpecialDoor = doorNum === 0 || doorNum === 1 || doorNum === 24;
 
-            // Draw cell border
-            doc.setDrawColor(148, 163, 184); // slate-400
-            doc.setLineWidth(0.1);
-            doc.rect(x, y, cellWidth, cellHeight, 'D');
+            if (isSpecialDoor) {
+              const subW = cellWidth / 2;
+              if (valObj) {
+                const colorLeft = getPdfColorForStatus(valObj.left);
+                const colorRight = getPdfColorForStatus(valObj.right);
+                
+                doc.setDrawColor(148, 163, 184);
+                doc.setLineWidth(0.05);
 
-            // Draw cell value label (1, 2, 3)
-            if (valLabel) {
-              doc.setTextColor(textColor[0], textColor[1], textColor[2]);
-              doc.setFont('helvetica', 'bold');
-              doc.setFontSize(8);
-              doc.text(valLabel, x + cellWidth / 2, y + 5, { align: 'center' });
+                // Draw left radiator (filled and stroked)
+                doc.setFillColor(colorLeft[0], colorLeft[1], colorLeft[2]);
+                doc.rect(x, y, subW, cellHeight, 'FD');
+                
+                // Draw right radiator (filled and stroked)
+                doc.setFillColor(colorRight[0], colorRight[1], colorRight[2]);
+                doc.rect(x + subW, y, subW, cellHeight, 'FD');
+              } else {
+                // Single block/no split
+                doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+                doc.setDrawColor(148, 163, 184);
+                doc.setLineWidth(0.05);
+                doc.rect(x, y, cellWidth, cellHeight, 'FD');
+              }
+
+              // Draw cell border around the whole cell
+              doc.setDrawColor(148, 163, 184); // slate-400
+              doc.setLineWidth(0.1);
+              doc.rect(x, y, cellWidth, cellHeight, 'S');
+            } else {
+              // Draw 4 smaller sub-boxes
+              const subW = 5.8;
+              const subH = 2.8;
+              const gapX = 0.4;
+              const gapY = 0.4;
+              
+              const colorLeftTop = valObj ? getPdfColorForStatus(valObj.left_top) : fillColor;
+              const colorRightTop = valObj ? getPdfColorForStatus(valObj.right_top) : fillColor;
+              const colorLeftBottom = valObj ? getPdfColorForStatus(valObj.left_bottom) : fillColor;
+              const colorRightBottom = valObj ? getPdfColorForStatus(valObj.right_bottom) : fillColor;
+
+              doc.setDrawColor(148, 163, 184);
+              doc.setLineWidth(0.05);
+
+              // Draw 4 sub-rectangles with a tiny gap
+              // top-left
+              doc.setFillColor(colorLeftTop[0], colorLeftTop[1], colorLeftTop[2]);
+              doc.rect(x + 0.5, y + 0.5, subW, subH, 'FD');
+
+              // top-right
+              doc.setFillColor(colorRightTop[0], colorRightTop[1], colorRightTop[2]);
+              doc.rect(x + 0.5 + subW + gapX, y + 0.5, subW, subH, 'FD');
+
+              // bottom-left
+              doc.setFillColor(colorLeftBottom[0], colorLeftBottom[1], colorLeftBottom[2]);
+              doc.rect(x + 0.5, y + 0.5 + subH + gapY, subW, subH, 'FD');
+
+              // bottom-right
+              doc.setFillColor(colorRightBottom[0], colorRightBottom[1], colorRightBottom[2]);
+              doc.rect(x + 0.5 + subW + gapX, y + 0.5 + subH + gapY, subW, subH, 'FD');
+
+              // Draw cell border around the whole cell
+              doc.setDrawColor(148, 163, 184); // slate-400
+              doc.setLineWidth(0.1);
+              doc.rect(x, y, cellWidth, cellHeight, 'S');
             }
           });
         });
@@ -1244,18 +1469,25 @@ const Quality: React.FC = () => {
         // Draw border around the entire label col
         doc.setDrawColor(148, 163, 184);
         doc.setLineWidth(0.2);
-        doc.rect(gridStartX, gridStartY, labelWidth, cellHeight * 5, 'D');
+        doc.rect(gridStartX, gridStartY, labelWidth, cellHeight * 5, 'S');
 
         return gridStartY + cellHeight * 5 + 6; // Return next Y position
       };
 
-      // Section 2: Comando Side (Even Doors)
-      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
-      currentY = drawDryerGrid('Secador MS1 - Lado de Comando (Portas Pares)', evenDoors, currentY);
+      // Determine dryer line
+      const activeLine = lines.find(l => l.id === sub.lineId);
+      const isMS2 = activeLine ? (activeLine.name.toLowerCase().includes('ms2') || activeLine.name.toLowerCase().includes('linha 2') || activeLine.name.toLowerCase().includes('l2') || activeLine.name.toLowerCase().includes('secador 2')) : false;
 
-      // Section 3: Acionamento Side (Odd Doors)
+      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
       const oddDoors = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23];
-      currentY = drawDryerGrid('Secador MS1 - Lado de Acionamento (Portas Ímpares)', oddDoors, currentY);
+
+      if (isMS2) {
+        currentY = drawDryerGrid('Secador MS2 - Lado de Comando (Portas Ímpares)', oddDoors, currentY);
+        currentY = drawDryerGrid('Secador MS2 - Lado de Acionamento (Portas Pares)', evenDoors, currentY);
+      } else {
+        currentY = drawDryerGrid('Secador MS1 - Lado de Comando (Portas Pares)', evenDoors, currentY);
+        currentY = drawDryerGrid('Secador MS1 - Lado de Acionamento (Portas Ímpares)', oddDoors, currentY);
+      }
 
       // Legend
       doc.setTextColor(71, 85, 105);
@@ -1567,6 +1799,10 @@ const Quality: React.FC = () => {
                     onClick={() => {
                       setFillingTemplate(null);
                       setSubmissionLineId('');
+                      setResponses({});
+                      setObservations({});
+                      setIsDraftLoaded(false);
+                      setDraftSavedAt(null);
                     }}
                     className="absolute left-4 top-1/2 -translate-y-1/2 text-white hover:bg-emerald-800 p-2 rounded-full transition-colors"
                     title="Voltar"
@@ -1587,16 +1823,26 @@ const Quality: React.FC = () => {
                       setModalConfig({
                         isOpen: true,
                         title: 'Cancelar Preenchimento?',
-                        message: 'Deseja realmente abandonar a execução deste check-list de qualidade? Todos os dados marcados serão perdidos.',
+                        message: 'Deseja realmente abandonar a execução deste check-list de qualidade? Todos os dados marcados serão perdidos e o rascunho atual será descartado.',
                         type: 'warning',
                         showConfirmButton: true,
                         confirmText: 'Sair e Descartar',
-                        onConfirm: () => {
+                        onConfirm: async () => {
                           closeModal();
+                          if (user && fillingTemplate) {
+                            try {
+                              const draftId = `${user.uid}_${fillingTemplate.id}`;
+                              await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
+                            } catch (e) {
+                              console.warn("Erro ao deletar rascunho de checklist:", e);
+                            }
+                          }
                           setFillingTemplate(null);
                           setResponses({});
                           setObservations({});
                           setSubmissionLineId('');
+                          setIsDraftLoaded(false);
+                          setDraftSavedAt(null);
                         }
                       });
                     }}
@@ -1677,6 +1923,11 @@ const Quality: React.FC = () => {
                             style={{ width: `${progressPct}%` }}
                           />
                         </div>
+                        {draftSavedAt && (
+                          <div className="text-[9px] font-black text-[#0d6e4f] uppercase tracking-widest text-right font-mono flex items-center justify-end gap-1 mt-1">
+                            <span>💾 Rascunho salvo às {draftSavedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -1767,57 +2018,397 @@ const Quality: React.FC = () => {
                                 className="border-t border-slate-100 bg-slate-50/50 p-4 space-y-4"
                               >
                                 {item.type === 'condition' && (
-                                  <div className="flex flex-wrap gap-2.5">
-                                    {item.conditionOptionsId ? (
-                                      optionSets.find(s => s.id === item.conditionOptionsId)?.options.map((opt, optIdx) => (
-                                        <button
-                                          key={`${opt}-${optIdx}`}
-                                          type="button"
-                                          onClick={() => {
-                                            setResponses(prev => ({ ...prev, [item.id]: opt }));
-                                            setTimeout(advanceToNext, 250);
-                                          }}
-                                          className={getOptionColorClasses(opt, responses[item.id] === opt)}
-                                        >
-                                          {opt}
-                                        </button>
-                                      ))
-                                    ) : (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setResponses(prev => ({ ...prev, [item.id]: 'ok' }));
-                                            setTimeout(advanceToNext, 250);
-                                          }}
-                                          className={cn(
-                                            "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
-                                            responses[item.id] === 'ok' 
-                                              ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100" 
-                                              : "bg-white border-slate-200 text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/10"
-                                          )}
-                                        >
-                                          <CheckCircle2 className="w-4 h-4" />
-                                          CONFORME (OK)
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setResponses(prev => ({ ...prev, [item.id]: 'not_ok' }));
-                                            // Don't auto-advance on fail, let them type observation if they want
-                                          }}
-                                          className={cn(
-                                            "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
-                                            responses[item.id] === 'not_ok' 
-                                              ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100" 
-                                              : "bg-white border-slate-200 text-slate-500 hover:border-rose-300 hover:bg-rose-50/10"
-                                          )}
-                                        >
-                                          <AlertCircle className="w-4 h-4" />
-                                          NÃO CONFORME
-                                        </button>
-                                      </>
-                                    )}
+                                  <div className="flex flex-wrap gap-2.5 w-full">
+                                    {(() => {
+                                      const isDryerItem = (fillingTemplate?.name.toLowerCase().includes('limpeza') || fillingTemplate?.name.toLowerCase().includes('secador')) && item.id.startsWith('door_');
+                                      if (isDryerItem) {
+                                        const match = item.id.match(/^door_(\d+)_level_([a-d])$/);
+                                        const doorNum = match ? parseInt(match[1], 10) : 0;
+                                        const isSpecialDoor = doorNum === 0 || doorNum === 1 || doorNum === 24;
+                                        
+                                        // Initialize default sub values
+                                        const currentVal = responses[item.id] || {};
+                                        const getSubVal = (key: string) => {
+                                          if (currentVal && typeof currentVal === 'object' && (currentVal as any)[key]) {
+                                            return (currentVal as any)[key];
+                                          }
+                                          return typeof currentVal === 'string' ? currentVal : 'Pouco Sujo';
+                                        };
+
+                                        return (
+                                          <div className="space-y-4 w-full">
+                                            {/* Quick Action Buttons */}
+                                            <div className="bg-slate-100/80 p-3 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 border border-slate-200 w-full">
+                                              <div className="text-left">
+                                                <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider font-mono">Preenchimento Rápido</p>
+                                                <p className="text-xs text-slate-600 font-bold mt-0.5">Definir o mesmo status para todos os radiadores desta porta:</p>
+                                              </div>
+                                              <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const newState = isSpecialDoor 
+                                                      ? { left: 'Pouco Sujo', right: 'Pouco Sujo' }
+                                                      : { left_top: 'Pouco Sujo', right_top: 'Pouco Sujo', left_bottom: 'Pouco Sujo', right_bottom: 'Pouco Sujo' };
+                                                    setResponses(prev => ({ ...prev, [item.id]: newState }));
+                                                    setTimeout(advanceToNext, 350);
+                                                  }}
+                                                  className="flex-1 sm:flex-initial px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-black rounded-lg uppercase tracking-wider transition-all"
+                                                >
+                                                  Tudo Pouco Sujo
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const newState = isSpecialDoor 
+                                                      ? { left: 'Sujo', right: 'Sujo' }
+                                                      : { left_top: 'Sujo', right_top: 'Sujo', left_bottom: 'Sujo', right_bottom: 'Sujo' };
+                                                    setResponses(prev => ({ ...prev, [item.id]: newState }));
+                                                  }}
+                                                  className="flex-1 sm:flex-initial px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-black rounded-lg uppercase tracking-wider transition-all"
+                                                >
+                                                  Tudo Sujo
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const newState = isSpecialDoor 
+                                                      ? { left: 'Tamponado', right: 'Tamponado' }
+                                                      : { left_top: 'Tamponado', right_top: 'Tamponado', left_bottom: 'Tamponado', right_bottom: 'Tamponado' };
+                                                    setResponses(prev => ({ ...prev, [item.id]: newState }));
+                                                  }}
+                                                  className="flex-1 sm:flex-initial px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 text-[10px] font-black rounded-lg uppercase tracking-wider transition-all"
+                                                >
+                                                  Tudo Tamponado
+                                                </button>
+                                              </div>
+                                            </div>
+
+                                            {/* Individual Radiators Grid */}
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+                                              {isSpecialDoor ? (
+                                                // 2 Radiators: Left and Right
+                                                <>
+                                                  {/* Left Radiator */}
+                                                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">L</span>
+                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Esquerdo</p>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-1.5">
+                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                        const isSel = getSubVal('left') === opt;
+                                                        return (
+                                                          <button
+                                                            key={opt}
+                                                            type="button"
+                                                            onClick={() => {
+                                                              const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
+                                                              setResponses(prev => ({
+                                                                ...prev,
+                                                                [item.id]: {
+                                                                  ...prevVal,
+                                                                  left: opt,
+                                                                  right: (prevVal as any).right || getSubVal('right')
+                                                                }
+                                                              }));
+                                                            }}
+                                                            className={cn(
+                                                              "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
+                                                              isSel 
+                                                                ? opt === 'Pouco Sujo'
+                                                                  ? "bg-emerald-600 border-emerald-600 text-white shadow"
+                                                                  : opt === 'Sujo'
+                                                                    ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
+                                                                    : "bg-rose-600 border-rose-600 text-white shadow"
+                                                                : "bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200"
+                                                            )}
+                                                          >
+                                                            {opt}
+                                                          </button>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  </div>
+
+                                                  {/* Right Radiator */}
+                                                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">R</span>
+                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Direito</p>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-1.5">
+                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                        const isSel = getSubVal('right') === opt;
+                                                        return (
+                                                          <button
+                                                            key={opt}
+                                                            type="button"
+                                                            onClick={() => {
+                                                              const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
+                                                              setResponses(prev => ({
+                                                                ...prev,
+                                                                [item.id]: {
+                                                                  ...prevVal,
+                                                                  left: (prevVal as any).left || getSubVal('left'),
+                                                                  right: opt
+                                                                }
+                                                              }));
+                                                            }}
+                                                            className={cn(
+                                                              "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
+                                                              isSel 
+                                                                ? opt === 'Pouco Sujo'
+                                                                  ? "bg-emerald-600 border-emerald-600 text-white shadow"
+                                                                  : opt === 'Sujo'
+                                                                    ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
+                                                                    : "bg-rose-600 border-rose-600 text-white shadow"
+                                                                : "bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200"
+                                                            )}
+                                                          >
+                                                            {opt}
+                                                          </button>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  </div>
+                                                </>
+                                              ) : (
+                                                // 4 Radiators
+                                                <>
+                                                  {/* Left Top */}
+                                                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">LT</span>
+                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Esquerdo Superior</p>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-1.5">
+                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                        const isSel = getSubVal('left_top') === opt;
+                                                        return (
+                                                          <button
+                                                            key={opt}
+                                                            type="button"
+                                                            onClick={() => {
+                                                              const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
+                                                              setResponses(prev => ({
+                                                                ...prev,
+                                                                [item.id]: {
+                                                                  ...prevVal,
+                                                                  left_top: opt,
+                                                                  right_top: (prevVal as any).right_top || getSubVal('right_top'),
+                                                                  left_bottom: (prevVal as any).left_bottom || getSubVal('left_bottom'),
+                                                                  right_bottom: (prevVal as any).right_bottom || getSubVal('right_bottom')
+                                                                }
+                                                              }));
+                                                            }}
+                                                            className={cn(
+                                                              "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
+                                                              isSel 
+                                                                ? opt === 'Pouco Sujo'
+                                                                  ? "bg-emerald-600 border-emerald-600 text-white shadow"
+                                                                  : opt === 'Sujo'
+                                                                    ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
+                                                                    : "bg-rose-600 border-rose-600 text-white shadow"
+                                                                : "bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200"
+                                                            )}
+                                                          >
+                                                            {opt}
+                                                          </button>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  </div>
+
+                                                  {/* Right Top */}
+                                                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">RT</span>
+                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Direito Superior</p>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-1.5">
+                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                        const isSel = getSubVal('right_top') === opt;
+                                                        return (
+                                                          <button
+                                                            key={opt}
+                                                            type="button"
+                                                            onClick={() => {
+                                                              const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
+                                                              setResponses(prev => ({
+                                                                ...prev,
+                                                                [item.id]: {
+                                                                  ...prevVal,
+                                                                  left_top: (prevVal as any).left_top || getSubVal('left_top'),
+                                                                  right_top: opt,
+                                                                  left_bottom: (prevVal as any).left_bottom || getSubVal('left_bottom'),
+                                                                  right_bottom: (prevVal as any).right_bottom || getSubVal('right_bottom')
+                                                                }
+                                                              }));
+                                                            }}
+                                                            className={cn(
+                                                              "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
+                                                              isSel 
+                                                                ? opt === 'Pouco Sujo'
+                                                                  ? "bg-emerald-600 border-emerald-600 text-white shadow"
+                                                                  : opt === 'Sujo'
+                                                                    ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
+                                                                    : "bg-rose-600 border-rose-600 text-white shadow"
+                                                                : "bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200"
+                                                            )}
+                                                          >
+                                                            {opt}
+                                                          </button>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  </div>
+
+                                                  {/* Left Bottom */}
+                                                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">LB</span>
+                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Esquerdo Inferior</p>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-1.5">
+                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                        const isSel = getSubVal('left_bottom') === opt;
+                                                        return (
+                                                          <button
+                                                            key={opt}
+                                                            type="button"
+                                                            onClick={() => {
+                                                              const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
+                                                              setResponses(prev => ({
+                                                                ...prev,
+                                                                [item.id]: {
+                                                                  ...prevVal,
+                                                                  left_top: (prevVal as any).left_top || getSubVal('left_top'),
+                                                                  right_top: (prevVal as any).right_top || getSubVal('right_top'),
+                                                                  left_bottom: opt,
+                                                                  right_bottom: (prevVal as any).right_bottom || getSubVal('right_bottom')
+                                                                }
+                                                              }));
+                                                            }}
+                                                            className={cn(
+                                                              "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
+                                                              isSel 
+                                                                ? opt === 'Pouco Sujo'
+                                                                  ? "bg-emerald-600 border-emerald-600 text-white shadow"
+                                                                  : opt === 'Sujo'
+                                                                    ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
+                                                                    : "bg-rose-600 border-rose-600 text-white shadow"
+                                                                : "bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200"
+                                                            )}
+                                                          >
+                                                            {opt}
+                                                          </button>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  </div>
+
+                                                  {/* Right Bottom */}
+                                                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">RB</span>
+                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Direito Inferior</p>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-1.5">
+                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                        const isSel = getSubVal('right_bottom') === opt;
+                                                        return (
+                                                          <button
+                                                            key={opt}
+                                                            type="button"
+                                                            onClick={() => {
+                                                              const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
+                                                              setResponses(prev => ({
+                                                                ...prev,
+                                                                [item.id]: {
+                                                                  ...prevVal,
+                                                                  left_top: (prevVal as any).left_top || getSubVal('left_top'),
+                                                                  right_top: (prevVal as any).right_top || getSubVal('right_top'),
+                                                                  left_bottom: (prevVal as any).left_bottom || getSubVal('left_bottom'),
+                                                                  right_bottom: opt
+                                                                }
+                                                              }));
+                                                            }}
+                                                            className={cn(
+                                                              "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
+                                                              isSel 
+                                                                ? opt === 'Pouco Sujo'
+                                                                  ? "bg-emerald-600 border-emerald-600 text-white shadow"
+                                                                  : opt === 'Sujo'
+                                                                    ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
+                                                                    : "bg-rose-600 border-rose-600 text-white shadow"
+                                                                : "bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200"
+                                                            )}
+                                                          >
+                                                            {opt}
+                                                          </button>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  </div>
+                                                </>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+
+                                      // Normal Item rendering
+                                      return item.conditionOptionsId ? (
+                                        optionSets.find(s => s.id === item.conditionOptionsId)?.options.map((opt, optIdx) => (
+                                          <button
+                                            key={`${opt}-${optIdx}`}
+                                            type="button"
+                                            onClick={() => {
+                                              setResponses(prev => ({ ...prev, [item.id]: opt }));
+                                              setTimeout(advanceToNext, 250);
+                                            }}
+                                            className={getOptionColorClasses(opt, responses[item.id] === opt)}
+                                          >
+                                            {opt}
+                                          </button>
+                                        ))
+                                      ) : (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setResponses(prev => ({ ...prev, [item.id]: 'ok' }));
+                                              setTimeout(advanceToNext, 250);
+                                            }}
+                                            className={cn(
+                                              "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
+                                              responses[item.id] === 'ok' 
+                                                ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100" 
+                                                : "bg-white border-slate-200 text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/10"
+                                            )}
+                                          >
+                                            <CheckCircle2 className="w-4 h-4" />
+                                            CONFORME (OK)
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setResponses(prev => ({ ...prev, [item.id]: 'not_ok' }));
+                                            }}
+                                            className={cn(
+                                              "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
+                                              responses[item.id] === 'not_ok' 
+                                                ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100" 
+                                                : "bg-white border-slate-200 text-slate-500 hover:border-rose-300 hover:bg-rose-50/10"
+                                            )}
+                                          >
+                                            <AlertCircle className="w-4 h-4" />
+                                            NÃO CONFORME
+                                          </button>
+                                        </>
+                                      );
+                                    })()}
                                   </div>
                                 )}
 
@@ -2048,16 +2639,26 @@ const Quality: React.FC = () => {
                       setModalConfig({
                         isOpen: true,
                         title: 'Descartar Check-list?',
-                        message: 'Deseja realmente cancelar este preenchimento de qualidade? Todos os dados marcados serão perdidos.',
+                        message: 'Deseja realmente cancelar este preenchimento de qualidade? Todos os dados marcados serão perdidos e o rascunho atual será descartado.',
                         type: 'warning',
                         showConfirmButton: true,
                         confirmText: 'Sim, Descartar',
-                        onConfirm: () => {
+                        onConfirm: async () => {
                           closeModal();
+                          if (user && fillingTemplate) {
+                            try {
+                              const draftId = `${user.uid}_${fillingTemplate.id}`;
+                              await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
+                            } catch (e) {
+                              console.warn("Erro ao deletar rascunho de checklist:", e);
+                            }
+                          }
                           setFillingTemplate(null);
                           setResponses({});
                           setObservations({});
                           setSubmissionLineId('');
+                          setIsDraftLoaded(false);
+                          setDraftSavedAt(null);
                         }
                       });
                     }}
@@ -2132,16 +2733,46 @@ const Quality: React.FC = () => {
                     <button
                       key={template.id}
                       disabled={isCompleted}
-                      onClick={() => {
+                      onClick={async () => {
+                        let loadedDraft: any = null;
+                        if (user) {
+                          try {
+                            const draftDoc = await getDoc(doc(db, 'quality_checklist_drafts', `${user.uid}_${template.id}`));
+                            if (draftDoc.exists()) {
+                              loadedDraft = draftDoc.data();
+                            }
+                          } catch (e) {
+                            console.error("Erro ao buscar rascunho de checklist:", e);
+                          }
+                        }
+
                         setFillingTemplate(template);
-                        setResponses({});
-                        setObservations({});
                         setExpandedItemId(template.items[0]?.id || null);
-                        // If selected line targets this template, default to it; otherwise default to empty or the template's single line
-                        const defaultLineId = selectedLineId && targetLineIds.includes(selectedLineId)
-                          ? selectedLineId
-                          : (targetLineIds.length === 1 ? targetLineIds[0] : '');
-                        setSubmissionLineId(defaultLineId);
+
+                        if (loadedDraft) {
+                          setResponses(loadedDraft.responses || {});
+                          setObservations(loadedDraft.observations || {});
+                          setSubmissionLineId(loadedDraft.submissionLineId || '');
+                          setIsDraftLoaded(true);
+                          setDraftSavedAt(loadedDraft.updatedAt?.toDate ? loadedDraft.updatedAt.toDate() : new Date(loadedDraft.updatedAt));
+                          
+                          setModalConfig({
+                            isOpen: true,
+                            title: 'Rascunho Recuperado',
+                            message: `Seu rascunho de preenchimento para o check-list "${template.name}" foi recuperado com sucesso. Você pode continuar de onde parou!`,
+                            type: 'success'
+                          });
+                        } else {
+                          setResponses({});
+                          setObservations({});
+                          setIsDraftLoaded(false);
+                          setDraftSavedAt(null);
+                          // If selected line targets this template, default to it; otherwise default to empty or the template's single line
+                          const defaultLineId = selectedLineId && targetLineIds.includes(selectedLineId)
+                            ? selectedLineId
+                            : (targetLineIds.length === 1 ? targetLineIds[0] : '');
+                          setSubmissionLineId(defaultLineId);
+                        }
                       }}
                       className={cn(
                         "group p-8 rounded-[2rem] border transition-all text-left flex flex-col justify-between relative overflow-hidden",
@@ -2277,12 +2908,29 @@ const Quality: React.FC = () => {
                               </div>
                             )}
                           </div>
-                          <span className={cn(
-                            "text-[10px] font-black px-2 py-0.5 rounded-full uppercase",
-                            template.active ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
-                          )}>
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await updateDoc(doc(db, 'quality_checklist_templates', template.id), {
+                                  active: !template.active
+                                });
+                              } catch (err) {
+                                console.error("Erro ao alternar status do checklist:", err);
+                              }
+                            }}
+                            className={cn(
+                              "text-[10px] font-black px-2.5 py-1 rounded-full uppercase transition-all cursor-pointer hover:scale-105 active:scale-95 flex items-center gap-1",
+                              template.active 
+                                ? "bg-emerald-100 text-emerald-700 hover:bg-rose-100 hover:text-rose-700" 
+                                : "bg-slate-100 text-slate-500 hover:bg-emerald-100 hover:text-emerald-700"
+                            )}
+                            title={template.active ? "Clique para Desativar" : "Clique para Ativar"}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
                             {template.active ? 'Ativo' : 'Inativo'}
-                          </span>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -3142,16 +3790,32 @@ const Quality: React.FC = () => {
                     let redCount = 0;
 
                     activeDryerSub.responses.forEach(resp => {
-                      const valStr = String(resp.value).toLowerCase();
-                      if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
-                        greenCount++;
-                        totalValids++;
-                      } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
-                        yellowCount++;
-                        totalValids++;
-                      } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
-                        redCount++;
-                        totalValids++;
+                      if (resp.value && typeof resp.value === 'object') {
+                        Object.values(resp.value).forEach(val => {
+                          const valStr = String(val).toLowerCase();
+                          if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+                            greenCount++;
+                            totalValids++;
+                          } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+                            yellowCount++;
+                            totalValids++;
+                          } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+                            redCount++;
+                            totalValids++;
+                          }
+                        });
+                      } else {
+                        const valStr = String(resp.value).toLowerCase();
+                        if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+                          greenCount++;
+                          totalValids++;
+                        } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+                          yellowCount++;
+                          totalValids++;
+                        } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
+                          redCount++;
+                          totalValids++;
+                        }
                       }
                     });
 
@@ -3191,149 +3855,244 @@ const Quality: React.FC = () => {
                     );
                   })()}
 
-                  {/* Even Doors (Lado Comando) */}
+                  {/* Dryer Sections (Lado de Comando and Lado de Acionamento) */}
                   {(() => {
+                    const activeLine = lines.find(l => l.id === activeDryerSub.lineId);
+                    const isMS2 = activeLine ? (activeLine.name.toLowerCase().includes('ms2') || activeLine.name.toLowerCase().includes('linha 2') || activeLine.name.toLowerCase().includes('l2') || activeLine.name.toLowerCase().includes('secador 2')) : false;
+
                     const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
-                    const levels = ['A', 'B', 'C', 'D'];
-                    return (
-                      <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-extrabold text-xs text-slate-700 uppercase tracking-wider">
-                            Secador MS1 - Lado de Comando (Portas Pares)
-                          </h4>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Vista Frontal</span>
-                        </div>
-                        <div className="overflow-x-auto pb-2">
-                          <div className="min-w-[480px] space-y-2">
-                            {/* Doors Header */}
-                            <div className="grid grid-cols-[85px_repeat(13,1fr)] gap-1.5 items-center">
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-right pr-2">PORTAS</span>
-                              {evenDoors.map(door => (
-                                <span key={door} className="text-center font-black text-slate-600 text-xs py-1.5 bg-slate-100 rounded-lg">
-                                  {door === 24 ? '00' : String(door)}
-                                </span>
-                              ))}
-                            </div>
-                            {/* Level Rows */}
-                            {levels.map(level => (
-                              <div key={level} className="grid grid-cols-[85px_repeat(13,1fr)] gap-1.5 items-center">
-                                <span className="font-extrabold text-slate-600 text-[11px] py-1 px-2 bg-slate-100/70 rounded-lg text-right pr-3">
-                                  Nível {level}
-                                </span>
-                                {evenDoors.map(door => {
-                                  const respId = `door_${door}_level_${level.toLowerCase()}`;
-                                  const resp = activeDryerSub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${door}_level_${level.toLowerCase()}`));
-                                  const valStr = resp ? String(resp.value).toLowerCase() : '';
-
-                                  let bgClass = "bg-slate-100/50 border border-slate-200 text-slate-400";
-                                  let code = "-";
-                                  const doorDisplay = door === 24 ? '00' : String(door);
-                                  let titleTip = `Porta ${doorDisplay} - Nível ${level}: Não Inspecionado`;
-
-                                  if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
-                                    bgClass = "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black";
-                                    code = "3";
-                                    titleTip = `Porta ${doorDisplay} - Nível ${level}: Pouco Sujo (Código 3)`;
-                                  } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
-                                    bgClass = "bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50 font-black";
-                                    code = "2";
-                                    titleTip = `Porta ${doorDisplay} - Nível ${level}: Sujo (Código 2)`;
-                                  } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
-                                    bgClass = "bg-rose-600 text-white shadow-md shadow-rose-100 font-black";
-                                    code = "1";
-                                    titleTip = `Porta ${doorDisplay} - Nível ${level}: Tamponado (Código 1)`;
-                                  }
-
-                                  if (resp?.observation) {
-                                    titleTip += ` | Obs: ${resp.observation}`;
-                                  }
-
-                                  return (
-                                    <div
-                                      key={door}
-                                      title={titleTip}
-                                      className={`h-9 flex items-center justify-center text-xs rounded-xl transition-all duration-300 cursor-help hover:scale-105 ${bgClass}`}
-                                    >
-                                      {code}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Odd Doors (Lado Acionamento) */}
-                  {(() => {
                     const oddDoors = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23];
                     const levels = ['A', 'B', 'C', 'D'];
+
+                    // Section 1: Lado de Comando
+                    // MS1: Even doors, MS2: Odd doors
+                    const section1Title = isMS2 
+                      ? `Secador ${activeLine?.name || 'MS2'} - Lado de Comando (Portas Ímpares)` 
+                      : `Secador ${activeLine?.name || 'MS1'} - Lado de Comando (Portas Pares)`;
+                    const section1Doors = isMS2 ? oddDoors : evenDoors;
+
+                    // Section 2: Lado de Acionamento
+                    // MS1: Odd doors, MS2: Even doors
+                    const section2Title = isMS2 
+                      ? `Secador ${activeLine?.name || 'MS2'} - Lado de Acionamento (Portas Pares)` 
+                      : `Secador ${activeLine?.name || 'MS1'} - Lado de Acionamento (Portas Ímpares)`;
+                    const section2Doors = isMS2 ? evenDoors : oddDoors;
+
                     return (
-                      <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-extrabold text-xs text-slate-700 uppercase tracking-wider">
-                            Secador MS1 - Lado de Acionamento (Portas Ímpares)
-                          </h4>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Vista Frontal</span>
-                        </div>
-                        <div className="overflow-x-auto pb-2">
-                          <div className="min-w-[480px] space-y-2">
-                            {/* Doors Header */}
-                            <div className="grid grid-cols-[85px_repeat(12,1fr)] gap-1.5 items-center">
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-right pr-2">PORTAS</span>
-                              {oddDoors.map(door => (
-                                <span key={door} className="text-center font-black text-slate-600 text-xs py-1.5 bg-slate-100 rounded-lg">
-                                  {String(door).padStart(2, '0')}
-                                </span>
+                      <div className="space-y-6">
+                        {/* Section 1: Lado de Comando */}
+                        <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-extrabold text-xs text-slate-700 uppercase tracking-wider">
+                              {section1Title}
+                            </h4>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Vista Frontal</span>
+                          </div>
+                          <div className="overflow-x-auto pb-2">
+                            <div className="min-w-[480px] space-y-2">
+                              {/* Doors Header */}
+                              <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: `85px repeat(${section1Doors.length}, 1fr)` }}>
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-right pr-2">PORTAS</span>
+                                {section1Doors.map(door => (
+                                  <span key={door} className="text-center font-black text-slate-600 text-xs py-1.5 bg-slate-100 rounded-lg">
+                                    {door === 24 ? '00' : String(door).padStart(2, '0')}
+                                  </span>
+                                ))}
+                              </div>
+                              {/* Level Rows */}
+                              {levels.map(level => (
+                                <div key={level} className="grid gap-1.5 items-center" style={{ gridTemplateColumns: `85px repeat(${section1Doors.length}, 1fr)` }}>
+                                  <span className="font-extrabold text-slate-600 text-[11px] py-1 px-2 bg-slate-100/70 rounded-lg text-right pr-3">
+                                    Nível {level}
+                                  </span>
+                                  {section1Doors.map(door => {
+                                    const respId = `door_${door}_level_${level.toLowerCase()}`;
+                                    const resp = activeDryerSub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${door}_level_${level.toLowerCase()}`));
+                                    const statusInfo = getOverallStatusInfo(resp?.value);
+                                    const { code, bgClass, bgClassForSub, textClassForLabel } = statusInfo;
+                                    const doorDisplay = door === 24 ? '00' : String(door);
+                                    let titleTip = `Porta ${doorDisplay} - Nível ${level}: ${statusInfo.label}`;
+
+                                    if (resp?.observation) {
+                                      titleTip += ` | Obs: ${resp.observation}`;
+                                    }
+
+                                    const isSpecialDoor = door === 0 || door === 1 || door === 24;
+                                    const valObj = (resp && typeof resp.value === 'object' && resp.value !== null) ? resp.value : null;
+
+                                    return (
+                                      <div
+                                        key={door}
+                                        title={titleTip}
+                                        className="h-10 flex items-center justify-center text-xs transition-all duration-300 cursor-help hover:scale-105"
+                                      >
+                                        {isSpecialDoor ? (
+                                          // 2 radiators: represented as 2 columns
+                                          <div className="relative w-full h-full p-0.5 grid grid-cols-2 gap-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                                            {valObj ? (
+                                              <>
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.left, bgClassForSub)}`} />
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.right, bgClassForSub)}`} />
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                              </>
+                                            )}
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                              <span className={cn(
+                                                "text-[9px] font-black px-1 py-0.5 rounded shadow-[0_1px_2px_rgba(0,0,0,0.05)]",
+                                                code === '-' ? "bg-white/80 text-slate-500" : "bg-white/90",
+                                                textClassForLabel
+                                              )}>
+                                                {code}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          // 4 radiators: represented as 4 sub-boxes (2x2 grid)
+                                          <div className="relative w-full h-full p-0.5 grid grid-cols-2 gap-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                                            {valObj ? (
+                                              <>
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.left_top, bgClassForSub)}`} />
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.right_top, bgClassForSub)}`} />
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.left_bottom, bgClassForSub)}`} />
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.right_bottom, bgClassForSub)}`} />
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                              </>
+                                            )}
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                              <span className={cn(
+                                                "text-[9px] font-black px-1 py-0.5 rounded shadow-[0_1px_2px_rgba(0,0,0,0.05)]",
+                                                code === '-' ? "bg-white/80 text-slate-500" : "bg-white/90",
+                                                textClassForLabel
+                                              )}>
+                                                {code}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               ))}
                             </div>
-                            {/* Level Rows */}
-                            {levels.map(level => (
-                              <div key={level} className="grid grid-cols-[85px_repeat(12,1fr)] gap-1.5 items-center">
-                                <span className="font-extrabold text-slate-600 text-[11px] py-1 px-2 bg-slate-100/70 rounded-lg text-right pr-3">
-                                  Nível {level}
-                                </span>
-                                {oddDoors.map(door => {
-                                  const respId = `door_${door}_level_${level.toLowerCase()}`;
-                                  const resp = activeDryerSub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${door}_level_${level.toLowerCase()}`));
-                                  const valStr = resp ? String(resp.value).toLowerCase() : '';
+                          </div>
+                        </div>
 
-                                  let bgClass = "bg-slate-100/50 border border-slate-200 text-slate-400";
-                                  let code = "-";
-                                  let titleTip = `Porta ${door} - Nível ${level}: Não Inspecionado`;
-
-                                  if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
-                                    bgClass = "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black";
-                                    code = "3";
-                                    titleTip = `Porta ${door} - Nível ${level}: Pouco Sujo (Código 3)`;
-                                  } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
-                                    bgClass = "bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50 font-black";
-                                    code = "2";
-                                    titleTip = `Porta ${door} - Nível ${level}: Sujo (Código 2)`;
-                                  } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
-                                    bgClass = "bg-rose-600 text-white shadow-md shadow-rose-100 font-black";
-                                    code = "1";
-                                    titleTip = `Porta ${door} - Nível ${level}: Tamponado (Código 1)`;
-                                  }
-
-                                  if (resp?.observation) {
-                                    titleTip += ` | Obs: ${resp.observation}`;
-                                  }
-
-                                  return (
-                                    <div
-                                      key={door}
-                                      title={titleTip}
-                                      className={`h-9 flex items-center justify-center text-xs rounded-xl transition-all duration-300 cursor-help hover:scale-105 ${bgClass}`}
-                                    >
-                                      {code}
-                                    </div>
-                                  );
-                                })}
+                        {/* Section 2: Lado de Acionamento */}
+                        <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-extrabold text-xs text-slate-700 uppercase tracking-wider">
+                              {section2Title}
+                            </h4>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Vista Frontal</span>
+                          </div>
+                          <div className="overflow-x-auto pb-2">
+                            <div className="min-w-[480px] space-y-2">
+                              {/* Doors Header */}
+                              <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: `85px repeat(${section2Doors.length}, 1fr)` }}>
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-right pr-2">PORTAS</span>
+                                {section2Doors.map(door => (
+                                  <span key={door} className="text-center font-black text-slate-600 text-xs py-1.5 bg-slate-100 rounded-lg">
+                                    {door === 24 ? '00' : String(door).padStart(2, '0')}
+                                  </span>
+                                ))}
                               </div>
-                            ))}
+                              {/* Level Rows */}
+                              {levels.map(level => (
+                                <div key={level} className="grid gap-1.5 items-center" style={{ gridTemplateColumns: `85px repeat(${section2Doors.length}, 1fr)` }}>
+                                  <span className="font-extrabold text-slate-600 text-[11px] py-1 px-2 bg-slate-100/70 rounded-lg text-right pr-3">
+                                    Nível {level}
+                                  </span>
+                                  {section2Doors.map(door => {
+                                    const respId = `door_${door}_level_${level.toLowerCase()}`;
+                                    const resp = activeDryerSub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${door}_level_${level.toLowerCase()}`));
+                                    const statusInfo = getOverallStatusInfo(resp?.value);
+                                    const { code, bgClass, bgClassForSub, textClassForLabel } = statusInfo;
+                                    const doorDisplay = door === 24 ? '00' : String(door);
+                                    let titleTip = `Porta ${doorDisplay} - Nível ${level}: ${statusInfo.label}`;
+
+                                    if (resp?.observation) {
+                                      titleTip += ` | Obs: ${resp.observation}`;
+                                    }
+
+                                    const isSpecialDoor = door === 0 || door === 1 || door === 24;
+                                    const valObj = (resp && typeof resp.value === 'object' && resp.value !== null) ? resp.value : null;
+
+                                    return (
+                                      <div
+                                        key={door}
+                                        title={titleTip}
+                                        className="h-10 flex items-center justify-center text-xs transition-all duration-300 cursor-help hover:scale-105"
+                                      >
+                                        {isSpecialDoor ? (
+                                          // 2 radiators: represented as 2 columns
+                                          <div className="relative w-full h-full p-0.5 grid grid-cols-2 gap-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                                            {valObj ? (
+                                              <>
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.left, bgClassForSub)}`} />
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.right, bgClassForSub)}`} />
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                              </>
+                                            )}
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                              <span className={cn(
+                                                "text-[9px] font-black px-1 py-0.5 rounded shadow-[0_1px_2px_rgba(0,0,0,0.05)]",
+                                                code === '-' ? "bg-white/80 text-slate-500" : "bg-white/90",
+                                                textClassForLabel
+                                              )}>
+                                                {code}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          // 4 radiators: represented as 4 sub-boxes (2x2 grid)
+                                          <div className="relative w-full h-full p-0.5 grid grid-cols-2 gap-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                                            {valObj ? (
+                                              <>
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.left_top, bgClassForSub)}`} />
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.right_top, bgClassForSub)}`} />
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.left_bottom, bgClassForSub)}`} />
+                                                <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.right_bottom, bgClassForSub)}`} />
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                                <div className={`rounded-[3px] transition-all ${bgClassForSub}`} />
+                                              </>
+                                            )}
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                              <span className={cn(
+                                                "text-[9px] font-black px-1 py-0.5 rounded shadow-[0_1px_2px_rgba(0,0,0,0.05)]",
+                                                code === '-' ? "bg-white/80 text-slate-500" : "bg-white/90",
+                                                textClassForLabel
+                                              )}>
+                                                {code}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       </div>
