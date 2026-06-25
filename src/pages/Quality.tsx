@@ -1019,12 +1019,21 @@ const Quality: React.FC = () => {
 
     const isDryer = template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador');
     if (isDryer && value) {
-      const lowerVal = String(value).toLowerCase();
-      if (lowerVal.includes('pouco') || lowerVal === 'pouco sujo' || lowerVal === 'pouco suja' || lowerVal.includes('limp')) {
-        return true;
-      }
-      if (lowerVal.includes('suj') || lowerVal.includes('tamponado') || lowerVal.includes('tamponada') || lowerVal.includes('vermelho')) {
-        return false;
+      if (typeof value === 'object' && value !== null) {
+        const statuses = Object.values(value) as string[];
+        const hasNonCompliant = statuses.some(s => {
+          const lowerS = String(s).toLowerCase();
+          return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
+        });
+        return !hasNonCompliant;
+      } else {
+        const lowerVal = String(value).toLowerCase();
+        if (lowerVal.includes('pouco') || lowerVal === 'pouco sujo' || lowerVal === 'pouco suja' || lowerVal.includes('limp')) {
+          return true;
+        }
+        if (lowerVal.includes('suj') || lowerVal.includes('tamponado') || lowerVal.includes('tamponada') || lowerVal.includes('vermelho')) {
+          return false;
+        }
       }
     }
 
@@ -1368,16 +1377,36 @@ const Quality: React.FC = () => {
           doors.forEach((doorNum, colIdx) => {
             const x = gridStartX + labelWidth + colIdx * cellWidth;
             
-            // Get the response for this specific door and level (using strict exact matching)
+            // Get the response for this specific door and level (using safe exact and suffix matching)
             const respId = `door_${doorNum}_level_${level.toLowerCase()}`;
-            const response = sub.responses.find(r => r.itemId === respId);
+            const response = sub.responses.find(r => 
+              r.itemId === respId || 
+              r.itemId.endsWith(`_door_${doorNum}_level_${level.toLowerCase()}`) || 
+              r.itemId.endsWith(`_${doorNum}_level_${level.toLowerCase()}`)
+            );
             
-            const valObj = (response && typeof response.value === 'object' && response.value !== null) ? response.value : null;
-            const valStr = response ? (valObj ? "" : String(response.value).toLowerCase()) : '';
-            
-            let fillColor = [255, 255, 255]; // white (default)
+            // Replicate exactly the same logic as the UI status calculation
+            const getPdfColorForOverallValue = (value: any, defaultColor = [241, 245, 249]) => {
+              if (!value) return defaultColor;
+              if (typeof value === 'object' && value !== null) {
+                const statuses = Object.values(value) as string[];
+                const hasTamponado = statuses.some(s => s.toLowerCase().includes('tamponado') || s.toLowerCase().includes('vermelho'));
+                const hasSujo = statuses.some(s => s.toLowerCase() === 'sujo' || s.toLowerCase() === 'suja' || s.toLowerCase().includes('suj'));
+                const hasPoucoSujo = statuses.some(s => s.toLowerCase().includes('pouco'));
 
-            const getPdfColorForStatus = (status: string | undefined, defaultColor = [255, 255, 255]) => {
+                if (hasTamponado) return [239, 68, 68]; // Red
+                if (hasSujo) return [245, 158, 11]; // Yellow
+                if (hasPoucoSujo) return [16, 185, 129]; // Green
+                return defaultColor;
+              }
+              const valStr = String(value).toLowerCase();
+              if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') return [16, 185, 129]; // Green
+              if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) return [245, 158, 11]; // Yellow
+              if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') return [239, 68, 68]; // Red
+              return defaultColor;
+            };
+
+            const getPdfColorForStatus = (status: string | undefined, defaultColor = [241, 245, 249]) => {
               if (!status) return defaultColor;
               const s = status.toLowerCase();
               if (s.includes('pouco') || s === 'pouco sujo' || s === 'pouco suja') return [16, 185, 129]; // Green
@@ -1386,23 +1415,16 @@ const Quality: React.FC = () => {
               return defaultColor;
             };
 
-            if (!valObj) {
-              if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
-                fillColor = [16, 185, 129]; // Green (Pouco sujo)
-              } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo')) {
-                fillColor = [245, 158, 11]; // Yellow (Sujo)
-              } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
-                fillColor = [239, 68, 68]; // Red (Tamponado)
-              }
-            }
+            const overallColor = getPdfColorForOverallValue(response?.value);
+            const valObj = (response && typeof response.value === 'object' && response.value !== null) ? response.value : null;
 
             const isSpecialDoor = doorNum === 0 || doorNum === 1 || doorNum === 24;
 
             if (isSpecialDoor) {
               const subW = cellWidth / 2;
               if (valObj) {
-                const colorLeft = getPdfColorForStatus(valObj.left);
-                const colorRight = getPdfColorForStatus(valObj.right);
+                const colorLeft = getPdfColorForStatus(valObj.left, overallColor);
+                const colorRight = getPdfColorForStatus(valObj.right, overallColor);
                 
                 doc.setDrawColor(148, 163, 184);
                 doc.setLineWidth(0.05);
@@ -1416,7 +1438,7 @@ const Quality: React.FC = () => {
                 doc.rect(x + subW, y, subW, cellHeight, 'FD');
               } else {
                 // Single block/no split
-                doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+                doc.setFillColor(overallColor[0], overallColor[1], overallColor[2]);
                 doc.setDrawColor(148, 163, 184);
                 doc.setLineWidth(0.05);
                 doc.rect(x, y, cellWidth, cellHeight, 'FD');
@@ -1433,10 +1455,10 @@ const Quality: React.FC = () => {
               const gapX = 0.4;
               const gapY = 0.4;
               
-              const colorLeftTop = valObj ? getPdfColorForStatus(valObj.left_top) : fillColor;
-              const colorRightTop = valObj ? getPdfColorForStatus(valObj.right_top) : fillColor;
-              const colorLeftBottom = valObj ? getPdfColorForStatus(valObj.left_bottom) : fillColor;
-              const colorRightBottom = valObj ? getPdfColorForStatus(valObj.right_bottom) : fillColor;
+              const colorLeftTop = valObj ? getPdfColorForStatus(valObj.left_top, overallColor) : overallColor;
+              const colorRightTop = valObj ? getPdfColorForStatus(valObj.right_top, overallColor) : overallColor;
+              const colorLeftBottom = valObj ? getPdfColorForStatus(valObj.left_bottom, overallColor) : overallColor;
+              const colorRightBottom = valObj ? getPdfColorForStatus(valObj.right_bottom, overallColor) : overallColor;
 
               doc.setDrawColor(148, 163, 184);
               doc.setLineWidth(0.05);
@@ -3907,7 +3929,11 @@ const Quality: React.FC = () => {
                                   </span>
                                   {section1Doors.map(door => {
                                     const respId = `door_${door}_level_${level.toLowerCase()}`;
-                                    const resp = activeDryerSub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${door}_level_${level.toLowerCase()}`));
+                                    const resp = activeDryerSub.responses.find(r => 
+                                      r.itemId === respId || 
+                                      r.itemId.endsWith(`_door_${door}_level_${level.toLowerCase()}`) || 
+                                      r.itemId.endsWith(`_${door}_level_${level.toLowerCase()}`)
+                                    );
                                     const statusInfo = getOverallStatusInfo(resp?.value);
                                     const { code, bgClass, bgClassForSub, textClassForLabel } = statusInfo;
                                     const doorDisplay = door === 24 ? '00' : String(door);
@@ -4015,7 +4041,11 @@ const Quality: React.FC = () => {
                                   </span>
                                   {section2Doors.map(door => {
                                     const respId = `door_${door}_level_${level.toLowerCase()}`;
-                                    const resp = activeDryerSub.responses.find(r => r.itemId === respId || r.itemId.includes(`_${door}_level_${level.toLowerCase()}`));
+                                    const resp = activeDryerSub.responses.find(r => 
+                                      r.itemId === respId || 
+                                      r.itemId.endsWith(`_door_${door}_level_${level.toLowerCase()}`) || 
+                                      r.itemId.endsWith(`_${door}_level_${level.toLowerCase()}`)
+                                    );
                                     const statusInfo = getOverallStatusInfo(resp?.value);
                                     const { code, bgClass, bgClassForSub, textClassForLabel } = statusInfo;
                                     const doorDisplay = door === 24 ? '00' : String(door);
