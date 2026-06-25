@@ -4491,7 +4491,7 @@ const Quality: React.FC = () => {
                        </div>
                        <div className="text-right">
                          <div className={getBadgeColorClasses(resp.value, compliant)}>
-                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : resp.value))}
+                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : (typeof resp.value === 'object' && resp.value !== null ? (resp.value.left_top !== undefined ? `LE: ${resp.value.left_top || '-'} RE: ${resp.value.right_top || '-'} LD: ${resp.value.left_bottom || '-'} RD: ${resp.value.right_bottom || '-'}` : `E: ${resp.value.left || '-'} D: ${resp.value.right || '-'}`) : String(resp.value || ''))))}
                           </div>
                        </div>
                       </div>

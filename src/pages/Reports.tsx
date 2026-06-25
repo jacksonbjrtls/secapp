@@ -1929,9 +1929,13 @@ const Reports: React.FC = () => {
                                      "px-2 py-0.5 rounded text-[9px] font-black uppercase",
                                      res.value === 'ok' || res.value === true ? "bg-emerald-100 text-emerald-700" :
                                      res.value === 'nok' || res.value === false ? "bg-rose-100 text-rose-700" :
-                                     "bg-slate-100 text-slate-600"
+                                     (typeof res.value === 'object' && res.value !== null) ? (
+                                       Object.values(res.value).some((s: any) => String(s).toLowerCase().includes('tamponado') || String(s).toLowerCase().includes('vermelho')) ? "bg-rose-100 text-rose-700" :
+                                       Object.values(res.value).some((s: any) => String(s).toLowerCase().includes('suj')) ? "bg-amber-100 text-amber-700" :
+                                       "bg-emerald-100 text-emerald-700"
+                                     ) : "bg-slate-100 text-slate-600"
                                    )}>
-                                     {res.label}{res.value !== undefined ? ': ' : ''}{res.value === true ? 'Sim' : res.value === false ? 'Não' : (res.value || '')}
+                                     {res.label}{res.value !== undefined ? ': ' : ''}{res.value === true ? 'Sim' : res.value === false ? 'Não' : (typeof res.value === 'object' && res.value !== null ? (res.value.left_top !== undefined ? `LE: ${res.value.left_top || '-'} RE: ${res.value.right_top || '-'} LD: ${res.value.left_bottom || '-'} RD: ${res.value.right_bottom || '-'}` : `E: ${res.value.left || '-'} D: ${res.value.right || '-'}`) : (res.value || ''))}
                                    </span>
                                 ))}
 

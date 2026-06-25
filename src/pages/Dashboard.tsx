@@ -649,8 +649,28 @@ const Dashboard: React.FC = () => {
   // Quality Metrics
   const qualityMetrics = useMemo(() => {
     const isResponseCompliant = (itemId: string, value: any, template: any) => {
-      const item = template.items.find((i: any) => i.id === itemId);
+      const item = template?.items?.find((i: any) => i.id === itemId);
       if (!item) return true;
+
+      const isDryer = template?.name?.toLowerCase().includes('limpeza') || template?.name?.toLowerCase().includes('secador');
+      if (isDryer && value) {
+        if (typeof value === 'object' && value !== null) {
+          const statuses = Object.values(value) as string[];
+          const hasNonCompliant = statuses.some(s => {
+            const lowerS = String(s).toLowerCase();
+            return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
+          });
+          return !hasNonCompliant;
+        } else {
+          const lowerVal = String(value).toLowerCase();
+          if (lowerVal.includes('pouco') || lowerVal === 'pouco sujo' || lowerVal === 'pouco suja' || lowerVal.includes('limp')) {
+            return true;
+          }
+          if (lowerVal.includes('suj') || lowerVal.includes('tamponado') || lowerVal.includes('tamponada') || lowerVal.includes('vermelho')) {
+            return false;
+          }
+        }
+      }
 
       if (item.type === 'condition') {
         if (item.conditionOptionsId) {

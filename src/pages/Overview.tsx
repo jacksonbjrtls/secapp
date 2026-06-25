@@ -456,6 +456,26 @@ export const Overview: React.FC = () => {
       const item = template?.items?.find((i: any) => i.id === itemId);
       if (!item) return true;
 
+      const isDryer = template?.name?.toLowerCase().includes('limpeza') || template?.name?.toLowerCase().includes('secador');
+      if (isDryer && value) {
+        if (typeof value === 'object' && value !== null) {
+          const statuses = Object.values(value) as string[];
+          const hasNonCompliant = statuses.some(s => {
+            const lowerS = String(s).toLowerCase();
+            return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
+          });
+          return !hasNonCompliant;
+        } else {
+          const lowerVal = String(value).toLowerCase();
+          if (lowerVal.includes('pouco') || lowerVal === 'pouco sujo' || lowerVal === 'pouco suja' || lowerVal.includes('limp')) {
+            return true;
+          }
+          if (lowerVal.includes('suj') || lowerVal.includes('tamponado') || lowerVal.includes('tamponada') || lowerVal.includes('vermelho')) {
+            return false;
+          }
+        }
+      }
+
       const valStr = String(value).toUpperCase().trim();
 
       if (item.type === 'condition') {
@@ -569,9 +589,9 @@ export const Overview: React.FC = () => {
           line: lineObj?.name || '---',
           operator: sub.userName,
           shift: sub.shift,
-          time: safeToDate(sub.createdAt)?.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})
+          time: safeToDate(sub.createdAt)?.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'}) || ''
         };
-      }).sort((a,b) => b.time.localeCompare(a.time)).slice(0, 5),
+      }).sort((a,b) => (b.time || '').localeCompare(a.time || '')).slice(0, 5),
       failingSubmissions: itemsWithFailure
     };
   }, [qualitySubmissions, qualityOmissions, qualityTemplates, qualitySectors, lines, qualityOptionSets, todayStart, todayEnd]);
