@@ -11,7 +11,7 @@ const firebaseConfig = {
   appId:             (import.meta as any).env.VITE_FIREBASE_APP_ID || "1:328642603761:web:62d4a334ccd5524ba71750",
 };
 
-const firestoreDatabaseId = (import.meta as any).env.VITE_FIREBASE_DATABASE_ID || undefined;
+const firestoreDatabaseId = (import.meta as any).env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firestoreDatabaseId);

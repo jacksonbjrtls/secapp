@@ -126,7 +126,7 @@ const requireAdmin = async (req: AuthenticatedRequest, res: Response, next: Next
       }
 
       // 3. Check Firestore user document
-      const dbFirestore = getFirestore(undefined, (firebaseConfig as any).firestoreDatabaseId || "(default)");
+      const dbFirestore = getFirestore(undefined, (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52");
       const userDoc = await dbFirestore.collection("users").doc(uid).get();
 
       if (!userDoc.exists) {

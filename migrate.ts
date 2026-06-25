@@ -37,7 +37,7 @@ if (getApps().length === 0) {
   });
 }
 
-const db = getFirestore(undefined, firebaseConfig.firestoreDatabaseId || "(default)");
+const db = getFirestore(undefined, firebaseConfig.firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52");
 
 // 2. Cryptographic helpers
 const legacyRc4 = (key: string, input: string): string => {
