@@ -257,11 +257,11 @@ const Quality: React.FC = () => {
           
           if (optSet) {
             const items = [];
-            for (let door = 0; door < 24; door++) {
+            for (let door = 0; door <= 24; door++) {
               for (const level of ['A', 'B', 'C', 'D']) {
                 items.push({
                   id: `door_${door}_level_${level.toLowerCase()}`,
-                  label: `Porta ${door} - Nivel ${level}`,
+                  label: `Porta ${door === 24 ? '00' : door} - Nivel ${level}`,
                   type: "condition",
                   required: false,
                   conditionOptionsId: optSet.id,
@@ -279,26 +279,26 @@ const Quality: React.FC = () => {
               createdAt: serverTimestamp(),
               items: items
             });
-            console.log("Seeded Dryer Cleanliness template with 96 items successfully.");
+            console.log("Seeded Dryer Cleanliness template with 100 items successfully.");
           }
         } catch (err) {
           console.error("Error auto-seeding template:", err);
         }
       } else {
-        // If it exists but has very few items (e.g. only 1), expand it to 96 items
+        // If it exists but has less than 100 items (e.g. 96), expand it to 100 items to include door 24 (00)
         const dryerTemplate = fetchedTemplates.find(t => t.name.toLowerCase().includes('limpeza') || t.name.toLowerCase().includes('secador'));
-        if (dryerTemplate && dryerTemplate.items.length < 5) {
+        if (dryerTemplate && dryerTemplate.items.length < 100) {
           try {
             const optionsSnap = await getDocs(collection(db, 'quality_checklist_options'));
             const optionsList = optionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as QualityChecklistOptionSet));
             const optSet = optionsList.find(o => o.name.toLowerCase().includes('limpeza') || o.name.toLowerCase().includes('secador'));
             if (optSet) {
               const items = [];
-              for (let door = 0; door < 24; door++) {
+              for (let door = 0; door <= 24; door++) {
                 for (const level of ['A', 'B', 'C', 'D']) {
                   items.push({
                     id: `door_${door}_level_${level.toLowerCase()}`,
-                    label: `Porta ${door} - Nivel ${level}`,
+                    label: `Porta ${door === 24 ? '00' : door} - Nivel ${level}`,
                     type: "condition",
                     required: false,
                     conditionOptionsId: optSet.id,
@@ -309,7 +309,7 @@ const Quality: React.FC = () => {
               await updateDoc(doc(db, 'quality_checklist_templates', dryerTemplate.id), {
                 items: items
               });
-              console.log("Successfully updated existing dryer template to 96 items.");
+              console.log("Successfully updated existing dryer template to 100 items.");
             }
           } catch (err) {
             console.error("Error expanding existing dryer template:", err);
@@ -1179,7 +1179,8 @@ const Quality: React.FC = () => {
 
         doors.forEach((doorNum, colIdx) => {
           const x = gridStartX + labelWidth + colIdx * cellWidth;
-          doc.text(String(doorNum).padStart(2, '0'), x + cellWidth / 2, gridStartY + 5, { align: 'center' });
+          const displayLabel = doorNum === 24 ? '00' : String(doorNum);
+          doc.text(displayLabel, x + cellWidth / 2, gridStartY + 5, { align: 'center' });
         });
 
         // Draw rows for Nível A, B, C, D
@@ -1249,7 +1250,7 @@ const Quality: React.FC = () => {
       };
 
       // Section 2: Comando Side (Even Doors)
-      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 0];
+      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
       currentY = drawDryerGrid('Secador MS1 - Lado de Comando (Portas Pares)', evenDoors, currentY);
 
       // Section 3: Acionamento Side (Odd Doors)
@@ -3192,7 +3193,7 @@ const Quality: React.FC = () => {
 
                   {/* Even Doors (Lado Comando) */}
                   {(() => {
-                    const evenDoors = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 0];
+                    const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
                     const levels = ['A', 'B', 'C', 'D'];
                     return (
                       <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100 space-y-4">
@@ -3205,17 +3206,17 @@ const Quality: React.FC = () => {
                         <div className="overflow-x-auto pb-2">
                           <div className="min-w-[480px] space-y-2">
                             {/* Doors Header */}
-                            <div className="grid grid-cols-[85px_repeat(12,1fr)] gap-1.5 items-center">
+                            <div className="grid grid-cols-[85px_repeat(13,1fr)] gap-1.5 items-center">
                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-right pr-2">PORTAS</span>
                               {evenDoors.map(door => (
                                 <span key={door} className="text-center font-black text-slate-600 text-xs py-1.5 bg-slate-100 rounded-lg">
-                                  {String(door).padStart(2, '0')}
+                                  {door === 24 ? '00' : String(door)}
                                 </span>
                               ))}
                             </div>
                             {/* Level Rows */}
                             {levels.map(level => (
-                              <div key={level} className="grid grid-cols-[85px_repeat(12,1fr)] gap-1.5 items-center">
+                              <div key={level} className="grid grid-cols-[85px_repeat(13,1fr)] gap-1.5 items-center">
                                 <span className="font-extrabold text-slate-600 text-[11px] py-1 px-2 bg-slate-100/70 rounded-lg text-right pr-3">
                                   Nível {level}
                                 </span>
@@ -3226,20 +3227,21 @@ const Quality: React.FC = () => {
 
                                   let bgClass = "bg-slate-100/50 border border-slate-200 text-slate-400";
                                   let code = "-";
-                                  let titleTip = `Porta ${door} - Nível ${level}: Não Inspecionado`;
+                                  const doorDisplay = door === 24 ? '00' : String(door);
+                                  let titleTip = `Porta ${doorDisplay} - Nível ${level}: Não Inspecionado`;
 
                                   if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
                                     bgClass = "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black";
                                     code = "3";
-                                    titleTip = `Porta ${door} - Nível ${level}: Pouco Sujo (Código 3)`;
+                                    titleTip = `Porta ${doorDisplay} - Nível ${level}: Pouco Sujo (Código 3)`;
                                   } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
                                     bgClass = "bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50 font-black";
                                     code = "2";
-                                    titleTip = `Porta ${door} - Nível ${level}: Sujo (Código 2)`;
+                                    titleTip = `Porta ${doorDisplay} - Nível ${level}: Sujo (Código 2)`;
                                   } else if (valStr.includes('tamponado') || valStr.includes('tamponada') || valStr === 'vermelho') {
                                     bgClass = "bg-rose-600 text-white shadow-md shadow-rose-100 font-black";
                                     code = "1";
-                                    titleTip = `Porta ${door} - Nível ${level}: Tamponado (Código 1)`;
+                                    titleTip = `Porta ${doorDisplay} - Nível ${level}: Tamponado (Código 1)`;
                                   }
 
                                   if (resp?.observation) {
