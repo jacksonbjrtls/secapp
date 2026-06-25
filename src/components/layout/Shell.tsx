@@ -221,7 +221,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'forklifts', name: 'Empilhadeiras', href: '/forklifts', icon: Truck, show: activeModules.forklifts !== false },
       { id: 'wires', name: 'Arames', href: '/wires', icon: Factory, show: activeModules.wires !== false },
       { id: 'consumables', name: 'Insumos', href: '/consumables', icon: PackagePlus, show: activeModules.consumables !== false },
-      { id: 'quality', name: 'Qualidade', href: '/quality', icon: ClipboardCheck, show: activeModules.quality !== false },
+      { id: 'quality', name: 'Inspeções', href: '/quality', icon: ClipboardCheck, show: activeModules.quality !== false },
       { id: 'dds', name: 'DDS Online', href: '/dds', icon: ShieldCheck, show: activeModules.dds !== false },
       { id: 'operational_routes', name: 'Rota Operacional', href: '/operational-routes', icon: Activity, show: activeModules.operational_routes !== false },
       { id: 'safety_observations', name: 'Obs. Segurança', href: '/safety-observations', icon: ShieldAlert, show: activeModules.safety_observations !== false },

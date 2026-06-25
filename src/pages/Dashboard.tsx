@@ -70,7 +70,7 @@ const Dashboard: React.FC = () => {
   const tabsList = useMemo(() => [
     { id: 'dds', moduleKey: 'dds', label: 'DDS Online', icon: Shield },
     { id: 'forklifts', moduleKey: 'forklifts', label: 'Empilhadeiras', icon: Truck },
-    { id: 'quality', moduleKey: 'quality', label: 'Qualidade', icon: ClipboardCheck },
+    { id: 'quality', moduleKey: 'quality', label: 'Inspeções', icon: ClipboardCheck },
     { id: 'wire', moduleKey: 'wires', label: 'Arames', icon: LayersIcon },
     { id: 'operational_routes', moduleKey: 'operational_routes', label: 'Rota Operacional', icon: Activity },
     { id: 'safety_observations', moduleKey: 'safety_observations', label: 'Observações de Segurança', icon: ShieldAlert },
