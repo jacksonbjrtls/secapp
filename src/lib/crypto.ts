@@ -179,12 +179,18 @@ export const encryptValue = async (value: string | null | undefined): Promise<st
   }
 };
 
+const decryptionCache = new Map<string, string>();
+
 /**
  * Decrypt an encrypted value (supports AES-256-GCM and fallback to legacy RC4)
  */
 export const decryptValue = async (value: string | null | undefined): Promise<string> => {
   if (!value) return '';
   const str = String(value).trim();
+
+  // Check cache first
+  const cached = decryptionCache.get(str);
+  if (cached !== undefined) return cached;
 
   // 1. Decrypt AES-GCM
   if (str.startsWith('__ENC_GCM__')) {
@@ -206,7 +212,9 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
         ciphertext
       );
 
-      return new TextDecoder().decode(decryptedBuffer);
+      const result = new TextDecoder().decode(decryptedBuffer);
+      decryptionCache.set(str, result);
+      return result;
     } catch (error) {
       console.error('[Crypto] AES-GCM Decryption error:', error);
       return str; // Return original value as fallback
@@ -215,10 +223,13 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
 
   // 2. Fallback to legacy RC4 decryption
   if (str.startsWith('__ENC__')) {
-    return decryptLegacyRc4(str);
+    const result = decryptLegacyRc4(str);
+    decryptionCache.set(str, result);
+    return result;
   }
 
   // 3. Not encrypted, return as-is
+  decryptionCache.set(str, str);
   return str;
 };
 

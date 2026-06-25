@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { getFirestore, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
@@ -17,11 +17,11 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firestoreDatabaseId);
 
 if (typeof window !== 'undefined') {
-  enableIndexedDbPersistence(db).catch((err) => {
+  enableMultiTabIndexedDbPersistence(db).catch((err) => {
     if (err.code === 'failed-precondition') {
-      console.warn('Firestore persistence failed-precondition');
+      console.warn('Firestore multi-tab persistence failed-precondition (expected if another process is active, sharing will continue)');
     } else if (err.code === 'unimplemented') {
-      console.warn('Firestore persistence unimplemented');
+      console.warn('Firestore multi-tab persistence unimplemented');
     }
   });
 }

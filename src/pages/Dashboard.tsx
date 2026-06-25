@@ -652,12 +652,13 @@ const Dashboard: React.FC = () => {
       const item = template?.items?.find((i: any) => i.id === itemId);
       if (!item) return true;
 
-      const isDryer = template?.name?.toLowerCase().includes('limpeza') || template?.name?.toLowerCase().includes('secador');
+      const isDryer = template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
       if (isDryer && value) {
         if (typeof value === 'object' && value !== null) {
           const statuses = Object.values(value) as string[];
           const hasNonCompliant = statuses.some(s => {
             const lowerS = String(s).toLowerCase();
+            if (lowerS.includes('pouco') || lowerS.includes('limp')) return false;
             return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
           });
           return !hasNonCompliant;

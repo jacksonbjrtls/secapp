@@ -218,9 +218,13 @@ const ConsumablesControl: React.FC = () => {
     );
 
     const unsubLines = onSnapshot(
-      query(collection(db, 'production_lines'), where('active', '==', true), orderBy('name')),
+      collection(db, 'production_lines'),
       (snap) => {
-        setLines(snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionLine)));
+        const mapped = snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionLine));
+        const filteredAndSorted = mapped
+          .filter(d => d.active === true)
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setLines(filteredAndSorted);
       },
       (err) => handleLocalError(err, 'listen', 'production_lines')
     );

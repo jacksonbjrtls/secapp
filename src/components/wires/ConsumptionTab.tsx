@@ -172,13 +172,14 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
 
     const q = query(
       collection(db, 'wire_coils'),
-      where('status', '==', 'consumed'),
       where('consumedAt', '>=', today),
       orderBy('consumedAt', 'desc')
     );
 
     const unsubscribe = onSnapshot(q, (snap) => {
-      const coils = snap.docs.map(d => ({ id: d.id, ...d.data() } as WireCoil));
+      const coils = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+        .filter(d => d.status === 'consumed');
       setRecentConsumptions(coils);
     }, (err) => {
       console.error("Error listening to consumptions:", err);

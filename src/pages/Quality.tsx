@@ -126,10 +126,19 @@ const getOverallStatusInfo = (value: any) => {
   }
   
   if (typeof value === 'object' && value !== null) {
-    const statuses = Object.values(value) as string[];
-    const hasTamponado = statuses.some(s => s.toLowerCase().includes('tamponado') || s.toLowerCase().includes('vermelho'));
-    const hasSujo = statuses.some(s => s.toLowerCase() === 'sujo' || s.toLowerCase() === 'suja' || s.toLowerCase().includes('suj'));
-    const hasPoucoSujo = statuses.some(s => s.toLowerCase().includes('pouco'));
+    const statuses = Object.values(value);
+    const hasTamponado = statuses.some(s => {
+      const ls = String(s || '').toLowerCase();
+      return ls.includes('tamponado') || ls.includes('vermelho');
+    });
+    const hasSujo = statuses.some(s => {
+      const ls = String(s || '').toLowerCase();
+      return ls === 'sujo' || ls === 'suja' || ls.includes('suj');
+    });
+    const hasPoucoSujo = statuses.some(s => {
+      const ls = String(s || '').toLowerCase();
+      return ls.includes('pouco');
+    });
 
     if (hasTamponado) {
       return { 
@@ -202,6 +211,26 @@ const getOverallStatusInfo = (value: any) => {
 
 const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
   if (value === undefined || value === null) return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-slate-500 text-white";
+  
+  if (typeof value === 'object' && value !== null) {
+    const statuses = Object.values(value);
+    const hasTamponado = statuses.some(s => {
+      const ls = String(s || '').toLowerCase();
+      return ls.includes('tamponado') || ls.includes('vermelho');
+    });
+    const hasSujo = statuses.some(s => {
+      const ls = String(s || '').toLowerCase();
+      return ls.includes('suj') && !ls.includes('pouco');
+    });
+    if (hasTamponado) {
+      return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-rose-600 text-white shadow-md shadow-rose-100";
+    }
+    if (hasSujo) {
+      return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50";
+    }
+    return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-emerald-500 text-white shadow-sm shadow-emerald-100";
+  }
+
   const valStr = String(value).toLowerCase();
   
   // Pouco sujo / conforme
@@ -227,6 +256,26 @@ const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
 
 const getIconColorClasses = (value: any, isCompliant: boolean) => {
   if (value === undefined || value === null) return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-slate-50 text-slate-600";
+  
+  if (typeof value === 'object' && value !== null) {
+    const statuses = Object.values(value);
+    const hasTamponado = statuses.some(s => {
+      const ls = String(s || '').toLowerCase();
+      return ls.includes('tamponado') || ls.includes('vermelho');
+    });
+    const hasSujo = statuses.some(s => {
+      const ls = String(s || '').toLowerCase();
+      return ls.includes('suj') && !ls.includes('pouco');
+    });
+    if (hasTamponado) {
+      return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-rose-50 text-rose-600 border border-rose-200";
+    }
+    if (hasSujo) {
+      return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-yellow-50 text-yellow-600 border border-yellow-200";
+    }
+    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-emerald-50 text-emerald-600 border border-emerald-200";
+  }
+
   const valStr = String(value).toLowerCase();
   
   if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('pouco') || valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
@@ -324,7 +373,7 @@ const Quality: React.FC = () => {
   useEffect(() => {
     const dryerSubs = submissions.filter(sub => {
       const template = templates.find(t => t.id === sub.templateId);
-      return template?.name.toLowerCase().includes('limpeza') || template?.name.toLowerCase().includes('secador');
+      return template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
     });
     if (dryerSubs.length > 0) {
       if (!selectedDryerSubId || !dryerSubs.some(s => s.id === selectedDryerSubId)) {
@@ -1017,12 +1066,13 @@ const Quality: React.FC = () => {
     const item = template.items.find(i => i.id === itemId);
     if (!item) return true;
 
-    const isDryer = template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador');
+    const isDryer = template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
     if (isDryer && value) {
       if (typeof value === 'object' && value !== null) {
         const statuses = Object.values(value) as string[];
         const hasNonCompliant = statuses.some(s => {
           const lowerS = String(s).toLowerCase();
+          if (lowerS.includes('pouco') || lowerS.includes('limp')) return false;
           return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
         });
         return !hasNonCompliant;
@@ -1122,7 +1172,7 @@ const Quality: React.FC = () => {
     const template = templates.find(t => t.id === sub.templateId);
     const sectorName = sectors.find(s => s.id === sub.sectorId)?.name || 'Todos os Setores';
     const lineName = lines.find(l => l.id === sub.lineId)?.name || 'N/A';
-    const isDryer = template?.name.toLowerCase().includes('limpeza') || template?.name.toLowerCase().includes('secador');
+    const isDryer = template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
     
     // Header - Standardized Emerald Theme
     doc.setFillColor(5, 150, 105); // emerald-600
@@ -1389,10 +1439,19 @@ const Quality: React.FC = () => {
             const getPdfColorForOverallValue = (value: any, defaultColor = [241, 245, 249]) => {
               if (!value) return defaultColor;
               if (typeof value === 'object' && value !== null) {
-                const statuses = Object.values(value) as string[];
-                const hasTamponado = statuses.some(s => s.toLowerCase().includes('tamponado') || s.toLowerCase().includes('vermelho'));
-                const hasSujo = statuses.some(s => s.toLowerCase() === 'sujo' || s.toLowerCase() === 'suja' || s.toLowerCase().includes('suj'));
-                const hasPoucoSujo = statuses.some(s => s.toLowerCase().includes('pouco'));
+                const statuses = Object.values(value);
+                const hasTamponado = statuses.some(s => {
+                  const ls = String(s || '').toLowerCase();
+                  return ls.includes('tamponado') || ls.includes('vermelho');
+                });
+                const hasSujo = statuses.some(s => {
+                  const ls = String(s || '').toLowerCase();
+                  return ls === 'sujo' || ls === 'suja' || ls.includes('suj');
+                });
+                const hasPoucoSujo = statuses.some(s => {
+                  const ls = String(s || '').toLowerCase();
+                  return ls.includes('pouco');
+                });
 
                 if (hasTamponado) return [239, 68, 68]; // Red
                 if (hasSujo) return [245, 158, 11]; // Yellow
@@ -1584,7 +1643,7 @@ const Quality: React.FC = () => {
     
     sortedSubs.forEach(sub => {
       const template = templates.find(t => t.id === sub.templateId);
-      const isDryerOrLimpeza = template?.name.toLowerCase().includes('limpeza') || template?.name.toLowerCase().includes('secador');
+      const isDryerOrLimpeza = template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
       
       sub.responses.forEach(resp => {
         const item = template?.items.find(it => it.id === resp.itemId);
@@ -1649,7 +1708,7 @@ const Quality: React.FC = () => {
 
   const dryerSubmissions = submissions.filter(sub => {
     const template = templates.find(t => t.id === sub.templateId);
-    return template?.name.toLowerCase().includes('limpeza') || template?.name.toLowerCase().includes('secador');
+    return template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
   });
 
   const activeDryerSub = dryerSubmissions.find(s => s.id === selectedDryerSubId) || dryerSubmissions[0];

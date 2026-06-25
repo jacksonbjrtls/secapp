@@ -478,13 +478,11 @@ const DDS: React.FC = () => {
     setHistoryLoading(true);
     const q = query(
       collection(db, 'dds_signatures'),
-      where('userId', '==', auth.currentUser.uid),
-      orderBy('timestamp', 'desc'),
-      limit(5)
+      where('userId', '==', auth.currentUser.uid)
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const signatures = await Promise.all(snapshot.docs.map(async (doc) => {
+      let signatures = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
         return {
@@ -493,6 +491,15 @@ const DDS: React.FC = () => {
           userName: decName
         };
       }));
+      
+      // Sort client-side descending by timestamp
+      signatures.sort((a: any, b: any) => {
+        const tA = a.timestamp?.seconds || (a.timestamp ? new Date(a.timestamp).getTime() / 1000 : 0);
+        const tB = b.timestamp?.seconds || (b.timestamp ? new Date(b.timestamp).getTime() / 1000 : 0);
+        return tB - tA;
+      });
+      // Limit to 5
+      signatures = signatures.slice(0, 5);
       
       // If sessionTitle is missing (backward compatibility), fetch it
       const historyWithTitles = await Promise.all(signatures.map(async (sig: any) => {
@@ -528,8 +535,7 @@ const DDS: React.FC = () => {
     setSignaturesLoading(true);
     const q = query(
       collection(db, 'dds_signatures'),
-      where('sessionId', '==', expandedSessionId),
-      orderBy('timestamp', 'desc')
+      where('sessionId', '==', expandedSessionId)
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -542,6 +548,12 @@ const DDS: React.FC = () => {
           userName: decName
         };
       }));
+      // Sort client-side descending by timestamp
+      sigs.sort((a: any, b: any) => {
+        const tA = a.timestamp?.seconds || (a.timestamp ? new Date(a.timestamp).getTime() / 1000 : 0);
+        const tB = b.timestamp?.seconds || (b.timestamp ? new Date(b.timestamp).getTime() / 1000 : 0);
+        return tB - tA;
+      });
       setSessionSignatures(sigs);
       setSignaturesLoading(false);
     }, (err) => {

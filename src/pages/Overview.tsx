@@ -30,7 +30,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 export const Overview: React.FC = () => {
-  const { isManager, isAdmin } = useAuth();
+  const { isManager, isAdmin, loading: authLoading, user, isApproved } = useAuth();
   
   // Real-time collections state
   const [users, setUsers] = useState<any[]>([]);
@@ -57,6 +57,18 @@ export const Overview: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleManualRefresh = () => {
+    setRefreshing(true);
+    setLoading(true);
+    setRefreshTrigger(prev => prev + 1);
+    setTimeout(() => {
+      setRefreshing(false);
+    }, 600);
+  };
+
   // Active modules state
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
     dds: true,
@@ -72,6 +84,7 @@ export const Overview: React.FC = () => {
   });
 
   useEffect(() => {
+    if (authLoading || !user) return;
     const unsubModules = onSnapshot(doc(db, 'system_config', 'modules'), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
@@ -84,7 +97,7 @@ export const Overview: React.FC = () => {
       console.error('Error listening to modules configuration in Overview:', error);
     });
     return () => unsubModules();
-  }, []);
+  }, [authLoading, user]);
 
   // Clock tick to keep current shift real-time
   useEffect(() => {
@@ -94,6 +107,9 @@ export const Overview: React.FC = () => {
 
   // Set up all real-time subscriptions
   useEffect(() => {
+    if (authLoading || !user || !isApproved) {
+      return;
+    }
     // Current day boundaries 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -110,6 +126,7 @@ export const Overview: React.FC = () => {
         return !MASTER_EMAILS.includes(userEmail);
       });
       setUsers(filtered);
+      setLastUpdated(new Date());
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'users');
     });
@@ -121,6 +138,7 @@ export const Overview: React.FC = () => {
         return { id: doc.id, ...data, userName: decName };
       }));
       setDdsSessions(mapped);
+      setLastUpdated(new Date());
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
     });
@@ -132,6 +150,7 @@ export const Overview: React.FC = () => {
         return { id: doc.id, ...data, userName: decName };
       }));
       setDdsSignatures(mapped);
+      setLastUpdated(new Date());
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
     });
@@ -252,12 +271,14 @@ export const Overview: React.FC = () => {
         return { id: doc.id, ...data, userName: decName };
       }));
       setConsumableLogs(mapped);
+      setLastUpdated(new Date());
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'consumable_logs');
     });
 
     const unsubCourses = onSnapshot(collection(db, 'training_courses'), (snap) => {
       setCourses(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLastUpdated(new Date());
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'training_courses');
     });
@@ -286,24 +307,28 @@ export const Overview: React.FC = () => {
       unsubConsumableLogs();
       unsubCourses();
     };
-  }, []);
+  }, [authLoading, user, isApproved, refreshTrigger]);
 
   // Active dates filtering
+  const currentDateString = currentTime.toDateString();
+  const currentHour = currentTime.getHours();
+  const currentYearAndMonth = `${currentTime.getFullYear()}-${currentTime.getMonth()}`;
+
   const todayStart = useMemo(() => {
-    const d = new Date(currentTime);
+    const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
-  }, [currentTime]);
+  }, [currentDateString]);
 
   const todayEnd = useMemo(() => {
-    const d = new Date(currentTime);
+    const d = new Date();
     d.setHours(23, 59, 59, 999);
     return d;
-  }, [currentTime]);
+  }, [currentDateString]);
 
   // Daily Scale Details
-  const activeShift = useMemo(() => getCurrentShift(), [currentTime]);
-  const activeGroups = useMemo(() => getTodayGroups(currentTime), [currentTime]);
+  const activeShift = useMemo(() => getCurrentShift(), [currentHour]);
+  const activeGroups = useMemo(() => getTodayGroups(new Date()), [currentDateString]);
 
   // 1. DDS Today's Compliance Data
   const ddsTodayStats = useMemo(() => {
@@ -456,12 +481,13 @@ export const Overview: React.FC = () => {
       const item = template?.items?.find((i: any) => i.id === itemId);
       if (!item) return true;
 
-      const isDryer = template?.name?.toLowerCase().includes('limpeza') || template?.name?.toLowerCase().includes('secador');
+      const isDryer = template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
       if (isDryer && value) {
         if (typeof value === 'object' && value !== null) {
           const statuses = Object.values(value) as string[];
           const hasNonCompliant = statuses.some(s => {
             const lowerS = String(s).toLowerCase();
+            if (lowerS.includes('pouco') || lowerS.includes('limp')) return false;
             return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
           });
           return !hasNonCompliant;
@@ -714,7 +740,7 @@ export const Overview: React.FC = () => {
       todayObservations: todayObs,
       monthObservations: monthObs
     };
-  }, [safetyObservations, currentTime, todayStart, todayEnd]);
+  }, [safetyObservations, currentYearAndMonth, todayStart, todayEnd]);
 
   // Overall Operations Health Score Index (Daily KPIs consolidated)
   const healthIndex = useMemo(() => {
@@ -881,6 +907,20 @@ export const Overview: React.FC = () => {
               </p>
             </div>
           </div>
+
+          <button
+            onClick={handleManualRefresh}
+            disabled={refreshing}
+            className="bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 px-5 py-3 rounded-2xl flex items-center gap-3 active:scale-95 transition-all shadow-sm group cursor-pointer"
+          >
+            <RefreshCw className={`w-5 h-5 text-indigo-600 ${refreshing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
+            <div className="text-left">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sincronizado</p>
+              <p className="text-sm font-black text-slate-700 tracking-tight tabular-nums">
+                {lastUpdated ? lastUpdated.toLocaleTimeString('pt-BR') : '---'}
+              </p>
+            </div>
+          </button>
         </div>
       </div>
 

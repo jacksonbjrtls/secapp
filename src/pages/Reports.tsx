@@ -214,22 +214,31 @@ const Reports: React.FC = () => {
         setWireReceivingData(batchesResults);
 
         // Fetch Wire Consumption Data (Consumed Coils)
-        const coilsSnap = await getDocs(query(collection(db, 'wire_coils'), where('status', '==', 'consumed'), orderBy('consumedAt', 'desc')));
-        const coilsResults = coilsSnap.docs.map(doc => {
-          const coil = doc.data();
-          return {
-            id: doc.id,
-            coilNumber: coil.coilNumber,
-            diameter: coil.diameter,
-            weight: coil.weight,
-            currentLineId: coil.currentLineId,
-            consumedBy: coil.consumedBy,
-            consumedShift: coil.consumedShift,
-            timestamp: safeToDate(coil.consumedAt) || new Date(),
-            supplierId: coil.supplierId,
-            consumedByGroup: coil.consumedByGroup || '-'
-          };
-        });
+        const coilsSnap = await getDocs(collection(db, 'wire_coils'));
+        const coilsResults = coilsSnap.docs
+          .map(doc => {
+            const coil = doc.data();
+            return {
+              id: doc.id,
+              coilNumber: coil.coilNumber,
+              diameter: coil.diameter,
+              weight: coil.weight,
+              currentLineId: coil.currentLineId,
+              consumedBy: coil.consumedBy,
+              consumedShift: coil.consumedShift,
+              timestamp: safeToDate(coil.consumedAt) || new Date(),
+              supplierId: coil.supplierId,
+              consumedByGroup: coil.consumedByGroup || '-',
+              status: coil.status,
+              consumedAt: coil.consumedAt
+            };
+          })
+          .filter(coil => coil.status === 'consumed')
+          .sort((a, b) => {
+            const tA = a.consumedAt?.seconds || (a.consumedAt ? new Date(a.consumedAt).getTime() / 1000 : 0);
+            const tB = b.consumedAt?.seconds || (b.consumedAt ? new Date(b.consumedAt).getTime() / 1000 : 0);
+            return tB - tA;
+          });
         setWireConsumptionData(coilsResults);
         
         // Fetch Quality Data
@@ -1931,7 +1940,7 @@ const Reports: React.FC = () => {
                                      res.value === 'nok' || res.value === false ? "bg-rose-100 text-rose-700" :
                                      (typeof res.value === 'object' && res.value !== null) ? (
                                        Object.values(res.value).some((s: any) => String(s).toLowerCase().includes('tamponado') || String(s).toLowerCase().includes('vermelho')) ? "bg-rose-100 text-rose-700" :
-                                       Object.values(res.value).some((s: any) => String(s).toLowerCase().includes('suj')) ? "bg-amber-100 text-amber-700" :
+                                       Object.values(res.value).some((s: any) => { const ls = String(s).toLowerCase(); return ls.includes('suj') && !ls.includes('pouco'); }) ? "bg-amber-100 text-amber-700" :
                                        "bg-emerald-100 text-emerald-700"
                                      ) : "bg-slate-100 text-slate-600"
                                    )}>
