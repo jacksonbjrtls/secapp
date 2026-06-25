@@ -1249,7 +1249,7 @@ const Quality: React.FC = () => {
       };
 
       // Section 2: Comando Side (Even Doors)
-      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 00];
+      const evenDoors = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 0];
       currentY = drawDryerGrid('Secador MS1 - Lado de Comando (Portas Pares)', evenDoors, currentY);
 
       // Section 3: Acionamento Side (Odd Doors)
