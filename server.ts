@@ -9,7 +9,15 @@ import dotenv from "dotenv";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
-import firebaseConfig from "./firebase-applet-config.json";
+let firebaseConfig: any = {};
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  }
+} catch (err) {
+  console.warn("Could not load firebase-applet-config.json dynamically", err);
+}
 import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();

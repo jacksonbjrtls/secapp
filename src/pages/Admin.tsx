@@ -53,6 +53,15 @@ import {
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+const finalFirebaseConfig = {
+  ...firebaseConfig,
+  apiKey: firebaseConfig.apiKey || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
+  authDomain: firebaseConfig.authDomain || "gen-lang-client-0972067932.firebaseapp.com",
+  projectId: firebaseConfig.projectId || "gen-lang-client-0972067932",
+  storageBucket: firebaseConfig.storageBucket || "gen-lang-client-0972067932.firebasestorage.app",
+  messagingSenderId: firebaseConfig.messagingSenderId || "328642603761",
+  appId: firebaseConfig.appId || "1:328642603761:web:62d4a334ccd5524ba71750"
+};
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
 import { validateEmailDomain } from '../lib/domainUtils';
@@ -628,7 +637,7 @@ const Admin: React.FC = () => {
     
     setAddUserLoading(true);
     const tempAppName = `temp-app-${Date.now()}`;
-    const tempApp = initializeApp(firebaseConfig, tempAppName);
+    const tempApp = initializeApp(finalFirebaseConfig, tempAppName);
     const tempAuth = getAuth(tempApp);
     const defaultPassword = 'Mudar@123';
 
