@@ -88,7 +88,7 @@ const decryptLegacyRc4 = (value: string): string => {
       return legacyRc4(saltedKey, encryptedData);
     };
 
-    const envKey = (import.meta as any).env?.VITE_ENCRYPTION_KEY;
+    const envKey = import.meta.env.VITE_ENCRYPTION_KEY;
     let decrypted = '';
 
     // Helper to check if a string contains garbage chars
@@ -124,7 +124,7 @@ let cachedCryptoKey: CryptoKey | null = null;
 const getCryptoKey = async (): Promise<CryptoKey> => {
   if (cachedCryptoKey) return cachedCryptoKey;
 
-  const secret = (import.meta as any).env?.VITE_ENCRYPTION_KEY;
+  const secret = import.meta.env.VITE_ENCRYPTION_KEY;
   if (!secret) {
     throw new Error('CRITICAL: A variável de ambiente VITE_ENCRYPTION_KEY não está definida no front-end!');
   }

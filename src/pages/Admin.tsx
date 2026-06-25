@@ -54,12 +54,12 @@ import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
 
 const finalFirebaseConfig = {
-  apiKey:            (import.meta as any).env.VITE_FIREBASE_API_KEY || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
-  authDomain:        (import.meta as any).env.VITE_FIREBASE_AUTH_DOMAIN || "gen-lang-client-0972067932.firebaseapp.com",
-  projectId:         (import.meta as any).env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0972067932",
-  storageBucket:     (import.meta as any).env.VITE_FIREBASE_STORAGE_BUCKET || "gen-lang-client-0972067932.firebasestorage.app",
-  messagingSenderId: (import.meta as any).env.VITE_FIREBASE_MESSAGING_SENDER_ID || "328642603761",
-  appId:             (import.meta as any).env.VITE_FIREBASE_APP_ID || "1:328642603761:web:62d4a334ccd5524ba71750",
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "gen-lang-client-0972067932.firebaseapp.com",
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0972067932",
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "gen-lang-client-0972067932.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "328642603761",
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID || "1:328642603761:web:62d4a334ccd5524ba71750",
 };
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
