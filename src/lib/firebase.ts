@@ -1,29 +1,26 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer, enableIndexedDbPersistence } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
 
-const finalConfig = {
-  ...firebaseConfig,
-  apiKey: firebaseConfig.apiKey || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
-  authDomain: firebaseConfig.authDomain || "gen-lang-client-0972067932.firebaseapp.com",
-  projectId: firebaseConfig.projectId || "gen-lang-client-0972067932",
-  storageBucket: firebaseConfig.storageBucket || "gen-lang-client-0972067932.firebasestorage.app",
-  messagingSenderId: firebaseConfig.messagingSenderId || "328642603761",
-  appId: firebaseConfig.appId || "1:328642603761:web:62d4a334ccd5524ba71750"
+const firebaseConfig = {
+  apiKey:            (import.meta as any).env.VITE_FIREBASE_API_KEY || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
+  authDomain:        (import.meta as any).env.VITE_FIREBASE_AUTH_DOMAIN || "gen-lang-client-0972067932.firebaseapp.com",
+  projectId:         (import.meta as any).env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0972067932",
+  storageBucket:     (import.meta as any).env.VITE_FIREBASE_STORAGE_BUCKET || "gen-lang-client-0972067932.firebasestorage.app",
+  messagingSenderId: (import.meta as any).env.VITE_FIREBASE_MESSAGING_SENDER_ID || "328642603761",
+  appId:             (import.meta as any).env.VITE_FIREBASE_APP_ID || "1:328642603761:web:62d4a334ccd5524ba71750",
 };
 
-const app = initializeApp(finalConfig);
-export const db = getFirestore(app, (finalConfig as any).firestoreDatabaseId);
+const firestoreDatabaseId = (import.meta as any).env.VITE_FIREBASE_DATABASE_ID || undefined;
 
-// Enable offline persistence
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app, firestoreDatabaseId);
+
 if (typeof window !== 'undefined') {
   enableIndexedDbPersistence(db).catch((err) => {
     if (err.code === 'failed-precondition') {
-      // Multiple tabs open, persistence can only be enabled in one tab at a time.
       console.warn('Firestore persistence failed-precondition');
     } else if (err.code === 'unimplemented') {
-      // The current browser doesn't support all of the features needed to enable persistence
       console.warn('Firestore persistence unimplemented');
     }
   });
