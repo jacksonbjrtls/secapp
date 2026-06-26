@@ -1893,9 +1893,8 @@ const Quality: React.FC = () => {
 
                   {/* Header Content Titles */}
                   <div className="space-y-0.5">
-                    <h2 className="text-xs font-black tracking-widest uppercase opacity-90">CHECK-LIST DE QUALIDADE</h2>
-                    <p className="text-base font-black tracking-wide uppercase leading-tight mt-0.5">{fillingTemplate.name}</p>
-                    <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider line-clamp-1 max-w-[320px] mx-auto">{fillingTemplate.description}</p>
+                    <h2 className="text-base font-black tracking-wide uppercase leading-tight">{fillingTemplate.name}</h2>
+                    <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider line-clamp-1 max-w-[320px] mx-auto">{fillingTemplate.description || 'Check-list de Qualidade'}</p>
                   </div>
 
                   {/* Right Close Button with safety modal */}
