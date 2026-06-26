@@ -119,28 +119,24 @@ const decryptLegacyRc4 = (value: string): string => {
   }
 };
 
-let cachedCryptoKey: CryptoKey | null = null;
+let keyCache = new Map<string, CryptoKey>();
 
-const getCryptoKey = async (): Promise<CryptoKey> => {
-  if (cachedCryptoKey) return cachedCryptoKey;
-
-  const secret = import.meta.env.VITE_ENCRYPTION_KEY;
-  if (!secret) {
-    throw new Error('CRITICAL: A variável de ambiente VITE_ENCRYPTION_KEY não está definida no front-end!');
-  }
+const getCryptoKeyForSecret = async (secret: string): Promise<CryptoKey> => {
+  let key = keyCache.get(secret);
+  if (key) return key;
 
   const keyBuffer = new TextEncoder().encode(secret);
   const hashBuffer = await crypto.subtle.digest('SHA-256', keyBuffer);
   
-  cachedCryptoKey = await crypto.subtle.importKey(
+  key = await crypto.subtle.importKey(
     'raw',
     hashBuffer,
     { name: 'AES-GCM' },
     false,
     ['encrypt', 'decrypt']
   );
-
-  return cachedCryptoKey;
+  keyCache.set(secret, key);
+  return key;
 };
 
 /**
@@ -157,7 +153,8 @@ export const encryptValue = async (value: string | null | undefined): Promise<st
   if (str.startsWith('__ENC__')) return str; 
 
   try {
-    const cryptoKey = await getCryptoKey();
+    const secret = import.meta.env.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
+    const cryptoKey = await getCryptoKeyForSecret(secret);
     const iv = crypto.getRandomValues(new Uint8Array(12)); // Standard 12 bytes IV for GCM
     const encodedValue = new TextEncoder().encode(str);
 
@@ -195,7 +192,8 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
   // 1. Decrypt AES-GCM
   if (str.startsWith('__ENC_GCM__')) {
     try {
-      const cryptoKey = await getCryptoKey();
+      const secret = import.meta.env.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
+      let cryptoKey = await getCryptoKeyForSecret(secret);
       const rawPayload = str.substring(11); // Remove '__ENC_GCM__'
       const combined = base64ToArray(rawPayload);
 
@@ -206,11 +204,26 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
       const iv = combined.slice(0, 12);
       const ciphertext = combined.slice(12);
 
-      const decryptedBuffer = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv },
-        cryptoKey,
-        ciphertext
-      );
+      let decryptedBuffer;
+      try {
+        decryptedBuffer = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv },
+          cryptoKey,
+          ciphertext
+        );
+      } catch (err) {
+        // Fallback to EldoradoSSTSecureKey2026 if the first secret fails and is different
+        if (secret !== 'EldoradoSSTSecureKey2026') {
+          cryptoKey = await getCryptoKeyForSecret('EldoradoSSTSecureKey2026');
+          decryptedBuffer = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv },
+            cryptoKey,
+            ciphertext
+          );
+        } else {
+          throw err;
+        }
+      }
 
       const result = new TextDecoder().decode(decryptedBuffer);
       decryptionCache.set(str, result);
