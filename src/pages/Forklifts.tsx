@@ -827,10 +827,10 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
       <div className="min-h-[400px]">
         {activeTab === 'checklists' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredForklifts.map(forklift => (
+            {filteredForklifts.map((forklift, idx) => (
               <motion.div 
                 layout
-                key={forklift.id}
+                key={`${forklift.id}-${idx}`}
                 className={cn(
                   "bg-white rounded-[2rem] border border-slate-200 p-6 shadow-sm hover:shadow-md transition-all group overflow-hidden relative",
                   forklift.status === 'bloqueada' && "opacity-80 grayscale-[0.5]"
@@ -933,8 +933,8 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {checklists.map(log => (
-                    <React.Fragment key={log.id}>
+                  {checklists.map((log, idx) => (
+                    <React.Fragment key={`${log.id}-${idx}`}>
                       <tr 
                         onClick={() => setExpandedChecklistId(expandedChecklistId === log.id ? null : log.id)}
                         className="hover:bg-slate-50/50 transition-colors cursor-pointer group"
@@ -1107,8 +1107,8 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {forklifts.map(f => (
-                    <tr key={f.id} className="hover:bg-slate-50/50">
+                  {forklifts.map((f, idx) => (
+                    <tr key={`${f.id}-${idx}`} className="hover:bg-slate-50/50">
                       <td className="px-6 py-4 font-black text-slate-900">{f.number}</td>
                       <td className="px-6 py-4 font-medium text-slate-600">{f.sector}</td>
                       <td className="px-6 py-4">

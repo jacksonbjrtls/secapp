@@ -2532,7 +2532,7 @@ const Quality: React.FC = () => {
                           if (fillingTemplate.sectorId === 'all') return true;
                           const sector = sectors.find(s => s.id === fillingTemplate.sectorId);
                           return sector?.lineIds.includes(l.id);
-                        }).map(line => {
+                        }).map((line, lineIdx) => {
                           const currentShift = getCurrentShift();
                           const currentGroup = getGroupForShift(new Date(), currentShift);
                           const shiftIdentifier = `${currentGroup} - ${currentShift}`;
@@ -2549,7 +2549,7 @@ const Quality: React.FC = () => {
 
                           return (
                             <button
-                              key={line.id}
+                              key={`${line.id}-${lineIdx}`}
                               type="button"
                               onClick={() => setSubmissionLineId(line.id)}
                               className={cn(

@@ -1407,11 +1407,11 @@ const DDS: React.FC = () => {
                         {registeredUsers.filter(user => {
                           const queryStr = (newExecutor || '').toLowerCase();
                           return (user.displayName || '').toLowerCase().includes(queryStr) || (user.email || '').toLowerCase().includes(queryStr);
-                        }).map(user => {
+                        }).map((user, idx) => {
                           const isSelected = newExecutor === user.displayName;
                           return (
                             <div
-                              key={user.uid}
+                              key={`${user.uid}-${idx}`}
                               onClick={() => {
                                 setNewExecutor(user.displayName);
                                 setShowExecutorDropdown(false);
@@ -2073,8 +2073,8 @@ const DDS: React.FC = () => {
                   .length > 0 ? (
                   sessions
                     .filter(s => selectedLetter === 'all' || s.group === selectedLetter)
-                    .map((session) => (
-                    <div key={session.id} className="flex flex-col gap-4 border border-slate-100 rounded-3xl p-4 hover:border-emerald-200 transition-all opacity-60 hover:opacity-100">
+                    .map((session, idx) => (
+                    <div key={`${session.id}-${idx}`} className="flex flex-col gap-4 border border-slate-100 rounded-3xl p-4 hover:border-emerald-200 transition-all opacity-60 hover:opacity-100">
                       <div className="flex items-start justify-between gap-4">
                         <button 
                           onClick={() => setExpandedSessionId(expandedSessionId === session.id ? null : session.id)}
@@ -2149,8 +2149,8 @@ const DDS: React.FC = () => {
                               ) : sessionSignatures.filter(sig => !participantSearch || sig.userName.toLowerCase().includes(participantSearch.toLowerCase())).length > 0 ? (
                                 sessionSignatures
                                   .filter(sig => !participantSearch || sig.userName.toLowerCase().includes(participantSearch.toLowerCase()))
-                                  .map((sig) => (
-                                  <div key={sig.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                                  .map((sig, idx) => (
+                                  <div key={`${sig.id}-${idx}`} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
                                     <div className="flex items-center gap-3">
                                       <div className="w-8 h-8 bg-white border border-slate-100 rounded-lg flex items-center justify-center text-slate-400">
                                         <Users className="w-4 h-4" />
@@ -2192,8 +2192,8 @@ const DDS: React.FC = () => {
                       <div className="space-y-2">
                         {sessions
                           .filter(s => s.createdBy === auth.currentUser?.uid)
-                          .map((session) => (
-                            <div key={session.id} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                          .map((session, idx) => (
+                            <div key={`${session.id}-${idx}`} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl">
                               <div className="flex-1">
                                 <div className="flex items-center gap-1.5 mb-1">
                                   <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-bold rounded uppercase">
@@ -2236,8 +2236,8 @@ const DDS: React.FC = () => {
                     </div>
                   ) : history.length > 0 ? (
                     <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                      {history.map((item) => (
-                        <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-emerald-200 transition-colors">
+                      {history.map((item, idx) => (
+                        <div key={`${item.id}-${idx}`} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-emerald-200 transition-colors">
                           <div className="flex flex-col gap-1">
                             <p className="font-bold text-slate-900 text-sm">{item.sessionTitle}</p>
                             <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
