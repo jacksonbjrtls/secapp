@@ -173,7 +173,24 @@ const Forklifts: React.FC = () => {
             setChecklistNotes(data.notes || '');
             setDraftDocId(draftDoc.id);
           } else {
-            setChecklistResults({});
+            // No draft exists! This is a fresh inspection.
+            // Check the previous checklist for any pending items (status === 'anormal')
+            const prevChecklist = checklists.find(c => c.forkliftId === showCheckModal.id);
+            if (prevChecklist && prevChecklist.itemResults) {
+              const prefilled: Record<string, any> = {};
+              Object.entries(prevChecklist.itemResults).forEach(([itemId, result]: [string, any]) => {
+                if (result.status === 'anormal') {
+                  prefilled[itemId] = {
+                    value: result.value !== undefined ? result.value : (checkItems.find(i => i.id === itemId)?.type === 'boolean' ? false : 'anormal'),
+                    status: 'anormal',
+                    observation: result.observation || 'Pendência anterior ainda não resolvida'
+                  };
+                }
+              });
+              setChecklistResults(prefilled);
+            } else {
+              setChecklistResults({});
+            }
             setChecklistNotes('');
             setDraftDocId(null);
           }
@@ -183,7 +200,7 @@ const Forklifts: React.FC = () => {
       };
       loadDraft();
     }
-  }, [showCheckModal]);
+  }, [showCheckModal, checklists, checkItems]);
 
   // Auto-save progress
   useEffect(() => {
@@ -835,20 +852,20 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                       </div>
                     </div>
                   </div>
-                  <div className={cn(
-                    "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border",
-                    forklift.status === 'liberada' 
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-100" 
-                      : "bg-rose-50 text-rose-700 border-rose-100"
-                  )}>
-                    {forklift.status}
-                  </div>
                 </div>
 
                 <div className="space-y-3 mb-6">
                   <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
                     <div className={cn("w-2 h-2 rounded-full", forklift.status === 'liberada' ? "bg-emerald-500" : "bg-rose-500")} />
-                    Status Operacional: <span className="font-bold text-slate-700">{forklift.status.toUpperCase()}</span>
+                    <span>Status Operacional:</span>
+                    <span className={cn(
+                      "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ml-1",
+                      forklift.status === 'liberada' 
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-100" 
+                        : "bg-rose-50 text-rose-700 border-rose-100 font-bold"
+                    )}>
+                      {forklift.status}
+                    </span>
                   </div>
                 </div>
 
