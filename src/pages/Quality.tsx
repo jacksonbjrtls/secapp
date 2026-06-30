@@ -2418,9 +2418,9 @@ const Quality: React.FC = () => {
                     >
                       Todas as Linhas
                     </button>
-                    {lines.map(line => (
+                    {lines.map((line, lineIdx) => (
                       <button
-                        key={line.id}
+                        key={`${line.id}-${lineIdx}`}
                         onClick={() => setSelectedLineId(line.id)}
                         className={cn(
                           "px-4 py-2 rounded-xl text-xs font-bold transition-all border",
@@ -3483,7 +3483,7 @@ const Quality: React.FC = () => {
                   if (parentSector && parentSector.lineIds.includes(selectedLineId)) return true;
                   
                   return false;
-                }).map(template => {
+                }).map((template, templateIdx) => {
                   const sector = sectors.find(s => s.id === template.sectorId);
                   const line = lines.find(l => l.id === template.sectorId);
                   const locationName = template.sectorId === 'all' ? 'Fábrica Completa' : (sector?.name || line?.name || 'Geral');
@@ -3524,7 +3524,7 @@ const Quality: React.FC = () => {
 
                   return (
                     <button
-                      key={template.id}
+                      key={`${template.id}-${templateIdx}`}
                       disabled={isCompleted}
                       onClick={async () => {
                         let loadedDraft: any = null;
@@ -3677,13 +3677,13 @@ const Quality: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 gap-4">
-              {templates.map(template => {
+              {templates.map((template, templateIdx) => {
                 const sector = sectors.find(s => s.id === template.sectorId);
                 const line = lines.find(l => l.id === template.sectorId);
                 const locationName = template.sectorId === 'all' ? 'Fábrica Completa' : (sector?.name || line?.name || 'N/A');
 
                 return (
-                  <div key={template.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div key={`${template.id}-${templateIdx}`} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center justify-between">
                     <div className="flex items-center gap-6">
                       <div className="w-12 h-12 bg-slate-50 text-slate-600 rounded-2xl flex items-center justify-center">
                         <FileText className="w-6 h-6" />
@@ -3819,13 +3819,13 @@ const Quality: React.FC = () => {
                             <option value="">Selecione o Destino</option>
                             <option value="all">Fábrica Completa</option>
                             <optgroup label="Setores Operacionais (Grupos)">
-                              {sectors.map(sector => (
-                                <option key={`sector-opt-${sector.id}`} value={sector.id}>{sector.name}</option>
+                              {sectors.map((sector, sectorIdx) => (
+                                <option key={`sector-opt-${sector.id}-${sectorIdx}`} value={sector.id}>{sector.name}</option>
                               ))}
                             </optgroup>
                             <optgroup label="Linhas Individuais">
-                              {lines.map(line => (
-                                <option key={`line-opt-${line.id}`} value={line.id}>{line.name}</option>
+                              {lines.map((line, lineIdx) => (
+                                <option key={`line-opt-${line.id}-${lineIdx}`} value={line.id}>{line.name}</option>
                               ))}
                             </optgroup>
                           </select>
@@ -4012,8 +4012,8 @@ const Quality: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {lines.map(line => (
-                  <div key={line.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between group">
+                {lines.map((line, lineIdx) => (
+                  <div key={`${line.id}-${lineIdx}`} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between group">
                     <div>
                       <h3 className="font-black text-slate-900">{line.name}</h3>
                       <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded">Ativa</span>
@@ -4062,8 +4062,8 @@ const Quality: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {sectors.map(sector => (
-                  <div key={sector.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                {sectors.map((sector, sectorIdx) => (
+                  <div key={`${sector.id}-${sectorIdx}`} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
                      <div className="flex items-center justify-between mb-4">
                        <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
                          <Layers className="w-6 h-6" />
@@ -4195,9 +4195,9 @@ const Quality: React.FC = () => {
                       <div className="space-y-2">
                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Vincular Linhas</label>
                          <div className="grid grid-cols-2 gap-2">
-                            {lines.map(line => (
+                            {lines.map((line, lineIdx) => (
                               <button
-                                key={line.id}
+                                key={`${line.id}-${lineIdx}`}
                                 onClick={() => {
                                   const current = newSector.lineIds || [];
                                   if (current.includes(line.id)) {
@@ -4268,8 +4268,8 @@ const Quality: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {optionSets.map(set => (
-                <div key={set.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+              {optionSets.map((set, setIdx) => (
+                <div key={`${set.id}-${setIdx}`} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-4">
                       <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
@@ -4442,8 +4442,8 @@ const Quality: React.FC = () => {
                 </div>
               ))}
 
-              {omissions.map(omission => (
-                <div key={omission.id} className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
+              {omissions.map((omission, oIdx) => (
+                <div key={`${omission.id}-${oIdx}`} className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div className="space-y-2">
                        <div className="flex items-center gap-3">
@@ -5036,8 +5036,8 @@ const Quality: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {products.map(prod => (
-                <div key={prod.id} className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-sm relative overflow-hidden flex flex-col justify-between group">
+              {products.map((prod, pIdx) => (
+                <div key={`${prod.id}-${pIdx}`} className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-sm relative overflow-hidden flex flex-col justify-between group">
                   <div className="space-y-4">
                     <div className="flex justify-between items-start">
                       <div className="space-y-1">

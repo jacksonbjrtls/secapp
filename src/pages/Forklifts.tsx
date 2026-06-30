@@ -304,12 +304,53 @@ const Forklifts: React.FC = () => {
     }
     
     setTestingEmail(true);
+    let automaticSent = false;
+    let errorMessage = '';
+
     try {
-      const recipientEmails = settings.responsiblePersons.map(p => p.email).join(',');
-      const subject = `SecApp - Teste de Envio de E-mail`;
-      
-      const localTimeStr = new Date().toLocaleString('pt-BR');
-      const body = `Olá,
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch('/api/send-notification', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          recipients: settings.responsiblePersons,
+          forkliftNumber: "TESTE-001 (E-mail de Teste)",
+          conductorName: profile?.displayName || auth.currentUser?.email || 'Administrador',
+          failures: [
+            { name: 'Motor de Partida', observation: 'Ruído excessivo detectado no acionamento (Exemplo de Teste).' }
+          ],
+          localTime: new Date().toLocaleString('pt-BR')
+        })
+      });
+
+      const resData = await response.json();
+      if (resData.success) {
+        automaticSent = true;
+        setModalConfig({
+          isOpen: true,
+          title: 'E-mail de Teste Enviado!',
+          message: `O servidor enviou automaticamente o e-mail de teste com sucesso para os seguintes responsáveis: ${settings.responsiblePersons.map(p => p.email).join(', ')}.`,
+          type: 'success'
+        });
+      } else {
+        errorMessage = resData.message || resData.error || '';
+        console.warn("Automatic test email returned success=false:", errorMessage);
+      }
+    } catch (err: any) {
+      errorMessage = err.message || '';
+      console.error("Error sending automatic test email:", err);
+    }
+
+    if (!automaticSent) {
+      try {
+        const recipientEmails = settings.responsiblePersons.map(p => p.email).join(',');
+        const subject = `SecApp - Teste de Envio de E-mail`;
+        
+        const localTimeStr = new Date().toLocaleString('pt-BR');
+        const body = `Olá,
 
 Este é um e-mail de teste de não conformidade de empilhadeira enviado utilizando o cliente de e-mail do aparelho.
 
@@ -323,24 +364,27 @@ Itens Não Conformes (Exemplo):
 
 Este é um teste do SecApp - Sistema de Gestão de Segurança.`;
 
-      const mailtoLink = `mailto:${recipientEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      window.location.href = mailtoLink;
+        const mailtoLink = `mailto:${recipientEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        window.location.href = mailtoLink;
 
-      setModalConfig({
-        isOpen: true,
-        title: 'Sucesso!',
-        message: 'Cliente de e-mail do aparelho aberto com sucesso!',
-        type: 'success'
-      });
-    } catch (err: any) {
-      console.error("Test email error:", err);
-      setModalConfig({
-        isOpen: true,
-        title: 'Erro',
-        message: `Não foi possível abrir o cliente de e-mail do aparelho: ${err.message}`,
-        type: 'error'
-      });
-    } finally {
+        setModalConfig({
+          isOpen: true,
+          title: 'Cliente de E-mail Aberto',
+          message: `O envio automático em segundo plano não está configurado (${errorMessage || 'sem variáveis GMAIL_USER/RESEND_API_KEY'}). Abrimos o cliente de e-mail nativo do seu aparelho com os destinatários preenchidos.`,
+          type: 'success'
+        });
+      } catch (err: any) {
+        console.error("Test email error:", err);
+        setModalConfig({
+          isOpen: true,
+          title: 'Erro',
+          message: `Não foi possível enviar nem abrir o cliente de e-mail local: ${err.message}`,
+          type: 'error'
+        });
+      } finally {
+        setTestingEmail(false);
+      }
+    } else {
       setTestingEmail(false);
     }
   };
@@ -585,16 +629,50 @@ Este é um teste do SecApp - Sistema de Gestão de Segurança.`;
             failures
           });
 
-          // Call client-side mailto using device email configuration if responsible persons exist
+          // Send automatic server-side notification if configured, fallback to client-side mailto if it fails or returns success: false
+          let automaticSent = false;
+          let errorMessage = '';
+
           if (responsibleList.length > 0) {
             try {
-              const recipientEmails = responsibleList.map(p => p.email).join(',');
-              const subject = `SecApp - Alerta de Não Conformidade: ${showCheckModal.number}`;
-              
-              const localTimeStr = new Date().toLocaleString('pt-BR');
-              const failuresText = failures.map(f => `- ${f.name}: ${f.observation || 'Sem observação.'}`).join('\n');
-              
-              const body = `Olá,
+              const idToken = await auth.currentUser?.getIdToken();
+              const response = await fetch('/api/send-notification', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${idToken}`
+                },
+                body: JSON.stringify({
+                  recipients: responsibleList,
+                  forkliftNumber: showCheckModal.number,
+                  conductorName: profile?.displayName || auth.currentUser.email || 'Condutor',
+                  failures: failures,
+                  localTime: new Date().toLocaleString('pt-BR')
+                })
+              });
+              const resData = await response.json();
+              if (resData.success) {
+                automaticSent = true;
+                console.log("Automatic email sent successfully via server API");
+              } else {
+                errorMessage = resData.message || resData.error || '';
+                console.warn("Server email API returned success=false:", errorMessage);
+              }
+            } catch (err: any) {
+              errorMessage = err.message || '';
+              console.error("Error calling server email API:", err);
+            }
+
+            // Fallback to client-side mailto if automatic email could not be sent
+            if (!automaticSent) {
+              try {
+                const recipientEmails = responsibleList.map(p => p.email).join(',');
+                const subject = `SecApp - Alerta de Não Conformidade: ${showCheckModal.number}`;
+                
+                const localTimeStr = new Date().toLocaleString('pt-BR');
+                const failuresText = failures.map(f => `- ${f.name}: ${f.observation || 'Sem observação.'}`).join('\n');
+                
+                const body = `Olá,
 
 Uma não conformidade crítica foi detectada durante a inspeção do equipamento do SecApp:
 
@@ -607,17 +685,22 @@ ${failuresText}
 
 Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
 
-              const mailtoLink = `mailto:${recipientEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-              window.location.href = mailtoLink;
-            } catch (err) {
-              console.error("Error launching device mailto:", err);
+                const mailtoLink = `mailto:${recipientEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                window.location.href = mailtoLink;
+              } catch (err) {
+                console.error("Error launching device mailto:", err);
+              }
             }
           }
           
+          const notificationSummary = automaticSent 
+            ? `Notificação automática enviada com sucesso para os responsáveis via servidor.`
+            : `Envio automático pendente de configuração (${errorMessage || 'sem serviço configurado'}). Cliente de e-mail aberto localmente.`;
+
           setModalConfig({
             isOpen: true,
             title: 'Inconformidade Detectada',
-            message: `${settings.autoLockOnNonConformity ? 'Check-list finalizado com Não Conformidade! Equipamento BLOQUEADO.' : 'Check-list finalizado com Não Conformidade!'}\n\n${responsibleSummary}`,
+            message: `${settings.autoLockOnNonConformity ? 'Check-list finalizado com Não Conformidade! Equipamento BLOQUEADO.' : 'Check-list finalizado com Não Conformidade!'}\n\n${notificationSummary}`,
             type: 'warning'
           });
         } else {

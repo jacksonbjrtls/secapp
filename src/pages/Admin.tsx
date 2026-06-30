@@ -976,7 +976,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
     setSendingEmailId(user.uid);
     try {
       const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
-      // We call our server API to send a custom email using secagemapp@gmail.com
+      // We call our server API to send a custom email using the configured system Gmail
       const res = await fetch('/api/send-custom-auth-email', {
         method: 'POST',
         headers: { 
@@ -993,7 +993,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
       
       const data = await res.json();
       if (data.success) {
-        setSuccess(`E-mail de boas-vindas/instruções enviado para ${user.email} via secagemapp@gmail.com`);
+        setSuccess(`E-mail de boas-vindas/instruções enviado para ${user.email} via ${data.sender || 'e-mail do sistema'}`);
       } else {
         throw new Error(data.error || 'Falha ao enviar e-mail via servidor.');
       }

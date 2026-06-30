@@ -551,10 +551,49 @@ const Login: React.FC = () => {
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Entrar'}
               </button>
             </form>
+          ) : message ? (
+            <div className="space-y-6 text-center animate-fade-in">
+              <div className="mx-auto w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center border border-emerald-100 shadow-sm">
+                <Mail className="w-8 h-8 text-emerald-600" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">E-mail de Redefinição Enviado!</h3>
+                <p className="text-sm text-slate-500 leading-relaxed">
+                  Enviamos instruções detalhadas de redefinição de senha para o endereço abaixo:
+                </p>
+                <div className="bg-slate-50 border border-slate-150 px-4 py-2.5 rounded-xl font-mono text-xs text-slate-700 select-all break-all inline-block max-w-full">
+                  {email}
+                </div>
+              </div>
+
+              <div className="bg-emerald-50/55 border border-emerald-100 p-5 rounded-2xl text-left space-y-2">
+                <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" /> Próximos passos recomendados:
+                </h4>
+                <ul className="text-xs text-emerald-700 space-y-1.5 list-disc list-inside leading-relaxed">
+                  <li>Aguarde alguns instantes e verifique sua caixa de entrada corporativa.</li>
+                  <li>Cheque também a pasta de <strong>Spam</strong> ou <strong>Lixo Eletrônico</strong> caso não encontre na caixa de entrada.</li>
+                  <li>Clique no link de segurança recebido para redefinir sua senha com facilidade.</li>
+                </ul>
+              </div>
+
+              <div className="pt-2 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMessage('');
+                    setIsForgotPassword(false);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-950/10 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition-all uppercase tracking-widest"
+                >
+                  Ir para a tela de Login
+                </button>
+              </div>
+            </div>
           ) : (
             <form className="space-y-6" onSubmit={handleResetPassword}>
-              <div className="text-gray-600 text-sm">
-                Insira seu e-mail para receber um link de redefinição de senha.
+              <div className="text-gray-600 text-sm leading-relaxed">
+                Insira seu e-mail corporativo cadastrado para receber um link de redefinição de senha com segurança.
               </div>
               
               <div>
@@ -574,8 +613,9 @@ const Login: React.FC = () => {
 
               {error && (
                 <div className="space-y-2">
-                  <div className="text-red-500 text-sm bg-red-50 p-3 rounded-lg border border-red-100">
-                    {error}
+                  <div className="text-red-500 text-sm bg-red-50 p-3 rounded-lg border border-red-100 italic flex gap-2">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <span>{error}</span>
                   </div>
                   <button
                     type="button"
@@ -588,18 +628,12 @@ const Login: React.FC = () => {
                 </div>
               )}
 
-              {message && (
-                <div className="text-emerald-600 text-sm bg-emerald-50 p-3 rounded-lg border border-emerald-100 font-bold">
-                  {message}
-                </div>
-              )}
-
               <button
                 type="submit"
                 disabled={loading}
                 className="w-full flex justify-center py-3 px-4 rounded-xl shadow-lg text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 disabled:opacity-50 transition-all uppercase tracking-widest"
               >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Enviar E-mail'}
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Enviar E-mail de Redefinição'}
               </button>
 
               <button

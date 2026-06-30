@@ -40,7 +40,7 @@ if (!projectId) {
 }
 
 
-const getEmailTemplate = (personName: string, forkliftNumber: string, conductorName: string, failures: any[]) => `
+const getEmailTemplate = (personName: string, forkliftNumber: string, conductorName: string, failures: any[], localTime?: string) => `
   <div style="font-family: sans-serif; padding: 20px; color: #334155; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 12px;">
     <div style="text-align: center; border-bottom: 2px solid #e11d48; padding-bottom: 15px; margin-bottom: 20px;">
       <h1 style="color: #e11d48; margin: 0; font-size: 24px;">SecApp - Alerta de Não Conformidade</h1>
@@ -52,7 +52,7 @@ const getEmailTemplate = (personName: string, forkliftNumber: string, conductorN
     <div style="background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #e2e8f0; margin: 20px 0;">
       <p style="margin: 5px 0;"><strong>Equipamento:</strong> ${forkliftNumber}</p>
       <p style="margin: 5px 0;"><strong>Condutor:</strong> ${conductorName}</p>
-      <p style="margin: 5px 0;"><strong>Data/Hora:</strong> ${new Date().toLocaleString('pt-BR')}</p>
+      <p style="margin: 5px 0;"><strong>Data/Hora:</strong> ${localTime || new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
     </div>
 
     <h3 style="color: #e11d48; border-bottom: 1px solid #fee2e2; padding-bottom: 5px;">Itens Não Conformes:</h3>
@@ -180,7 +180,7 @@ async function startServer() {
   // API Route to send email
   app.post("/api/send-notification", requireAuth, async (req, res) => {
     try {
-      const { recipients, forkliftNumber, conductorName, failures = [] } = req.body;
+      const { recipients, forkliftNumber, conductorName, failures = [], localTime } = req.body;
       
       const gmailUser = process.env.GMAIL_USER;
       const gmailPass = process.env.GMAIL_APP_PASSWORD;
@@ -204,7 +204,7 @@ async function startServer() {
               from: `"SecApp - Segurança" <${gmailUser}>`,
               to: person.email,
               subject: `SecApp - Alerta Não Conformidade: ${forkliftNumber}`,
-              html: getEmailTemplate(person.name, forkliftNumber, conductorName, failures)
+              html: getEmailTemplate(person.name, forkliftNumber, conductorName, failures, localTime)
             });
             console.log(`[API] Gmail sent successfully to ${person.email}`);
             return { email: person.email, success: true };
@@ -219,7 +219,7 @@ async function startServer() {
           const errors = results.filter(r => !r.success).map(r => `${r.email}: ${r.error}`).join(' | ');
           return res.json({ success: false, message: "Falha no envio via Gmail.", error: errors, details: results });
         }
-        return res.json({ success: true, results });
+        return res.json({ success: true, sender: gmailUser, results });
 
       } else if (resendApiKey) {
         // --- RESEND TRANSPORT ---
@@ -233,7 +233,7 @@ async function startServer() {
               from: "SecApp <onboarding@resend.dev>",
               to: person.email,
               subject: `SecApp - Alerta Não Conformidade: ${forkliftNumber}`,
-              html: getEmailTemplate(person.name, forkliftNumber, conductorName, failures)
+              html: getEmailTemplate(person.name, forkliftNumber, conductorName, failures, localTime)
             });
             
             if (response.error) {
@@ -258,7 +258,7 @@ async function startServer() {
           const errors = results.filter(r => !r.success).map(r => `${r.email}: ${r.error}`).join(' | ');
           return res.json({ success: false, message: "Falha no envio via Resend.", error: errors, details: results });
         }
-        return res.json({ success: true, results });
+        return res.json({ success: true, sender: "onboarding@resend.dev", results });
 
       } else {
         console.warn("No email service configured.");
@@ -442,7 +442,7 @@ async function startServer() {
         html: html
       });
 
-      res.json({ success: true });
+      res.json({ success: true, sender: gmailUser });
     } catch (err: any) {
       console.error("[API] Custom email error:", err);
       res.status(500).json({ success: false, error: err.message });
