@@ -100,7 +100,7 @@ export interface QualitySector {
   createdAt: any;
 }
 
-export type ChecklistItemType = 'condition' | 'number' | 'range' | 'barcode' | 'text';
+export type ChecklistItemType = 'condition' | 'number' | 'range' | 'barcode' | 'text' | 'product';
 
 export interface ChecklistItemDefinition {
   id: string;
@@ -114,6 +114,7 @@ export interface ChecklistItemDefinition {
   isInteger?: boolean; // For 'number' type
   isRangeDropdown?: boolean; // For 'range' type
   allowObservation?: boolean; // Se o usuário pode colocar uma observação com texto livre
+  radiatorCount?: number; // Quantidade de radiadores para inspeção do secador
 }
 
 export interface QualityChecklistOptionSet {
@@ -130,10 +131,14 @@ export interface QualityChecklistTemplate {
   description: string;
   sectorId: string; // ID do QualitySector ou 'all'
   frequencyPerShift: number;
+  scheduleType?: 'shift' | 'daily' | 'weekly' | 'fortnightly' | 'specific_date';
+  specificDate?: string; // YYYY-MM-DD
+  weeklyDay?: number; // 0-6 (domingo a sábado)
   items: ChecklistItemDefinition[];
   active: boolean;
   createdBy: string;
   createdAt: any;
+  productId?: string;
 }
 
 export interface QualityChecklistSubmission {
@@ -150,6 +155,8 @@ export interface QualityChecklistSubmission {
     observation?: string;
   }[];
   createdAt: any;
+  productId?: string;
+  productName?: string;
 }
 
 export interface QualityChecklistOmission {
@@ -210,5 +217,23 @@ export interface TrainingCourse {
   createdBy: string;
   createdByName?: string;
 }
+
+export interface SecagemProduct {
+  id: string;
+  code: string;
+  name: string;
+  applyCover: boolean; // sim ou não
+  wireGauge: '2.18' | '2.30'; // 2,18 ou 2,30
+  tieWireQty1: number;
+  tieWireQty2: number;
+  bigBaleWireQty: number;
+  unitWireQty: number;
+  sealType: string;
+  specialSeal: string;
+  photoUrl?: string; // Foto Modelo do Produto
+  active: boolean;
+  createdAt: any;
+}
+
 
 

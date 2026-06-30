@@ -105,7 +105,14 @@ const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, s
           "w-5 h-5",
           isActive ? "text-emerald-600" : "text-slate-400 group-hover:text-emerald-600"
         )} />
-        {name}
+        {name === 'Treinamentos/Certificados' ? (
+          <div className="flex flex-col leading-tight text-left">
+            <span>Treinamentos</span>
+            <span className="text-slate-400 font-normal">Certificados</span>
+          </div>
+        ) : (
+          name
+        )}
       </Link>
     </div>
   );
@@ -216,8 +223,8 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   useEffect(() => {
     const defaultNav = [
       { id: 'shift_handover', name: 'Passagem de Turno', href: '/shift-handover', icon: ArrowLeftRight, show: activeModules.shift_handover !== false },
-      { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, show: !!isManager || !!isAdmin },
-      { id: 'overview', name: 'Overview', href: '/overview', icon: Activity, show: !!isManager || !!isAdmin },
+      { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, show: (!!isManager || !!isAdmin) && activeModules.dashboard !== false },
+      { id: 'overview', name: 'Overview', href: '/overview', icon: Activity, show: (!!isManager || !!isAdmin) && activeModules.overview !== false },
       { id: 'forklifts', name: 'Empilhadeiras', href: '/forklifts', icon: Truck, show: activeModules.forklifts !== false },
       { id: 'wires', name: 'Arames', href: '/wires', icon: Factory, show: activeModules.wires !== false },
       { id: 'consumables', name: 'Insumos', href: '/consumables', icon: PackagePlus, show: activeModules.consumables !== false },

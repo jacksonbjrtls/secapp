@@ -847,6 +847,22 @@ export const Overview: React.FC = () => {
     );
   }
 
+  if (activeModules.overview === false) {
+    return (
+      <div className="max-w-md mx-auto my-12 text-center" id="overview-disabled">
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-md flex flex-col items-center">
+          <div className="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-500 mb-4">
+            <Activity className="w-8 h-8 animate-pulse" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Módulo Desabilitado</h2>
+          <p className="text-sm text-slate-500 mt-2 font-semibold">
+            O módulo de Overview foi temporariamente desativado pelo administrador do sistema.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 max-w-[1600px] mx-auto pb-12">
       

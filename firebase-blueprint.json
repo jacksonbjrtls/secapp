@@ -529,6 +529,27 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["date", "shift", "status", "operatorIn", "createdBy", "createdAt"]
+    },
+    "SecagemProduct": {
+      "title": "Secagem Product",
+      "description": "Product manufactured in the drying section with physical and package specifications.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "applyCover": { "type": "boolean" },
+        "wireGauge": { "type": "string", "enum": ["2.18", "2.30"] },
+        "tieWireQty1": { "type": "integer" },
+        "tieWireQty2": { "type": "integer" },
+        "bigBaleWireQty": { "type": "integer" },
+        "unitWireQty": { "type": "integer" },
+        "sealType": { "type": "string" },
+        "specialSeal": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "name", "applyCover", "wireGauge", "active", "createdAt"]
     }
   },
   "firestore": {
@@ -663,6 +684,10 @@
     "/training_courses/{courseId}": {
       "schema": "TrainingCourse",
       "description": "Training courses and operators certificates."
+    },
+    "/quality_products/{productId}": {
+      "schema": "SecagemProduct",
+      "description": "Drying/Secagem product configurations."
     }
   }
 }

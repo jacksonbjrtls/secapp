@@ -26,7 +26,8 @@ import {
   ChecklistItemType,
   ProductionLine,
   QualitySector,
-  QualityChecklistOptionSet
+  QualityChecklistOptionSet,
+  SecagemProduct
 } from '../types';
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 import { jsPDF } from 'jspdf';
@@ -46,6 +47,7 @@ import {
   BarChart3,
   Clock,
   ChevronRight,
+  ChevronDown,
   ChevronLeft,
   Edit2,
   QrCode,
@@ -55,14 +57,70 @@ import {
   LayoutGrid,
   Layers,
   Printer,
-  Download
+  Download,
+  GripVertical,
+  Package,
+  Upload,
+  Image
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+const getLocalDateString = (dateObj: Date): string => {
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const isTemplateDueOnDate = (template: QualityChecklistTemplate, dateObj: Date): boolean => {
+  if (!template.scheduleType || template.scheduleType === 'shift') {
+    return true; // Sempre devido
+  }
+  if (template.scheduleType === 'daily') {
+    return true; // Todos os dias
+  }
+  if (template.scheduleType === 'weekly') {
+    // 0 é Domingo, 1 é Segunda, etc.
+    const targetDay = dateObj.getDay();
+    return template.weeklyDay === undefined || template.weeklyDay === targetDay;
+  }
+  if (template.scheduleType === 'fortnightly') {
+    // A cada 15 dias. Usar diferença de dias a partir de createdAt
+    const baseDate = template.createdAt ? safeToDate(template.createdAt) : new Date(2026, 0, 1);
+    const d1 = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
+    const d2 = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+    const diffTime = Math.abs(d2.getTime() - d1.getTime());
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays % 15 === 0;
+  }
+  if (template.scheduleType === 'specific_date') {
+    const dateStr = getLocalDateString(dateObj);
+    return template.specificDate === dateStr;
+  }
+  return true;
+};
 
 // Tabs
-type QualityTab = 'perform' | 'templates' | 'sectors' | 'options' | 'omissions' | 'dashboard';
+type QualityTab = 'perform' | 'templates' | 'sectors' | 'options' | 'omissions' | 'dashboard' | 'products';
 
 const getOptionColorClasses = (option: string, isSelected: boolean) => {
   const optLower = option.toLowerCase();
@@ -292,9 +350,238 @@ const getIconColorClasses = (value: any, isCompliant: boolean) => {
     : "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-rose-50 text-rose-600";
 };
 
+interface SortableChecklistItemProps {
+  id: string;
+  item: ChecklistItemDefinition;
+  idx: number;
+  optionSets: QualityChecklistOptionSet[];
+  updateItemInTemplate: (id: string, updates: Partial<ChecklistItemDefinition>) => void;
+  removeItemFromTemplate: (id: string) => void;
+}
+
+const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
+  id,
+  item,
+  idx,
+  optionSets,
+  updateItemInTemplate,
+  removeItemFromTemplate
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : 'auto',
+    position: 'relative' as const,
+    opacity: isDragging ? 0.6 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4 relative group",
+        isDragging && "border-emerald-200 shadow-md bg-white z-50"
+      )}
+    >
+      <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
+        <div className="flex items-center gap-2 shrink-0">
+          <div
+            {...attributes}
+            {...listeners}
+            className="p-1 text-slate-300 hover:text-slate-600 cursor-grab active:cursor-grabbing rounded transition-all"
+            title="Arraste para reordenar"
+          >
+            <GripVertical className="w-5 h-5" />
+          </div>
+          <span className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center font-black text-xs shrink-0">
+            {idx + 1}
+          </span>
+        </div>
+        <input
+          type="text"
+          value={item.label}
+          onChange={(e) => updateItemInTemplate(item.id, { label: e.target.value })}
+          className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-black focus:ring-2 focus:ring-emerald-500"
+          placeholder="Pergunta ou Item a verificar..."
+        />
+        <div className="flex gap-2 w-full md:w-auto">
+          <select
+            value={item.type}
+            onChange={(e) => updateItemInTemplate(item.id, { type: e.target.value as ChecklistItemType })}
+            className="flex-1 md:flex-none px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none text-xs font-black focus:ring-2 focus:ring-emerald-500"
+          >
+            <option value="condition">Opções (OK/NOK/...)</option>
+            <option value="number">Numérico</option>
+            <option value="range">Range (Baixo/Alto)</option>
+            <option value="barcode">Código / QR</option>
+            <option value="product">Código do Produto (Lista de Cadastrados)</option>
+            <option value="text">Texto Livre / Observação</option>
+          </select>
+          <button
+            onClick={() => removeItemFromTemplate(item.id)}
+            className="p-2.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+          >
+            <Trash2 className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pl-14">
+        {item.type === 'condition' && (
+          <div className="col-span-full">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Conjunto de Opções</label>
+            <select
+              value={item.conditionOptionsId || ''}
+              onChange={(e) => updateItemInTemplate(item.id, { conditionOptionsId: e.target.value })}
+              className="w-full md:w-64 px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none text-xs font-bold focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="">Padrão (OK / NÃO OK)</option>
+              {optionSets.map(set => (
+                <option key={set.id} value={set.id}>{set.name}</option>
+              ))}
+            </select>
+            
+            {(() => {
+              const selectedOptSet = optionSets.find(s => s.id === item.conditionOptionsId);
+              const isDryerOs = selectedOptSet?.name?.toLowerCase().includes('limpeza') || selectedOptSet?.name?.toLowerCase().includes('secador');
+              if (isDryerOs) {
+                return (
+                  <div className="mt-4">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">
+                      Quantidade de Radiadores nesta Porta
+                    </label>
+                    <select
+                      value={item.radiatorCount !== undefined ? item.radiatorCount : 4}
+                      onChange={(e) => updateItemInTemplate(item.id, { radiatorCount: parseInt(e.target.value, 10) })}
+                      className="w-full md:w-64 px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none text-xs font-bold focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value={0}>Sem Radiadores (Item Simples)</option>
+                      <option value={2}>2 Radiadores (Superior / Inferior)</option>
+                      <option value={4}>4 Radiadores (Esquerdo Sup / Direito Sup / Esquerdo Inf / Direito Inf)</option>
+                    </select>
+                    <p className="mt-1 text-[10px] text-slate-400 font-medium max-w-md">
+                      Defina quantos radiadores esta porta possui. O preenchimento da inspeção criará campos específicos para cada radiador.
+                    </p>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+          </div>
+        )}
+
+        {item.type === 'number' && (
+          <>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={item.isInteger || false}
+                onChange={(e) => updateItemInTemplate(item.id, { isInteger: e.target.checked })}
+                id={`int-${item.id}`}
+                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <label htmlFor={`int-${item.id}`} className="text-xs font-bold text-slate-600">Número Inteiro</label>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={item.isRangeDropdown || false}
+                onChange={(e) => updateItemInTemplate(item.id, { isRangeDropdown: e.target.checked })}
+                id={`range-${item.id}`}
+                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <label htmlFor={`range-${item.id}`} className="text-xs font-bold text-slate-600">Usar Dropdown (Range)</label>
+            </div>
+            {item.isRangeDropdown && (
+              <div className="flex gap-2 items-center col-span-full md:col-span-1">
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Min"
+                  value={item.min || ''}
+                  onChange={(e) => updateItemInTemplate(item.id, { min: parseFloat(e.target.value) })}
+                  className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                />
+                <span className="text-slate-400 text-xs font-bold">até</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Max"
+                  value={item.max || ''}
+                  onChange={(e) => updateItemInTemplate(item.id, { max: parseFloat(e.target.value) })}
+                  className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                />
+                <span className="text-slate-400 text-xs font-bold">Passo:</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Step"
+                  value={item.step || ''}
+                  onChange={(e) => updateItemInTemplate(item.id, { step: parseFloat(e.target.value) })}
+                  className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                />
+              </div>
+            )}
+          </>
+        )}
+        {item.type === 'product' && (
+          <div className="col-span-full">
+            <div className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex items-start gap-2.5">
+              <Package className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-black text-emerald-800 uppercase tracking-wider">Campo de Produto Cadastrado</p>
+                <p className="text-[11px] text-emerald-600 font-bold mt-1">
+                  Este campo exibirá automaticamente um seletor contendo todos os produtos cadastrados na aba "Produtos da Secagem" para que o operador selecione durante a inspeção.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="col-span-full border-t border-slate-100 pt-3 mt-1 flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={item.required !== false}
+              onChange={(e) => updateItemInTemplate(item.id, { required: e.target.checked })}
+              id={`required-${item.id}`}
+              className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+            />
+            <label htmlFor={`required-${item.id}`} className="text-xs font-bold text-slate-600">
+              Item Obrigatório
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={item.allowObservation || false}
+              onChange={(e) => updateItemInTemplate(item.id, { allowObservation: e.target.checked })}
+              id={`allow-obs-${item.id}`}
+              className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+            />
+            <label htmlFor={`allow-obs-${item.id}`} className="text-xs font-bold text-slate-600">
+              Habilitar campo para observação (texto livre no checklist)
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Quality: React.FC = () => {
   const { user, profile, isManager, isAdmin, isMaster } = useAuth();
   const [activeTab, setActiveTab] = useState<QualityTab>('perform');
+  const [showTabMenu, setShowTabMenu] = useState(false);
   const [templates, setTemplates] = useState<QualityChecklistTemplate[]>([]);
   const [lines, setLines] = useState<ProductionLine[]>([]);
   const [sectors, setSectors] = useState<QualitySector[]>([]);
@@ -302,6 +589,43 @@ const Quality: React.FC = () => {
   const [submissions, setSubmissions] = useState<QualityChecklistSubmission[]>([]);
   const [omissions, setOmissions] = useState<QualityChecklistOmission[]>([]);
   const [loading, setLoading] = useState(true);
+  const [seedingConfig, setSeedingConfig] = useState<{ dryerTemplateSeeded?: boolean } | null>(null);
+  const [seedingLoading, setSeedingLoading] = useState(true);
+
+  const [products, setProducts] = useState<SecagemProduct[]>([]);
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<SecagemProduct | null>(null);
+  const [newProduct, setNewProduct] = useState<Partial<SecagemProduct>>({
+    code: '',
+    name: '',
+    applyCover: false,
+    wireGauge: '2.18',
+    tieWireQty1: 0,
+    tieWireQty2: 0,
+    bigBaleWireQty: 0,
+    unitWireQty: 0,
+    sealType: '',
+    specialSeal: '',
+    photoUrl: '',
+    active: true
+  });
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
+
+  useEffect(() => {
+    if (!user) return;
+    const unsubSeeding = onSnapshot(doc(db, 'settings', 'quality_seeding'), (docSnap) => {
+      if (docSnap.exists()) {
+        setSeedingConfig(docSnap.data() as { dryerTemplateSeeded?: boolean });
+      } else {
+        setSeedingConfig({ dryerTemplateSeeded: false });
+      }
+      setSeedingLoading(false);
+    }, (err) => {
+      console.error("Error loading quality seeding config:", err);
+      setSeedingLoading(false);
+    });
+    return () => unsubSeeding();
+  }, [user]);
   const [viewingSubmission, setViewingSubmission] = useState<QualityChecklistSubmission | null>(null);
 
   // Performance Filtering
@@ -345,11 +669,42 @@ const Quality: React.FC = () => {
     active: true
   });
 
+  const itemSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEndItems = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setNewTemplate(prev => {
+        const items = prev.items || [];
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+        if (oldIndex !== -1 && newIndex !== -1) {
+          return {
+            ...prev,
+            items: arrayMove(items, oldIndex, newIndex)
+          };
+        }
+        return prev;
+      });
+    }
+  };
+
   // For Template Deletion
   const [templateToDelete, setTemplateToDelete] = useState<QualityChecklistTemplate | null>(null);
   const [submissionToDelete, setSubmissionToDelete] = useState<QualityChecklistSubmission | null>(null);
   const [sectorToDelete, setSectorToDelete] = useState<QualitySector | null>(null);
   const [optionSetToDelete, setOptionSetToDelete] = useState<any | null>(null);
+  const [productToDelete, setProductToDelete] = useState<SecagemProduct | null>(null);
   const [lineToDelete, setLineToDelete] = useState<ProductionLine | null>(null);
   const [selectedDryerSubId, setSelectedDryerSubId] = useState<string>('');
 
@@ -383,13 +738,19 @@ const Quality: React.FC = () => {
   }, [submissions, templates, selectedDryerSubId]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || seedingLoading) return;
 
     const unsubTemplates = onSnapshot(collection(db, 'quality_checklist_templates'), async (snapshot) => {
       const fetchedTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualityChecklistTemplate));
       setTemplates(fetchedTemplates);
       
       const hasDryerTemplate = fetchedTemplates.some(t => t.name.toLowerCase().includes('limpeza') || t.name.toLowerCase().includes('secador'));
+      
+      // If the template seeding is explicitly marked as done or should be skipped, do not auto-seed
+      if (seedingConfig?.dryerTemplateSeeded) {
+        return;
+      }
+
       if (!hasDryerTemplate) {
         try {
           const sectorsSnap = await getDocs(collection(db, 'quality_sectors'));
@@ -408,13 +769,15 @@ const Quality: React.FC = () => {
             const items = [];
             for (let door = 0; door <= 24; door++) {
               for (const level of ['A', 'B', 'C', 'D']) {
+                const isSpecial = door === 0 || door === 1 || door === 24;
                 items.push({
                   id: `door_${door}_level_${level.toLowerCase()}`,
                   label: `Porta ${door === 24 ? '00' : door} - Nivel ${level}`,
                   type: "condition",
                   required: false,
                   conditionOptionsId: optSet.id,
-                  allowObservation: true
+                  allowObservation: true,
+                  radiatorCount: isSpecial ? 2 : 4
                 });
               }
             }
@@ -429,39 +792,60 @@ const Quality: React.FC = () => {
               items: items
             });
             console.log("Seeded Dryer Cleanliness template with 100 items successfully.");
+            
+            // Mark as seeded in settings to prevent future automatic recreation
+            await setDoc(doc(db, 'settings', 'quality_seeding'), {
+              dryerTemplateSeeded: true
+            }, { merge: true });
           }
         } catch (err) {
           console.error("Error auto-seeding template:", err);
         }
       } else {
-        // If it exists but has less than 100 items (e.g. 96), expand it to 100 items to include door 24 (00)
-        const dryerTemplate = fetchedTemplates.find(t => t.name.toLowerCase().includes('limpeza') || t.name.toLowerCase().includes('secador'));
-        if (dryerTemplate && dryerTemplate.items.length < 100) {
+        // Since it already exists, make sure we mark it as seeded in our settings so that deleting it won't recreate it
+        if (!seedingConfig?.dryerTemplateSeeded) {
           try {
-            const optionsSnap = await getDocs(collection(db, 'quality_checklist_options'));
-            const optionsList = optionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as QualityChecklistOptionSet));
-            const optSet = optionsList.find(o => o.name.toLowerCase().includes('limpeza') || o.name.toLowerCase().includes('secador'));
-            if (optSet) {
-              const items = [];
-              for (let door = 0; door <= 24; door++) {
-                for (const level of ['A', 'B', 'C', 'D']) {
-                  items.push({
-                    id: `door_${door}_level_${level.toLowerCase()}`,
-                    label: `Porta ${door === 24 ? '00' : door} - Nivel ${level}`,
-                    type: "condition",
-                    required: false,
-                    conditionOptionsId: optSet.id,
-                    allowObservation: true
-                  });
+            await setDoc(doc(db, 'settings', 'quality_seeding'), {
+              dryerTemplateSeeded: true
+            }, { merge: true });
+          } catch (e) {
+            console.error("Error marking dryer template as seeded:", e);
+          }
+        }
+
+        // If it exists but has less than 100 items (e.g. 96), or some are missing radiatorCount, update it
+        const dryerTemplate = fetchedTemplates.find(t => t.name.toLowerCase().includes('limpeza') || t.name.toLowerCase().includes('secador'));
+        if (dryerTemplate) {
+          const needsUpdate = dryerTemplate.items.length < 100 || dryerTemplate.items.some(it => it.id.startsWith('door_') && it.radiatorCount === undefined);
+          if (needsUpdate) {
+            try {
+              const optionsSnap = await getDocs(collection(db, 'quality_checklist_options'));
+              const optionsList = optionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as QualityChecklistOptionSet));
+              const optSet = optionsList.find(o => o.name.toLowerCase().includes('limpeza') || o.name.toLowerCase().includes('secador'));
+              if (optSet) {
+                const items = [];
+                for (let door = 0; door <= 24; door++) {
+                  for (const level of ['A', 'B', 'C', 'D']) {
+                    const isSpecial = door === 0 || door === 1 || door === 24;
+                    items.push({
+                      id: `door_${door}_level_${level.toLowerCase()}`,
+                      label: `Porta ${door === 24 ? '00' : door} - Nivel ${level}`,
+                      type: "condition",
+                      required: false,
+                      conditionOptionsId: optSet.id,
+                      allowObservation: true,
+                      radiatorCount: isSpecial ? 2 : 4
+                    });
+                  }
                 }
+                await updateDoc(doc(db, 'quality_checklist_templates', dryerTemplate.id), {
+                  items: items
+                });
+                console.log("Successfully updated existing dryer template to 100 items with radiatorCount.");
               }
-              await updateDoc(doc(db, 'quality_checklist_templates', dryerTemplate.id), {
-                items: items
-              });
-              console.log("Successfully updated existing dryer template to 100 items.");
+            } catch (err) {
+              console.error("Error expanding existing dryer template:", err);
             }
-          } catch (err) {
-            console.error("Error expanding existing dryer template:", err);
           }
         }
       }
@@ -559,6 +943,11 @@ const Quality: React.FC = () => {
       setOmissions(mapped);
     }, (error) => console.error("Error in quality_checklist_omissions listener:", error));
 
+    const unsubProducts = onSnapshot(collection(db, 'quality_products'), (snapshot) => {
+      const fetchedProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SecagemProduct));
+      setProducts(fetchedProducts);
+    }, (error) => console.error("Error in quality_products listener:", error));
+
     setLoading(false);
 
     return () => {
@@ -568,8 +957,9 @@ const Quality: React.FC = () => {
       unsubOptionSets();
       unsubSubmissions();
       unsubOmissions();
+      unsubProducts();
     };
-  }, [user]);
+  }, [user, seedingLoading, seedingConfig]);
 
   const handleSaveLine = async () => {
     if (!newLine.name) {
@@ -667,6 +1057,105 @@ const Quality: React.FC = () => {
     }
   };
 
+  const [dragActive, setDragActive] = useState(false);
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 800 * 1024) { // limit to 800KB to fit easily in firestore limits
+      setModalConfig({
+        isOpen: true,
+        title: 'Imagem Muito Grande',
+        message: 'Por favor, selecione uma imagem de até 800KB para garantir o armazenamento adequado.',
+        type: 'warning'
+      });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setNewProduct(prev => ({ ...prev, photoUrl: event.target?.result as string }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      if (file.size > 800 * 1024) {
+        setModalConfig({
+          isOpen: true,
+          title: 'Imagem Muito Grande',
+          message: 'Por favor, selecione uma imagem de até 800KB para garantir o armazenamento adequado.',
+          type: 'warning'
+        });
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setNewProduct(prev => ({ ...prev, photoUrl: event.target?.result as string }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveProduct = async () => {
+    if (!newProduct.code || !newProduct.name) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Aviso',
+        message: 'Preencha o código e o nome do produto.',
+        type: 'warning'
+      });
+      return;
+    }
+
+    try {
+      if (editingProduct) {
+        await updateDoc(doc(db, 'quality_products', editingProduct.id), {
+          ...newProduct,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        await addDoc(collection(db, 'quality_products'), {
+          ...newProduct,
+          active: true,
+          createdAt: serverTimestamp()
+        });
+      }
+      setIsAddingProduct(false);
+      setEditingProduct(null);
+      setNewProduct({
+        code: '',
+        name: '',
+        applyCover: false,
+        wireGauge: '2.18',
+        tieWireQty1: 0,
+        tieWireQty2: 0,
+        bigBaleWireQty: 0,
+        unitWireQty: 0,
+        sealType: '',
+        specialSeal: '',
+        photoUrl: '',
+        active: true
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'quality_products');
+    }
+  };
+
   const handleSaveTemplate = async () => {
     if (!newTemplate.name || !newTemplate.sectorId || !newTemplate.items?.length) {
       setModalConfig({
@@ -679,14 +1168,27 @@ const Quality: React.FC = () => {
     }
 
     try {
+      const cleanTemplate = { ...newTemplate };
+      if (cleanTemplate.scheduleType !== 'weekly') {
+        delete cleanTemplate.weeklyDay;
+      }
+      if (cleanTemplate.scheduleType !== 'specific_date') {
+        delete cleanTemplate.specificDate;
+      }
+      Object.keys(cleanTemplate).forEach(key => {
+        if ((cleanTemplate as any)[key] === undefined) {
+          delete (cleanTemplate as any)[key];
+        }
+      });
+
       if (editingTemplate) {
         await updateDoc(doc(db, 'quality_checklist_templates', editingTemplate.id), {
-          ...newTemplate,
+          ...cleanTemplate,
           updatedAt: serverTimestamp()
         });
       } else {
         await addDoc(collection(db, 'quality_checklist_templates'), {
-          ...newTemplate,
+          ...cleanTemplate,
           createdBy: user?.uid,
           createdAt: serverTimestamp()
         });
@@ -698,8 +1200,12 @@ const Quality: React.FC = () => {
         description: '',
         sectorId: '',
         frequencyPerShift: 1,
+        scheduleType: 'shift',
+        weeklyDay: 1,
+        specificDate: '',
         items: [],
-        active: true
+        active: true,
+        productId: ''
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'quality_checklist_templates');
@@ -793,8 +1299,8 @@ const Quality: React.FC = () => {
   useEffect(() => {
     if (!fillingTemplate || !user) return;
     
-    // Only save draft if there are some responses or observations or line selected
-    if (Object.keys(responses).length === 0 && Object.keys(observations).length === 0 && !submissionLineId) return;
+    // Only save draft if there are some responses or observations or line selected or product selected
+    if (Object.keys(responses).length === 0 && Object.keys(observations).length === 0 && !submissionLineId && !selectedProductId) return;
 
     const timeoutId = setTimeout(async () => {
       const draftId = `${user.uid}_${fillingTemplate.id}`;
@@ -805,6 +1311,7 @@ const Quality: React.FC = () => {
           responses,
           observations,
           submissionLineId,
+          productId: selectedProductId,
           updatedAt: new Date()
         });
         setDraftSavedAt(new Date());
@@ -814,7 +1321,7 @@ const Quality: React.FC = () => {
     }, 1500);
 
     return () => clearTimeout(timeoutId);
-  }, [responses, observations, submissionLineId, fillingTemplate, user]);
+  }, [responses, observations, submissionLineId, selectedProductId, fillingTemplate, user]);
 
   const generateRangeOptions = (min?: number, max?: number, step?: number) => {
     if (min === undefined || max === undefined) return [];
@@ -862,20 +1369,23 @@ const Quality: React.FC = () => {
     const currentShiftName = getCurrentShift();
     const currentGroup = getGroupForShift(new Date(), currentShiftName);
     const shiftIdentifier = `${currentGroup} - ${currentShiftName}`;
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateString(new Date());
 
+    const isDayBased = fillingTemplate.scheduleType && fillingTemplate.scheduleType !== 'shift';
     const existingSubmissions = submissions.filter(sub => 
       sub.templateId === fillingTemplate.id && 
       (sub.lineId === submissionLineId || sub.lineId === fillingTemplate.sectorId) &&
-      sub.shift === shiftIdentifier &&
-      (safeToDate(sub.createdAt) || new Date()).toISOString().split('T')[0] === todayStr
+      (isDayBased ? true : sub.shift === shiftIdentifier) &&
+      getLocalDateString(safeToDate(sub.createdAt) || new Date()) === todayStr
     );
 
     if (existingSubmissions.length >= fillingTemplate.frequencyPerShift) {
       setModalConfig({
         isOpen: true,
         title: 'Limite Atingido',
-        message: `Este checklist já foi realizado ${fillingTemplate.frequencyPerShift} vez(es) neste turno. Limite atingido.`,
+        message: isDayBased 
+          ? `Este checklist já foi realizado hoje. Limite atingido.`
+          : `Este checklist já foi realizado ${fillingTemplate.frequencyPerShift} vez(es) neste turno. Limite atingido.`,
         type: 'info'
       });
       return;
@@ -896,6 +1406,7 @@ const Quality: React.FC = () => {
         closeModal();
         try {
           const encName = await encryptValue(profile.displayName || user.email);
+          const matchedProd = products.find(p => p.id === selectedProductId);
           await addDoc(collection(db, 'quality_checklist_submissions'), {
             templateId: fillingTemplate.id,
             sectorId: fillingTemplate.sectorId,
@@ -903,6 +1414,8 @@ const Quality: React.FC = () => {
             userId: user.uid,
             userName: encName,
             shift: shiftIdentifier, // Format: "A - Turno 1"
+            productId: selectedProductId || '',
+            productName: matchedProd ? matchedProd.name : '',
             responses: Object.entries(responses).map(([itemId, value]) => ({ 
               itemId, 
               value,
@@ -949,7 +1462,7 @@ const Quality: React.FC = () => {
       if (!profile && !isAdmin && !isManager) return;
 
       const today = new Date();
-      const todayStr = today.toISOString().split('T')[0];
+      const todayStr = getLocalDateString(today);
       
       const activeTemplates = templates.filter(t => t.active);
       const pending = [];
@@ -957,7 +1470,7 @@ const Quality: React.FC = () => {
       // Check last 2 days
       for (let i = 0; i < 2; i++) {
         const d = new Date(today.getTime() - i * 86400000);
-        const dStr = d.toISOString().split('T')[0];
+        const dStr = getLocalDateString(d);
         const shifts: Shift[] = ['Turno 1', 'Turno 2', 'Turno 3'];
         
         for (const s of shifts) {
@@ -971,6 +1484,11 @@ const Quality: React.FC = () => {
 
             if (Date.now() > shiftEndTime.getTime()) {
               for (const template of activeTemplates) {
+                if (!isTemplateDueOnDate(template, d)) continue;
+
+                const isDayBased = template.scheduleType && template.scheduleType !== 'shift';
+                if (isDayBased && s !== 'Turno 3') continue;
+
                 // Determine target line IDs for this template
                 const targetLineIds = template.sectorId === 'all'
                   ? lines.map(l => l.id)
@@ -983,8 +1501,8 @@ const Quality: React.FC = () => {
                   const count = submissions.filter(sub => 
                     sub.templateId === template.id && 
                     sub.lineId === lineId &&
-                    sub.shift === shiftIdentifier &&
-                    (safeToDate(sub.createdAt) || new Date()).toISOString().split('T')[0] === dStr
+                    (isDayBased ? true : sub.shift === shiftIdentifier) &&
+                    getLocalDateString(safeToDate(sub.createdAt) || new Date()) === dStr
                   ).length;
 
                   if (count < template.frequencyPerShift) {
@@ -1218,17 +1736,7 @@ const Quality: React.FC = () => {
     // Checklist Items
     const itemsData = sub.responses.map((resp, idx) => {
       const item = template?.items.find(it => it.id === resp.itemId);
-      const compliant = template ? isResponseCompliant(resp.itemId, resp.value, template) : true;
-      const optSetName = item?.type === 'condition' 
-        ? sanitizePdfText(optionSets.find(os => os.id === item.conditionOptionsId)?.name || 'OK/NOK')
-        : 'N/A';
       
-      const patternStr = item?.type === 'condition' ? `Opções (${optSetName})` :
-                         item?.type === 'number' ? 'Numérico' :
-                         item?.type === 'range' ? 'Range (Baixo/Alto)' :
-                         item?.type === 'barcode' ? 'Código / QR' :
-                         item?.type === 'text' ? 'Texto Livre' : 'N/A';
-                         
       let valStr = '';
       if (resp.value && typeof resp.value === 'object') {
         const valObj = resp.value as any;
@@ -1255,15 +1763,13 @@ const Quality: React.FC = () => {
       return [
         idx + 1,
         sanitizePdfText(item?.label || 'Item Removido'),
-        sanitizePdfText(patternStr),
-        sanitizePdfText(displayVal),
-        compliant ? 'CONFORME' : 'NAO CONFORME'
+        sanitizePdfText(displayVal)
       ];
     });
     
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 20,
-      head: [['#', 'Item de Inspecao', 'Padrao / Tipo', 'Resposta / Observacao', 'Avaliacao']],
+      head: [['#', 'Item de Inspecao', 'Resposta / Observacao']],
       body: itemsData,
       headStyles: { 
         fillColor: [241, 245, 249], 
@@ -1272,20 +1778,9 @@ const Quality: React.FC = () => {
       },
       styles: { fontSize: 9 },
       columnStyles: {
-        0: { cellWidth: 10, halign: 'center' },
-        1: { cellWidth: 60 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 50 },
-        4: { halign: 'center', fontStyle: 'bold' }
-      },
-      didParseCell: (data) => {
-        if (data.section === 'body' && data.column.index === 4) {
-          if (data.cell.raw === 'NAO CONFORME') {
-            data.cell.styles.textColor = [225, 29, 72]; // rose-600
-          } else {
-            data.cell.styles.textColor = [5, 150, 105]; // emerald-600
-          }
-        }
+        0: { cellWidth: 15, halign: 'center' },
+        1: { cellWidth: 85 },
+        2: { cellWidth: 80 }
       }
     });
     
@@ -1477,24 +1972,43 @@ const Quality: React.FC = () => {
             const overallColor = getPdfColorForOverallValue(response?.value);
             const valObj = (response && typeof response.value === 'object' && response.value !== null) ? response.value : null;
 
-            const isSpecialDoor = doorNum === 0 || doorNum === 1 || doorNum === 24;
+            const tObj = templates.find(t => t.id === sub.templateId);
+            const itemObj = tObj?.items.find(it => 
+              it.id === respId || 
+              it.id.endsWith(`_door_${doorNum}_level_${level.toLowerCase()}`) || 
+              it.id.endsWith(`_${doorNum}_level_${level.toLowerCase()}`)
+            );
+            const radiatorCount = itemObj?.radiatorCount !== undefined 
+              ? itemObj.radiatorCount 
+              : (doorNum === 0 || doorNum === 1 || doorNum === 24 ? 2 : 4);
 
-            if (isSpecialDoor) {
-              const subW = cellWidth / 2;
+            if (radiatorCount === 0) {
+              // Single block/no split
+              doc.setFillColor(overallColor[0], overallColor[1], overallColor[2]);
+              doc.setDrawColor(148, 163, 184);
+              doc.setLineWidth(0.05);
+              doc.rect(x, y, cellWidth, cellHeight, 'FD');
+
+              // Draw cell border around the whole cell
+              doc.setDrawColor(148, 163, 184); // slate-400
+              doc.setLineWidth(0.1);
+              doc.rect(x, y, cellWidth, cellHeight, 'S');
+            } else if (radiatorCount === 2) {
+              const subH = cellHeight / 2;
               if (valObj) {
-                const colorLeft = getPdfColorForStatus(valObj.left, overallColor);
-                const colorRight = getPdfColorForStatus(valObj.right, overallColor);
+                const colorTop = getPdfColorForStatus(valObj.left, overallColor);
+                const colorBottom = getPdfColorForStatus(valObj.right, overallColor);
                 
                 doc.setDrawColor(148, 163, 184);
                 doc.setLineWidth(0.05);
 
-                // Draw left radiator (filled and stroked)
-                doc.setFillColor(colorLeft[0], colorLeft[1], colorLeft[2]);
-                doc.rect(x, y, subW, cellHeight, 'FD');
+                // Draw top radiator (filled and stroked)
+                doc.setFillColor(colorTop[0], colorTop[1], colorTop[2]);
+                doc.rect(x, y, cellWidth, subH, 'FD');
                 
-                // Draw right radiator (filled and stroked)
-                doc.setFillColor(colorRight[0], colorRight[1], colorRight[2]);
-                doc.rect(x + subW, y, subW, cellHeight, 'FD');
+                // Draw bottom radiator (filled and stroked)
+                doc.setFillColor(colorBottom[0], colorBottom[1], colorBottom[2]);
+                doc.rect(x, y + subH, cellWidth, subH, 'FD');
               } else {
                 // Single block/no split
                 doc.setFillColor(overallColor[0], overallColor[1], overallColor[2]);
@@ -1719,12 +2233,13 @@ const Quality: React.FC = () => {
         <div>
           <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
             <ClipboardCheck className="w-10 h-10 text-emerald-600" />
-            Qualidade de Processo
+            Inspeções de Processo
           </h1>
           <p className="text-slate-500 font-medium mt-1">Gestão de inspeções e conformidade.</p>
         </div>
 
-        <div className="flex bg-slate-100 p-1.5 rounded-2xl overflow-x-auto max-w-full scrollbar-none whitespace-nowrap">
+        {/* Desktop Tabs - Visible on lg screens */}
+        <div className="hidden lg:flex bg-slate-100 p-1.5 rounded-2xl overflow-x-auto max-w-full scrollbar-none whitespace-nowrap">
           <button
             onClick={() => setActiveTab('perform')}
             className={cn(
@@ -1778,6 +2293,17 @@ const Quality: React.FC = () => {
           </button>
           {(isAdmin || isManager) && (
             <button
+              onClick={() => setActiveTab('products')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-sm font-black transition-all shrink-0",
+                activeTab === 'products' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Produtos
+            </button>
+          )}
+          {(isAdmin || isManager) && (
+            <button
               onClick={() => setActiveTab('dashboard')}
               className={cn(
                 "px-4 py-2 rounded-xl text-sm font-black transition-all shrink-0",
@@ -1787,6 +2313,68 @@ const Quality: React.FC = () => {
               Resultados
             </button>
           )}
+        </div>
+
+        {/* Mobile/Tablet Dropdown Control - Visible below lg screens */}
+        <div className="lg:hidden relative inline-block w-full max-w-sm">
+          <button
+            onClick={() => setShowTabMenu(!showTabMenu)}
+            className="w-full flex items-center justify-between gap-3 px-5 py-4 bg-white border border-slate-200 rounded-2xl text-xs font-black uppercase tracking-wider text-slate-700 shadow-sm transition-all active:scale-[0.98] hover:border-emerald-200"
+          >
+            <div className="flex items-center gap-2.5">
+              {activeTab === 'perform' && <><ClipboardCheck className="w-4 h-4 text-emerald-600" /> Realizar</>}
+              {activeTab === 'templates' && <><FileText className="w-4 h-4 text-slate-800" /> Modelos</>}
+              {activeTab === 'sectors' && <><LayoutGrid className="w-4 h-4 text-emerald-700" /> Setores</>}
+              {activeTab === 'options' && <><Settings className="w-4 h-4 text-slate-700" /> Opções</>}
+              {activeTab === 'omissions' && <><AlertCircle className="w-4 h-4 text-rose-600 animate-pulse" /> Justificativas</>}
+              {activeTab === 'products' && <><Package className="w-4 h-4 text-amber-700" /> Produtos</>}
+              {activeTab === 'dashboard' && <><BarChart3 className="w-4 h-4 text-blue-700" /> Resultados</>}
+            </div>
+            <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTabMenu && "rotate-180")} />
+          </button>
+
+          <AnimatePresence>
+            {showTabMenu && (
+              <>
+                <div 
+                  className="fixed inset-0 z-10" 
+                  onClick={() => setShowTabMenu(false)} 
+                />
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute right-0 mt-2 w-full min-w-[260px] bg-white border border-slate-100 rounded-2xl shadow-2xl z-20 overflow-hidden p-1.5"
+                >
+                  {[
+                    { id: 'perform', label: 'Realizar', icon: ClipboardCheck },
+                    { id: 'templates', label: 'Modelos', icon: FileText, roles: [isManager, isAdmin] },
+                    { id: 'sectors', label: 'Setores', icon: LayoutGrid, roles: [isManager, isAdmin] },
+                    { id: 'options', label: 'Opções', icon: Settings, roles: [isManager, isAdmin] },
+                    { id: 'omissions', label: 'Justificativas', icon: AlertCircle },
+                    { id: 'products', label: 'Produtos', icon: Package, roles: [isManager, isAdmin] },
+                    { id: 'dashboard', label: 'Resultados', icon: BarChart3, roles: [isManager, isAdmin] },
+                  ].map((tab: any) => {
+                    if (tab.roles && !tab.roles.some(Boolean)) return null;
+                    const Icon = tab.icon;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => { setActiveTab(tab.id); setShowTabMenu(false); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-4 py-3.5 rounded-xl text-left text-xs font-black uppercase tracking-wider transition-all",
+                          activeTab === tab.id ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                        )}
+                      >
+                        <Icon className="w-4 h-4" />
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -1948,13 +2536,14 @@ const Quality: React.FC = () => {
                           const currentShift = getCurrentShift();
                           const currentGroup = getGroupForShift(new Date(), currentShift);
                           const shiftIdentifier = `${currentGroup} - ${currentShift}`;
-                          const todayStr = new Date().toISOString().split('T')[0];
+                          const todayStr = getLocalDateString(new Date());
 
+                          const isDayBased = fillingTemplate.scheduleType && fillingTemplate.scheduleType !== 'shift';
                           const lineSubmissionsCount = submissions.filter(sub => 
                             sub.templateId === fillingTemplate.id && 
                             sub.lineId === line.id &&
-                            sub.shift === shiftIdentifier &&
-                            (safeToDate(sub.createdAt) || new Date()).toISOString().split('T')[0] === todayStr
+                            (isDayBased ? true : sub.shift === shiftIdentifier) &&
+                            getLocalDateString(safeToDate(sub.createdAt) || new Date()) === todayStr
                           ).length;
                           const isLineCompleted = lineSubmissionsCount >= fillingTemplate.frequencyPerShift;
 
@@ -1983,6 +2572,52 @@ const Quality: React.FC = () => {
                       </div>
                     </div>
                   )}
+
+                  {/* Product Selection */}
+                  <div className="bg-slate-50 p-4 rounded-[1.5rem] border border-slate-200">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-[#0d6e4f] ml-1 block mb-2 font-mono">Produto Sendo Produzido</label>
+                    <div className="relative">
+                      <select
+                        value={selectedProductId}
+                        onChange={(e) => setSelectedProductId(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all appearance-none cursor-pointer"
+                      >
+                        <option value="">-- Selecione o Produto --</option>
+                        {products.map(prod => (
+                          <option key={prod.id} value={prod.id}>
+                            {prod.code} - {prod.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-500">
+                        <ChevronRight className="w-4 h-4 rotate-90" />
+                      </div>
+                    </div>
+                    {/* Display some product specs if selected */}
+                    {(() => {
+                      const selectedProdObj = products.find(p => p.id === selectedProductId);
+                      if (!selectedProdObj) return null;
+                      return (
+                        <div className="mt-3 p-3 bg-white border border-slate-100 rounded-xl space-y-2 text-xs text-slate-600">
+                          <p className="font-bold text-slate-800">Especificações do Produto:</p>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-medium">
+                            <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Aplicar Capa</span> {selectedProdObj.applyCover ? 'Sim' : 'Não'}</div>
+                            <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Bitola do Arame</span> {selectedProdObj.wireGauge.replace('.', ',')}</div>
+                            <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Amarradeira 1 / 2</span> {selectedProdObj.tieWireQty1} / {selectedProdObj.tieWireQty2}</div>
+                            <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Big Bale / Unit</span> {selectedProdObj.bigBaleWireQty} / {selectedProdObj.unitWireQty}</div>
+                            <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Tipo de Selo</span> {selectedProdObj.sealType || 'N/A'}</div>
+                            <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Selo Especial</span> {selectedProdObj.specialSeal || 'N/A'}</div>
+                          </div>
+                          {selectedProdObj.photoUrl && (
+                            <div className="mt-2 border-t border-slate-50 pt-2 flex items-center gap-3">
+                              <span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block shrink-0">Foto Modelo</span>
+                              <img src={selectedProdObj.photoUrl} alt={selectedProdObj.name} referrerPolicy="no-referrer" className="h-16 w-auto rounded-lg border border-slate-200 object-contain bg-slate-50" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
 
                   {/* PROGRESS BAR VISUAL INDICATOR */}
                   {(() => {
@@ -2100,11 +2735,15 @@ const Quality: React.FC = () => {
                                 {item.type === 'condition' && (
                                   <div className="flex flex-wrap gap-2.5 w-full">
                                     {(() => {
-                                      const isDryerItem = (fillingTemplate?.name.toLowerCase().includes('limpeza') || fillingTemplate?.name.toLowerCase().includes('secador')) && item.id.startsWith('door_');
+                                      const isDryerItem = 
+                                        (item.radiatorCount !== undefined && item.radiatorCount > 0) ||
+                                        (((fillingTemplate?.name.toLowerCase().includes('limpeza') || fillingTemplate?.name.toLowerCase().includes('secador')) && item.id.startsWith('door_')) && item.radiatorCount !== 0);
                                       if (isDryerItem) {
                                         const match = item.id.match(/^door_(\d+)_level_([a-d])$/);
                                         const doorNum = match ? parseInt(match[1], 10) : 0;
-                                        const isSpecialDoor = doorNum === 0 || doorNum === 1 || doorNum === 24;
+                                        const isSpecialDoor = item.radiatorCount !== undefined 
+                                          ? item.radiatorCount === 2 
+                                          : (doorNum === 0 || doorNum === 1 || doorNum === 24);
                                         
                                         // Initialize default sub values
                                         const currentVal = responses[item.id] || {};
@@ -2167,13 +2806,13 @@ const Quality: React.FC = () => {
                                             {/* Individual Radiators Grid */}
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
                                               {isSpecialDoor ? (
-                                                // 2 Radiators: Left and Right
+                                                // 2 Radiators: Superior and Inferior
                                                 <>
-                                                  {/* Left Radiator */}
+                                                  {/* Superior Radiator */}
                                                   <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                                                     <div className="flex items-center gap-2">
-                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">L</span>
-                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Esquerdo</p>
+                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">S</span>
+                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Superior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
                                                       {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
@@ -2211,11 +2850,11 @@ const Quality: React.FC = () => {
                                                     </div>
                                                   </div>
 
-                                                  {/* Right Radiator */}
+                                                  {/* Inferior Radiator */}
                                                   <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                                                     <div className="flex items-center gap-2">
-                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">R</span>
-                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Direito</p>
+                                                      <span className="w-5 h-5 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-[10px]">I</span>
+                                                      <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Inferior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
                                                       {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
@@ -2584,6 +3223,77 @@ const Quality: React.FC = () => {
                                   </div>
                                 )}
 
+                                {item.type === 'product' && (
+                                  <div className="space-y-4">
+                                    <div className="relative">
+                                      <Package className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                                      <select
+                                        value={responses[item.id] || ''}
+                                        onChange={(e) => {
+                                          setResponses(prev => ({ ...prev, [item.id]: e.target.value }));
+                                          // Auto-advance with a slight delay
+                                          if (e.target.value) {
+                                            setTimeout(advanceToNext, 600);
+                                          }
+                                        }}
+                                        className="w-full pl-10 pr-10 py-3.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-bold text-xs appearance-none text-slate-800"
+                                      >
+                                        <option value="">Selecione o Produto...</option>
+                                        {products.filter(p => p.active !== false).map(prod => (
+                                          <option key={prod.id} value={prod.code}>
+                                            {prod.code} - {prod.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-400">
+                                        <ChevronDown className="w-4 h-4" />
+                                      </div>
+                                    </div>
+
+                                    {(() => {
+                                      const selectedCode = responses[item.id];
+                                      const selectedProd = products.find(p => p.code === selectedCode);
+                                      if (!selectedProd) return null;
+                                      return (
+                                        <motion.div
+                                          initial={{ opacity: 0, y: 10 }}
+                                          animate={{ opacity: 1, y: 0 }}
+                                          className="bg-slate-50 border border-slate-200/80 p-4 rounded-2xl space-y-3 text-left"
+                                        >
+                                          <div className="flex justify-between items-start">
+                                            <div>
+                                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Especificações do Produto</p>
+                                              <h4 className="text-sm font-black text-slate-900 mt-0.5">{selectedProd.name}</h4>
+                                            </div>
+                                            <span className="text-[10px] font-mono font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                              Cód: {selectedProd.code}
+                                            </span>
+                                          </div>
+
+                                          <div className="grid grid-cols-2 gap-3 pt-1 text-[11px]">
+                                            <div className="bg-white p-2.5 rounded-xl border border-slate-100">
+                                              <span className="text-slate-400 font-bold block mb-0.5">Bitola do Arame</span>
+                                              <span className="font-extrabold text-slate-700">{selectedProd.wireGauge} mm</span>
+                                            </div>
+                                            <div className="bg-white p-2.5 rounded-xl border border-slate-100">
+                                              <span className="text-slate-400 font-bold block mb-0.5">Aplicação de Capa</span>
+                                              <span className="font-extrabold text-slate-700">{selectedProd.applyCover ? 'Sim' : 'Não'}</span>
+                                            </div>
+                                            <div className="bg-white p-2.5 rounded-xl border border-slate-100">
+                                              <span className="text-slate-400 font-bold block mb-0.5">Arame por Unidade</span>
+                                              <span className="font-extrabold text-slate-700">{selectedProd.unitWireQty || 0} pç</span>
+                                            </div>
+                                            <div className="bg-white p-2.5 rounded-xl border border-slate-100">
+                                              <span className="text-slate-400 font-bold block mb-0.5">Tipo de Selo</span>
+                                              <span className="font-extrabold text-slate-700">{selectedProd.sealType || 'N/A'}</span>
+                                            </div>
+                                          </div>
+                                        </motion.div>
+                                      );
+                                    })()}
+                                  </div>
+                                )}
+
                                 {item.type === 'barcode' && (
                                   <div className="space-y-3">
                                     <div className="relative group">
@@ -2760,6 +3470,7 @@ const Quality: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {templates.filter(t => {
                   if (!t.active) return false;
+                  if (!isTemplateDueOnDate(t, new Date())) return false;
                   if (!selectedLineId) return true;
                   
                   // Show if matched directly
@@ -2781,18 +3492,20 @@ const Quality: React.FC = () => {
                   const currentShift = getCurrentShift();
                   const currentGroup = getGroupForShift(new Date(), currentShift);
                   const shiftIdentifier = `${currentGroup} - ${currentShift}`;
-                  const todayStr = new Date().toISOString().split('T')[0];
+                  const todayStr = getLocalDateString(new Date());
 
                   const targetLineIds = template.sectorId === 'all'
                     ? lines.map(l => l.id)
                     : (sectors.find(sec => sec.id === template.sectorId)?.lineIds || (lines.find(l => l.id === template.sectorId) ? [template.sectorId] : []));
 
+                  const isDayBased = template.scheduleType && template.scheduleType !== 'shift';
+
                   const linesStatus = targetLineIds.map(lineId => {
                     const lineSubmissions = submissions.filter(sub => 
                       sub.templateId === template.id && 
                       sub.lineId === lineId &&
-                      sub.shift === shiftIdentifier &&
-                      (safeToDate(sub.createdAt) || new Date()).toISOString().split('T')[0] === todayStr
+                      (isDayBased ? true : sub.shift === shiftIdentifier) &&
+                      getLocalDateString(safeToDate(sub.createdAt) || new Date()) === todayStr
                     );
                     return {
                       lineId,
@@ -2833,6 +3546,7 @@ const Quality: React.FC = () => {
                           setResponses(loadedDraft.responses || {});
                           setObservations(loadedDraft.observations || {});
                           setSubmissionLineId(loadedDraft.submissionLineId || '');
+                          setSelectedProductId(loadedDraft.productId || template.productId || '');
                           setIsDraftLoaded(true);
                           setDraftSavedAt(loadedDraft.updatedAt?.toDate ? loadedDraft.updatedAt.toDate() : new Date(loadedDraft.updatedAt));
                           
@@ -2847,6 +3561,7 @@ const Quality: React.FC = () => {
                           setObservations({});
                           setIsDraftLoaded(false);
                           setDraftSavedAt(null);
+                          setSelectedProductId(template.productId || '');
                           // If selected line targets this template, default to it; otherwise default to empty or the template's single line
                           const defaultLineId = selectedLineId && targetLineIds.includes(selectedLineId)
                             ? selectedLineId
@@ -2946,8 +3661,12 @@ const Quality: React.FC = () => {
                     description: '',
                     sectorId: '',
                     frequencyPerShift: 1,
+                    scheduleType: 'shift',
+                    weeklyDay: 1,
+                    specificDate: '',
                     items: [],
-                    active: true
+                    active: true,
+                    productId: ''
                   });
                 }}
                 className="bg-slate-900 text-white px-6 py-3 rounded-xl font-black flex items-center gap-2 hover:bg-slate-800 transition-all shadow-lg"
@@ -2971,9 +3690,23 @@ const Quality: React.FC = () => {
                       </div>
                       <div>
                         <h3 className="text-lg font-black text-slate-900">{template.name}</h3>
-                        <div className="flex items-center gap-4 mt-1">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-1.5">
                           <span className="text-xs font-bold text-slate-400">{template.items.length} itens</span>
-                          <span className="text-xs font-bold text-slate-400">{template.frequencyPerShift}x por turno</span>
+                          <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded uppercase tracking-wider">
+                            {template.scheduleType === 'daily' && 'Diário'}
+                            {template.scheduleType === 'weekly' && `Semanal (${
+                              template.weeklyDay === 1 ? 'Segunda' :
+                              template.weeklyDay === 2 ? 'Terça' :
+                              template.weeklyDay === 3 ? 'Quarta' :
+                              template.weeklyDay === 4 ? 'Quinta' :
+                              template.weeklyDay === 5 ? 'Sexta' :
+                              template.weeklyDay === 6 ? 'Sábado' :
+                              template.weeklyDay === 0 ? 'Domingo' : 'Segunda'
+                            })`}
+                            {template.scheduleType === 'fortnightly' && 'Quinzenal'}
+                            {template.scheduleType === 'specific_date' && `Agendado (${template.specificDate ? new Date(template.specificDate + 'T00:00:00').toLocaleDateString('pt-BR') : ''})`}
+                            {(!template.scheduleType || template.scheduleType === 'shift') && `${template.frequencyPerShift}x por turno`}
+                          </span>
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded w-fit">
                               {locationName}
@@ -3099,31 +3832,89 @@ const Quality: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50/50 p-4 border border-slate-100 rounded-2xl">
                         <div className="space-y-2">
-                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Frequência por Turno</label>
-                          <div className="relative">
-                             <Clock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                             <input
-                               type="number"
-                               min="1"
-                               max="12"
-                               value={newTemplate.frequencyPerShift}
-                               onChange={(e) => setNewTemplate(prev => ({ ...prev, frequencyPerShift: parseInt(e.target.value) || 1 }))}
-                               className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
-                             />
+                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Agendamento</label>
+                          <select
+                            value={newTemplate.scheduleType || 'shift'}
+                            onChange={(e) => {
+                              const val = e.target.value as any;
+                              setNewTemplate(prev => ({ 
+                                ...prev, 
+                                scheduleType: val,
+                                frequencyPerShift: val === 'shift' ? prev.frequencyPerShift : 1,
+                                weeklyDay: val === 'weekly' ? 1 : undefined,
+                                specificDate: val === 'specific_date' ? getLocalDateString(new Date()) : undefined
+                              }));
+                            }}
+                            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-xs text-slate-800"
+                          >
+                            <option value="shift">Por Turno (Recorrente por Turno)</option>
+                            <option value="daily">Diário (Todos os Dias)</option>
+                            <option value="weekly">Semanal (Uma vez por semana)</option>
+                            <option value="fortnightly">Quinzenal (A cada 15 dias)</option>
+                            <option value="specific_date">Data Agendada (Data específica)</option>
+                          </select>
+                        </div>
+
+                        {newTemplate.scheduleType === 'weekly' && (
+                          <div className="space-y-2">
+                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Dia da Semana</label>
+                            <select
+                              value={newTemplate.weeklyDay !== undefined ? newTemplate.weeklyDay : 1}
+                              onChange={(e) => setNewTemplate(prev => ({ ...prev, weeklyDay: parseInt(e.target.value) }))}
+                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-xs text-slate-800"
+                            >
+                              <option value={1}>Segunda-feira</option>
+                              <option value={2}>Terça-feira</option>
+                              <option value={3}>Quarta-feira</option>
+                              <option value={4}>Quinta-feira</option>
+                              <option value={5}>Sexta-feira</option>
+                              <option value={6}>Sábado</option>
+                              <option value={0}>Domingo</option>
+                            </select>
                           </div>
-                        </div>
-                        <div className="space-y-2">
-                           <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Descrição (Opcional)</label>
-                           <input
-                             type="text"
-                             value={newTemplate.description}
-                             onChange={(e) => setNewTemplate(prev => ({ ...prev, description: e.target.value }))}
-                             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
-                             placeholder="Breve resumo da finalidade..."
-                           />
-                        </div>
+                        )}
+
+                        {newTemplate.scheduleType === 'specific_date' && (
+                          <div className="space-y-2">
+                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Data do Agendamento</label>
+                            <input
+                              type="date"
+                              value={newTemplate.specificDate || ''}
+                              onChange={(e) => setNewTemplate(prev => ({ ...prev, specificDate: e.target.value }))}
+                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-xs text-slate-800"
+                            />
+                          </div>
+                        )}
+
+                        {(!newTemplate.scheduleType || newTemplate.scheduleType === 'shift') && (
+                          <div className="space-y-2">
+                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Frequência por Turno</label>
+                            <div className="relative">
+                               <Clock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                               <input
+                                 type="number"
+                                 min="1"
+                                 max="12"
+                                 value={newTemplate.frequencyPerShift}
+                                 onChange={(e) => setNewTemplate(prev => ({ ...prev, frequencyPerShift: parseInt(e.target.value) || 1 }))}
+                                 className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-xs text-slate-800"
+                               />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                         <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Descrição (Opcional)</label>
+                         <input
+                           type="text"
+                           value={newTemplate.description}
+                           onChange={(e) => setNewTemplate(prev => ({ ...prev, description: e.target.value }))}
+                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium text-xs text-slate-700"
+                           placeholder="Breve resumo da finalidade..."
+                         />
                       </div>
 
                       <div className="space-y-4 pt-4">
@@ -3139,139 +3930,30 @@ const Quality: React.FC = () => {
                         </div>
 
                         <div className="space-y-3">
-                          {newTemplate.items?.map((item, idx) => (
-                            <div key={item.id || `item-${idx}`} className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
-                              <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
-                                <span className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center font-black text-xs shrink-0">{idx + 1}</span>
-                                <input
-                                  type="text"
-                                  value={item.label}
-                                  onChange={(e) => updateItemInTemplate(item.id, { label: e.target.value })}
-                                  className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-black"
-                                  placeholder="Pergunta ou Item a verificar..."
-                                />
-                                <div className="flex gap-2 w-full md:w-auto">
-                                  <select
-                                    value={item.type}
-                                    onChange={(e) => updateItemInTemplate(item.id, { type: e.target.value as ChecklistItemType })}
-                                    className="flex-1 md:flex-none px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none text-xs font-black"
-                                  >
-                                    <option value="condition">Opções (OK/NOK/...)</option>
-                                    <option value="number">Numérico</option>
-                                    <option value="range">Range (Baixo/Alto)</option>
-                                    <option value="barcode">Código / QR</option>
-                                    <option value="text">Texto Livre / Observação</option>
-                                  </select>
-                                  <button
-                                    onClick={() => removeItemFromTemplate(item.id)}
-                                    className="p-2.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                                  >
-                                    <Trash2 className="w-5 h-5" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pl-12">
-                                {item.type === 'condition' && (
-                                  <div className="col-span-full">
-                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Conjunto de Opções</label>
-                                    <select
-                                      value={item.conditionOptionsId || ''}
-                                      onChange={(e) => updateItemInTemplate(item.id, { conditionOptionsId: e.target.value })}
-                                      className="w-full md:w-64 px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none text-xs font-bold"
-                                    >
-                                      <option value="">Padrão (OK / NÃO OK)</option>
-                                      {optionSets.map(set => (
-                                        <option key={set.id} value={set.id}>{set.name}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                )}
-
-                                {item.type === 'number' && (
-                                  <>
-                                    <div className="flex items-center gap-2">
-                                      <input
-                                        type="checkbox"
-                                        checked={item.isInteger || false}
-                                        onChange={(e) => updateItemInTemplate(item.id, { isInteger: e.target.checked })}
-                                        id={`int-${item.id}`}
-                                        className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                                      />
-                                      <label htmlFor={`int-${item.id}`} className="text-xs font-bold text-slate-600">Número Inteiro</label>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <input
-                                        type="checkbox"
-                                        checked={item.isRangeDropdown || false}
-                                        onChange={(e) => updateItemInTemplate(item.id, { isRangeDropdown: e.target.checked })}
-                                        id={`range-${item.id}`}
-                                        className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                                      />
-                                      <label htmlFor={`range-${item.id}`} className="text-xs font-bold text-slate-600">Usar Dropdown (Range)</label>
-                                    </div>
-                                    {item.isRangeDropdown && (
-                                      <div className="flex gap-2 items-center col-span-full md:col-span-1">
-                                        <input
-                                          type="number"
-                                          step="0.01"
-                                          placeholder="Min"
-                                          value={item.min || ''}
-                                          onChange={(e) => updateItemInTemplate(item.id, { min: parseFloat(e.target.value) })}
-                                          className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
-                                        />
-                                        <span className="text-slate-400 text-xs font-bold">até</span>
-                                        <input
-                                          type="number"
-                                          step="0.01"
-                                          placeholder="Max"
-                                          value={item.max || ''}
-                                          onChange={(e) => updateItemInTemplate(item.id, { max: parseFloat(e.target.value) })}
-                                          className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
-                                        />
-                                        <span className="text-slate-400 text-xs font-bold">Passo:</span>
-                                        <input
-                                          type="number"
-                                          step="0.01"
-                                          placeholder="Step"
-                                          value={item.step || ''}
-                                          onChange={(e) => updateItemInTemplate(item.id, { step: parseFloat(e.target.value) })}
-                                          className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
-                                        />
-                                      </div>
-                                    )}
-                                  </>
-                                )}
-                                <div className="col-span-full border-t border-slate-100 pt-3 mt-1 flex flex-col sm:flex-row sm:items-center gap-4">
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="checkbox"
-                                      checked={item.required !== false}
-                                      onChange={(e) => updateItemInTemplate(item.id, { required: e.target.checked })}
-                                      id={`required-${item.id}`}
-                                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                                    />
-                                    <label htmlFor={`required-${item.id}`} className="text-xs font-bold text-slate-600">
-                                      Item Obrigatório
-                                    </label>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="checkbox"
-                                      checked={item.allowObservation || false}
-                                      onChange={(e) => updateItemInTemplate(item.id, { allowObservation: e.target.checked })}
-                                      id={`allow-obs-${item.id}`}
-                                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                                    />
-                                    <label htmlFor={`allow-obs-${item.id}`} className="text-xs font-bold text-slate-600">
-                                      Habilitar campo para observação (texto livre no checklist)
-                                    </label>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                          {!newTemplate.items?.length && (
+                          {newTemplate.items && newTemplate.items.length > 0 ? (
+                            <DndContext
+                              sensors={itemSensors}
+                              collisionDetection={closestCenter}
+                              onDragEnd={handleDragEndItems}
+                            >
+                              <SortableContext
+                                items={newTemplate.items.map(i => i.id)}
+                                strategy={verticalListSortingStrategy}
+                              >
+                                {newTemplate.items.map((item, idx) => (
+                                  <SortableChecklistItem
+                                    key={item.id}
+                                    id={item.id}
+                                    item={item}
+                                    idx={idx}
+                                    optionSets={optionSets}
+                                    updateItemInTemplate={updateItemInTemplate}
+                                    removeItemFromTemplate={removeItemFromTemplate}
+                                  />
+                                ))}
+                              </SortableContext>
+                            </DndContext>
+                          ) : (
                             <div className="text-center py-8 text-slate-400 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-100">
                                Nenhum item adicionado ainda.
                             </div>
@@ -4001,7 +4683,11 @@ const Quality: React.FC = () => {
                                       titleTip += ` | Obs: ${resp.observation}`;
                                     }
 
-                                    const isSpecialDoor = door === 0 || door === 1 || door === 24;
+                                    const tObj = templates.find(t => t.id === activeDryerSub.templateId);
+                                    const itemObj = tObj?.items.find(it => it.id === respId || it.id.endsWith(`_${respId}`));
+                                    const radiatorCount = itemObj?.radiatorCount !== undefined 
+                                      ? itemObj.radiatorCount 
+                                      : (door === 0 || door === 1 || door === 24 ? 2 : 4);
                                     const valObj = (resp && typeof resp.value === 'object' && resp.value !== null) ? resp.value : null;
 
                                     return (
@@ -4010,9 +4696,23 @@ const Quality: React.FC = () => {
                                         title={titleTip}
                                         className="h-10 flex items-center justify-center text-xs transition-all duration-300 cursor-help hover:scale-105"
                                       >
-                                        {isSpecialDoor ? (
-                                          // 2 radiators: represented as 2 columns
-                                          <div className="relative w-full h-full p-0.5 grid grid-cols-2 gap-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                                        {radiatorCount === 0 ? (
+                                          // No radiators: simple single-box
+                                          <div className="relative w-full h-full p-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                                            <div className={`rounded-[3px] w-full h-full transition-all ${bgClassForSub}`} />
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                              <span className={cn(
+                                                "text-[9px] font-black px-1 py-0.5 rounded shadow-[0_1px_2px_rgba(0,0,0,0.05)]",
+                                                code === '-' ? "bg-white/80 text-slate-500" : "bg-white/90",
+                                                textClassForLabel
+                                              )}>
+                                                {code}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ) : radiatorCount === 2 ? (
+                                          // 2 radiators: represented as 2 rows
+                                          <div className="relative w-full h-full p-0.5 grid grid-rows-2 gap-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
                                             {valObj ? (
                                               <>
                                                 <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.left, bgClassForSub)}`} />
@@ -4113,7 +4813,11 @@ const Quality: React.FC = () => {
                                       titleTip += ` | Obs: ${resp.observation}`;
                                     }
 
-                                    const isSpecialDoor = door === 0 || door === 1 || door === 24;
+                                    const tObj = templates.find(t => t.id === activeDryerSub.templateId);
+                                    const itemObj = tObj?.items.find(it => it.id === respId || it.id.endsWith(`_${respId}`));
+                                    const radiatorCount = itemObj?.radiatorCount !== undefined 
+                                      ? itemObj.radiatorCount 
+                                      : (door === 0 || door === 1 || door === 24 ? 2 : 4);
                                     const valObj = (resp && typeof resp.value === 'object' && resp.value !== null) ? resp.value : null;
 
                                     return (
@@ -4122,9 +4826,23 @@ const Quality: React.FC = () => {
                                         title={titleTip}
                                         className="h-10 flex items-center justify-center text-xs transition-all duration-300 cursor-help hover:scale-105"
                                       >
-                                        {isSpecialDoor ? (
-                                          // 2 radiators: represented as 2 columns
-                                          <div className="relative w-full h-full p-0.5 grid grid-cols-2 gap-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                                        {radiatorCount === 0 ? (
+                                          // No radiators: simple single-box
+                                          <div className="relative w-full h-full p-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                                            <div className={`rounded-[3px] w-full h-full transition-all ${bgClassForSub}`} />
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                              <span className={cn(
+                                                "text-[9px] font-black px-1 py-0.5 rounded shadow-[0_1px_2px_rgba(0,0,0,0.05)]",
+                                                code === '-' ? "bg-white/80 text-slate-500" : "bg-white/90",
+                                                textClassForLabel
+                                              )}>
+                                                {code}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ) : radiatorCount === 2 ? (
+                                          // 2 radiators: represented as 2 rows
+                                          <div className="relative w-full h-full p-0.5 grid grid-rows-2 gap-0.5 bg-slate-100 border border-slate-200 rounded-xl overflow-hidden">
                                             {valObj ? (
                                               <>
                                                 <div className={`rounded-[3px] transition-all ${getRadiatorColorClass(valObj.left, bgClassForSub)}`} />
@@ -4275,6 +4993,457 @@ const Quality: React.FC = () => {
              </div>
           </motion.div>
         )}
+
+        {activeTab === 'products' && (
+          <motion.div
+            key="products"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-6"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-black text-slate-900">Produtos da Secagem</h2>
+                <p className="text-slate-500 text-sm font-medium">Cadastre e gerencie as especificações dos produtos produzidos na secagem.</p>
+              </div>
+              {(isAdmin || isMaster) && (
+                <button
+                  onClick={() => {
+                    setIsAddingProduct(true);
+                    setEditingProduct(null);
+                    setNewProduct({
+                      code: '',
+                      name: '',
+                      applyCover: false,
+                      wireGauge: '2.18',
+                      tieWireQty1: 0,
+                      tieWireQty2: 0,
+                      bigBaleWireQty: 0,
+                      unitWireQty: 0,
+                      sealType: '',
+                      specialSeal: '',
+                      photoUrl: '',
+                      active: true
+                    });
+                  }}
+                  className="bg-slate-900 text-white px-6 py-3 rounded-xl font-black flex items-center gap-2 hover:bg-slate-800 transition-all shadow-lg text-sm"
+                >
+                  <Plus className="w-5 h-5" />
+                  Cadastrar Produto
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {products.map(prod => (
+                <div key={prod.id} className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-sm relative overflow-hidden flex flex-col justify-between group">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-start">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-black text-[#0d6e4f] bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
+                          CÓD: {prod.code}
+                        </span>
+                        <h3 className="text-lg font-black text-slate-900 leading-snug pt-1">{prod.name}</h3>
+                      </div>
+                      <span className={cn(
+                        "w-2.5 h-2.5 rounded-full",
+                        prod.active ? "bg-emerald-500" : "bg-slate-300"
+                      )} />
+                    </div>
+
+                    {prod.photoUrl && (
+                      <div className="w-full h-32 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden">
+                        <img src={prod.photoUrl} alt={prod.name} referrerPolicy="no-referrer" className="h-full w-full object-contain" />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-4 border-t border-b border-slate-100 py-4 text-xs font-semibold text-slate-600">
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Aplicar Capa</span>
+                        <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold uppercase", prod.applyCover ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-600")}>
+                          {prod.applyCover ? 'Sim' : 'Não'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Bitola do Arame</span>
+                        <span className="text-slate-900 font-black font-mono">{prod.wireGauge.replace('.', ',')}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Qtd Amarradeira 1/2</span>
+                        <span className="text-slate-900 font-black font-mono">{prod.tieWireQty1} / {prod.tieWireQty2}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Qtd Big Bale/Unit</span>
+                        <span className="text-slate-900 font-black font-mono">{prod.bigBaleWireQty} / {prod.unitWireQty}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Tipo de Selo</span>
+                        <span className="text-slate-900 truncate block font-bold">{prod.sealType || 'N/A'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Selo Especial</span>
+                        <span className="text-slate-900 truncate block font-bold">{prod.specialSeal || 'N/A'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {(isAdmin || isMaster) && (
+                    <div className="flex gap-2 pt-4 mt-auto border-t border-slate-50">
+                      <button
+                        onClick={() => {
+                          setEditingProduct(prod);
+                          setNewProduct(prod);
+                          setIsAddingProduct(true);
+                        }}
+                        className="flex-1 border border-slate-200 text-slate-700 hover:border-slate-300 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 hover:bg-slate-50"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => setProductToDelete(prod)}
+                        className="p-2.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl transition-all"
+                        title="Excluir Produto"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {products.length === 0 && (
+                <div className="col-span-full text-center py-20 bg-white rounded-[2.5rem] border border-slate-200">
+                  <Package className="w-12 h-12 text-slate-200 mx-auto mb-4 animate-pulse" />
+                  <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">Nenhum produto cadastrado.</p>
+                  {(isAdmin || isMaster) && (
+                    <button
+                      onClick={() => setIsAddingProduct(true)}
+                      className="mt-4 text-emerald-600 font-black text-sm hover:underline"
+                    >
+                      Cadastre o primeiro agora
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal for Product Creation/Editing */}
+      <AnimatePresence>
+        {isAddingProduct && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setIsAddingProduct(false);
+                setEditingProduct(null);
+              }}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl p-8 border border-slate-100 overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-2xl font-black text-slate-900">
+                  {editingProduct ? 'Editar Produto' : 'Cadastrar Novo Produto'}
+                </h3>
+                <button 
+                  onClick={() => {
+                    setIsAddingProduct(false);
+                    setEditingProduct(null);
+                  }} 
+                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                >
+                  <X className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                {/* Product Code & Name */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Código do Produto</label>
+                    <input
+                      type="text"
+                      value={newProduct.code}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, code: e.target.value }))}
+                      placeholder="Ex: P1002"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Produto</label>
+                    <input
+                      type="text"
+                      value={newProduct.name}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="Ex: Fio Arame Galvanizado"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Apply Cover (Sim/Não) & Wire Gauge (2.18 / 2.30) */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1 block">Aplicar Capa?</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setNewProduct(prev => ({ ...prev, applyCover: true }))}
+                        className={cn(
+                          "flex-1 py-2.5 rounded-xl text-xs font-bold transition-all border",
+                          newProduct.applyCover 
+                            ? "bg-[#0d6e4f] border-[#0d6e4f] text-white" 
+                            : "bg-white border-slate-200 text-slate-500 hover:border-[#0d6e4f]"
+                        )}
+                      >
+                        Sim
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewProduct(prev => ({ ...prev, applyCover: false }))}
+                        className={cn(
+                          "flex-1 py-2.5 rounded-xl text-xs font-bold transition-all border",
+                          !newProduct.applyCover 
+                            ? "bg-[#0d6e4f] border-[#0d6e4f] text-white" 
+                            : "bg-white border-slate-200 text-slate-500 hover:border-[#0d6e4f]"
+                        )}
+                      >
+                        Não
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1 block">Bitola do Arame (Fardo)</label>
+                    <div className="flex gap-2">
+                      {(['2.18', '2.30'] as const).map(gauge => (
+                        <button
+                          key={gauge}
+                          type="button"
+                          onClick={() => setNewProduct(prev => ({ ...prev, wireGauge: gauge }))}
+                          className={cn(
+                            "flex-1 py-2.5 rounded-xl text-xs font-bold transition-all border font-mono",
+                            newProduct.wireGauge === gauge 
+                              ? "bg-[#0d6e4f] border-[#0d6e4f] text-white" 
+                              : "bg-white border-slate-200 text-slate-500 hover:border-[#0d6e4f]"
+                          )}
+                        >
+                          {gauge.replace('.', ',')}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Wire quantities: tieWireQty1, tieWireQty2 */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Qtd Arame Amarradeira 1</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newProduct.tieWireQty1}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, tieWireQty1: parseInt(e.target.value) || 0 }))}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-mono font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Qtd Arame Amarradeira 2</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newProduct.tieWireQty2}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, tieWireQty2: parseInt(e.target.value) || 0 }))}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-mono font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Big Bale & Unit wire qty */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Qtd Arame Big Bale</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newProduct.bigBaleWireQty}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, bigBaleWireQty: parseInt(e.target.value) || 0 }))}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-mono font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Qtd Arame na Unit</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newProduct.unitWireQty}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, unitWireQty: parseInt(e.target.value) || 0 }))}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-mono font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Seal Type & Special Seal */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Selo</label>
+                    <input
+                      type="text"
+                      value={newProduct.sealType}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, sealType: e.target.value }))}
+                      placeholder="Ex: Selo Metálico Standard"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Selo Especial</label>
+                    <input
+                      type="text"
+                      value={newProduct.specialSeal}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, specialSeal: e.target.value }))}
+                      placeholder="Ex: Sim / Não ou Tipo"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Photo Model Upload (Drag and Drop / Click) */}
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1 block">Foto Modelo do Produto</label>
+                  <div 
+                    onDragEnter={handleDrag}
+                    onDragOver={handleDrag}
+                    onDragLeave={handleDrag}
+                    onDrop={handleDrop}
+                    className={cn(
+                      "border-2 border-dashed rounded-2xl p-6 text-center transition-all relative flex flex-col items-center justify-center cursor-pointer",
+                      dragActive ? "border-[#0d6e4f] bg-emerald-50/50" : "border-slate-200 hover:border-slate-300 bg-slate-50/30"
+                    )}
+                    onClick={() => document.getElementById('product-photo-upload')?.click()}
+                  >
+                    <input 
+                      id="product-photo-upload" 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={handlePhotoUpload} 
+                      className="hidden" 
+                    />
+                    {newProduct.photoUrl ? (
+                      <div className="relative group">
+                        <img src={newProduct.photoUrl} alt="Preview" referrerPolicy="no-referrer" className="max-h-24 mx-auto rounded-lg object-contain bg-white p-1 shadow-sm border border-slate-100" />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setNewProduct(prev => ({ ...prev, photoUrl: '' }));
+                          }}
+                          className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow-md hover:bg-rose-700 transition-colors"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 flex flex-col items-center">
+                        <Upload className="w-8 h-8 text-slate-400" />
+                        <p className="text-xs font-bold text-slate-600">Arraste a foto ou clique para escolher</p>
+                        <p className="text-[10px] text-slate-400 font-medium">JPEG, PNG ou WEBP até 800KB</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-6 border-t border-slate-100 mt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingProduct(false);
+                    setEditingProduct(null);
+                  }}
+                  className="px-6 py-3 border border-slate-200 hover:border-slate-300 text-slate-600 rounded-xl font-bold transition-all text-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveProduct}
+                  className="px-6 py-3 bg-[#0d6e4f] text-white rounded-xl font-black hover:bg-emerald-800 transition-all shadow-lg text-sm"
+                >
+                  {editingProduct ? 'Salvar Alterações' : 'Cadastrar'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal for Product Deletion Confirmation */}
+      <AnimatePresence>
+        {productToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setProductToDelete(null)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl p-8 border border-slate-100"
+            >
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center">
+                  <Trash2 className="w-8 h-8" />
+                </div>
+                <h3 className="text-xl font-black text-slate-900">Excluir Produto?</h3>
+                <p className="text-slate-500 font-semibold text-sm">
+                  Deseja realmente excluir o produto <span className="text-slate-900 font-extrabold">"{productToDelete.name}"</span>? Esta ação não pode ser desfeita.
+                </p>
+              </div>
+
+              <div className="flex justify-center gap-3 pt-6 mt-4">
+                <button
+                  onClick={() => setProductToDelete(null)}
+                  className="px-6 py-3 border border-slate-200 hover:border-slate-300 text-slate-600 rounded-xl font-bold transition-all text-sm"
+                >
+                  Não, Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await deleteDoc(doc(db, 'quality_products', productToDelete.id));
+                      setProductToDelete(null);
+                      setModalConfig({
+                        isOpen: true,
+                        title: 'Sucesso',
+                        message: 'Produto excluído com sucesso.',
+                        type: 'success'
+                      });
+                    } catch (err) {
+                      handleFirestoreError(err, OperationType.DELETE, 'quality_products');
+                    }
+                  }}
+                  className="px-6 py-3 bg-rose-600 text-white rounded-xl font-black hover:bg-rose-700 transition-all shadow-lg text-sm"
+                >
+                  Sim, Excluir
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -4382,6 +5551,16 @@ const Quality: React.FC = () => {
         onConfirm={async () => {
           if (!templateToDelete) return;
           try {
+            const isDryer = templateToDelete.name.toLowerCase().includes('limpeza') || templateToDelete.name.toLowerCase().includes('secador');
+            if (isDryer) {
+              try {
+                await setDoc(doc(db, 'settings', 'quality_seeding'), {
+                  dryerTemplateSeeded: true
+                }, { merge: true });
+              } catch (e) {
+                console.error("Error setting quality_seeding on delete:", e);
+              }
+            }
             await deleteDoc(doc(db, 'quality_checklist_templates', templateToDelete.id));
             setTemplateToDelete(null);
           } catch (err) {
@@ -4542,6 +5721,7 @@ const Quality: React.FC = () => {
                               item?.type === 'number' ? 'Numérico' :
                               item?.type === 'range' ? 'Range (Baixo/Alto)' :
                               item?.type === 'barcode' ? 'Código / QR' :
+                              item?.type === 'product' ? 'Produto Cadastrado' :
                               item?.type === 'text' ? 'Texto Livre / Observação' :
                               (item?.type || 'N/A')}
                            </p>
@@ -4549,11 +5729,21 @@ const Quality: React.FC = () => {
                        </div>
                        <div className="text-right">
                          <div className={getBadgeColorClasses(resp.value, compliant)}>
-                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : (typeof resp.value === 'object' && resp.value !== null ? (resp.value.left_top !== undefined ? `LE: ${resp.value.left_top || '-'} RE: ${resp.value.right_top || '-'} LD: ${resp.value.left_bottom || '-'} RD: ${resp.value.right_bottom || '-'}` : `E: ${resp.value.left || '-'} D: ${resp.value.right || '-'}`) : String(resp.value || ''))))}
+                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (item?.type === 'product' ? `PRODUTO: ${resp.value}` : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : (typeof resp.value === 'object' && resp.value !== null ? (resp.value.left_top !== undefined ? `LE: ${resp.value.left_top || '-'} RE: ${resp.value.right_top || '-'} LD: ${resp.value.left_bottom || '-'} RD: ${resp.value.right_bottom || '-'}` : `E: ${resp.value.left || '-'} D: ${resp.value.right || '-'}`) : String(resp.value || '')))))}
                           </div>
                        </div>
                       </div>
                       
+                      {item?.type === 'product' && (
+                        <div className="ml-14 bg-slate-50 border border-slate-100 p-4 rounded-xl text-xs font-semibold text-slate-600">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Produto Selecionado</span>
+                          <div className="flex items-center gap-2">
+                            <Package className="w-4 h-4 text-emerald-600 animate-pulse" />
+                            <span className="font-extrabold text-slate-800">Código: {resp.value}</span>
+                          </div>
+                        </div>
+                      )}
+
                       {item?.type === 'text' && (
                         <div className="ml-14 bg-slate-50 border border-slate-100 p-4 rounded-xl text-xs font-semibold text-slate-600">
                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Resposta / Texto Livre</span>

@@ -804,6 +804,22 @@ const Dashboard: React.FC = () => {
     { name: 'Domínios Autorizados', value: stats.allowedDomains.toString(), icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50' },
   ];
 
+  if (activeModules.dashboard === false) {
+    return (
+      <div className="max-w-md mx-auto my-12 text-center" id="dashboard-disabled">
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-md flex flex-col items-center">
+          <div className="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-500 mb-4">
+            <LayoutDashboard className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Módulo Desabilitado</h2>
+          <p className="text-sm text-slate-500 mt-2 font-semibold">
+            O módulo de Dashboard foi temporariamente desativado pelo administrador do sistema.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 bg-white p-8 rounded-[2.5rem] border border-slate-200">
