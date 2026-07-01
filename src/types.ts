@@ -216,6 +216,14 @@ export interface TrainingCourse {
   updatedAt?: any;
   createdBy: string;
   createdByName?: string;
+  accessCode?: string;
+  signedParticipants?: string[];
+  signatures?: {
+    userId: string;
+    userName: string;
+    email: string;
+    signedAt: string;
+  }[];
 }
 
 export interface SecagemProduct {

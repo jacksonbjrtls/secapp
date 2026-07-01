@@ -486,7 +486,7 @@ service cloud.firestore {
     match /training_courses/{courseId} {
       allow get, list: if isApproved();
       allow create: if isManager() && isValidId(courseId);
-      allow update: if isManager() && isValidId(courseId);
+      allow update: if (isManager() || isApproved()) && isValidId(courseId);
       allow delete: if isMaster() || (isManager() && isValidId(courseId));
     }
   }
