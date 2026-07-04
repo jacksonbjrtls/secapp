@@ -98,6 +98,7 @@ const Certificates: React.FC = () => {
   const [courses, setCourses] = useState<TrainingCourse[]>([]);
   const [registeredUsers, setRegisteredUsers] = useState<{ id: string; displayName: string; email: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'meus' | 'gerenciar'>('meus');
   
   // Create / Edit modal state
@@ -119,6 +120,8 @@ const Certificates: React.FC = () => {
   const [activeCertificateForPdf, setActiveCertificateForPdf] = useState<{
     course: TrainingCourse;
     participantName: string;
+    participantId?: string;
+    participantEmail?: string;
   } | null>(null);
   const [expandedCourseParticipantsId, setExpandedCourseParticipantsId] = useState<string | null>(null);
 
@@ -182,11 +185,25 @@ const Certificates: React.FC = () => {
             return {
               id: doc.id,
               displayName: decName || 'Sem nome',
-              email: decEmail || ''
+              email: (decEmail || '').toLowerCase().trim()
             };
           })
         );
-        const filteredAndSortedList = usersList
+
+        // Filter out duplicate users by email
+        const uniqueUsersMap = new Map<string, typeof usersList[0]>();
+        usersList.forEach((u) => {
+          if (u.email) {
+            if (!uniqueUsersMap.has(u.email)) {
+              uniqueUsersMap.set(u.email, u);
+            }
+          } else {
+            uniqueUsersMap.set(u.id, u);
+          }
+        });
+        const uniqueUsersList = Array.from(uniqueUsersMap.values());
+
+        const filteredAndSortedList = uniqueUsersList
           .filter(u => u.displayName !== 'Sem nome')
           .sort((a, b) => a.displayName.localeCompare(b.displayName));
         setRegisteredUsers(filteredAndSortedList);
@@ -304,14 +321,26 @@ const Certificates: React.FC = () => {
 
   const handleSaveCourse = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return; // Prevent double submits
     if (!title || !period || !instructor || selectedParticipants.length === 0) {
       showToast('Por favor, preencha todos os campos obrigatórios e adicione pelo menos um participante.', 'error');
       return;
     }
 
     try {
-      setLoading(true);
+      setSaving(true);
       const code = (accessCodeField || `SEC-${Math.random().toString(36).substring(2, 8).toUpperCase()}`).trim().toUpperCase();
+      
+      // Ensure all arrays are strictly unique and duplicates are excluded
+      const uniqueParticipants = Array.from(new Set(selectedParticipants));
+      const uniqueSignedParticipants = Array.from(new Set(editingCourse?.signedParticipants || []));
+      const uniqueSignatures = (editingCourse?.signatures || []).reduce((acc: any[], current: any) => {
+        if (current?.userId && !acc.some(item => item.userId === current.userId)) {
+          acc.push(current);
+        }
+        return acc;
+      }, []);
+
       const payload = {
         title,
         period,
@@ -319,11 +348,11 @@ const Certificates: React.FC = () => {
         syllabus,
         instructor,
         instructorTitle,
-        participants: selectedParticipants,
+        participants: uniqueParticipants,
         updatedAt: serverTimestamp(),
         accessCode: code,
-        signedParticipants: editingCourse?.signedParticipants || [],
-        signatures: editingCourse?.signatures || [],
+        signedParticipants: uniqueSignedParticipants,
+        signatures: uniqueSignatures,
       };
 
       if (editingCourse) {
@@ -346,7 +375,7 @@ const Certificates: React.FC = () => {
       console.error('Erro ao salvar treinamento:', err);
       showToast('Erro ao salvar dados do treinamento no banco de dados.', 'error');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -495,37 +524,61 @@ const Certificates: React.FC = () => {
       
       // Table Data preparation
       const tableRows: any[] = [];
-      const participantsList = course.participants || [];
       
-      registeredUsers
-        .filter(u => participantsList.includes(u.id))
-        .forEach((u, index) => {
-          // Check if signed
-          const signature = course.signatures?.find((s: any) => s.userId === u.id);
-          const isSigned = course.signedParticipants?.includes(u.id) || !!signature;
+      // Merge registered course.participants, signed participants and signatures to make sure we show everyone in the PDF
+      const participantsList = Array.from(new Set([
+        ...(course.participants || []),
+        ...(course.signedParticipants || []),
+        ...(course.signatures || []).map((s: any) => s.userId).filter(Boolean)
+      ]));
+      
+      participantsList.forEach((participantId, index) => {
+        // Try to find the user in registeredUsers
+        const u = registeredUsers.find(ru => ru.id === participantId);
+        
+        // Try to find if they have a signature record by ID, or as a backup by email or name
+        const signature = course.signatures?.find((s: any) => 
+          s.userId === participantId ||
+          (u?.email && s.email && s.email.toLowerCase().trim() === u.email.toLowerCase().trim()) ||
+          (u?.displayName && s.userName && s.userName.toLowerCase().trim() === u.displayName.toLowerCase().trim())
+        );
+        
+        // If they are in registeredUsers, we have their real display name and email.
+        // Else, if we have a signature, we can use the name and email from there.
+        // Otherwise, fallback to 'Colaborador' and ID/empty
+        const displayName = u?.displayName || signature?.userName || 'Colaborador';
+        const email = u?.email || signature?.email || 'Sem e-mail';
+        
+        // Check if signed (using ID check or whether a signature record exists)
+        const isSigned = course.signedParticipants?.includes(participantId) || 
+                         !!signature ||
+                         (u?.id && course.signedParticipants?.includes(u.id)) ||
+                         (email !== 'Sem e-mail' && course.signatures?.some((s: any) => s.email?.toLowerCase().trim() === email.toLowerCase().trim()));
+        
+        let statusText = 'PENDENTE DE ASSINATURA';
+        if (isSigned) {
+          const isManual = signature?.signedAt ? signature.signedAt.includes('(Assinado manualmente') : false;
+          const dateStr = signature?.signedAt ? formatSignatureDate(signature.signedAt) : '';
           
-          let statusText = 'PENDENTE';
-          if (isSigned) {
-            if (signature) {
-              const dateStr = signature.signedAt ? formatSignatureDate(signature.signedAt) : '';
-              statusText = `ASSINADO DIGITALMENTE\n${dateStr}`;
-            } else {
-              statusText = 'ASSINADO DIGITALMENTE';
-            }
+          const label = isManual ? 'ASSINADO MANUALMENTE' : 'ASSINADO DIGITALMENTE';
+          if (dateStr) {
+            statusText = `${label}\n${dateStr}`;
+          } else {
+            statusText = label;
           }
-          
-          tableRows.push([
-            (index + 1).toString(),
-            u.displayName,
-            u.email,
-            statusText,
-            isSigned ? '-------------------------------' : '_______________________________'
-          ]);
-        });
+        }
+        
+        tableRows.push([
+          (index + 1).toString(),
+          displayName,
+          email,
+          statusText
+        ]);
+      });
       
       autoTable(doc, {
         startY: 82,
-        head: [['#', 'Nome do Colaborador', 'E-mail / Registro', 'Status Assinatura Virtual', 'Assinatura Física (Rubrica)']],
+        head: [['#', 'Nome do Colaborador', 'E-mail / Registro', 'Assinatura Digital']],
         body: tableRows,
         theme: 'striped',
         headStyles: {
@@ -540,11 +593,10 @@ const Certificates: React.FC = () => {
           textColor: [51, 65, 85]
         },
         columnStyles: {
-          0: { cellWidth: 8 },
-          1: { cellWidth: 45 },
-          2: { cellWidth: 40 },
-          3: { cellWidth: 45, fontStyle: 'bold' },
-          4: { cellWidth: 42 }
+          0: { cellWidth: 10 },
+          1: { cellWidth: 65 },
+          2: { cellWidth: 50 },
+          3: { cellWidth: 55, fontStyle: 'bold' }
         },
         margin: { left: 15, right: 15 },
         didDrawPage: (data) => {
@@ -726,11 +778,11 @@ const Certificates: React.FC = () => {
     course.instructor.toLowerCase().includes(searchText.toLowerCase())
   );
 
-  const handlePrint = async (course: TrainingCourse, participantName: string) => {
+  const handlePrint = async (course: TrainingCourse, participantName: string, participantId?: string, participantEmail?: string) => {
     const loadingId = `${course.id}_${participantName}`;
     setIsGeneratingPdf(loadingId);
     try {
-      setActiveCertificateForPdf({ course, participantName });
+      setActiveCertificateForPdf({ course, participantName, participantId, participantEmail });
       
       // Wait to let React mount and paint the elements in the hidden offscreen container
       await new Promise((resolve) => setTimeout(resolve, 600));
@@ -920,7 +972,7 @@ const Certificates: React.FC = () => {
                       {isSigned ? (
                         <button
                           disabled={isGeneratingPdf !== null}
-                          onClick={() => handlePrint(course, profile?.displayName || 'COLABORADOR')}
+                          onClick={() => handlePrint(course, profile?.displayName || 'COLABORADOR', user?.uid, user?.email)}
                           className="w-full bg-emerald-600 hover:bg-emerald-700 text-white transition-colors font-bold text-xs py-3.5 rounded-2xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-emerald-100"
                         >
                           {isGeneratingPdf === `${course.id}_${profile?.displayName || 'COLABORADOR'}` ? (
@@ -1185,7 +1237,7 @@ const Certificates: React.FC = () => {
                                                     </button>
                                                     <button
                                                       type="button"
-                                                      onClick={() => handlePrint(course, operator.displayName)}
+                                                      onClick={() => handlePrint(course, operator.displayName, operator.id, operator.email)}
                                                       disabled={isGeneratingPdf !== null}
                                                       className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
                                                     >
@@ -1486,9 +1538,11 @@ const Certificates: React.FC = () => {
                   </button>
                   <button
                     type="submit"
-                    className="px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-xs uppercase shadow-lg shadow-emerald-100"
+                    disabled={saving}
+                    className="px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-xs uppercase shadow-lg shadow-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    Salvar Registro
+                    {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {saving ? 'Salvando...' : 'Salvar Registro'}
                   </button>
                 </div>
               </form>
@@ -1502,19 +1556,27 @@ const Certificates: React.FC = () => {
           GERADOR DE PDF — Contêiner oculto fora de tela
           Layout fiel ao PDF de referência Eldorado Brasil
       ═══════════════════════════════════════════ */}
-      {activeCertificateForPdf && (
-        <div
-          style={{
-            position: 'absolute',
-            left: '-9999px',
-            top: '-9999px',
-            width: '1122.52px',
-            height: '1587.4px',
-            overflow: 'hidden',
-            pointerEvents: 'none',
-          }}
-          className="no-print"
-        >
+      {activeCertificateForPdf && (() => {
+        const certSig = activeCertificateForPdf.course.signatures?.find((s: any) => 
+          (activeCertificateForPdf.participantId && s.userId === activeCertificateForPdf.participantId) ||
+          (activeCertificateForPdf.participantEmail && s.email && s.email.toLowerCase().trim() === activeCertificateForPdf.participantEmail.toLowerCase().trim()) ||
+          (s.userName && s.userName.toLowerCase().trim() === activeCertificateForPdf.participantName.toLowerCase().trim())
+        );
+        const isCertSigned = activeCertificateForPdf.course.signedParticipants?.includes(activeCertificateForPdf.participantId || '') || 
+                             !!certSig;
+        return (
+          <div
+            style={{
+              position: 'absolute',
+              left: '-9999px',
+              top: '-9999px',
+              width: '1122.52px',
+              height: '1587.4px',
+              overflow: 'hidden',
+              pointerEvents: 'none',
+            }}
+            className="no-print"
+          >
 
           {/* ══════════════════════════════════
               PÁGINA 1 — FRENTE
@@ -1824,7 +1886,32 @@ const Certificates: React.FC = () => {
 
                 {/* Coluna direita — Colaborador */}
                 <div style={{ width: '250px', textAlign: 'center' }}>
-                  <div style={{ minHeight: '22px', marginBottom: '3px' }} />
+                  {isCertSigned ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{
+                        fontSize: '14px',
+                        fontStyle: 'italic',
+                        color: '#0d5c2e',
+                        fontFamily: 'Georgia, "Times New Roman", serif',
+                        lineHeight: 1.1,
+                      }}>
+                        {activeCertificateForPdf.participantName.split(' ').slice(0, 3).join(' ')}
+                      </div>
+                      <div style={{
+                        fontSize: '6.5px',
+                        color: '#10b981',
+                        fontWeight: 800,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        marginTop: '1px',
+                        marginBottom: '3px',
+                      }}>
+                        ✔ Assinado Digitalmente {certSig?.signedAt ? `(${formatSignatureDate(certSig.signedAt)})` : ''}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ minHeight: '22px', marginBottom: '3px' }} />
+                  )}
                   <div style={{ borderTop: '1px solid #94a3b8', marginBottom: '4px' }} />
                   <div style={{
                     fontSize: '7.5px',
@@ -1997,7 +2084,8 @@ const Certificates: React.FC = () => {
           </div>
 
         </div>
-      )}
+        );
+      })()}
 
       {/* MODAL: Large QR Code Projection for Admin */}
       <AnimatePresence>

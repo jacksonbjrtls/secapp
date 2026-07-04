@@ -32,6 +32,30 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 
+const formatSignatureDate = (signedAtStr: string) => {
+  if (!signedAtStr) return '';
+  try {
+    const isManual = signedAtStr.includes('(Assinado manualmente');
+    let datePart = signedAtStr;
+    if (isManual) {
+      const match = signedAtStr.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/);
+      if (match) {
+        datePart = match[1];
+      } else {
+        return signedAtStr;
+      }
+    }
+    const date = new Date(datePart);
+    if (isNaN(date.getTime())) {
+      return signedAtStr;
+    }
+    const formatted = date.toLocaleString('pt-BR');
+    return isManual ? `${formatted} (Manual)` : formatted;
+  } catch (e) {
+    return signedAtStr;
+  }
+};
+
 const Profile: React.FC = () => {
   const { profile, user, isAdmin } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -49,7 +73,12 @@ const Profile: React.FC = () => {
 
   // States for direct PDF generation
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-  const [activeCertificateForPdf, setActiveCertificateForPdf] = useState<{ course: any; participantName: string } | null>(null);
+  const [activeCertificateForPdf, setActiveCertificateForPdf] = useState<{
+    course: any;
+    participantName: string;
+    participantId?: string;
+    participantEmail?: string;
+  } | null>(null);
 
   // Unused legacy modal states retained for compiler compatibility
   const [viewingCourse, setViewingCourse] = useState<any>(null);
@@ -81,10 +110,10 @@ const Profile: React.FC = () => {
     fetchUserCertificates();
   }, [user]);
 
-  const handlePrint = async (course: any, participantName: string) => {
+  const handlePrint = async (course: any, participantName: string, participantId?: string, participantEmail?: string) => {
     if (isGeneratingPdf) return;
     setIsGeneratingPdf(true);
-    setActiveCertificateForPdf({ course, participantName });
+    setActiveCertificateForPdf({ course, participantName, participantId, participantEmail });
 
     // Wait for the hidden container to render in the DOM
     await new Promise((resolve) => setTimeout(resolve, 800));
@@ -630,7 +659,7 @@ const Profile: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => handlePrint(course, profile?.displayName || user?.displayName || user?.email || 'COLABORADOR')}
+                    onClick={() => handlePrint(course, profile?.displayName || user?.displayName || user?.email || 'COLABORADOR', user?.uid, user?.email)}
                     disabled={isGeneratingPdf}
                     className="px-4 py-2.5 bg-slate-50 hover:bg-emerald-50 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50"
                   >
@@ -1181,18 +1210,26 @@ const Profile: React.FC = () => {
       </AnimatePresence>
 
       {/* Off-screen high fidelity A4 Landscape Container for html2canvas capture */}
-      {activeCertificateForPdf && (
-        <div 
-          style={{ 
-            position: 'absolute', 
-            left: '-9999px', 
-            top: '-9999px',
-            overflow: 'hidden',
-            width: '1122.52px',
-            height: '1600px' // Enough height to render both stacked
-          }}
-          className="no-print"
-        >
+      {activeCertificateForPdf && (() => {
+        const certSig = activeCertificateForPdf.course?.signatures?.find((s: any) => 
+          (activeCertificateForPdf.participantId && s.userId === activeCertificateForPdf.participantId) ||
+          (activeCertificateForPdf.participantEmail && s.email && s.email.toLowerCase().trim() === activeCertificateForPdf.participantEmail.toLowerCase().trim()) ||
+          (s.userName && s.userName.toLowerCase().trim() === activeCertificateForPdf.participantName.toLowerCase().trim())
+        );
+        const isCertSigned = activeCertificateForPdf.course?.signedParticipants?.includes(activeCertificateForPdf.participantId || '') || 
+                             !!certSig;
+        return (
+          <div 
+            style={{ 
+              position: 'absolute', 
+              left: '-9999px', 
+              top: '-9999px',
+              overflow: 'hidden',
+              width: '1122.52px',
+              height: '1600px' // Enough height to render both stacked
+            }}
+            className="no-print"
+          >
           {/* Page 1 (Front) */}
           <div 
             id="pdf-cert-front"
@@ -1409,7 +1446,18 @@ const Profile: React.FC = () => {
                   </div>
 
                   <div className="text-center w-64 flex flex-col items-center justify-end">
-                    <div className="h-10 flex items-center justify-center"></div>
+                    {isCertSigned ? (
+                      <div className="flex flex-col items-center justify-center">
+                        <div className="font-serif italic text-emerald-800/80 text-base select-none leading-none">
+                          {activeCertificateForPdf.participantName.split(' ').slice(0, 3).join(' ')}
+                        </div>
+                        <div className="text-[6.5px] text-emerald-600 font-extrabold uppercase tracking-widest mt-1 mb-2">
+                          ✔ Assinado Digitalmente {certSig?.signedAt ? `(${formatSignatureDate(certSig.signedAt)})` : ''}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="h-10 flex items-center justify-center"></div>
+                    )}
                     <div className="w-full border-t border-slate-400 mt-0.5 mb-1.5"></div>
                     <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1 font-sans">
                       Colaborador
@@ -1473,7 +1521,8 @@ const Profile: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
