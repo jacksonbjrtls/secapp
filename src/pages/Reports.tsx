@@ -284,12 +284,26 @@ const Reports: React.FC = () => {
           setSafetyObservationsData(safetyList);
 
           const usersSnap = await getDocs(collection(db, 'users'));
-          const usersList = usersSnap.docs
-            .map(doc => ({ uid: doc.id, id: doc.id, ...doc.data() as any }))
+          const decryptedUsersList = await Promise.all(
+            usersSnap.docs.map(async (doc) => {
+              const data = doc.data();
+              const decName = await decryptValue(data.displayName);
+              const decEmail = await decryptValue(data.email);
+              return {
+                uid: doc.id,
+                id: doc.id,
+                ...data,
+                displayName: decName || 'Sem nome',
+                email: (decEmail || '').toLowerCase().trim()
+              };
+            })
+          );
+          const usersList = decryptedUsersList
             .filter(user => {
-              const userEmail = user.email?.toLowerCase().trim() || '';
-              return !MASTER_EMAILS.includes(userEmail);
-            });
+              const userEmail = user.email || '';
+              return !MASTER_EMAILS.includes(userEmail) && user.displayName !== 'Sem nome';
+            })
+            .sort((a, b) => a.displayName.localeCompare(b.displayName));
           setAllUsers(usersList);
         }
 

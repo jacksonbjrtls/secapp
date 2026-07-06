@@ -206,9 +206,18 @@ const Dashboard: React.FC = () => {
         const validSessionIds = new Set(sessionsSnap.docs.map(d => d.id));
         const validSignatures = signaturesSnap.docs.filter(d => validSessionIds.has(d.data().sessionId));
 
-        const nonMasterUsersCount = usersSnap.docs.filter(doc => {
-          const email = doc.data()?.email?.toLowerCase().trim() || '';
-          return !MASTER_EMAILS.includes(email);
+        const decryptedUsers = await Promise.all(
+          usersSnap.docs.map(async (doc) => {
+            const data = doc.data();
+            const decEmail = await decryptValue(data.email);
+            return {
+              email: (decEmail || '').toLowerCase().trim()
+            };
+          })
+        );
+
+        const nonMasterUsersCount = decryptedUsers.filter(user => {
+          return !MASTER_EMAILS.includes(user.email);
         }).length;
 
         setStats({

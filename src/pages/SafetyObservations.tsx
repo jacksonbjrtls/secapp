@@ -13,6 +13,7 @@ import {
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
+import { decryptValue } from '../lib/crypto';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -405,29 +406,40 @@ const SafetyObservations: React.FC = () => {
 
   // Subscribe to registered users list as operators for autocomplete
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'users'), (snap) => {
-      const uniqueUsersMap = new Map<string, { id: string; name: string }>();
- 
-      snap.docs.forEach(doc => {
-        const u = doc.data();
-        const userEmail = u.email?.toLowerCase().trim() || '';
-        if (MASTER_EMAILS.includes(userEmail)) return;
-        const rawName = (u.displayName || u.name || u.nome || u.email || '').trim();
-        if (rawName && !uniqueUsersMap.has(rawName)) {
-          uniqueUsersMap.set(rawName, {
-            id: doc.id,
-            name: rawName
-          });
-        }
-      });
- 
-      const ops = Array.from(uniqueUsersMap.values());
- 
-      // Sort alphabetically
-      ops.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
- 
-      setOperatorsState(ops);
-      setDbOperators(ops.map(o => o.name));
+    const unsub = onSnapshot(collection(db, 'users'), async (snap) => {
+      try {
+        const decryptedUsers = await Promise.all(
+          snap.docs.map(async (doc) => {
+            const u = doc.data();
+            const decName = await decryptValue(u.displayName);
+            const decEmail = await decryptValue(u.email);
+            return {
+              id: doc.id,
+              name: (decName || 'Sem nome').trim(),
+              email: (decEmail || '').toLowerCase().trim()
+            };
+          })
+        );
+
+        const uniqueUsersMap = new Map<string, { id: string; name: string }>();
+        decryptedUsers.forEach(user => {
+          if (MASTER_EMAILS.includes(user.email)) return;
+          if (user.name && user.name !== 'Sem nome' && !uniqueUsersMap.has(user.name)) {
+            uniqueUsersMap.set(user.name, {
+              id: user.id,
+              name: user.name
+            });
+          }
+        });
+
+        const ops = Array.from(uniqueUsersMap.values());
+        ops.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+
+        setOperatorsState(ops);
+        setDbOperators(ops.map(o => o.name));
+      } catch (err) {
+        console.error("Error decrypting users in SafetyObservations:", err);
+      }
     }, (err) => {
       console.error("Error loading registered users as operators:", err);
     });

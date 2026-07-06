@@ -186,19 +186,27 @@ const DDS: React.FC = () => {
     const fetchUsers = async () => {
       if (!profile) return;
       try {
-        const q = query(collection(db, 'users'), orderBy('displayName', 'asc'));
+        const q = collection(db, 'users');
         const snapshot = await getDocs(q);
-        const usersList = snapshot.docs
-          .map(doc => ({
-            uid: doc.id,
-            displayName: doc.data().displayName,
-            email: doc.data().email
-          }))
+        const decryptedUsersList = await Promise.all(
+          snapshot.docs.map(async (doc) => {
+            const data = doc.data();
+            const decName = await decryptValue(data.displayName);
+            const decEmail = await decryptValue(data.email);
+            return {
+              uid: doc.id,
+              displayName: decName || 'Sem nome',
+              email: (decEmail || '').toLowerCase().trim()
+            };
+          })
+        );
+        const filteredAndSortedList = decryptedUsersList
           .filter(user => {
-            const userEmail = user.email?.toLowerCase().trim() || '';
-            return !MASTER_EMAILS.includes(userEmail);
-          });
-        setRegisteredUsers(usersList);
+            const userEmail = user.email || '';
+            return !MASTER_EMAILS.includes(userEmail) && user.displayName !== 'Sem nome';
+          })
+          .sort((a, b) => a.displayName.localeCompare(b.displayName));
+        setRegisteredUsers(filteredAndSortedList);
       } catch (err) {
         console.error("Error fetching users:", err);
       }
