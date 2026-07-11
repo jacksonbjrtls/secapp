@@ -945,6 +945,8 @@ const Quality: React.FC = () => {
 
     const unsubProducts = onSnapshot(collection(db, 'quality_products'), (snapshot) => {
       const fetchedProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SecagemProduct));
+      // Sort products by product code in ascending order (using numeric and case-insensitive natural sorting)
+      fetchedProducts.sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' }));
       setProducts(fetchedProducts);
     }, (error) => console.error("Error in quality_products listener:", error));
 
@@ -2602,7 +2604,7 @@ const Quality: React.FC = () => {
                           <p className="font-bold text-slate-800">Especificações do Produto:</p>
                           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-medium">
                             <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Aplicar Capa</span> {selectedProdObj.applyCover ? 'Sim' : 'Não'}</div>
-                            <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Bitola do Arame</span> {selectedProdObj.wireGauge.replace('.', ',')}</div>
+                            <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Bitola do Arame</span> {selectedProdObj.wireGauge === 'sem arame' ? 'Sem arame' : `${selectedProdObj.wireGauge.replace('.', ',')} mm`}</div>
                             <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Amarradeira 1 / 2</span> {selectedProdObj.tieWireQty1} / {selectedProdObj.tieWireQty2}</div>
                             <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Big Bale / Unit</span> {selectedProdObj.bigBaleWireQty} / {selectedProdObj.unitWireQty}</div>
                             <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Tipo de Selo</span> {selectedProdObj.sealType || 'N/A'}</div>
@@ -3273,7 +3275,9 @@ const Quality: React.FC = () => {
                                           <div className="grid grid-cols-2 gap-3 pt-1 text-[11px]">
                                             <div className="bg-white p-2.5 rounded-xl border border-slate-100">
                                               <span className="text-slate-400 font-bold block mb-0.5">Bitola do Arame</span>
-                                              <span className="font-extrabold text-slate-700">{selectedProd.wireGauge} mm</span>
+                                              <span className="font-extrabold text-slate-700">
+                                                {selectedProd.wireGauge === 'sem arame' ? 'Sem arame' : `${selectedProd.wireGauge.replace('.', ',')} mm`}
+                                              </span>
                                             </div>
                                             <div className="bg-white p-2.5 rounded-xl border border-slate-100">
                                               <span className="text-slate-400 font-bold block mb-0.5">Aplicação de Capa</span>
@@ -5067,7 +5071,9 @@ const Quality: React.FC = () => {
                       </div>
                       <div>
                         <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Bitola do Arame</span>
-                        <span className="text-slate-900 font-black font-mono">{prod.wireGauge.replace('.', ',')}</span>
+                        <span className="text-slate-900 font-black font-mono">
+                          {prod.wireGauge === 'sem arame' ? 'Sem arame' : prod.wireGauge.replace('.', ',')}
+                        </span>
                       </div>
                       <div>
                         <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Qtd Amarradeira 1/2</span>
@@ -5226,19 +5232,20 @@ const Quality: React.FC = () => {
                   <div className="space-y-2">
                     <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1 block">Bitola do Arame (Fardo)</label>
                     <div className="flex gap-2">
-                      {(['2.18', '2.30'] as const).map(gauge => (
+                      {(['2.18', '2.30', 'sem arame'] as const).map(gauge => (
                         <button
                           key={gauge}
                           type="button"
                           onClick={() => setNewProduct(prev => ({ ...prev, wireGauge: gauge }))}
                           className={cn(
-                            "flex-1 py-2.5 rounded-xl text-xs font-bold transition-all border font-mono",
+                            "flex-1 py-2.5 rounded-xl text-xs font-bold transition-all border",
+                            gauge !== 'sem arame' && "font-mono",
                             newProduct.wireGauge === gauge 
                               ? "bg-[#0d6e4f] border-[#0d6e4f] text-white" 
                               : "bg-white border-slate-200 text-slate-500 hover:border-[#0d6e4f]"
                           )}
                         >
-                          {gauge.replace('.', ',')}
+                          {gauge === 'sem arame' ? 'Sem arame' : gauge.replace('.', ',')}
                         </button>
                       ))}
                     </div>

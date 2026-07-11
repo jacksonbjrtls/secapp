@@ -231,7 +231,7 @@ export interface SecagemProduct {
   code: string;
   name: string;
   applyCover: boolean; // sim ou não
-  wireGauge: '2.18' | '2.30'; // 2,18 ou 2,30
+  wireGauge: '2.18' | '2.30' | 'sem arame'; // 2,18 ou 2,30 ou sem arame
   tieWireQty1: number;
   tieWireQty2: number;
   bigBaleWireQty: number;
