@@ -1,12 +1,13 @@
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { updateProfile, updatePassword } from 'firebase/auth';
-import { doc, updateDoc, serverTimestamp, collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { updateProfile, updatePassword, updateEmail } from 'firebase/auth';
+import { doc, updateDoc, serverTimestamp, collection, getDocs, query, orderBy, setDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { safeHtml2canvas } from '../lib/html2canvasShim';
 import { jsPDF } from 'jspdf';
+import { encryptValue, hashEmailForSearch } from '../lib/crypto';
 import { 
   User, 
   Users,
@@ -22,12 +23,14 @@ import {
   Calendar,
   Clock,
   Eye,
+  EyeOff,
   Printer,
   Download,
   UserCheck,
   X,
   Maximize2,
-  Search
+  Search,
+  Mail
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -60,10 +63,13 @@ const Profile: React.FC = () => {
   const { profile, user, isAdmin } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [displayName, setDisplayName] = useState(profile?.displayName || '');
+  const [email, setEmail] = useState(profile?.email || user?.email || '');
   const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
   const [group, setGroup] = useState(profile?.group || '');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -193,10 +199,11 @@ const Profile: React.FC = () => {
   React.useEffect(() => {
     if (profile) {
       setDisplayName(profile.displayName || '');
+      setEmail(profile.email || user?.email || '');
       setPhotoURL(profile.photoURL || '');
       setGroup(profile.group || '');
     }
-  }, [profile]);
+  }, [profile, user]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -253,21 +260,62 @@ const Profile: React.FC = () => {
     setSuccess('');
 
     try {
+      const emailLower = email.trim().toLowerCase();
+      const nameTrimmed = displayName.trim();
+      const currentEmail = user?.email?.toLowerCase();
+
+      // 1. If email changed, update it in Firebase Auth first
+      if (emailLower && currentEmail && emailLower !== currentEmail) {
+        try {
+          await updateEmail(auth.currentUser, emailLower);
+        } catch (authErr: any) {
+          if (authErr.code === 'auth/requires-recent-login') {
+            throw new Error('Para alterar o e-mail, você precisa ter feito login recentemente. Saia e entre novamente.');
+          } else {
+            throw authErr;
+          }
+        }
+      }
+
       // Update Auth Profile
       const isDataUrl = photoURL.startsWith('data:');
-      
       await updateProfile(auth.currentUser, {
-        displayName,
+        displayName: nameTrimmed,
         ...(isDataUrl ? {} : { photoURL })
       });
 
+      // Encrypt values for Firestore
+      const encDisplayName = await encryptValue(nameTrimmed);
+      const encEmail = await encryptValue(emailLower);
+      const newEmailHash = hashEmailForSearch(emailLower);
+      const oldEmailHash = profile?.emailHash || (currentEmail ? hashEmailForSearch(currentEmail) : '');
+
       // Update Firestore User Doc
       await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-        displayName,
+        displayName: encDisplayName,
+        email: encEmail,
+        emailHash: newEmailHash,
         photoURL,
         group: group || null,
         updatedAt: serverTimestamp()
       });
+
+      // Update users_public lookup if email changed
+      if (oldEmailHash && oldEmailHash !== newEmailHash) {
+        try {
+          await deleteDoc(doc(db, 'users_public', oldEmailHash));
+        } catch (e) {
+          console.warn("Could not delete old users_public mapping:", e);
+        }
+
+        await setDoc(doc(db, 'users_public', newEmailHash), {
+          exists: true,
+          uid: auth.currentUser.uid,
+          role: profile?.role || 'viewer',
+          status: profile?.status || 'approved',
+          updatedAt: serverTimestamp()
+        });
+      }
 
       setSuccess('Perfil atualizado com sucesso!');
     } catch (err: any) {
@@ -275,8 +323,7 @@ const Profile: React.FC = () => {
       if (err.code?.startsWith('auth/')) {
         setError(`Erro na conta: ${err.message}`);
       } else {
-        handleFirestoreError(err, OperationType.UPDATE, `users/${auth.currentUser.uid}`);
-        setError('Erro ao atualizar banco de dados.');
+        setError(err.message || 'Erro ao atualizar perfil.');
       }
     } finally {
       setLoading(false);
@@ -442,6 +489,22 @@ const Profile: React.FC = () => {
             </div>
 
             <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Endereço de E-mail</label>
+              <div className="relative">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none disabled:opacity-60 disabled:bg-slate-100/40"
+                  placeholder="Seu e-mail"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Letra de Trabalho (Escala)</label>
               <div className="relative">
                 <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
@@ -567,12 +630,19 @@ const Profile: React.FC = () => {
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
-                  type="password"
+                  type={showNewPassword ? "text" : "password"}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-rose-500 focus:border-rose-500 transition-all outline-none"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-12 text-sm font-medium focus:ring-2 focus:ring-rose-500 focus:border-rose-500 transition-all outline-none"
                   placeholder="Mínimo 6 caracteres"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showNewPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
 
@@ -581,12 +651,19 @@ const Profile: React.FC = () => {
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
-                  type="password"
+                  type={showConfirmPassword ? "text" : "password"}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-rose-500 focus:border-rose-500 transition-all outline-none"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-12 text-sm font-medium focus:ring-2 focus:ring-rose-500 focus:border-rose-500 transition-all outline-none"
                   placeholder="Confirme sua senha"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
 

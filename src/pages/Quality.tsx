@@ -4423,7 +4423,7 @@ const Quality: React.FC = () => {
 
             <div className="grid grid-cols-1 gap-4">
               {pendingOmissions.map((omission, idx) => (
-                <div key={`pending-${idx}`} className="bg-amber-50 p-8 rounded-[2rem] border border-amber-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div key={`pending-${omission.template.id}-${omission.lineId}-${omission.date}-${omission.shift}`} className="bg-amber-50 p-8 rounded-[2rem] border border-amber-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div>
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-100 px-2 py-0.5 rounded">Pendente de Justificativa</span>
@@ -5715,7 +5715,7 @@ const Quality: React.FC = () => {
                   const compliant = template ? isResponseCompliant(resp.itemId, resp.value, template) : true;
                   
                   return (
-                    <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-4">
+                    <div key={`resp-${resp.itemId || 'item'}-${idx}`} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-4">
                       <div className="flex items-center justify-between gap-4">
                        <div className="flex items-center gap-4">
                          <div className={getIconColorClasses(resp.value, compliant)}>

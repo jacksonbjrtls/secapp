@@ -67,10 +67,19 @@ import { validateEmailDomain } from '../lib/domainUtils';
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 
 const Admin: React.FC = () => {
-  const { isAdmin, isMaster, logoUrl, updateCompanyLogo } = useAuth();
+  const { isAdmin, isMaster, user, logoUrl, updateCompanyLogo } = useAuth();
+  const isSuperMaster = user?.email?.toLowerCase() === 'jacksonbjr@gmail.com';
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [editingNameUserId, setEditingNameUserId] = useState<string | null>(null);
   const [tempEditName, setTempEditName] = useState('');
+  const [editingEmailUserId, setEditingEmailUserId] = useState<string | null>(null);
+  const [tempEditEmail, setTempEditEmail] = useState('');
+  const [moduleToReset, setModuleToReset] = useState<{
+    id: string;
+    title: string;
+    collections: string[];
+    description: string;
+  } | null>(null);
   const [domains, setDomains] = useState<AllowedDomain[]>([]);
   const [loading, setLoading] = useState(true);
   const [userToDelete, setUserToDelete] = useState<{ id: string; email: string } | null>(null);
@@ -829,6 +838,342 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
     }
   };
 
+  const handleUpdateEmail = async (userId: string, newEmail: string) => {
+    const emailLower = newEmail.trim().toLowerCase();
+    if (!emailLower) return;
+    
+    const targetUser = users.find(u => u.uid === userId);
+    if (!targetUser) return;
+    
+    if (targetUser.email === emailLower) return;
+
+    try {
+      const oldEmailHash = targetUser.emailHash || hashEmailForSearch(targetUser.email);
+      const newEmailHash = hashEmailForSearch(emailLower);
+
+      // 1. Update main user document
+      await updateDoc(doc(db, 'users', userId), { 
+        email: emailLower,
+        emailHash: newEmailHash,
+        updatedAt: serverTimestamp()
+      });
+
+      // 2. Manage users_public lookup
+      if (oldEmailHash !== newEmailHash) {
+        try {
+          await deleteDoc(doc(db, 'users_public', oldEmailHash));
+        } catch (e) {
+          console.warn("Could not delete old users_public mapping:", e);
+        }
+
+        await setDoc(doc(db, 'users_public', newEmailHash), {
+          exists: true,
+          uid: userId,
+          role: targetUser.role,
+          status: targetUser.status || 'approved',
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      setUsers(users.map(u => u.uid === userId ? { ...u, email: emailLower, emailHash: newEmailHash } : u));
+      setSuccess('E-mail atualizado com sucesso!');
+    } catch (err: any) {
+      console.error(err);
+      handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+      setError('Erro ao atualizar e-mail: ' + (err.message || ''));
+    }
+  };
+
+  const handleModuleReset = async (moduleId: string, collections: string[]) => {
+    if (!isSuperMaster) return;
+    setResetLoading(true);
+    setError('');
+    setSuccess('');
+    setResetProgress('Iniciando limpeza individual...');
+
+    try {
+      if (moduleId === 'users') {
+        // Clear all users except master emails
+        await deleteCollectionDocs('users', (docSnap) => {
+          const data = docSnap.data();
+          const email = (data.email || '').toLowerCase().trim();
+          return !MASTER_EMAILS.includes(email);
+        });
+
+        // Clear users_public except master hashes
+        await deleteCollectionDocs('users_public', (docSnap) => {
+          const masterHashes = MASTER_EMAILS.map(email => hashEmailForSearch(email.toLowerCase().trim()));
+          return !masterHashes.includes(docSnap.id);
+        });
+      } else {
+        // Clear collections directly
+        for (const collName of collections) {
+          await deleteCollectionDocs(collName);
+        }
+      }
+
+      setResetProgress('Finalizando restauração...');
+      setSuccess(`Módulo "${moduleToReset?.title || moduleId}" limpo com sucesso!`);
+      setModuleToReset(null);
+      await fetchData();
+    } catch (err: any) {
+      console.error('[Admin Module Reset] Error:', err);
+      setError('Ocorreu um erro ao tentar limpar o módulo.');
+    } finally {
+      setResetLoading(false);
+      setResetProgress('');
+    }
+  };
+
+  const handleRestoreDefaultTemplates = async () => {
+    if (!isSuperMaster) return;
+    setResetLoading(true);
+    setError('');
+    setSuccess('');
+    setResetProgress('Iniciando restauração de modelos...');
+
+    try {
+      // 1. Restore Quality Sector if not present
+      setResetProgress('Restaurando Setor de Qualidade...');
+      const sectorsSnap = await getDocs(collection(db, 'quality_sectors'));
+      let targetSectorId = '';
+      const existingSec = sectorsSnap.docs.find(d => {
+        const data = d.data();
+        return (data.name || '').toLowerCase().includes('secagem') || (data.name || '').toLowerCase().includes('secador');
+      });
+
+      if (existingSec) {
+        targetSectorId = existingSec.id;
+      } else {
+        const docRef = await addDoc(collection(db, 'quality_sectors'), {
+          name: "Secagem e Acabamento",
+          lineIds: [],
+          active: true,
+          createdAt: serverTimestamp()
+        });
+        targetSectorId = docRef.id;
+      }
+
+      // 2. Restore Quality Option Set if not present
+      setResetProgress('Restaurando Opções de Resposta...');
+      const optionsSnap = await getDocs(collection(db, 'quality_checklist_options'));
+      let targetOptionSetId = '';
+      const existingOpt = optionsSnap.docs.find(d => {
+        const data = d.data();
+        return (data.name || '').toLowerCase().includes('limpeza') || (data.name || '').toLowerCase().includes('secador');
+      });
+
+      if (existingOpt) {
+        targetOptionSetId = existingOpt.id;
+      } else {
+        const docRef = await addDoc(collection(db, 'quality_checklist_options'), {
+          name: "Nível de Limpeza de Secador",
+          options: ["Pouco Sujo", "Sujo", "Tamponado"],
+          active: true,
+          createdAt: serverTimestamp()
+        });
+        targetOptionSetId = docRef.id;
+      }
+
+      // 3. Restore Quality Checklist Template "Inspeção de Limpeza do Secador"
+      setResetProgress('Gerando Checklist de Limpeza do Secador (100 itens)...');
+      const templatesSnap = await getDocs(collection(db, 'quality_checklist_templates'));
+      const existingTmpl = templatesSnap.docs.find(d => {
+        const data = d.data();
+        return (data.name || '').toLowerCase().includes('limpeza') || (data.name || '').toLowerCase().includes('secador');
+      });
+
+      if (!existingTmpl) {
+        const items = [];
+        for (let door = 0; door <= 24; door++) {
+          for (const level of ['A', 'B', 'C', 'D']) {
+            const isSpecial = door === 0 || door === 1 || door === 24;
+            items.push({
+              id: `door_${door}_level_${level.toLowerCase()}`,
+              label: `Porta ${door === 24 ? '00' : door} - Nivel ${level}`,
+              type: "condition",
+              required: false,
+              conditionOptionsId: targetOptionSetId,
+              allowObservation: true,
+              radiatorCount: isSpecial ? 2 : 4
+            });
+          }
+        }
+        await addDoc(collection(db, 'quality_checklist_templates'), {
+          name: "Inspeção de Limpeza do Secador",
+          description: "Monitoramento de conformidade da limpeza do secador de celulose em 4 níveis de criticidade por porta.",
+          sectorId: targetSectorId || 'all',
+          frequencyPerShift: 1,
+          active: true,
+          createdBy: auth.currentUser?.uid || 'system',
+          createdAt: serverTimestamp(),
+          items: items
+        });
+      }
+
+      // 4. Restore Operational Route Templates
+      setResetProgress('Restaurando Modelos de Rotas Operacionais...');
+      const routeTemplatesSnap = await getDocs(collection(db, 'route_templates'));
+
+      // Template 1: Rota da Mesa Formadora e Prensa
+      const hasRoute1 = routeTemplatesSnap.docs.some(d => (d.data().name || '').toLowerCase().includes('mesa formadora'));
+      if (!hasRoute1) {
+        await addDoc(collection(db, 'route_templates'), {
+          name: "Rota da Mesa Formadora e Prensa",
+          active: true,
+          sectorId: "all",
+          frequency: "shift",
+          allowedShifts: ["Turno 1", "Turno 2", "Turno 3"],
+          equipments: [
+            {
+              id: 'mesa_formadora_nivel',
+              name: 'Nível da Caixa de Entrada',
+              tag: 'CX-ENT',
+              description: 'Verificar se o nível da polpa na caixa de entrada está estável',
+              required: true,
+              type: 'condition'
+            },
+            {
+              id: 'mesa_formadora_vazio',
+              name: 'Pressão de Vácuo das Caixas',
+              tag: 'VAC-CX',
+              description: 'Nível de vácuo nas caixas de sucção (bar)',
+              required: true,
+              type: 'number',
+              min: 0.1,
+              max: 0.8
+            },
+            {
+              id: 'mesa_formadora_feltro',
+              name: 'Alinhamento do Feltro',
+              tag: 'AL-FEL',
+              description: 'Verificar centralização e guias',
+              required: true,
+              type: 'condition'
+            },
+            {
+              id: 'prensa_pressao',
+              name: 'Pressão Hidráulica da Prensa 1',
+              tag: 'P-PRE1',
+              description: 'Pressão do cilindro principal (bar)',
+              required: true,
+              type: 'number',
+              min: 80,
+              max: 180
+            }
+          ],
+          createdAt: serverTimestamp()
+        });
+      }
+
+      // Template 2: Rota de Inspeção do Secador de Celulose
+      const hasRoute2 = routeTemplatesSnap.docs.some(d => (d.data().name || '').toLowerCase().includes('inspeção do secador'));
+      if (!hasRoute2) {
+        await addDoc(collection(db, 'route_templates'), {
+          name: "Rota de Inspeção do Secador de Celulose",
+          active: true,
+          sectorId: "all",
+          frequency: "shift",
+          allowedShifts: ["Turno 1", "Turno 2", "Turno 3"],
+          equipments: [
+            {
+              id: 'secador_vapor_pressao',
+              name: 'Pressão do Vapor Principal',
+              tag: 'P-VAP-PRIN',
+              description: 'Pressão da linha de vapor (bar)',
+              required: true,
+              type: 'number',
+              min: 4,
+              max: 14
+            },
+            {
+              id: 'secador_temperatura',
+              name: 'Temperatura Interna Média',
+              tag: 'T-SEC',
+              description: 'Temperatura interna (°C)',
+              required: true,
+              type: 'number',
+              min: 100,
+              max: 155
+            },
+            {
+              id: 'secador_vazamentos',
+              name: 'Vazamentos nas Portas',
+              tag: 'L-PORT',
+              description: 'Verificar se há escape de vapor ou condensado',
+              required: true,
+              type: 'condition'
+            }
+          ],
+          createdAt: serverTimestamp()
+        });
+      }
+
+      // Template 3: Rota da Amarradeira (Enfardamento)
+      const hasRoute3 = routeTemplatesSnap.docs.some(d => (d.data().name || '').toLowerCase().includes('amarradeira'));
+      if (!hasRoute3) {
+        await addDoc(collection(db, 'route_templates'), {
+          name: "Rota da Amarradeira (Enfardamento)",
+          active: true,
+          sectorId: "all",
+          frequency: "shift",
+          allowedShifts: ["Turno 1", "Turno 2", "Turno 3"],
+          equipments: [
+            {
+              id: 'amarradeira_tensao_esq',
+              name: 'Tensionamento - Nó Esquerdo',
+              tag: 'TENS-NOE',
+              description: 'Aperto mecânico do nó esquerdo',
+              required: true,
+              type: 'condition'
+            },
+            {
+              id: 'amarradeira_tensao_dir',
+              name: 'Tensionamento - Nó Direito',
+              tag: 'TENS-NOD',
+              description: 'Aperto mecânico do nó direito',
+              required: true,
+              type: 'condition'
+            },
+            {
+              id: 'amarradeira_pressao_ar',
+              name: 'Pressão do Ar Comprimido',
+              tag: 'P-AR-AM',
+              description: 'Pressão de suprimento pneumático (bar)',
+              required: true,
+              type: 'number',
+              min: 5.5,
+              max: 8.5
+            },
+            {
+              id: 'amarradeira_sensor_pos',
+              name: 'Sensor de Posição do Fardo',
+              tag: 'SENS-FAR',
+              description: 'Alinhamento do sensor óptico',
+              required: true,
+              type: 'condition'
+            }
+          ],
+          createdAt: serverTimestamp()
+        });
+      }
+
+      // 5. Update local seeding configurations in firestore settings
+      await setDoc(doc(db, 'settings', 'quality_seeding'), {
+        dryerTemplateSeeded: true
+      }, { merge: true });
+
+      setResetProgress('Sincronizando...');
+      setSuccess('Modelos de Rotas e Inspeções padrão restaurados com sucesso!');
+    } catch (err: any) {
+      console.error('[Admin Seeding Restore] Error:', err);
+      setError('Ocorreu um erro ao tentar restaurar os modelos padrão: ' + (err.message || ''));
+    } finally {
+      setResetLoading(false);
+      setResetProgress('');
+    }
+  };
+
   const handleUpdateRole = async (userId: string, newRole: UserRole) => {
     try {
       await updateDoc(doc(db, 'users', userId), { 
@@ -946,7 +1291,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
 
   const handleMasterReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isMaster) return;
+    if (!isSuperMaster) return;
 
     if (resetConfirmText.trim().toUpperCase() !== 'CONFIRMO APAGAR TUDO') {
       setError('Por favor, digite exatamente "CONFIRMO APAGAR TUDO" para prosseguir.');
@@ -1197,7 +1542,9 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
       { id: 'branding' as const, label: 'Identidade Visual', icon: Palette, color: 'text-blue-500' },
       { id: 'logs' as const, label: 'Logs de Acesso', icon: History, color: 'text-purple-500' },
       { id: 'import' as const, label: 'Importação de Dados (CSV)', icon: Upload, color: 'text-teal-500' },
-      { id: 'reset' as const, label: 'Reset Sistema', icon: ShieldAlert, color: 'text-rose-600' }
+      ...(isSuperMaster ? [
+        { id: 'reset' as const, label: 'Reset Sistema', icon: ShieldAlert, color: 'text-rose-600' }
+      ] : [])
     ] : [])
   ];
 
@@ -1404,7 +1751,53 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-600 font-mono">{user.email}</td>
+                    <td className="px-6 py-4">
+                      {editingEmailUserId === user.uid ? (
+                        <input
+                          type="email"
+                          value={tempEditEmail}
+                          onChange={(e) => setTempEditEmail(e.target.value)}
+                          onBlur={() => {
+                            if (tempEditEmail.trim() && tempEditEmail.trim().toLowerCase() !== user.email) {
+                              handleUpdateEmail(user.uid, tempEditEmail);
+                            }
+                            setEditingEmailUserId(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              if (tempEditEmail.trim() && tempEditEmail.trim().toLowerCase() !== user.email) {
+                                handleUpdateEmail(user.uid, tempEditEmail);
+                              }
+                              setEditingEmailUserId(null);
+                            } else if (e.key === 'Escape') {
+                              setEditingEmailUserId(null);
+                            }
+                          }}
+                          autoFocus
+                          className="font-mono text-xs text-slate-800 bg-white border border-emerald-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-emerald-500 w-full min-w-[200px]"
+                        />
+                      ) : (
+                        <div 
+                          onClick={() => {
+                            if (!user.isMaster || isMaster) {
+                              setEditingEmailUserId(user.uid);
+                              setTempEditEmail(user.email || '');
+                            }
+                          }}
+                          className="group flex flex-col justify-center min-w-0 cursor-pointer select-none"
+                          title="Clique para editar o e-mail"
+                        >
+                          <span className="font-mono text-sm text-gray-600 truncate block">
+                            {user.email}
+                          </span>
+                          {(!user.isMaster || isMaster) && (
+                            <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                              clique para editar
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-6 py-4">
                       <select
                         value={user.group || ''}
@@ -1977,11 +2370,17 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
           </div>
         </motion.div>
       ) : activeTab === 'reset' ? (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-white p-8 rounded-[2.5rem] border border-red-200 shadow-xl shadow-red-50"
-        >
+        !isSuperMaster ? (
+          <div className="p-12 bg-white border border-red-100 rounded-[2rem] shadow-sm text-center">
+            <h2 className="text-xl font-bold text-red-600 mb-2">Acesso Negado</h2>
+            <p className="text-slate-500">Apenas o usuário master principal (jacksonbjr@gmail.com) tem permissão para visualizar e limpar os dados do sistema.</p>
+          </div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white p-8 rounded-[2.5rem] border border-red-200 shadow-xl shadow-red-50"
+          >
           <div className="mb-8">
             <h2 className="text-2xl font-black text-rose-700 tracking-tight flex items-center gap-3">
               <ShieldAlert className="w-8 h-8 text-rose-600 animate-bounce" />
@@ -2026,45 +2425,205 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
             </div>
           </div>
 
-          <form onSubmit={handleMasterReset} className="max-w-md mx-auto bg-slate-50 p-6 rounded-[2rem] border border-slate-200 space-y-4">
-            <div>
-              <label className="block text-xs font-black text-rose-700 uppercase tracking-widest text-center mb-3">
-                Para confirmar, digite exatamente a frase abaixo:
-              </label>
-              <div className="text-center font-bold text-sm bg-rose-50 text-rose-700 py-2.5 px-4 rounded-xl border border-rose-100 mb-4 select-none">
-                CONFIRMO APAGAR TUDO
-              </div>
-              <input
-                type="text"
-                required
-                disabled={resetLoading}
-                placeholder="Digite a frase para autorizar..."
-                value={resetConfirmText}
-                onChange={(e) => setResetConfirmText(e.target.value)}
-                className="w-full text-center px-4 py-3 bg-white border border-slate-300 rounded-2xl focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none font-bold placeholder-slate-400 transition-all text-sm uppercase"
-              />
-            </div>
+          {/* Limpeza Seletiva por Módulo */}
+          <div className="mb-12 border-t border-slate-100 pt-8">
+            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4 flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-rose-500 animate-pulse" />
+              Limpeza Seletiva por Módulo (Tabelas Individuais)
+            </h3>
+            <p className="text-xs text-slate-500 font-semibold mb-6">
+              Selecione o módulo que deseja limpar separadamente. Todos os dados associados às coleções daquele módulo serão excluídos permanentemente, preservando o restante do sistema.
+            </p>
 
-            {resetLoading ? (
-              <div className="flex flex-col items-center justify-center py-4 bg-white rounded-2xl border border-slate-100 shadow-inner">
+            {resetLoading && moduleToReset ? (
+              <div className="flex flex-col items-center justify-center py-10 bg-rose-50/50 rounded-3xl border border-rose-100 mb-6">
                 <Loader2 className="w-8 h-8 text-rose-600 animate-spin mb-3" />
                 <span className="text-xs font-bold text-rose-700 uppercase tracking-widest animate-pulse">
-                  {resetProgress || 'Processando Exclusão...'}
+                  {resetProgress || 'Processando Exclusão de Módulo...'}
                 </span>
                 <span className="text-[10px] text-slate-400 mt-1">Por favor, não feche ou recarregue o aplicativo</span>
               </div>
             ) : (
-              <button
-                type="submit"
-                disabled={resetConfirmText.trim().toUpperCase() !== 'CONFIRMO APAGAR TUDO'}
-                className="w-full py-4 bg-rose-600 text-white font-black rounded-2xl hover:bg-rose-700 shadow-xl shadow-rose-200 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none uppercase tracking-wider text-xs"
-              >
-                <Trash2 className="w-4 h-4" />
-                Executar Limpeza Geral do Sistema
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[
+                  {
+                    id: 'wires',
+                    title: 'Arames & Bobinas',
+                    collections: ['wire_suppliers', 'wire_batches', 'wire_coils', 'wire_storage_bays', 'monthly_production'],
+                    description: 'Apaga todo o histórico de bobinas, lotes de arames, fornecedores, baias e histórico de consumo.'
+                  },
+                  {
+                    id: 'quality_submissions',
+                    title: 'Inspeções de Qualidade',
+                    collections: ['quality_checklist_submissions', 'quality_checklist_omissions'],
+                    description: 'Apaga apenas as fichas de inspeção preenchidas e omissões registradas, mantendo os modelos de checklist intactos.'
+                  },
+                  {
+                    id: 'quality_templates',
+                    title: 'Modelos de Checklist (Qualidade)',
+                    collections: ['quality_checklist_templates', 'production_lines', 'quality_sectors', 'quality_checklist_options'],
+                    description: 'Apaga os templates de checklist de qualidade, linhas de produção, setores e opções de resposta.'
+                  },
+                  {
+                    id: 'route_submissions',
+                    title: 'Inspeções de Rotas',
+                    collections: ['route_submissions'],
+                    description: 'Apaga todas as fichas preenchidas de inspeção de rotas operacionais, mantendo os modelos e rotas.'
+                  },
+                  {
+                    id: 'route_templates',
+                    title: 'Modelos de Rotas Operacionais',
+                    collections: ['route_templates'],
+                    description: 'Apaga os modelos de rotas operacionais e equipamentos cadastrados.'
+                  },
+                  {
+                    id: 'dds',
+                    title: 'Diálogos de Segurança (DDS)',
+                    collections: ['dds_sessions', 'dds_signatures'],
+                    description: 'Remove todas as reuniões de DDS registradas e as assinaturas de presença dos operadores.'
+                  },
+                  {
+                    id: 'forklift_checklists',
+                    title: 'Checklists de Empilhadeira',
+                    collections: ['forklift_checklists', 'forklift_drafts'],
+                    description: 'Apaga apenas os checklists de empilhadeira preenchidos e rascunhos, sem apagar as empilhadeiras em si.'
+                  },
+                  {
+                    id: 'forklifts',
+                    title: 'Cadastro de Empilhadeiras',
+                    collections: ['forklifts', 'forklift_check_items'],
+                    description: 'Exclui o cadastro das empilhadeiras e os itens de inspeção padrões.'
+                  },
+                  {
+                    id: 'users',
+                    title: 'Usuários & Perfis',
+                    collections: ['users', 'users_public'],
+                    description: 'Limpa todos os cadastros e perfis de usuários do sistema, mantendo exclusivamente os acessos Master.'
+                  },
+                  {
+                    id: 'safety',
+                    title: 'Observações de Segurança',
+                    collections: ['safety_observations', 'safety_categories', 'safety_areas'],
+                    description: 'Apaga todas as observações de segurança (desvios) reportadas pelos colaboradores.'
+                  },
+                  {
+                    id: 'courses',
+                    title: 'Cursos & Treinamentos',
+                    collections: ['training_courses', 'operators'],
+                    description: 'Exclui o cadastro de operadores credenciados, cursos e certificados gerados.'
+                  },
+                  {
+                    id: 'logs',
+                    title: 'Logs & Notificações',
+                    collections: ['user_login_logs', 'notifications'],
+                    description: 'Remove todo o histórico de acessos/logins e a fila de notificações enviadas no sistema.'
+                  }
+                ].map((mod) => (
+                  <div 
+                    key={mod.id} 
+                    className="bg-slate-50 border border-slate-200 p-5 rounded-3xl hover:border-rose-200 hover:shadow-md transition-all flex flex-col justify-between"
+                  >
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-sm mb-1">{mod.title}</h4>
+                      <p className="text-[10px] text-slate-500 font-semibold leading-relaxed mb-4">{mod.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={resetLoading}
+                      onClick={() => setModuleToReset(mod)}
+                      className="w-full py-2 bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 border border-rose-100 hover:border-rose-200 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Limpar Módulo
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
-          </form>
+          </div>
+
+          {/* Restauração de Modelos Padrão */}
+          <div className="mb-12 border-t border-slate-100 pt-8">
+            <h3 className="text-lg font-black text-teal-800 uppercase tracking-tight mb-4 flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-teal-600" />
+              Restaurar Estruturas e Modelos Padrão
+            </h3>
+            <p className="text-xs text-slate-500 font-semibold mb-6">
+              Se você apagou acidentalmente ou deseja reiniciar os modelos originais do sistema (incluindo as Rotas Operacionais, a Inspeção do Secador de Celulose com 100 itens, o Setor de Qualidade e as opções de respostas), utilize a ferramenta abaixo para recriá-los instantaneamente no banco de dados.
+            </p>
+
+            {resetLoading && (resetProgress.includes('restaura') || resetProgress.includes('Gerando') || resetProgress.includes('Modelos') || resetProgress.includes('Opções')) ? (
+              <div className="flex flex-col items-center justify-center py-10 bg-teal-50/50 rounded-3xl border border-teal-100 mb-6">
+                <Loader2 className="w-8 h-8 text-teal-600 animate-spin mb-3" />
+                <span className="text-xs font-bold text-teal-700 uppercase tracking-widest animate-pulse">
+                  {resetProgress || 'Restaurando Modelos Padrão...'}
+                </span>
+                <span className="text-[10px] text-slate-400 mt-1">Por favor, não feche ou recarregue o aplicativo</span>
+              </div>
+            ) : (
+              <div className="max-w-md mx-auto bg-slate-50 p-6 rounded-[2rem] border border-slate-200 text-center space-y-4">
+                <div className="text-xs text-slate-600 font-semibold leading-relaxed">
+                  Esta ação irá verificar as tabelas e recriar os modelos de rotas operacionais e inspeções caso tenham sido removidos, sem alterar ou apagar os preenchimentos já realizados.
+                </div>
+                <button
+                  type="button"
+                  disabled={resetLoading}
+                  onClick={handleRestoreDefaultTemplates}
+                  className="w-full py-4 bg-teal-600 hover:bg-teal-700 text-white font-black rounded-2xl shadow-xl shadow-teal-100 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed uppercase tracking-wider text-xs"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  Restaurar Modelos de Rotas e Inspeções
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Limpeza Geral (Master Reset) */}
+          <div className="border-t border-slate-100 pt-8">
+            <h3 className="text-lg font-black text-rose-700 uppercase tracking-tight mb-4 text-center">
+              Limpeza Geral do Banco de Dados (Master Reset)
+            </h3>
+            <form onSubmit={handleMasterReset} className="max-w-md mx-auto bg-slate-50 p-6 rounded-[2rem] border border-slate-200 space-y-4">
+              <div>
+                <label className="block text-xs font-black text-rose-700 uppercase tracking-widest text-center mb-3">
+                  Para confirmar, digite exatamente a frase abaixo:
+                </label>
+                <div className="text-center font-bold text-sm bg-rose-50 text-rose-700 py-2.5 px-4 rounded-xl border border-rose-100 mb-4 select-none">
+                  CONFIRMO APAGAR TUDO
+                </div>
+                <input
+                  type="text"
+                  required
+                  disabled={resetLoading}
+                  placeholder="Digite a frase para autorizar..."
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  className="w-full text-center px-4 py-3 bg-white border border-slate-300 rounded-2xl focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none font-bold placeholder-slate-400 transition-all text-sm uppercase"
+                />
+              </div>
+
+              {resetLoading && !moduleToReset ? (
+                <div className="flex flex-col items-center justify-center py-4 bg-white rounded-2xl border border-slate-100 shadow-inner">
+                  <Loader2 className="w-8 h-8 text-rose-600 animate-spin mb-3" />
+                  <span className="text-xs font-bold text-rose-700 uppercase tracking-widest animate-pulse">
+                    {resetProgress || 'Processando Exclusão...'}
+                  </span>
+                  <span className="text-[10px] text-slate-400 mt-1">Por favor, não feche ou recarregue o aplicativo</span>
+                </div>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={resetConfirmText.trim().toUpperCase() !== 'CONFIRMO APAGAR TUDO' || resetLoading}
+                  className="w-full py-4 bg-rose-600 text-white font-black rounded-2xl hover:bg-rose-700 shadow-xl shadow-rose-200 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none uppercase tracking-wider text-xs"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Executar Limpeza Geral do Sistema
+                </button>
+              )}
+            </form>
+          </div>
         </motion.div>
+        )
       ) : activeTab === 'import' ? (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
@@ -2628,6 +3187,21 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
           onConfirm={() => {
             if (userToDelete) {
               handleDeleteUser(userToDelete.id, userToDelete.email, true);
+            }
+          }}
+        />
+
+        <ConfirmationModal
+          isOpen={!!moduleToReset}
+          onClose={() => setModuleToReset(null)}
+          title={`Limpar Módulo: ${moduleToReset?.title}?`}
+          message={`Tem certeza que deseja excluir permanentemente todos os dados associados ao módulo "${moduleToReset?.title || ''}"? Esta ação é definitiva, limpará todas as tabelas listadas e é 100% irreversível.`}
+          type="warning"
+          confirmText="Limpar Módulo"
+          showConfirmButton={true}
+          onConfirm={() => {
+            if (moduleToReset) {
+              handleModuleReset(moduleToReset.id, moduleToReset.collections);
             }
           }}
         />

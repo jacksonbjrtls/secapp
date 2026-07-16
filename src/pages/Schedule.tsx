@@ -105,7 +105,7 @@ const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) 
               </th>
               {daysArray.map(day => (
                 <th 
-                  key={day} 
+                  key={`header-day-${day}`} 
                   style={{ border: `1px solid ${colors.slate200}`, color: colors.slate600 }}
                   className="p-0.5 text-center w-5 font-black"
                 >
@@ -122,7 +122,7 @@ const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) 
               </th>
               {daysArray.map(day => (
                 <th 
-                  key={day} 
+                  key={`header-dayname-${day}`} 
                   style={{ border: `1px solid ${colors.slate200}`, color: colors.slate500 }}
                   className="p-0.5 text-center w-5 font-bold lowercase"
                 >
@@ -143,7 +143,7 @@ const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) 
                 const group = getGroupForShift(new Date(year, month, day), 'Turno 3');
                 return (
                   <td 
-                    key={day} 
+                    key={`shift-3-${day}`} 
                     style={{ backgroundColor: groupColors[group].bg, color: groupColors[group].text, border: `1px solid ${colors.slate200}` }}
                     className="p-0 text-center font-black"
                   >
@@ -163,7 +163,7 @@ const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) 
                 const group = getGroupForShift(new Date(year, month, day), 'Turno 1');
                 return (
                   <td 
-                    key={day} 
+                    key={`shift-1-${day}`} 
                     style={{ backgroundColor: groupColors[group].bg, color: groupColors[group].text, border: `1px solid ${colors.slate200}` }}
                     className="p-0 text-center font-black"
                   >
@@ -183,7 +183,7 @@ const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) 
                 const group = getGroupForShift(new Date(year, month, day), 'Turno 2');
                 return (
                   <td 
-                    key={day} 
+                    key={`shift-2-${day}`} 
                     style={{ backgroundColor: groupColors[group].bg, color: groupColors[group].text, border: `1px solid ${colors.slate200}` }}
                     className="p-0 text-center font-black"
                   >
@@ -204,7 +204,7 @@ const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) 
                 const folgas = getFolgasForDay(day);
                 return (
                   <td 
-                    key={day} 
+                    key={`folga-1-${day}`} 
                     style={{ border: `1px solid ${colors.slate200}`, color: colors.slate600, backgroundColor: colors.white }}
                     className="p-0.5 text-center font-bold h-5"
                   >
@@ -218,7 +218,7 @@ const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) 
                 const folgas = getFolgasForDay(day);
                 return (
                   <td 
-                    key={day} 
+                    key={`folga-2-${day}`} 
                     style={{ border: `1px solid ${colors.slate200}`, color: colors.slate600, backgroundColor: colors.white }}
                     className="p-0.5 text-center font-bold h-5"
                   >
