@@ -10,6 +10,8 @@
  * - Otherwise, it is returned as-is.
  */
 
+import { auth } from './firebase';
+
 // Helper to convert Uint8Array to Base64
 const arrayToBase64 = (arr: Uint8Array): string => {
   let binary = '';
@@ -178,6 +180,34 @@ export const encryptValue = async (value: string | null | undefined): Promise<st
 
 const decryptionCache = new Map<string, string>();
 
+// Helper to request decryption from server if client-side subtle crypto is missing or fails
+const decryptFromServer = async (value: string): Promise<string | null> => {
+  try {
+    const currentUser = auth?.currentUser;
+    if (!currentUser) return null;
+
+    const token = await currentUser.getIdToken();
+    const response = await fetch('/api/crypto/decrypt', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ values: value })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server decryption failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.decrypted || null;
+  } catch (err) {
+    console.error('[Crypto] Server fallback decryption error:', err);
+    return null;
+  }
+};
+
 /**
  * Decrypt an encrypted value (supports AES-256-GCM and fallback to legacy RC4)
  */
@@ -192,6 +222,10 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
   // 1. Decrypt AES-GCM
   if (str.startsWith('__ENC_GCM__')) {
     try {
+      if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.subtle)) {
+        throw new Error('Web Crypto API (subtle) not available in this browser/context');
+      }
+
       const secret = import.meta.env.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
       let cryptoKey = await getCryptoKeyForSecret(secret);
       const rawPayload = str.substring(11); // Remove '__ENC_GCM__'
@@ -229,7 +263,14 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
       decryptionCache.set(str, result);
       return result;
     } catch (error) {
-      console.error('[Crypto] AES-GCM Decryption error:', error);
+      console.error('[Crypto] AES-GCM Decryption error, attempting server-side fallback:', error);
+      
+      const serverDecrypted = await decryptFromServer(str);
+      if (serverDecrypted !== null) {
+        decryptionCache.set(str, serverDecrypted);
+        return serverDecrypted;
+      }
+      
       return str; // Return original value as fallback
     }
   }

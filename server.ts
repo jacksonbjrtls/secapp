@@ -264,6 +264,27 @@ async function startServer() {
     app.use(express.urlencoded({ extended: true }));
   }
 
+  // API Route to decrypt values on behalf of the client
+  app.post("/api/crypto/decrypt", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { values } = req.body;
+      if (!values) {
+        return res.status(400).json({ error: "Missing values parameter" });
+      }
+
+      if (Array.isArray(values)) {
+        const decrypted = values.map(val => decryptValueNode(val));
+        return res.json({ decrypted });
+      } else {
+        const decrypted = decryptValueNode(values);
+        return res.json({ decrypted });
+      }
+    } catch (error: any) {
+      console.error("[API] Error decrypting values:", error);
+      return res.status(500).json({ error: error.message || "Internal decryption error" });
+    }
+  });
+
   // API Route to send email
   app.post("/api/send-notification", requireAuth, async (req, res) => {
     try {
