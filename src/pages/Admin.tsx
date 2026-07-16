@@ -432,7 +432,7 @@ const Admin: React.FC = () => {
           });
           
           try {
-            const dataToInsert = tableDef.processRow(mappedRow);
+            let dataToInsert: any = tableDef.processRow(mappedRow);
             const key = tableDef.getKey(mappedRow);
             
             if (tableDef.id === 'users' && !mappedRow.email) {
@@ -446,6 +446,33 @@ const Admin: React.FC = () => {
             }
             if (tableDef.id === 'forklifts' && !mappedRow.number) {
               throw new Error('Número identificador da empilhadeira é obrigatório.');
+            }
+
+            if (tableDef.id === 'users') {
+              const emailStr = mappedRow.email?.toLowerCase().trim() || "";
+              const nameStr = mappedRow.displayName?.trim() || "Usuário Sem Nome";
+              const encEmail = await encryptValue(emailStr);
+              const encName = await encryptValue(nameStr);
+              const emailHash = hashEmailForSearch(emailStr);
+              dataToInsert = {
+                email: encEmail,
+                emailHash: emailHash,
+                displayName: encName,
+                role: ['viewer', 'manager', 'admin'].includes(mappedRow.role?.toLowerCase().trim()) ? mappedRow.role.toLowerCase().trim() : 'viewer',
+                status: ['active', 'blocked'].includes(mappedRow.status?.toLowerCase().trim()) ? (mappedRow.status.toLowerCase().trim() === 'active' ? 'approved' : 'blocked') : 'approved',
+                mustChangePassword: true,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+              };
+
+              // Also write to users_public
+              await setDoc(doc(db, 'users_public', emailHash), {
+                exists: true,
+                uid: emailStr, // For imported users, fallback uid is their plaintext email initially
+                role: dataToInsert.role,
+                status: dataToInsert.status,
+                updatedAt: serverTimestamp()
+              });
             }
             
             if (key) {
@@ -638,7 +665,7 @@ const Admin: React.FC = () => {
     const tempAppName = `temp-app-${Date.now()}`;
     const tempApp = initializeApp(finalFirebaseConfig, tempAppName);
     const tempAuth = getAuth(tempApp);
-    const defaultPassword = 'Mudar@123';
+    const defaultPassword = 'Mudarsenha123';
 
     try {
       // 1. Create Auth User in secondary app to avoid logging out admin
@@ -668,9 +695,11 @@ const Admin: React.FC = () => {
       const addedUserEmail = newUser.email.toLowerCase().trim();
       const encryptedEmail = await encryptValue(addedUserEmail);
       const encryptedName = await encryptValue(newUser.name);
+      const emailHash = hashEmailForSearch(addedUserEmail);
+
       await setDoc(doc(db, 'users', user.uid), {
         email: encryptedEmail,
-        emailHash: hashEmailForSearch(addedUserEmail),
+        emailHash: emailHash,
         displayName: encryptedName,
         role: newUser.role,
         status: 'approved',
@@ -678,6 +707,15 @@ const Admin: React.FC = () => {
         emailVerifiedInAuth: false,
         isMaster: false,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Synchronize users_public lookup mapping
+      await setDoc(doc(db, 'users_public', emailHash), {
+        exists: true,
+        uid: user.uid,
+        role: newUser.role,
+        status: 'approved',
         updatedAt: serverTimestamp()
       });
 
@@ -714,9 +752,10 @@ const Admin: React.FC = () => {
                 // Yes, we got the UID! Now let's create the Firestore user profile
                 const encCheckEmail = await encryptValue(checkEmailLower);
                 const encNewUserName = await encryptValue(newUser.name || data.displayName || 'Usuário');
+                const emailHash = hashEmailForSearch(checkEmailLower);
                 await setDoc(doc(db, 'users', data.uid), {
                   email: encCheckEmail,
-                  emailHash: hashEmailForSearch(checkEmailLower),
+                  emailHash: emailHash,
                   displayName: encNewUserName,
                   role: newUser.role,
                   status: 'approved',
@@ -724,6 +763,15 @@ const Admin: React.FC = () => {
                   emailVerifiedInAuth: true,
                   isMaster: false,
                   createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp()
+                });
+
+                // Synchronize users_public lookup mapping
+                await setDoc(doc(db, 'users_public', emailHash), {
+                  exists: true,
+                  uid: data.uid,
+                  role: newUser.role,
+                  status: 'approved',
                   updatedAt: serverTimestamp()
                 });
                 setSuccess(`Usuário ${newUser.email} já possuía credenciais de acesso mas estava sem perfil ativo. O vínculo foi reestabelecido e ele foi ativado com sucesso!`);
@@ -787,6 +835,16 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
         role: newRole,
         updatedAt: serverTimestamp()
       });
+
+      const targetUser = users.find(u => u.uid === userId);
+      if (targetUser) {
+        const hash = targetUser.emailHash || hashEmailForSearch(targetUser.email);
+        await setDoc(doc(db, 'users_public', hash), {
+          role: newRole,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
+
       setUsers(users.map(u => u.uid === userId ? { ...u, role: newRole } : u));
       setSuccess('Função atualizada com sucesso!');
     } catch (err) {
@@ -816,6 +874,16 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
         disabled: newStatus === 'blocked',
         updatedAt: serverTimestamp()
       });
+
+      const targetUser = users.find(u => u.uid === userId);
+      if (targetUser) {
+        const hash = targetUser.emailHash || hashEmailForSearch(targetUser.email);
+        await setDoc(doc(db, 'users_public', hash), {
+          status: newStatus === 'blocked' ? 'blocked' : 'approved',
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
+
       setUsers(users.map(u => u.uid === userId ? { ...u, status: newStatus, disabled: newStatus === 'blocked' } : u));
       setSuccess(`Usuário ${newStatus === 'blocked' ? 'bloqueado' : 'aprovado'} com sucesso!`);
     } catch (err) {
@@ -959,6 +1027,17 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
     try {
       console.log(`[Admin] Deleting user profile: ${userId} (${userEmail})`);
       await deleteDoc(doc(db, 'users', userId));
+      
+      // Also delete from users_public lookup index
+      if (userEmail) {
+        const emailHash = hashEmailForSearch(userEmail.toLowerCase().trim());
+        try {
+          await deleteDoc(doc(db, 'users_public', emailHash));
+        } catch (pubErr) {
+          console.warn('[Admin] Failed to delete public hash mapping:', pubErr);
+        }
+      }
+
       setUsers(prev => prev.filter(u => u.uid !== userId));
       setSuccess('Usuário removido do sistema.');
     } catch (err) {
@@ -2487,7 +2566,7 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
                 <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-xs text-amber-700 space-y-1">
                   <p className="font-bold">Informações Importantes:</p>
                   <ul className="list-disc ml-4 space-y-1">
-                    <li>Senha padrão: <span className="font-black">Mudar@123</span></li>
+                    <li>Senha padrão: <span className="font-black">Mudarsenha123</span></li>
                     <li>O usuário será obrigado a trocar a senha no primeiro acesso.</li>
                     <li>O e-mail não precisará de verificação imediata para o primeiro acesso.</li>
                   </ul>

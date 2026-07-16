@@ -7,7 +7,6 @@ import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from './lib/utils';
 import Shell from './components/layout/Shell';
 import Login from './pages/Login';
-import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
 import Reports from './pages/Reports';
@@ -339,7 +338,7 @@ const App: React.FC = () => {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/register" element={<Navigate to="/login" replace />} />
           
           <Route 
             path="/" 

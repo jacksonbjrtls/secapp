@@ -118,8 +118,7 @@ service cloud.firestore {
         return email in getMasterEmails();
       }
 
-      allow get: if true;
-      allow list: if isApproved();
+      allow get, list: if true;
       
       allow create: if isSignedIn() && (
                       (request.auth.uid == userId && 
@@ -148,16 +147,6 @@ service cloud.firestore {
                     );
       
       allow delete: if isMaster() || (isAdmin() && (!isMasterDoc(resource.data)));
-    }
-
-    // Public User Lookup for check-email validation
-    match /users_public/{emailHash} {
-      allow get: if true;
-      allow create, update: if isSignedIn() && (
-                              (request.auth.uid == request.resource.data.uid) || 
-                              isAdmin()
-                            );
-      allow delete: if isAdmin();
     }
 
     // Allowed Domains
