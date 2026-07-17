@@ -148,11 +148,12 @@ export const encryptValue = async (value: string | null | undefined): Promise<st
   if (!value) return '';
   const str = String(value).trim();
   
-  // Already encrypted with GCM
-  if (str.startsWith('__ENC_GCM__')) return str;
+  // Already encrypted with GCM (case-insensitive check)
+  const upperStr = str.toUpperCase();
+  if (upperStr.startsWith('__ENC_GCM__')) return str;
   // If it's legacy RC4, keep it as is or decrypt and re-encrypt? Let's treat it as plain text if we want to encrypt it.
   // Actually, if it starts with __ENC__, it's encrypted. Let's return it so we don't double-encrypt.
-  if (str.startsWith('__ENC__')) return str; 
+  if (upperStr.startsWith('__ENC__')) return str; 
 
   try {
     const secret = import.meta.env.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
@@ -220,15 +221,14 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
   if (cached !== undefined) return cached;
 
   // 1. Decrypt AES-GCM
-  if (str.startsWith('__ENC_GCM__')) {
+  const upperStr = str.toUpperCase();
+  if (upperStr.startsWith('__ENC_GCM__')) {
     try {
       if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.subtle)) {
         throw new Error('Web Crypto API (subtle) not available in this browser/context');
       }
 
-      const secret = import.meta.env.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
-      let cryptoKey = await getCryptoKeyForSecret(secret);
-      const rawPayload = str.substring(11); // Remove '__ENC_GCM__'
+      const rawPayload = str.substring(11); // Remove prefix (always 11 chars)
       const combined = base64ToArray(rawPayload);
 
       if (combined.length < 12) {
@@ -238,25 +238,34 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
       const iv = combined.slice(0, 12);
       const ciphertext = combined.slice(12);
 
-      let decryptedBuffer;
-      try {
-        decryptedBuffer = await crypto.subtle.decrypt(
-          { name: 'AES-GCM', iv },
-          cryptoKey,
-          ciphertext
-        );
-      } catch (err) {
-        // Fallback to EldoradoSSTSecureKey2026 if the first secret fails and is different
-        if (secret !== 'EldoradoSSTSecureKey2026') {
-          cryptoKey = await getCryptoKeyForSecret('EldoradoSSTSecureKey2026');
+      const keysToTry = Array.from(new Set([
+        import.meta.env.VITE_ENCRYPTION_KEY,
+        'Js29082011@',
+        'EldoradoSSTSecureKey2026',
+        'EldoradoMaster@2026'
+      ].filter(Boolean))) as string[];
+
+      let decryptedBuffer: ArrayBuffer | null = null;
+      let lastError: any = null;
+
+      for (const keyCandidate of keysToTry) {
+        try {
+          const cryptoKey = await getCryptoKeyForSecret(keyCandidate);
           decryptedBuffer = await crypto.subtle.decrypt(
             { name: 'AES-GCM', iv },
             cryptoKey,
             ciphertext
           );
-        } else {
-          throw err;
+          if (decryptedBuffer) {
+            break; // Decrypted successfully!
+          }
+        } catch (err) {
+          lastError = err;
         }
+      }
+
+      if (!decryptedBuffer) {
+        throw lastError || new Error('All decryption keys failed');
       }
 
       const result = new TextDecoder().decode(decryptedBuffer);
@@ -276,7 +285,7 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
   }
 
   // 2. Fallback to legacy RC4 decryption
-  if (str.startsWith('__ENC__')) {
+  if (upperStr.startsWith('__ENC__')) {
     const result = decryptLegacyRc4(str);
     decryptionCache.set(str, result);
     return result;

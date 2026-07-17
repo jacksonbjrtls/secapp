@@ -6,12 +6,19 @@ import { getFirestore, collection, getDocs, limit } from "firebase/firestore";
 
 async function run() {
   console.log("=== CLIENT FIRESTORE TEST START ===");
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  const firebaseConfig = {
+    apiKey: "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
+    authDomain: "gen-lang-client-0972067932.firebaseapp.com",
+    projectId: "gen-lang-client-0972067932",
+    storageBucket: "gen-lang-client-0972067932.firebasestorage.app",
+    messagingSenderId: "328642603761",
+    appId: "1:328642603761:web:62d4a334ccd5524ba71750",
+  };
+  const firestoreDatabaseId = "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
 
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
-  const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  const db = getFirestore(app, firestoreDatabaseId);
 
   const testEmails = [
     'jacksonbjr@gmail.com',

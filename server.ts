@@ -24,10 +24,21 @@ import { GoogleGenAI, Type } from "@google/genai";
 dotenv.config();
 
 // Initialize Firebase Admin safely with robust validation
+const envProjectId = process.env.FIREBASE_PROJECT_ID;
+const finalEnvProjectId = envProjectId && envProjectId !== "secapp-project-123" ? envProjectId : undefined;
+
 const projectId = (firebaseConfig as any).projectId || 
                   process.env.VITE_FIREBASE_PROJECT_ID || 
-                  (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PROJECT_ID !== "secapp-project-123" ? process.env.FIREBASE_PROJECT_ID : undefined) || 
+                  finalEnvProjectId || 
                   "gen-lang-client-0972067932";
+
+const databaseId = (firebaseConfig as any).firestoreDatabaseId || 
+                   process.env.VITE_FIREBASE_DATABASE_ID || 
+                   "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
+
+const apiKey = firebaseConfig.apiKey || 
+               process.env.VITE_FIREBASE_API_KEY || 
+               "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA";
 
 process.env.FIREBASE_PROJECT_ID = projectId;
 process.env.GOOGLE_CLOUD_PROJECT = projectId;
@@ -39,9 +50,9 @@ if (!projectId) {
   try {
     if (getApps().length === 0) {
       initializeApp({
-        projectId: projectId,
+        projectId: projectId
       });
-      console.log(`[Firebase Admin] Inicializado com sucesso para o projeto: ${projectId}`);
+      console.log(`[Firebase Admin] Inicializado com sucesso com projectId: ${projectId}`);
     }
   } catch (err) {
     console.error("Firebase Admin initialization error:", err);
@@ -723,16 +734,16 @@ async function startServer() {
         }
         const emailHash = 'hash_' + (hash >>> 0).toString(16);
 
-        const apiKey = firebaseConfig.apiKey || process.env.VITE_FIREBASE_API_KEY;
-        const databaseId = (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
-        const projectId = firebaseConfig.projectId;
+        const localApiKey = apiKey;
+        const localDatabaseId = databaseId;
+        const localProjectId = projectId;
 
         // Verify existence in users_public
         let userExistsInPublic = isMaster;
         let publicData: any = {};
 
-        if (apiKey && projectId) {
-          const publicUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users_public/${emailHash}?key=${apiKey}`;
+        if (localApiKey && localProjectId) {
+          const publicUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users_public/${emailHash}?key=${localApiKey}`;
           try {
             const publicRes = await fetch(publicUrl);
             if (publicRes.status === 200) {
@@ -1056,10 +1067,10 @@ async function startServer() {
     const str = String(value).trim();
 
     // 1. Decrypt AES-GCM
-    if (str.startsWith('__ENC_GCM__')) {
+    const upperStr = str.toUpperCase();
+    if (upperStr.startsWith('__ENC_GCM__')) {
       try {
-        const secret = process.env.VITE_ENCRYPTION_KEY || 'EldoradoSSTSecureKey2026';
-        const rawPayload = str.substring(11); // Remove '__ENC_GCM__'
+        const rawPayload = str.substring(11); // Remove prefix (always 11 chars)
         const combined = Buffer.from(rawPayload, 'base64');
 
         if (combined.length < 12) {
@@ -1075,6 +1086,13 @@ async function startServer() {
         const ciphertext = ciphertextAndAuthTag.subarray(0, ciphertextAndAuthTag.length - 16);
         const authTag = ciphertextAndAuthTag.subarray(ciphertextAndAuthTag.length - 16);
 
+        const keysToTry = Array.from(new Set([
+          process.env.VITE_ENCRYPTION_KEY,
+          'Js29082011@',
+          'EldoradoSSTSecureKey2026',
+          'EldoradoMaster@2026'
+        ].filter(Boolean))) as string[];
+
         const tryDecrypt = (secretKey: string) => {
           const keyHash = crypto.createHash('sha256').update(secretKey).digest();
           const decipher = crypto.createDecipheriv('aes-256-gcm', keyHash, iv);
@@ -1084,18 +1102,21 @@ async function startServer() {
           return decrypted;
         };
 
-        try {
-          return tryDecrypt(secret);
-        } catch (err) {
-          if (secret !== 'EldoradoSSTSecureKey2026') {
-            try {
-              return tryDecrypt('EldoradoSSTSecureKey2026');
-            } catch (fallbackErr) {
-              // Ignore fallback error
+        let decryptedText: string | null = null;
+        let lastError: any = null;
+
+        for (const keyCandidate of keysToTry) {
+          try {
+            decryptedText = tryDecrypt(keyCandidate);
+            if (decryptedText !== null) {
+              return decryptedText;
             }
+          } catch (err) {
+            lastError = err;
           }
-          throw err;
         }
+
+        throw lastError || new Error('All decryption keys failed');
       } catch (error) {
         console.error('[Node Crypto] AES-GCM Decryption error:', error);
         return str;
@@ -1103,9 +1124,9 @@ async function startServer() {
     }
 
     // 2. Fallback to legacy RC4 decryption
-    if (str.startsWith('__ENC__')) {
+    if (upperStr.startsWith('__ENC__')) {
       try {
-        const payloadRaw = str.substring(7); // Remove '__ENC__'
+        const payloadRaw = str.substring(7); // Remove prefix (always 7 chars)
         const payload = Buffer.from(payloadRaw, 'base64').toString('utf8');
         
         const colonIndex = payload.indexOf(':');
@@ -1202,11 +1223,11 @@ async function startServer() {
 
       // 1. Check in users_public collection via REST API (Highly secure, fast & immune to Admin SDK restriction)
       try {
-        const apiKey = firebaseConfig.apiKey || process.env.VITE_FIREBASE_API_KEY;
-        const databaseId = (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
-        const projectId = firebaseConfig.projectId;
-        if (apiKey && projectId) {
-          const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users_public/${emailHash}?key=${apiKey}`;
+        const localApiKey = apiKey;
+        const localDatabaseId = databaseId;
+        const localProjectId = projectId;
+        if (localApiKey && localProjectId) {
+          const url = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users_public/${emailHash}?key=${localApiKey}`;
           const response = await fetch(url);
           if (response.status === 200) {
             console.log(`[API check-email] Found user in users_public: ${emailHash}`);
@@ -1228,9 +1249,9 @@ async function startServer() {
         const authErrMessage = authErr?.message || String(authErr);
         // Fallback to Firebase REST API lookup if Admin SDK throws permission error or fails
         try {
-          const apiKey = firebaseConfig.apiKey || process.env.VITE_FIREBASE_API_KEY;
-          if (apiKey) {
-            const url = `https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=${apiKey}`;
+          const localApiKey = apiKey;
+          if (localApiKey) {
+            const url = `https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=${localApiKey}`;
             const restRes = await fetch(url, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -1336,16 +1357,16 @@ async function startServer() {
       const emailHash = 'hash_' + (hash >>> 0).toString(16);
 
       // Verify user existence in users_public using Firestore REST API
-      const apiKey = firebaseConfig.apiKey || process.env.VITE_FIREBASE_API_KEY;
-      const databaseId = (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
-      const projectId = firebaseConfig.projectId;
+      const localApiKey = apiKey;
+      const localDatabaseId = databaseId;
+      const localProjectId = projectId;
 
-      if (!apiKey || !projectId) {
+      if (!localApiKey || !localProjectId) {
         return res.status(500).json({ success: false, error: "Firebase credentials missing on server." });
       }
 
       // Step A: Check /users_public/{emailHash}
-      const publicUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users_public/${emailHash}?key=${apiKey}`;
+      const publicUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users_public/${emailHash}?key=${localApiKey}`;
       const publicRes = await fetch(publicUrl);
       
       if (publicRes.status !== 200 && !isMaster) {
@@ -1376,7 +1397,7 @@ async function startServer() {
       // Step B: Check if already registered in Firebase Auth using REST API createAuthUri
       let authUserExists = false;
       try {
-        const authUriUrl = `https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=${apiKey}`;
+        const authUriUrl = `https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=${localApiKey}`;
         const uriRes = await fetch(authUriUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1644,7 +1665,7 @@ Retorne rigorosamente no formato de JSON schema especificado.`;
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "0.0.0.0", async () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

@@ -826,8 +826,9 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
   const handleUpdateName = async (userId: string, newName: string) => {
     if (!newName.trim()) return;
     try {
+      const encryptedName = await encryptValue(newName.trim());
       await updateDoc(doc(db, 'users', userId), { 
-        displayName: newName.trim(),
+        displayName: encryptedName,
         updatedAt: serverTimestamp()
       });
       setUsers(users.map(u => u.uid === userId ? { ...u, displayName: newName.trim() } : u));
@@ -850,10 +851,11 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
     try {
       const oldEmailHash = targetUser.emailHash || hashEmailForSearch(targetUser.email);
       const newEmailHash = hashEmailForSearch(emailLower);
+      const encryptedEmail = await encryptValue(emailLower);
 
       // 1. Update main user document
       await updateDoc(doc(db, 'users', userId), { 
-        email: emailLower,
+        email: encryptedEmail,
         emailHash: newEmailHash,
         updatedAt: serverTimestamp()
       });
