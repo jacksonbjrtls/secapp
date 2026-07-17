@@ -871,9 +871,13 @@ async function startServer() {
           link = await getAuth().generatePasswordResetLink(email, actionCodeSettings);
         } catch (e: any) {
           console.warn("[API send-custom-auth-email] generatePasswordResetLink failed:", e);
-          return res.status(500).json({ 
+          const isApiDisabled = e.message?.includes('identitytoolkit') || e.message?.includes('disabled') || e.message?.includes('used in project');
+          return res.status(200).json({ 
             success: false, 
-            error: "Serviço administrativo de redefinição de senha indisponível. Utilizando redefinição padrão do Firebase." 
+            useClientFallback: true,
+            error: isApiDisabled 
+              ? "A API Identity Toolkit está desativada no console Google Cloud. O administrador precisa ativá-la no painel do GCP."
+              : "Serviço administrativo de redefinição de senha indisponível." 
           });
         }
 
@@ -1343,7 +1347,7 @@ async function startServer() {
     try {
       const { email } = req.body;
       if (!email) {
-        return res.status(400).json({ success: false, error: "E-mail não informado." });
+        return res.status(200).json({ success: false, error: "E-mail não informado." });
       }
 
       const emailLower = email.toLowerCase().trim();
@@ -1363,21 +1367,20 @@ async function startServer() {
       }
       const emailHash = 'hash_' + (hash >>> 0).toString(16);
 
-      // Verify user existence in users_public using Firestore REST API
       const localApiKey = apiKey;
       const localDatabaseId = databaseId;
       const localProjectId = projectId;
 
       if (!localApiKey || !localProjectId) {
-        return res.status(500).json({ success: false, error: "Firebase credentials missing on server." });
+        return res.status(200).json({ success: false, error: "Firebase credentials missing on server." });
       }
 
-      // Step A: Check /users_public/{emailHash}
+      // Step A: Check /users_public/{emailHash} via REST API (works across project boundaries)
       const publicUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users_public/${emailHash}?key=${localApiKey}`;
       const publicRes = await fetch(publicUrl);
       
       if (publicRes.status !== 200 && !isMaster) {
-        return res.json({ success: false, code: 'user-not-found', error: "Este e-mail não está cadastrado no sistema. Solicite acesso ao administrador." });
+        return res.status(200).json({ success: false, code: 'user-not-found', error: "Este e-mail não está cadastrado no sistema. Solicite acesso ao administrador." });
       }
 
       let publicData: any = {};
@@ -1398,7 +1401,7 @@ async function startServer() {
       }
 
       if (publicData.status === 'blocked' || publicData.status === 'pending') {
-        return res.json({ success: false, code: 'user-blocked', error: "Sua conta está suspensa ou pendente de aprovação pelo administrador." });
+        return res.status(200).json({ success: false, code: 'user-blocked', error: "Sua conta está suspensa ou pendente de aprovação pelo administrador." });
       }
 
       // Step B: Check if already registered in Firebase Auth using REST API createAuthUri
@@ -1425,12 +1428,12 @@ async function startServer() {
 
       if (authUserExists) {
         // Already exists in Auth, they can just login
-        return res.json({ success: true, message: "Usuário já registrado no Auth." });
+        return res.status(200).json({ success: true, message: "Usuário já registrado no Auth." });
       }
 
       // Step C: If not in Auth, sign them up with default password
       console.log(`[API auto-provision] Auto-provisioning user via REST Auth API: ${emailLower}`);
-      const signUpUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${apiKey}`;
+      const signUpUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${localApiKey}`;
       const signUpRes = await fetch(signUpUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1445,9 +1448,24 @@ async function startServer() {
       if (!signUpRes.ok) {
         const errMsg = signUpData.error?.message;
         if (errMsg === "EMAIL_EXISTS") {
-          return res.json({ success: true, message: "Usuário já registrado no Auth." });
+          return res.status(200).json({ success: true, message: "Usuário já registrado no Auth." });
+        } else if (errMsg?.includes("blocked") || signUpData.error?.code === 400) {
+          // Provide a detailed, ultra-clear explanation on how to resolve the SignUp block
+          return res.status(200).json({ 
+            success: false, 
+            error: `O cadastro automático de novos usuários está bloqueado pelas políticas ou configurações do seu Firebase/Google Cloud.
+
+Para solucionar isso de uma vez por todas, o administrador do projeto precisa realizar estes 2 passos simples:
+
+1️⃣ Ativar o Provedor de E-mail/Senha:
+No console do Firebase (https://console.firebase.google.com/), vá em "Authentication" > aba "Sign-in method" > clique em "E-mail/senha" e garanta que o provedor esteja como HABILITADO (Ativado).
+
+2️⃣ Ajustar as Restrições da Chave de API no Google Cloud:
+No Console do Google Cloud (https://console.cloud.google.com/), acesse seu projeto, vá em "APIs e Serviços" > "Credenciais", clique na sua Chave de API (geralmente iniciada por "AIzaSy" ou chamada "Browser key") e verifique a seção "Restrições de API" (API restrictions).
+Se a chave estiver restrita, certifique-se de adicionar a "Identity Toolkit API" na lista de APIs permitidas. Caso contrário, qualquer tentativa de criar usuários por e-mail será totalmente bloqueada pelo Google Cloud!` 
+          });
         } else {
-          return res.status(400).json({ success: false, error: errMsg || "Falha ao registrar usuário no sistema." });
+          return res.status(200).json({ success: false, error: errMsg || "Falha ao registrar usuário no sistema." });
         }
       }
 
@@ -1460,7 +1478,7 @@ async function startServer() {
         console.log(`[API auto-provision] Healing document ID in Firestore from ${currentDocId} to ${newUid}`);
         
         // Fetch current user document
-        const getDocUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users/${currentDocId}?key=${apiKey}`;
+        const getDocUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users/${currentDocId}?key=${localApiKey}`;
         const getDocRes = await fetch(getDocUrl);
         
         let fieldsToSave: any = {};
@@ -1475,7 +1493,7 @@ async function startServer() {
         fieldsToSave.updatedAt = { timestampValue: new Date().toISOString() };
 
         // Create new document at users/{newUid}
-        const createDocUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users/${newUid}?key=${apiKey}`;
+        const createDocUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users/${newUid}?key=${localApiKey}`;
         await fetch(createDocUrl, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1483,7 +1501,7 @@ async function startServer() {
         });
 
         // Update the users_public document to point to the new UID
-        const updatePublicUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users_public/${emailHash}?key=${apiKey}`;
+        const updatePublicUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users_public/${emailHash}?key=${localApiKey}`;
         await fetch(updatePublicUrl, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1500,12 +1518,12 @@ async function startServer() {
 
         // Delete the old users/{currentDocId} document if it was different
         if (currentDocId && currentDocId !== newUid) {
-          const deleteDocUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users/${currentDocId}?key=${apiKey}`;
+          const deleteDocUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users/${currentDocId}?key=${localApiKey}`;
           await fetch(deleteDocUrl, { method: "DELETE" });
         }
       } else {
         // If they already have the correct UID, just make sure mustChangePassword is true
-        const getDocUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users/${newUid}?key=${apiKey}`;
+        const getDocUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/users/${newUid}?key=${localApiKey}`;
         const getDocRes = await fetch(getDocUrl);
         if (getDocRes.status === 200) {
           const docJson: any = await getDocRes.json();
@@ -1521,10 +1539,10 @@ async function startServer() {
         }
       }
 
-      return res.json({ success: true, message: "Usuário provisionado com sucesso para primeiro acesso." });
+      return res.status(200).json({ success: true, message: "Usuário provisionado com sucesso para primeiro acesso." });
     } catch (error: any) {
       console.error("[API] Error in auto-provision:", error);
-      return res.status(500).json({ success: false, error: error.message || "Erro interno ao verificar primeiro acesso" });
+      return res.status(200).json({ success: false, error: error.message || "Erro interno ao verificar primeiro acesso" });
     }
   });
 

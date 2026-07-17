@@ -807,6 +807,16 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
         } catch (dbErr) {
           setError('Este e-mail já está em uso no sistema de autenticação.');
         }
+      } else if (err?.message?.includes('blocked') || err?.message?.includes('api-not-activated-or-disabled') || err?.code?.includes('api-key-restrictions')) {
+        setError(`O cadastro de novos usuários está bloqueado pelas políticas do seu Firebase ou do Google Cloud.
+
+Para solucionar isso de uma vez por todas, realize estes 2 passos simples:
+
+1️⃣ Ativar o Provedor de E-mail/Senha:
+No console do Firebase (console.firebase.google.com), vá em "Authentication" > aba "Sign-in method" > garanta que o provedor "E-mail/senha" esteja como ATIVADO.
+
+2️⃣ Ajustar as Restrições da Chave de API no Google Cloud:
+No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Serviços" > "Credenciais", clique na sua Chave de API (Browser key) e certifique-se de marcar a "Identity Toolkit API" na lista de APIs permitidas. Caso contrário, o Google Cloud bloqueará a criação de qualquer usuário por e-mail!`);
       } else {
         setError(err.message || 'Erro ao criar usuário. Tente novamente.');
       }
@@ -1799,6 +1809,17 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
                           )}
                         </div>
                       )}
+                      <div className="mt-1">
+                        {user.mustChangePassword ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-black text-amber-700 uppercase tracking-wider bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                            🔑 Primeiro Acesso
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 uppercase tracking-wider bg-emerald-50 border border-emerald-250 px-2 py-0.5 rounded-md">
+                            🛡️ Senha Alterada
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <select
@@ -3152,11 +3173,11 @@ Basta pedir para o usuário "${newUser.email}" fazer o login uma vez no sistema 
             initial={{ opacity: 0, y: 50, x: '-50%' }}
             animate={{ opacity: 1, y: 0, x: '-50%' }}
             exit={{ opacity: 0, y: 50, x: '-50%' }}
-            className="fixed bottom-10 left-1/2 bg-rose-500 text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-3 z-50 min-w-[300px]"
+            className="fixed bottom-10 left-1/2 bg-rose-500 text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-3 z-50 max-w-[90vw] md:max-w-2xl"
           >
-            <ShieldAlert className="w-6 h-6" />
-            <span className="font-bold">{error}</span>
-            <button onClick={() => setError('')} className="ml-auto hover:bg-white/20 p-1 rounded">
+            <ShieldAlert className="w-6 h-6 shrink-0" />
+            <span className="font-bold text-sm whitespace-pre-line text-left flex-1">{error}</span>
+            <button onClick={() => setError('')} className="ml-auto hover:bg-white/20 p-1 rounded shrink-0">
               <X className="w-4 h-4" />
             </button>
           </motion.div>

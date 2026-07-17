@@ -555,6 +555,8 @@ const Login: React.FC = () => {
       let displayError = 'Erro ao enviar e-mail de redefinição. Verifique se o endereço está correto e cadastrado.';
       if (err.code === 'auth/user-not-found' || err.message?.includes('user-not-found') || err.message?.includes('não cadastrado')) {
         displayError = 'Este e-mail não está cadastrado no sistema SecApp.';
+      } else if (err.message?.includes('identitytoolkit') || err.message?.includes('Identity Toolkit') || err.message?.includes('disabled')) {
+        displayError = 'A API Identity Toolkit está desativada no seu Google Cloud Console. O administrador do sistema precisa ativá-la para habilitar a redefinição de senha.';
       } else if (err.message) {
         displayError = err.message;
       }
@@ -712,9 +714,9 @@ const Login: React.FC = () => {
 
               {error && (
                 <div className="space-y-3">
-                  <div className="text-red-500 text-sm bg-red-50 p-3 rounded-lg border border-red-100 italic flex gap-2">
-                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                    <span>{error}</span>
+                  <div className="text-red-500 text-sm bg-red-50 p-4 rounded-xl border border-red-100 italic flex gap-2">
+                    <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                    <span className="whitespace-pre-line text-left flex-1 font-medium">{error}</span>
                   </div>
                   {(error.includes('aba') || error.includes('pop-up') || error.includes('desativá-lo')) && (
                     <button
