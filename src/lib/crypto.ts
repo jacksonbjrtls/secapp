@@ -228,7 +228,9 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
         throw new Error('Web Crypto API (subtle) not available in this browser/context');
       }
 
-      const rawPayload = str.substring(11); // Remove prefix (always 11 chars)
+      let rawPayload = str.substring(11); // Remove prefix (always 11 chars)
+      // Defensive fix: replace space characters with '+' to heal URL-encoding issues
+      rawPayload = rawPayload.replace(/ /g, '+');
       const combined = base64ToArray(rawPayload);
 
       if (combined.length < 12) {
@@ -242,7 +244,12 @@ export const decryptValue = async (value: string | null | undefined): Promise<st
         import.meta.env.VITE_ENCRYPTION_KEY,
         'Js29082011@',
         'EldoradoSSTSecureKey2026',
-        'EldoradoMaster@2026'
+        'EldoradoMaster@2026',
+        'Js29082011',
+        'EldoradoSST',
+        'eldorado',
+        'EldoradoMaster',
+        'Eldorado'
       ].filter(Boolean))) as string[];
 
       let decryptedBuffer: ArrayBuffer | null = null;

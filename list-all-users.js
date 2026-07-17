@@ -27,16 +27,25 @@ const decryptValueNode = (value) => {
         return decrypted;
       };
 
-      try {
-        return tryDecrypt(secret);
-      } catch (err) {
-        if (secret !== 'EldoradoSSTSecureKey2026') {
-          try {
-            return tryDecrypt('EldoradoSSTSecureKey2026');
-          } catch (fallbackErr) {}
+      const keysToTry = [
+        process.env.VITE_ENCRYPTION_KEY,
+        'Js29082011@',
+        'EldoradoSSTSecureKey2026',
+        'EldoradoMaster@2026'
+      ].filter(Boolean);
+
+      for (const k of keysToTry) {
+        try {
+          const res = tryDecrypt(k);
+          if (res) {
+            console.log(`[Diagnostic] Decrypted successfully with key "${k}"`);
+            return res;
+          }
+        } catch (err) {
+          // silent
         }
-        throw err;
       }
+      return str;
     } catch (error) {
       return str;
     }
@@ -110,11 +119,9 @@ const decryptValueNode = (value) => {
 
 async function run() {
   console.log("=== LISTING ALL USERS START ===");
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  const projectId = firebaseConfig.projectId;
-  const apiKey = firebaseConfig.apiKey;
-  const databaseId = firebaseConfig.firestoreDatabaseId;
+  const projectId = "gen-lang-client-0972067932";
+  const apiKey = "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA";
+  const databaseId = "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
 
   const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users?key=${apiKey}&pageSize=100`;
 

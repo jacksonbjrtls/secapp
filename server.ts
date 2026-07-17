@@ -1070,7 +1070,9 @@ async function startServer() {
     const upperStr = str.toUpperCase();
     if (upperStr.startsWith('__ENC_GCM__')) {
       try {
-        const rawPayload = str.substring(11); // Remove prefix (always 11 chars)
+        let rawPayload = str.substring(11); // Remove prefix (always 11 chars)
+        // Defensive fix: replace space characters with '+' to heal URL-encoding issues
+        rawPayload = rawPayload.replace(/ /g, '+');
         const combined = Buffer.from(rawPayload, 'base64');
 
         if (combined.length < 12) {
@@ -1090,7 +1092,12 @@ async function startServer() {
           process.env.VITE_ENCRYPTION_KEY,
           'Js29082011@',
           'EldoradoSSTSecureKey2026',
-          'EldoradoMaster@2026'
+          'EldoradoMaster@2026',
+          'Js29082011',
+          'EldoradoSST',
+          'eldorado',
+          'EldoradoMaster',
+          'Eldorado'
         ].filter(Boolean))) as string[];
 
         const tryDecrypt = (secretKey: string) => {

@@ -29,16 +29,25 @@ const decryptValueNode = (value) => {
         return decrypted;
       };
 
-      try {
-        return tryDecrypt(secret);
-      } catch (err) {
-        if (secret !== 'EldoradoSSTSecureKey2026') {
-          try {
-            return tryDecrypt('EldoradoSSTSecureKey2026');
-          } catch (fallbackErr) {}
+      const keysToTry = [
+        process.env.VITE_ENCRYPTION_KEY,
+        'Js29082011@',
+        'EldoradoSSTSecureKey2026',
+        'EldoradoMaster@2026'
+      ].filter(Boolean);
+
+      for (const k of keysToTry) {
+        try {
+          const res = tryDecrypt(k);
+          if (res) {
+            console.log(`[Diagnostic] Decrypted successfully using key: "${k}"`);
+            return res;
+          }
+        } catch (err) {
+          // ignore
         }
-        throw err;
       }
+      return str;
     } catch (error) {
       return str;
     }
@@ -112,11 +121,18 @@ const decryptValueNode = (value) => {
 
 async function run() {
   console.log("=== CLIENT LISTING START ===");
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  const firebaseConfig = {
+    apiKey: "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
+    authDomain: "gen-lang-client-0972067932.firebaseapp.com",
+    projectId: "gen-lang-client-0972067932",
+    storageBucket: "gen-lang-client-0972067932.firebasestorage.app",
+    messagingSenderId: "328642603761",
+    appId: "1:328642603761:web:62d4a334ccd5524ba71750",
+  };
+  const firestoreDatabaseId = "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
 
   const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  const db = getFirestore(app, firestoreDatabaseId);
 
   try {
     const snap = await getDocs(collection(db, "users"));
