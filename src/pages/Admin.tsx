@@ -52,6 +52,8 @@ import {
 } from 'lucide-react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const finalFirebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
@@ -131,6 +133,88 @@ const Admin: React.FC = () => {
   const [addUserLoading, setAddUserLoading] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+
+  // Helper to sanitize Portuguese accented characters for jsPDF text drawing
+  const sanitizePdfText = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return String(text)
+      .replace(/[áàâãäÁÀÂÃÄ]/g, 'a')
+      .replace(/[éèêëÉÈÊË]/g, 'e')
+      .replace(/[íìîïÍÌÎÏ]/g, 'i')
+      .replace(/[óòôõöÓÒÔÕÖ]/g, 'o')
+      .replace(/[úùûüÚÙÛÜ]/g, 'u')
+      .replace(/[çÇ]/g, 'c')
+      .replace(/[ñÑ]/g, 'n');
+  };
+
+  const handleExportUsersPDF = () => {
+    try {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      // Header styling - Standardized Emerald Theme
+      doc.setFillColor(5, 150, 105); // emerald-600
+      doc.rect(0, 0, pageWidth, 35, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.text(sanitizePdfText('Relatório de Usuários'), 14, 20);
+      
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(190, 242, 219); // emerald-100ish for secondary text on emerald bg
+      
+      const nowStr = new Date().toLocaleString('pt-BR');
+      doc.text(sanitizePdfText(`Gerado em: ${nowStr}`), 14, 28);
+      doc.text(sanitizePdfText(`Total de Usuários: ${filteredUsers.length}`), pageWidth - 14, 28, { align: 'right' });
+
+      const head = [['Nome', 'E-mail', 'Função', 'Grupo/Letra', 'Status', 'Acesso']];
+      const tableData = filteredUsers.map(u => {
+        let roleLabel = 'Viewer';
+        if (u.isMaster) roleLabel = 'Master';
+        else if (u.role === 'admin') roleLabel = 'Admin';
+        else if (u.role === 'manager') roleLabel = 'Manager';
+
+        let statusLabel = 'Inativo';
+        if (u.status === 'approved') statusLabel = 'Ativo';
+        else if (u.status === 'blocked') statusLabel = 'Bloqueado';
+        else if (u.status === 'pending') statusLabel = 'Pendente';
+
+        const firstAccessLabel = u.mustChangePassword ? 'Primeiro Acesso' : 'Senha Alterada';
+
+        return [
+          u.displayName || 'Sem nome',
+          u.email,
+          roleLabel,
+          u.group || '-',
+          statusLabel,
+          firstAccessLabel
+        ];
+      });
+
+      autoTable(doc, {
+        startY: 40,
+        head: head.map(row => row.map(cell => sanitizePdfText(cell))),
+        body: tableData.map(row => row.map(cell => sanitizePdfText(cell))),
+        theme: 'striped',
+        headStyles: { 
+          fillColor: [5, 150, 105], // emerald-600 to look ultra cohesive!
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: 'bold'
+        },
+        styles: { fontSize: 8, cellPadding: 3 },
+        alternateRowStyles: { fillColor: [248, 250, 252] } // slate-50
+      });
+
+      doc.save(`relatorio_usuarios_${Date.now()}.pdf`);
+      setSuccess('PDF exportado com sucesso!');
+    } catch (err: any) {
+      console.error('Erro ao gerar PDF:', err);
+      setError('Erro ao gerar PDF dos usuários.');
+    }
+  };
 
   // System Logs local states
   const [loginLogs, setLoginLogs] = useState<any[]>([]);
@@ -1681,8 +1765,8 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-            <div className="relative w-full">
+          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+            <div className="relative flex-grow w-full">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
               <input
                 type="text"
@@ -1692,6 +1776,13 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                 className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 transition-all text-sm font-medium outline-none"
               />
             </div>
+            <button
+              onClick={handleExportUsersPDF}
+              className="w-full sm:w-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-sm rounded-2xl transition-all shadow-md shadow-emerald-100 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+            >
+              <Download className="w-4 h-4" />
+              Exportar PDF
+            </button>
           </div>
 
           <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
