@@ -750,6 +750,69 @@ const Admin: React.FC = () => {
     }
   };
 
+  const handleDeleteAllLoginLogs = async () => {
+    if (!isMaster) {
+      setError('Apenas o usuário master pode limpar os logs.');
+      return;
+    }
+    if (!window.confirm('Tem certeza absoluta que deseja apagar TODOS os logs de acesso gerais e individuais do sistema? Esta ação é irreversível.')) {
+      return;
+    }
+    setLogsLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const logsSnap = await getDocs(collection(db, 'user_login_logs'));
+      if (logsSnap.empty) {
+        setSuccess('Nenhum log encontrado para excluir.');
+        return;
+      }
+      
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const d of logsSnap.docs) {
+        batch.delete(doc(db, 'user_login_logs', d.id));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) {
+        await batch.commit();
+      }
+      
+      setSuccess('Todos os logs de acesso do sistema foram excluídos com sucesso!');
+      await fetchLoginLogs();
+    } catch (err: any) {
+      console.error('Error clearing login logs:', err);
+      setError(`Erro ao excluir os logs de acesso: ${err.message || err}`);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const handleDeleteIndividualLog = async (logId: string) => {
+    if (!isMaster) {
+      setError('Apenas o usuário master pode excluir logs.');
+      return;
+    }
+    setLogsLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      await deleteDoc(doc(db, 'user_login_logs', logId));
+      setSuccess('Registro de log excluído com sucesso!');
+      await fetchLoginLogs();
+    } catch (err: any) {
+      console.error('Error deleting individual log:', err);
+      setError(`Erro ao excluir registro de log: ${err.message || err}`);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (isAdmin && activeTab === 'logs') {
       fetchLoginLogs();
@@ -3318,7 +3381,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
           </div>
 
           <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-            <div className="relative w-full">
+            <div className="relative w-full md:max-w-md">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
               <input
                 type="text"
@@ -3328,6 +3391,17 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                 className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 transition-all text-sm font-medium outline-none"
               />
             </div>
+            {isMaster && (
+              <button
+                type="button"
+                onClick={handleDeleteAllLoginLogs}
+                disabled={logsLoading}
+                className="w-full md:w-auto px-5 py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs uppercase tracking-wider rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 hover:shadow-lg hover:shadow-rose-100 shrink-0"
+              >
+                <Trash2 className="w-4 h-4" />
+                Limpar Todos os Logs (Geral)
+              </button>
+            )}
           </div>
 
           <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
@@ -3346,6 +3420,9 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                       <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-left">Dispositivo / Navegador</th>
                       <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Data/Horário Local</th>
                       <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Horário Servidor (UTC)</th>
+                      {isMaster && (
+                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Ações</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -3377,6 +3454,19 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                             <td className="px-6 py-4 text-xs text-slate-400 font-mono text-right">
                               {dateObj ? dateObj.toISOString() : 'Aguardando sync'}
                             </td>
+                            {isMaster && (
+                              <td className="px-6 py-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteIndividualLog(log.id)}
+                                  disabled={logsLoading}
+                                  title="Excluir este log"
+                                  className="p-1.5 hover:bg-rose-50 text-rose-500 hover:text-rose-700 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         );
                       })}
@@ -3386,7 +3476,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                               log.email?.toLowerCase().includes(term));
                     }).length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                        <td colSpan={isMaster ? 6 : 5} className="px-6 py-12 text-center text-gray-500">
                           Nenhum registro de acesso encontrado.
                         </td>
                       </tr>

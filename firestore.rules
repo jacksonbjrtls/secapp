@@ -175,12 +175,12 @@ service cloud.firestore {
 
     // User Login Logs
     match /user_login_logs/{logId} {
-      allow get, list: if isMaster();
+      allow get, list: if isAdmin();
       allow create: if isSignedIn() && 
                     request.resource.data.userId == request.auth.uid && 
                     request.resource.data.timestamp == request.time;
       allow update: if false;
-      allow delete: if isMaster();
+      allow delete: if isAdmin();
     }
 
     // DDS Sessions
