@@ -203,7 +203,7 @@ const DDS: React.FC = () => {
         const filteredAndSortedList = decryptedUsersList
           .filter(user => {
             const userEmail = user.email || '';
-            return !MASTER_EMAILS.includes(userEmail) && user.displayName !== 'Sem nome';
+            return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
           })
           .sort((a, b) => a.displayName.localeCompare(b.displayName));
         setRegisteredUsers(filteredAndSortedList);

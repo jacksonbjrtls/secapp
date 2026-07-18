@@ -53,7 +53,7 @@ import { cn, safeToDate } from '../lib/utils';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
 
 const Dashboard: React.FC = () => {
-  const { isManager } = useAuth();
+  const { isManager, isMaster } = useAuth();
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
     dds: true,
     forklifts: true,
@@ -217,7 +217,7 @@ const Dashboard: React.FC = () => {
         );
 
         const nonMasterUsersCount = decryptedUsers.filter(user => {
-          return !MASTER_EMAILS.includes(user.email);
+          return !MASTER_EMAILS.includes(user.email) || isMaster;
         }).length;
 
         setStats({

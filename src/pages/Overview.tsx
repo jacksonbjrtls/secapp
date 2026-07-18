@@ -30,7 +30,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 export const Overview: React.FC = () => {
-  const { isManager, isAdmin, loading: authLoading, user, isApproved } = useAuth();
+  const { isManager, isAdmin, loading: authLoading, user, isApproved, isMaster } = useAuth();
   
   // Real-time collections state
   const [users, setUsers] = useState<any[]>([]);
@@ -123,7 +123,7 @@ export const Overview: React.FC = () => {
       }));
       const filtered = mapped.filter(user => {
         const userEmail = user.email?.toLowerCase().trim() || '';
-        return !MASTER_EMAILS.includes(userEmail);
+        return !MASTER_EMAILS.includes(userEmail) || isMaster;
       });
       setUsers(filtered);
       setLastUpdated(new Date());

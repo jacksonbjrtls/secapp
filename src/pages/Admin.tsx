@@ -641,7 +641,7 @@ const Admin: React.FC = () => {
             isMaster: isUserMaster 
           } as UserProfile;
         })))
-        .filter(user => !user.isMaster);
+        .filter(user => !user.isMaster || isMaster);
 
       // Group by email and auto-cleanup duplicates (sandbox vs real)
       const emailGroups: { [email: string]: UserProfile[] } = {};
@@ -893,10 +893,13 @@ const Admin: React.FC = () => {
       fetchData();
     } catch (err: any) {
       console.error(err);
-      const isEmailInUse = err?.code === 'auth/email-already-in-use' || 
-                           err?.message?.includes('auth/email-already-in-use') || 
-                           err?.message?.includes('email-already-in-use') ||
-                           String(err)?.includes('email-already-in-use');
+      const errStr = (err?.code || err?.message || String(err) || '').toLowerCase();
+      const isEmailInUse = errStr.includes('email-already-in-use') || 
+                           errStr.includes('email-already-exists') || 
+                           errStr.includes('email_exists') || 
+                           errStr.includes('already in use') || 
+                           errStr.includes('already exists') || 
+                           errStr.includes('already-in-use');
 
       if (isEmailInUse) {
         // Check if user exists in Firestore
@@ -986,7 +989,12 @@ No console do Firebase (console.firebase.google.com), vá em "Authentication" > 
 2️⃣ Ajustar as Restrições da Chave de API no Google Cloud:
 No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Serviços" > "Credenciais", clique na sua Chave de API (Browser key) e certifique-se de marcar a "Identity Toolkit API" na lista de APIs permitidas. Caso contrário, o Google Cloud bloqueará a criação de qualquer usuário por e-mail!`);
       } else {
-        const isEmailInUseFallback = err?.message?.includes('email-already-in-use') || String(err)?.includes('email-already-in-use');
+        const isEmailInUseFallback = errStr.includes('email-already-in-use') || 
+                                     errStr.includes('email-already-exists') || 
+                                     errStr.includes('email_exists') || 
+                                     errStr.includes('already in use') || 
+                                     errStr.includes('already exists') || 
+                                     errStr.includes('already-in-use');
         if (isEmailInUseFallback) {
           setError('Este e-mail já está sendo utilizado por outra conta de usuário.');
         } else {

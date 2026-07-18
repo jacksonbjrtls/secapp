@@ -1289,7 +1289,16 @@ async function startServer() {
         const code = err?.code || "";
         console.error(`[API] Failed to update Auth user email:`, msg);
         
-        if (code === "auth/email-already-in-use" || msg.includes("already-in-use") || msg.includes("EMAIL_EXISTS")) {
+        const isAlreadyInUse = 
+          code === "auth/email-already-in-use" || 
+          code === "auth/email-already-exists" || 
+          msg.toLowerCase().includes("already-in-use") || 
+          msg.toLowerCase().includes("already-exists") || 
+          msg.toLowerCase().includes("already in use") || 
+          msg.toLowerCase().includes("already exists") || 
+          msg.includes("EMAIL_EXISTS");
+        
+        if (isAlreadyInUse) {
           return res.json({ success: false, error: "email-already-in-use", message: "Este e-mail já está em uso no sistema de autenticação." });
         }
         
