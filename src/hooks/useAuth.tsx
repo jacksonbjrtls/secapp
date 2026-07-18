@@ -5,7 +5,7 @@ import { auth, db } from '../lib/firebase';
 import { UserProfile } from '../types';
 import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
-import { decryptValue, hashEmailForSearch } from '../lib/crypto';
+import { encryptValue, decryptValue, hashEmailForSearch } from '../lib/crypto';
 
 interface AuthContextType {
   user: User | null;
@@ -122,6 +122,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Attempt self-healing profile migration if their profile was registered under a fallback/sandbox UID
             const emailLower = user.email?.toLowerCase().trim();
             if (emailLower) {
+              // Auto-recreate profile for MASTER_EMAILS if they logged in but are missing in Firestore!
+              if (MASTER_EMAILS.map(e => e.toLowerCase()).includes(emailLower)) {
+                console.log('[useAuth] Auto-recreating master profile for:', emailLower);
+                Promise.all([
+                  encryptValue(emailLower),
+                  encryptValue(user.displayName || emailLower.split('@')[0])
+                ]).then(async ([encEmail, encName]) => {
+                  const emailHash = hashEmailForSearch(emailLower);
+                  await setDoc(doc(db, 'users', user.uid), {
+                    email: encEmail,
+                    emailHash: emailHash,
+                    displayName: encName,
+                    role: 'admin',
+                    status: 'approved',
+                    mustChangePassword: false,
+                    emailVerifiedInAuth: user.emailVerified || true,
+                    isMaster: true,
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp()
+                  });
+                  await setDoc(doc(db, 'users_public', emailHash), {
+                    exists: true,
+                    uid: user.uid,
+                    role: 'admin',
+                    status: 'approved',
+                    updatedAt: serverTimestamp()
+                  });
+                  console.log('[useAuth] Master profile auto-recreated successfully!');
+                }).catch(err => {
+                  console.error('[useAuth] Failed to auto-recreate master profile:', err);
+                });
+              }
+
               const emailHash = hashEmailForSearch(emailLower);
               const publicRef = doc(db, 'users_public', emailHash);
               

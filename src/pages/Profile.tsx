@@ -322,9 +322,13 @@ const Profile: React.FC = () => {
       setSuccess('Perfil atualizado com sucesso!');
     } catch (err: any) {
       console.error('Update Profile Error:', err);
-      const isEmailInUse = err.code === 'auth/email-already-in-use' || 
-                           err.message?.includes('auth/email-already-in-use') ||
-                           err.message?.includes('email-already-in-use');
+      const errStr = (err?.code || err?.message || String(err) || '').toLowerCase();
+      const isEmailInUse = errStr.includes('email-already-in-use') || 
+                           errStr.includes('email-already-exists') || 
+                           errStr.includes('email_exists') || 
+                           errStr.includes('already in use') || 
+                           errStr.includes('already exists') || 
+                           errStr.includes('already-in-use');
       if (isEmailInUse) {
         setError('Este e-mail já está sendo utilizado por outra conta de usuário.');
       } else if (err.code?.startsWith('auth/')) {

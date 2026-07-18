@@ -920,15 +920,18 @@ const Admin: React.FC = () => {
               });
               
               let data: any = {};
-              if (res.ok) {
+              try {
+                const responseText = await res.text();
                 try {
-                  data = await res.json();
-                } catch (jsonErr) {
-                  console.error('Failed to parse get-auth-user JSON:', jsonErr);
+                  data = JSON.parse(responseText);
+                } catch (pErr) {
+                  data = { error: responseText || `Status HTTP ${res.status}` };
                 }
+              } catch (readErr: any) {
+                data = { error: readErr.message || 'Erro de leitura da resposta' };
               }
 
-              if (data.success && data.uid) {
+              if (res.ok && data.success && data.uid) {
                 // Yes, we got the UID! Now let's create the Firestore user profile
                 const encCheckEmail = await encryptValue(checkEmailLower);
                 const encNewUserName = await encryptValue(newUser.name || data.displayName || 'Usuário');
@@ -939,7 +942,7 @@ const Admin: React.FC = () => {
                   displayName: encNewUserName,
                   role: newUser.role,
                   status: 'approved',
-                  mustChangePassword: false, // Keep existing password
+                  mustChangePassword: true, // Treated as first access
                   emailVerifiedInAuth: true,
                   isMaster: false,
                   createdAt: serverTimestamp(),
@@ -1087,10 +1090,20 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
             return;
           }
         } else {
-          console.warn('[Admin] Failed to update user email in Firebase Authentication (status code not ok)');
+          const resData = await res.json().catch(() => ({}));
+          const errMsg = resData.message || 'Falha de comunicação com o servidor de autenticação.';
+          setError(`Erro ao atualizar e-mail: ${errMsg}`);
+          return;
         }
-      } catch (authErr) {
-        console.warn('[Admin] Failed to update user email in Firebase Authentication:', authErr);
+      } catch (authErr: any) {
+        console.error('[Admin] Failed to update user email in Firebase Authentication:', authErr);
+        const errStr = (authErr?.code || authErr?.message || String(authErr) || '').toLowerCase();
+        if (errStr.includes('email-already-in-use') || errStr.includes('already-in-use')) {
+          setError('Este e-mail já está sendo utilizado por outra conta de usuário.');
+        } else {
+          setError(`Erro ao atualizar e-mail na autenticação: ${authErr.message || 'Falha de rede.'}`);
+        }
+        return;
       }
 
       // 2. Update main user document in Firestore
@@ -1581,10 +1594,17 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
         await deleteCollectionDocs(collName);
       }
 
+      const masterHashes = MASTER_EMAILS.map(email => hashEmailForSearch(email.toLowerCase().trim()));
+
       await deleteCollectionDocs('users', (docSnap) => {
         const data = docSnap.data();
-        const email = (data.email || '').toLowerCase().trim();
-        return !MASTER_EMAILS.includes(email);
+        const hash = data.emailHash || '';
+        return !masterHashes.includes(hash);
+      });
+
+      await deleteCollectionDocs('users_public', (docSnap) => {
+        const hash = docSnap.id || '';
+        return !masterHashes.includes(hash);
       });
 
       setResetProgress('Finalizando restauração...');
