@@ -55,13 +55,23 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { StopReport, StopWorkFront, ProductionLine } from '../types';
 
+const formatDateToBR = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
+
 const WORK_FRONT_OPTIONS = [
   'Mecânica',
   'Elétrica',
   'Instrumentação',
   'Hidráulica',
   'Civil',
-  'Caldeiraria'
+  'Caldeiraria',
+  'Operacional'
 ] as const;
 
 export default function StopsControl() {
@@ -562,7 +572,7 @@ export default function StopsControl() {
     docPdf.setFont('helvetica', 'normal');
     
     const generalData = [
-      ['Data:', report.date, 'Tipo de Parada:', report.type.toUpperCase()],
+      ['Data:', formatDateToBR(report.date), 'Tipo de Parada:', report.type.toUpperCase()],
       ['Local (Linha):', report.lineName || report.lineId, 'Tempo de Rejeição:', `${report.rejectionTime} min`],
       ['Hora Início:', report.startTime, 'Hora Término:', report.endTime],
       ['Duração:', formatDurationString(duration), 'Registrado por:', report.userName]
@@ -725,6 +735,7 @@ export default function StopsControl() {
         else if (wf.front === 'Hidráulica') color = [6, 182, 212]; // Cyan
         else if (wf.front === 'Civil') color = [16, 185, 129]; // Emerald
         else if (wf.front === 'Caldeiraria') color = [244, 63, 94]; // Rose
+        else if (wf.front === 'Operacional') color = [139, 92, 246]; // Violet / Purple
 
         // Draw the colored bar
         docPdf.setFillColor(color[0], color[1], color[2]);
@@ -765,7 +776,7 @@ export default function StopsControl() {
     docPdf.text(splitObs, 15, currentY + 6);
 
     // Save File
-    docPdf.save(`Controle_Parada_${report.date}_${report.lineName || 'Linha'}.pdf`);
+    docPdf.save(`Controle_Parada_${formatDateToBR(report.date).replace(/\//g, '-')}_${report.lineName || 'Linha'}.pdf`);
   };
 
   // Export full table of stops to PDF
@@ -783,7 +794,7 @@ export default function StopsControl() {
     
     docPdf.setFontSize(9);
     docPdf.setFont('helvetica', 'normal');
-    docPdf.text(`Filtrado por data: ${filterStartDate || 'Início'} até ${filterEndDate || 'Fim'} | Total registros: ${filteredReports.length}`, 15, 28);
+    docPdf.text(`Filtrado por data: ${filterStartDate ? formatDateToBR(filterStartDate) : 'Início'} até ${filterEndDate ? formatDateToBR(filterEndDate) : 'Fim'} | Total registros: ${filteredReports.length}`, 15, 28);
     docPdf.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 220, 28);
 
     const headers = [['Data', 'Tipo', 'Local/Linha', 'Início', 'Término', 'Duração', 'Rejeição', 'MS1 Speed', 'MS2 Speed', 'Frentes de Trabalho']];
@@ -791,7 +802,7 @@ export default function StopsControl() {
       const duration = getMinutesDiff(r.startTime, r.endTime);
       const frontsStr = r.workFronts.map(wf => wf.front).join(', ');
       return [
-        r.date,
+        formatDateToBR(r.date),
         r.type.toUpperCase(),
         r.lineName || r.lineId,
         r.startTime,
@@ -893,7 +904,7 @@ export default function StopsControl() {
               <div className="flex items-center justify-between p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800">
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="w-5 h-5" />
-                  <span className="font-bold text-sm">Modo de Edição Ativo: Editando parada de {editingReport.date} às {editingReport.startTime}</span>
+                  <span className="font-bold text-sm">Modo de Edição Ativo: Editando parada de {formatDateToBR(editingReport.date)} às {editingReport.startTime}</span>
                 </div>
                 <button 
                   type="button" 
@@ -1365,7 +1376,7 @@ export default function StopsControl() {
                         return (
                           <tr key={report.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="p-4 pl-6 whitespace-nowrap">
-                              <span className="text-slate-800">{report.date}</span>
+                              <span className="text-slate-800">{formatDateToBR(report.date)}</span>
                             </td>
                             <td className="p-4 whitespace-nowrap">
                               <span className={cn(
@@ -1621,7 +1632,7 @@ export default function StopsControl() {
                     )}>
                       {viewingReport.type === 'programada' ? 'Programada' : 'Geral'}
                     </span>
-                    <span className="text-xs text-slate-400 font-bold">{viewingReport.date}</span>
+                    <span className="text-xs text-slate-400 font-bold">{formatDateToBR(viewingReport.date)}</span>
                   </div>
                   <h3 className="text-lg font-extrabold tracking-tight mt-1">{viewingReport.lineName || viewingReport.lineId}</h3>
                 </div>
@@ -1765,7 +1776,7 @@ export default function StopsControl() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Data:</span>
-                  <span className="font-extrabold text-slate-800">{justSavedReport.date}</span>
+                  <span className="font-extrabold text-slate-800">{formatDateToBR(justSavedReport.date)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Período:</span>

@@ -574,7 +574,7 @@
             "type": "object",
             "properties": {
               "id": { "type": "string" },
-              "front": { "type": "string", "enum": ["Mecânica", "Elétrica", "Instrumentação", "Hidráulica", "Civil", "Caldeiraria"] },
+              "front": { "type": "string", "enum": ["Mecânica", "Elétrica", "Instrumentação", "Hidráulica", "Civil", "Caldeiraria", "Operacional"] },
               "description": { "type": "string" },
               "startTime": { "type": "string" },
               "endTime": { "type": "string" }

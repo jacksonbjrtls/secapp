@@ -245,7 +245,7 @@ export interface SecagemProduct {
 
 export interface StopWorkFront {
   id: string;
-  front: 'Mecânica' | 'Elétrica' | 'Instrumentação' | 'Hidráulica' | 'Civil' | 'Caldeiraria';
+  front: 'Mecânica' | 'Elétrica' | 'Instrumentação' | 'Hidráulica' | 'Civil' | 'Caldeiraria' | 'Operacional';
   description: string;
   startTime: string; // HH:MM
   endTime: string; // HH:MM
