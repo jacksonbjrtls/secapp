@@ -867,9 +867,13 @@ const Admin: React.FC = () => {
   };
 
   const filteredUsers = users.filter(user => {
-    const matchesSearch = user.displayName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          user.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (user.displayName || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          (user.email || '').toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
+  }).sort((a, b) => {
+    const nameA = (a.displayName || a.email || '').trim().toLowerCase();
+    const nameB = (b.displayName || b.email || '').trim().toLowerCase();
+    return nameA.localeCompare(nameB, 'pt-BR');
   });
 
   const handleCreateUser = async (e: React.FormEvent) => {
