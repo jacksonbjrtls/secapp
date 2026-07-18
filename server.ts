@@ -582,8 +582,14 @@ async function startServer() {
       if (type === 'verification' || type === 'welcome') {
         try {
           link = await getAuth().generateEmailVerificationLink(email, actionCodeSettings);
-        } catch (e) {
-          console.warn("Could not generate verification link (user might not exist yet or already verified):", e);
+        } catch (e: any) {
+          const msg = e?.message || String(e);
+          const isQuiet = msg.includes("Identity Toolkit") || msg.includes("identitytoolkit") || msg.includes("PERMISSION_DENIED") || msg.includes("accessNotConfigured");
+          if (isQuiet) {
+            console.warn(`[Firebase Auth] Verification link generation skipped: Identity Toolkit API is not active in the hosting project.`);
+          } else {
+            console.warn("Could not generate verification link (user might not exist yet or already verified):", msg);
+          }
         }
         
         subject = "SecApp - Bem-vindo e Verificação de E-mail";
@@ -870,8 +876,14 @@ async function startServer() {
         try {
           link = await getAuth().generatePasswordResetLink(email, actionCodeSettings);
         } catch (e: any) {
-          console.warn("[API send-custom-auth-email] generatePasswordResetLink failed:", e);
-          const isApiDisabled = e.message?.includes('identitytoolkit') || e.message?.includes('disabled') || e.message?.includes('used in project');
+          const msg = e?.message || String(e);
+          const isQuiet = msg.includes("Identity Toolkit") || msg.includes("identitytoolkit") || msg.includes("PERMISSION_DENIED") || msg.includes("accessNotConfigured");
+          if (isQuiet) {
+            console.warn("[API send-custom-auth-email] Password reset link generation skipped: Identity Toolkit API is not active in the hosting project.");
+          } else {
+            console.warn("[API send-custom-auth-email] generatePasswordResetLink failed:", msg);
+          }
+          const isApiDisabled = isQuiet || msg.includes('disabled') || msg.includes('used in project');
           return res.status(200).json({ 
             success: false, 
             useClientFallback: true,
