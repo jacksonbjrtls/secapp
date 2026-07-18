@@ -998,7 +998,7 @@ const Reports: React.FC = () => {
 
           <AnimatePresence>
             {showTypeMenu && (
-              <>
+              <React.Fragment key="type-menu-fragment">
                 <div 
                   className="fixed inset-0 z-10" 
                   onClick={() => setShowTypeMenu(false)} 
@@ -1075,7 +1075,7 @@ const Reports: React.FC = () => {
                     </button>
                   )}
                 </motion.div>
-              </>
+              </React.Fragment>
             )}
           </AnimatePresence>
         </div>
@@ -1252,6 +1252,7 @@ const Reports: React.FC = () => {
       <AnimatePresence>
         {showFilters && (
           <motion.div
+            key="filters-panel-container"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -2231,7 +2232,7 @@ const Reports: React.FC = () => {
 
       <AnimatePresence>
         {editingConsumption && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div key="edit-consumption-modal-container" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -2606,6 +2607,7 @@ const Reports: React.FC = () => {
           </div>
         )}
         <ConfirmationModal
+          key="generic-modal"
           isOpen={modalConfig.isOpen}
           onClose={closeModal}
           title={modalConfig.title}
@@ -2613,6 +2615,7 @@ const Reports: React.FC = () => {
           type={modalConfig.type}
         />
         <ConfirmationModal
+          key="cleanup-orphans-modal"
           isOpen={showCleanupConfirm}
           onClose={() => setShowCleanupConfirm(false)}
           title="Excluir Registros Órfãos?"

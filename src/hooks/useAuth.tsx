@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, onSnapshot, collection, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, collection, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { UserProfile } from '../types';
 import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
-import { decryptValue } from '../lib/crypto';
+import { decryptValue, hashEmailForSearch } from '../lib/crypto';
 
 interface AuthContextType {
   user: User | null;
@@ -103,14 +103,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (user) {
         const profileRef = doc(db, 'users', user.uid);
-        unsubProfile = onSnapshot(profileRef, async (doc) => {
-          if (doc.exists()) {
-            const data = doc.data();
-            console.log('[useAuth] Profile loaded:', { uid: doc.id, status: data.status, role: data.role });
+         unsubProfile = onSnapshot(profileRef, async (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            console.log('[useAuth] Profile loaded:', { uid: snapshot.id, status: data.status, role: data.role });
             const decryptedDisplayName = await decryptValue(data.displayName);
             const decryptedEmail = await decryptValue(data.email);
             setProfile({
-              uid: doc.id,
+              uid: snapshot.id,
               ...data,
               displayName: decryptedDisplayName,
               email: decryptedEmail,
@@ -118,6 +118,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } else {
             console.log('[useAuth] Profile document does not exist for UID:', user.uid);
             setProfile(null);
+
+            // Attempt self-healing profile migration if their profile was registered under a fallback/sandbox UID
+            const emailLower = user.email?.toLowerCase().trim();
+            if (emailLower) {
+              const emailHash = hashEmailForSearch(emailLower);
+              const publicRef = doc(db, 'users_public', emailHash);
+              
+              getDoc(publicRef).then(async (pubSnap) => {
+                if (pubSnap.exists()) {
+                  const pubData = pubSnap.data() as any;
+                  const oldUid = pubData?.uid;
+                  if (oldUid && oldUid !== user.uid) {
+                    console.log(`[useAuth] Healing: Profile found under different UID (${oldUid}). Starting copy to actual UID (${user.uid})...`);
+                    
+                    const oldProfileRef = doc(db, 'users', oldUid);
+                    const oldProfileSnap = await getDoc(oldProfileRef);
+                    
+                    if (oldProfileSnap.exists()) {
+                      const oldProfileData = oldProfileSnap.data() as any;
+                      
+                      // Write new profile under the correct actual UID
+                      const newProfileRef = doc(db, 'users', user.uid);
+                      await setDoc(newProfileRef, {
+                        ...oldProfileData,
+                        updatedAt: serverTimestamp()
+                      });
+                      
+                      // Update the public lookup index to point to the correct UID
+                      await setDoc(publicRef, {
+                        uid: user.uid,
+                        updatedAt: serverTimestamp()
+                      }, { merge: true });
+                      
+                      console.log('[useAuth] Healing: Profile successfully migrated client-side!');
+                    }
+                  }
+                }
+              }).catch((err) => {
+                console.warn('[useAuth] Healing lookup failed:', err);
+              });
+            }
           }
           setLoading(false);
         }, (error) => {

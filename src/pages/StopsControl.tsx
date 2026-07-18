@@ -1613,7 +1613,7 @@ export default function StopsControl() {
       {/* DETAIL VIEW MODAL */}
       <AnimatePresence>
         {viewingReport && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 px-3 overflow-y-auto">
+          <div key="detail-view-modal-container" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 px-3 overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -1748,7 +1748,7 @@ export default function StopsControl() {
       {/* POST-COMPLETION / SUCCESS MODAL WITH PDF EXPORT */}
       <AnimatePresence>
         {justSavedReport && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 px-3 overflow-y-auto">
+          <div key="success-pdf-modal-container" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 px-3 overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}

@@ -48,10 +48,11 @@ import {
   Sliders,
   Download,
   Info,
-  Check
+  Check,
+  Key
 } from 'lucide-react';
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -134,6 +135,10 @@ const Admin: React.FC = () => {
   const [addUserLoading, setAddUserLoading] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+  const [userToResetPassword, setUserToResetPassword] = useState<{ id: string; email: string; displayName: string } | null>(null);
+  const [newPasswordValue, setNewPasswordValue] = useState('Mudarsenha123');
+  const [passwordResetLoading, setPasswordResetLoading] = useState(false);
+  const [emailResetLoading, setEmailResetLoading] = useState(false);
 
   // Helper to sanitize Portuguese accented characters for jsPDF text drawing
   const sanitizePdfText = (text: string | null | undefined): string => {
@@ -637,7 +642,76 @@ const Admin: React.FC = () => {
           } as UserProfile;
         })))
         .filter(user => !user.isMaster);
-      setUsers(usersList);
+
+      // Group by email and auto-cleanup duplicates (sandbox vs real)
+      const emailGroups: { [email: string]: UserProfile[] } = {};
+      usersList.forEach(u => {
+        const emailKey = (u.email || '').toLowerCase().trim();
+        if (emailKey) {
+          if (!emailGroups[emailKey]) {
+            emailGroups[emailKey] = [];
+          }
+          emailGroups[emailKey].push(u);
+        }
+      });
+
+      const uniqueUsers: UserProfile[] = [];
+      const toDeleteFromDb: string[] = [];
+
+      for (const emailKey of Object.keys(emailGroups)) {
+        const group = emailGroups[emailKey];
+        if (group.length === 1) {
+          uniqueUsers.push(group[0]);
+        } else {
+          // Find if we have a real UID and sandbox UIDs
+          const realUsers = group.filter(u => !u.uid.startsWith('sandbox_user_'));
+          const sandboxUsers = group.filter(u => u.uid.startsWith('sandbox_user_'));
+
+          if (realUsers.length > 0) {
+            // Keep the real user (newest real if multiple exist)
+            realUsers.sort((a, b) => {
+              const tA = a.createdAt?.seconds || 0;
+              const tB = b.createdAt?.seconds || 0;
+              return tB - tA;
+            });
+            uniqueUsers.push(realUsers[0]);
+
+            // Mark other real users as duplicates to delete
+            for (let i = 1; i < realUsers.length; i++) {
+              toDeleteFromDb.push(realUsers[i].uid);
+            }
+            // Mark all sandbox users as duplicates to delete
+            sandboxUsers.forEach(su => toDeleteFromDb.push(su.uid));
+          } else {
+            // Only sandbox users exist. Keep the newest sandbox user.
+            sandboxUsers.sort((a, b) => {
+              const tA = a.createdAt?.seconds || 0;
+              const tB = b.createdAt?.seconds || 0;
+              return tB - tA;
+            });
+            uniqueUsers.push(sandboxUsers[0]);
+
+            // Mark other sandbox users to delete
+            for (let i = 1; i < sandboxUsers.length; i++) {
+              toDeleteFromDb.push(sandboxUsers[i].uid);
+            }
+          }
+        }
+      }
+
+      // Perform background deletion of duplicate profiles to heal the database
+      if (toDeleteFromDb.length > 0) {
+        console.log('[Admin fetchData] Healing duplicate user records by deleting stale UIDs:', toDeleteFromDb);
+        toDeleteFromDb.forEach(async (dupUid) => {
+          try {
+            await deleteDoc(doc(db, 'users', dupUid));
+          } catch (delErr) {
+            console.warn(`[Admin fetchData] Failed to delete duplicate profile document ${dupUid}:`, delErr);
+          }
+        });
+      }
+
+      setUsers(uniqueUsers);
       setDomains(domainsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AllowedDomain)));
     } catch (err) {
       handleFirestoreError(err, OperationType.GET, 'admin_data');
@@ -841,7 +915,16 @@ const Admin: React.FC = () => {
                 },
                 body: JSON.stringify({ email: newUser.email })
               });
-              const data = await res.json();
+              
+              let data: any = {};
+              if (res.ok) {
+                try {
+                  data = await res.json();
+                } catch (jsonErr) {
+                  console.error('Failed to parse get-auth-user JSON:', jsonErr);
+                }
+              }
+
               if (data.success && data.uid) {
                 // Yes, we got the UID! Now let's create the Firestore user profile
                 const encCheckEmail = await encryptValue(checkEmailLower);
@@ -903,7 +986,12 @@ No console do Firebase (console.firebase.google.com), vá em "Authentication" > 
 2️⃣ Ajustar as Restrições da Chave de API no Google Cloud:
 No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Serviços" > "Credenciais", clique na sua Chave de API (Browser key) e certifique-se de marcar a "Identity Toolkit API" na lista de APIs permitidas. Caso contrário, o Google Cloud bloqueará a criação de qualquer usuário por e-mail!`);
       } else {
-        setError(err.message || 'Erro ao criar usuário. Tente novamente.');
+        const isEmailInUseFallback = err?.message?.includes('email-already-in-use') || String(err)?.includes('email-already-in-use');
+        if (isEmailInUseFallback) {
+          setError('Este e-mail já está sendo utilizado por outra conta de usuário.');
+        } else {
+          setError(err.message || 'Erro ao criar usuário. Tente novamente.');
+        }
       }
     } finally {
       setAddUserLoading(false);
@@ -941,21 +1029,71 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
     const targetUser = users.find(u => u.uid === userId);
     if (!targetUser) return;
     
-    if (targetUser.email === emailLower) return;
+    const currentEmail = targetUser.email || '';
+    if (currentEmail.toLowerCase().trim() === emailLower) return;
+
+    setError('');
+    setSuccess('');
 
     try {
-      const oldEmailHash = targetUser.emailHash || hashEmailForSearch(targetUser.email);
+      const oldEmailHash = targetUser.emailHash || hashEmailForSearch(currentEmail);
       const newEmailHash = hashEmailForSearch(emailLower);
-      const encryptedEmail = await encryptValue(emailLower);
+      
+      // Check duplicate in local users state first
+      const isDuplicateInState = users.some(u => u.uid !== userId && (u.email || '').toLowerCase().trim() === emailLower);
+      if (isDuplicateInState) {
+        setError('Este e-mail já possui um cadastro ativo no sistema.');
+        return;
+      }
 
-      // 1. Update main user document
+      // Check duplicate in Firestore
+      const emailQuery = query(collection(db, 'users'), where('emailHash', '==', newEmailHash), limit(1));
+      const querySnapshot = await getDocs(emailQuery);
+      if (!querySnapshot.empty && querySnapshot.docs[0].id !== userId) {
+        setError('Este e-mail já possui um cadastro ativo no sistema.');
+        return;
+      }
+
+      setLoading(true);
+
+      // 1. Update Firebase Auth first to ensure email is not in use and update is successful
+      try {
+        const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+        const res = await fetch('/api/admin/update-auth-email', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${adminToken}`
+          },
+          body: JSON.stringify({ uid: userId, email: emailLower })
+        });
+        
+        if (res.ok) {
+          const resData = await res.json();
+          if (!resData.success) {
+            if (resData.error === 'email-already-in-use') {
+              setError('Este e-mail já está sendo utilizado por outra conta de usuário.');
+            } else {
+              setError(`Erro ao atualizar e-mail na autenticação: ${resData.message || 'Falha desconhecida'}`);
+            }
+            return;
+          }
+        } else {
+          console.warn('[Admin] Failed to update user email in Firebase Authentication (status code not ok)');
+        }
+      } catch (authErr) {
+        console.warn('[Admin] Failed to update user email in Firebase Authentication:', authErr);
+      }
+
+      // 2. Update main user document in Firestore
+      const encryptedEmail = await encryptValue(emailLower);
       await updateDoc(doc(db, 'users', userId), { 
         email: encryptedEmail,
         emailHash: newEmailHash,
         updatedAt: serverTimestamp()
       });
 
-      // 2. Manage users_public lookup
+      // 3. Manage users_public lookup
       if (oldEmailHash !== newEmailHash) {
         try {
           await deleteDoc(doc(db, 'users_public', oldEmailHash));
@@ -978,6 +1116,8 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
       console.error(err);
       handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
       setError('Erro ao atualizar e-mail: ' + (err.message || ''));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1467,12 +1607,44 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
     
     setDeletingUserId(userId);
     try {
-      console.log(`[Admin] Deleting user profile: ${userId} (${userEmail})`);
-      await deleteDoc(doc(db, 'users', userId));
+      console.log(`[Admin] Initiating full delete for user: ${userEmail} (ID: ${userId})`);
+      const emailHash = hashEmailForSearch(userEmail.toLowerCase().trim());
       
-      // Also delete from users_public lookup index
+      // 1. Delete from Firebase Authentication first to prevent email conflicts when recreating
+      try {
+        const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+        await fetch('/api/admin/delete-auth-user', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${adminToken}`
+          },
+          body: JSON.stringify({ email: userEmail, uid: userId })
+        });
+      } catch (authDelErr) {
+        console.warn('[Admin] Failed to delete user from Firebase Authentication:', authDelErr);
+      }
+
+      // 2. Query and delete all documents in 'users' with matching emailHash (both sandbox and real ones)
+      try {
+        const q = query(collection(db, 'users'), where('emailHash', '==', emailHash));
+        const qSnap = await getDocs(q);
+        const deletePromises = qSnap.docs.map(docSnap => deleteDoc(docSnap.ref));
+        
+        // Also ensure the selected userId is deleted even if its emailHash did not match or query failed
+        if (!qSnap.docs.some(docSnap => docSnap.id === userId)) {
+          deletePromises.push(deleteDoc(doc(db, 'users', userId)));
+        }
+        await Promise.all(deletePromises);
+        console.log(`[Admin] Successfully deleted ${deletePromises.length} profile documents in Firestore for ${userEmail}`);
+      } catch (dbDelErr) {
+        console.error('[Admin] Failed to delete profile documents from users collection:', dbDelErr);
+        // Fallback: delete at least the specific userId document
+        await deleteDoc(doc(db, 'users', userId));
+      }
+      
+      // 3. Delete from users_public lookup index
       if (userEmail) {
-        const emailHash = hashEmailForSearch(userEmail.toLowerCase().trim());
         try {
           await deleteDoc(doc(db, 'users_public', emailHash));
         } catch (pubErr) {
@@ -1480,8 +1652,9 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
         }
       }
 
-      setUsers(prev => prev.filter(u => u.uid !== userId));
-      setSuccess('Usuário removido do sistema.');
+      // 4. Update state by filtering out both the specific userId and any users with the same email
+      setUsers(prev => prev.filter(u => u.uid !== userId && (u.email || '').toLowerCase().trim() !== userEmail.toLowerCase().trim()));
+      setSuccess('Usuário e todos os seus perfis foram excluídos permanentemente com sucesso.');
     } catch (err) {
       console.error('[Admin] Delete error:', err);
       handleFirestoreError(err, OperationType.DELETE, `users/${userId}`);
@@ -1523,6 +1696,70 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
       setError(`Erro ao enviar e-mail: ${err.message}`);
     } finally {
       setSendingEmailId(null);
+    }
+  };
+
+  const handleResetUserPassword = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!userToResetPassword) return;
+    
+    if (newPasswordValue.length < 6) {
+      setError('A senha deve conter no mínimo 6 caracteres.');
+      return;
+    }
+    
+    setPasswordResetLoading(true);
+    setError('');
+    setSuccess('');
+    
+    try {
+      const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      const response = await fetch('/api/admin/reset-user-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({
+          email: userToResetPassword.email,
+          userId: userToResetPassword.id,
+          newPassword: newPasswordValue
+        })
+      });
+      
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setSuccess(`Senha redefinida com sucesso para o usuário ${userToResetPassword.email}!`);
+        setUserToResetPassword(null);
+        setNewPasswordValue('Mudarsenha123');
+        fetchData();
+      } else {
+        setError(data.error || 'Não foi possível redefinir a senha do usuário.');
+      }
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      setError('Erro ao redefinir a senha do usuário: ' + (err.message || ''));
+    } finally {
+      setPasswordResetLoading(false);
+    }
+  };
+
+  const handleSendPasswordResetEmail = async () => {
+    if (!userToResetPassword) return;
+    
+    setEmailResetLoading(true);
+    setError('');
+    setSuccess('');
+    
+    try {
+      await sendPasswordResetEmail(auth, userToResetPassword.email.toLowerCase().trim());
+      setSuccess(`E-mail de recuperação de senha enviado com sucesso para ${userToResetPassword.email}!`);
+      setUserToResetPassword(null);
+    } catch (err: any) {
+      console.error('Send reset email error:', err);
+      setError('Erro ao enviar e-mail de redefinição: ' + (err.message || ''));
+    } finally {
+      setEmailResetLoading(false);
     }
   };
 
@@ -2047,6 +2284,21 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                           ) : (
                             <Mail className="w-5 h-5" />
                           )}
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setUserToResetPassword({
+                              id: user.uid,
+                              email: user.email || '',
+                              displayName: user.displayName || ''
+                            });
+                            setNewPasswordValue('Mudarsenha123');
+                          }}
+                          title="Resetar Senha Individual"
+                          className="p-2 rounded-xl transition-all text-amber-500 hover:text-amber-700 hover:bg-amber-50"
+                        >
+                          <Key className="w-5 h-5" />
                         </button>
                       </div>
                     </td>
@@ -3121,7 +3373,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
 
       <AnimatePresence>
         {showConfirmDelete && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div key="confirm-delete-domain" className="fixed inset-0 z-[60] flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -3164,7 +3416,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
         )}
 
         {isAddUserOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div key="add-user-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -3293,10 +3545,11 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
         )}
 
         <ConfirmationModal
+          key="delete-user-modal"
           isOpen={!!userToDelete}
           onClose={() => setUserToDelete(null)}
-          title="Excluir Perfil?"
-          message={`Tem certeza que deseja excluir permanentemente o perfil de ${userToDelete?.email || ''}? Esta ação NÃO removerá a conta do Firebase Auth, apenas o perfil e permissões no sistema.`}
+          title="Excluir Usuário?"
+          message={`Tem certeza que deseja excluir permanentemente o usuário ${userToDelete?.email || ''}? Esta ação removerá completamente o perfil do banco de dados (Firestore) e as credenciais de acesso no sistema (Firebase Auth) de forma definitiva.`}
           type="warning"
           confirmText="Excluir"
           showConfirmButton={true}
@@ -3308,6 +3561,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
         />
 
         <ConfirmationModal
+          key="reset-module-modal"
           isOpen={!!moduleToReset}
           onClose={() => setModuleToReset(null)}
           title={`Limpar Módulo: ${moduleToReset?.title}?`}
@@ -3321,6 +3575,103 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
             }
           }}
         />
+
+        {userToResetPassword && (
+          <div key="reset-password-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+              onClick={() => setUserToResetPassword(null)}
+            />
+            
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-sm bg-white rounded-[2rem] shadow-2xl overflow-hidden z-10 border border-slate-100"
+            >
+              <div className="p-6">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="p-2.5 bg-amber-50 rounded-xl text-amber-500">
+                    <Key className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none mb-1">
+                      Resetar Senha
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium leading-none">
+                      {userToResetPassword.displayName || 'Sem Nome'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-[11px] font-mono text-slate-400 bg-slate-50 rounded-xl px-3 py-2 border border-slate-100/50 mb-4 truncate text-center">
+                  {userToResetPassword.email}
+                </div>
+
+                <div className="space-y-3.5">
+                  {/* Opção Principal: E-mail */}
+                  <button
+                    type="button"
+                    disabled={emailResetLoading}
+                    onClick={handleSendPasswordResetEmail}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold rounded-xl shadow-md shadow-emerald-600/10 transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-xs"
+                  >
+                    {emailResetLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Mail className="w-4 h-4" />
+                        Enviar E-mail de Recuperação
+                      </>
+                    )}
+                  </button>
+
+                  <div className="relative flex py-0.5 items-center">
+                    <div className="flex-grow border-t border-slate-100"></div>
+                    <span className="flex-shrink mx-3 text-[9px] text-slate-300 font-bold uppercase tracking-wider">ou</span>
+                    <div className="flex-grow border-t border-slate-100"></div>
+                  </div>
+
+                  {/* Opção Secundária: Manual */}
+                  <form onSubmit={handleResetUserPassword} className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        required
+                        value={newPasswordValue}
+                        onChange={(e) => setNewPasswordValue(e.target.value)}
+                        placeholder="Senha temporária"
+                        className="flex-1 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs font-bold outline-none focus:bg-white focus:ring-1 focus:ring-amber-500 focus:border-transparent transition-all"
+                      />
+                      <button
+                        type="submit"
+                        disabled={passwordResetLoading}
+                        className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold rounded-xl shadow-md shadow-amber-500/10 transition-all flex items-center justify-center gap-1 disabled:opacity-50 text-xs whitespace-nowrap"
+                      >
+                        {passwordResetLoading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          "Forçar Senha"
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setUserToResetPassword(null)}
+                className="absolute top-5 right-5 p-2 text-slate-300 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
     </div>
   );

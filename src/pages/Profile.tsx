@@ -271,6 +271,8 @@ const Profile: React.FC = () => {
         } catch (authErr: any) {
           if (authErr.code === 'auth/requires-recent-login') {
             throw new Error('Para alterar o e-mail, você precisa ter feito login recentemente. Saia e entre novamente.');
+          } else if (authErr.code === 'auth/email-already-in-use' || authErr.message?.includes('email-already-in-use')) {
+            throw new Error('Este e-mail já está sendo utilizado por outra conta de usuário.');
           } else {
             throw authErr;
           }
@@ -320,7 +322,12 @@ const Profile: React.FC = () => {
       setSuccess('Perfil atualizado com sucesso!');
     } catch (err: any) {
       console.error('Update Profile Error:', err);
-      if (err.code?.startsWith('auth/')) {
+      const isEmailInUse = err.code === 'auth/email-already-in-use' || 
+                           err.message?.includes('auth/email-already-in-use') ||
+                           err.message?.includes('email-already-in-use');
+      if (isEmailInUse) {
+        setError('Este e-mail já está sendo utilizado por outra conta de usuário.');
+      } else if (err.code?.startsWith('auth/')) {
         setError(`Erro na conta: ${err.message}`);
       } else {
         setError(err.message || 'Erro ao atualizar perfil.');

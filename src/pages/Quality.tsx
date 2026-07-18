@@ -2337,7 +2337,7 @@ const Quality: React.FC = () => {
 
           <AnimatePresence>
             {showTabMenu && (
-              <>
+              <React.Fragment key="quality-tab-menu-fragment">
                 <div 
                   className="fixed inset-0 z-10" 
                   onClick={() => setShowTabMenu(false)} 
@@ -2374,7 +2374,7 @@ const Quality: React.FC = () => {
                     );
                   })}
                 </motion.div>
-              </>
+              </React.Fragment>
             )}
           </AnimatePresence>
         </div>
@@ -5397,7 +5397,7 @@ const Quality: React.FC = () => {
       {/* Modal for Product Deletion Confirmation */}
       <AnimatePresence>
         {productToDelete && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div key="product-delete-modal-container" className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5455,7 +5455,7 @@ const Quality: React.FC = () => {
 
       <AnimatePresence>
         {justifyingOmission && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div key="justification-omission-modal-container" className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5650,7 +5650,7 @@ const Quality: React.FC = () => {
 
       <AnimatePresence>
         {viewingSubmission && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div key="viewing-submission-modal-container" className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}

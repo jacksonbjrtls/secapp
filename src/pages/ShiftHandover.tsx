@@ -1406,7 +1406,7 @@ export const ShiftHandover: React.FC = () => {
       {/* Visual Guidelines (Guidelines Popout / Modal) */}
       <AnimatePresence>
         {showGuidelines && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div key="guidelines-modal-container" className="fixed inset-0 z-50 flex items-center justify-center p-4">
             {/* Backdrop Blur overlay */}
             <motion.div
               initial={{ opacity: 0 }}

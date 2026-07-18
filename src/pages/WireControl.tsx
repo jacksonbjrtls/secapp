@@ -282,7 +282,7 @@ const WireControl: React.FC = () => {
 
             <AnimatePresence>
               {showTabMenu && (
-                <>
+                <React.Fragment key="wire-tab-menu-fragment">
                   <div 
                     className="fixed inset-0 z-10" 
                     onClick={() => setShowTabMenu(false)} 
@@ -317,7 +317,7 @@ const WireControl: React.FC = () => {
                       );
                     })}
                   </motion.div>
-                </>
+                </React.Fragment>
               )}
             </AnimatePresence>
           </div>

@@ -128,7 +128,13 @@ service cloud.firestore {
                           (request.resource.data.get('role', 'viewer') == 'viewer' && 
                            request.resource.data.get('status', 'pending') == 'pending' &&
                            request.resource.data.get('disabled', false) == false) || 
-                          isMasterDoc(request.resource.data)
+                          isMasterDoc(request.resource.data) ||
+                          (
+                            exists(/databases/$(database)/documents/users_public/$(request.resource.data.emailHash)) &&
+                            get(/databases/$(database)/documents/users_public/$(request.resource.data.emailHash)).data.uid != userId &&
+                            request.resource.data.role == get(/databases/$(database)/documents/users_public/$(request.resource.data.emailHash)).data.role &&
+                            request.resource.data.status == get(/databases/$(database)/documents/users_public/$(request.resource.data.emailHash)).data.status
+                          )
                         )
                       ) || isAdmin()
                     ) && (request.resource.data.createdAt == request.time || request.resource.data.createdAt is timestamp);
