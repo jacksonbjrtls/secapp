@@ -124,6 +124,7 @@ const Admin: React.FC = () => {
     safety_observations: true,
     shift_handover: true,
     certificates: true,
+    stops_control: true,
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
@@ -2209,6 +2210,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
               { id: 'safety_observations', label: 'Observação de Segurança', desc: 'Mecanismo para que operadores possam reportar desvios de segurança e condições inseguras.', icon: 'ShieldAlert' },
               { id: 'consumables', label: 'Controle de Insumos', desc: 'Controle de estoque, entrada de produtos por unidade de medida e consumo de insumos (como tinta) por setor e linha.', icon: 'PackagePlus' },
               { id: 'certificates', label: 'Treinamentos/Certificados', desc: 'Módulo de treinamentos de Secagem para emissão e controle de certificados de qualificação e presença.', icon: 'Award' },
+              { id: 'stops_control', label: 'Controle de Parada', desc: 'Módulo de controle de paradas (programadas ou gerais) com registro de frentes de trabalho (mecânica, elétrica, hidráulica, etc.) e estatísticas.', icon: 'Clock' },
             ].map((mod) => {
               const isEnabled = activeModules[mod.id] !== false;
               return (

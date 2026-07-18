@@ -243,5 +243,33 @@ export interface SecagemProduct {
   createdAt: any;
 }
 
+export interface StopWorkFront {
+  id: string;
+  front: 'Mecânica' | 'Elétrica' | 'Instrumentação' | 'Hidráulica' | 'Civil' | 'Caldeiraria';
+  description: string;
+  startTime: string; // HH:MM
+  endTime: string; // HH:MM
+}
+
+export interface StopReport {
+  id: string;
+  type: 'programada' | 'geral';
+  date: string; // YYYY-MM-DD
+  lineId: string; // Line ID or name
+  lineName?: string;
+  startTime: string; // HH:MM
+  endTime: string; // HH:MM
+  rejectionTime: string; // e.g. "15 minutos" or minutes
+  cutterSpeedMS1: number;
+  cutterSpeedMS2: number;
+  workFronts: StopWorkFront[];
+  observation: string;
+  userId: string;
+  userName: string;
+  createdAt: any;
+  updatedAt?: any;
+}
+
+
 
 

@@ -25,7 +25,8 @@ import {
   Check,
   PackagePlus,
   ArrowLeftRight,
-  Award
+  Award,
+  Clock
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
@@ -205,6 +206,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     consumables: true,
     shift_handover: true,
     certificates: true,
+    stops_control: true,
   });
 
   useEffect(() => {
@@ -234,6 +236,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'safety_observations', name: 'Obs. Segurança', href: '/safety-observations', icon: ShieldAlert, show: activeModules.safety_observations !== false },
       { id: 'schedule', name: 'Escala', href: '/schedule', icon: CalendarDays, show: activeModules.schedule !== false },
       { id: 'certificates', name: 'Treinamentos/Certificados', href: '/certificates', icon: Award, show: activeModules.certificates !== false },
+      { id: 'stops_control', name: 'Controle de Parada', href: '/stops-control', icon: Clock, show: activeModules.stops_control !== false },
       { id: 'admin', name: 'Painel Administrativo', href: '/admin', icon: Users, show: !!isAdmin },
       { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
     ];

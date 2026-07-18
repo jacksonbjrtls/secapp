@@ -498,5 +498,16 @@ service cloud.firestore {
       allow update: if (isManager() || isApproved()) && isValidId(courseId);
       allow delete: if isMaster() || (isManager() && isValidId(courseId));
     }
+
+    // Stops Reports (Controle de Paradas)
+    match /stops_reports/{reportId} {
+      allow get, list: if isApproved();
+      allow create: if isApproved() && isNotDisabled() && isValidId(reportId) &&
+                      request.resource.data.userId == request.auth.uid &&
+                      (request.resource.data.createdAt == request.time || request.resource.data.createdAt is timestamp);
+      allow update: if isApproved() && isNotDisabled() && isValidId(reportId) &&
+                      (isManager() || resource.data.userId == request.auth.uid);
+      allow delete: if isMaster() || (isManager() && isValidId(reportId));
+    }
   }
 }

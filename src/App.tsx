@@ -22,6 +22,7 @@ import OperationalRoutes from './pages/OperationalRoutes';
 import SafetyObservations from './pages/SafetyObservations';
 import { ShiftHandover } from './pages/ShiftHandover';
 import Certificates from './pages/Certificates';
+import StopsControl from './pages/StopsControl';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean; requireManager?: boolean }> = ({ 
@@ -444,6 +445,15 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <Certificates />
+              </ProtectedRoute>
+            } 
+          />
+          
+          <Route 
+            path="/stops-control" 
+            element={
+              <ProtectedRoute>
+                <StopsControl />
               </ProtectedRoute>
             } 
           />

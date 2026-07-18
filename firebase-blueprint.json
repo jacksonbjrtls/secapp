@@ -550,6 +550,40 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["code", "name", "applyCover", "wireGauge", "active", "createdAt"]
+    },
+    "StopReport": {
+      "title": "Stop Report",
+      "description": "Operational stop report tracking machine stops, cutter speeds, and work fronts.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["programada", "geral"] },
+        "date": { "type": "string", "format": "date" },
+        "lineId": { "type": "string" },
+        "lineName": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "rejectionTime": { "type": "string" },
+        "cutterSpeedMS1": { "type": "number" },
+        "cutterSpeedMS2": { "type": "number" },
+        "observation": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "workFronts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "front": { "type": "string", "enum": ["Mecânica", "Elétrica", "Instrumentação", "Hidráulica", "Civil", "Caldeiraria"] },
+              "description": { "type": "string" },
+              "startTime": { "type": "string" },
+              "endTime": { "type": "string" }
+            },
+            "required": ["id", "front", "startTime", "endTime"]
+          }
+        }
+      },
+      "required": ["type", "date", "lineId", "startTime", "endTime", "userId"]
     }
   },
   "firestore": {
@@ -688,6 +722,10 @@
     "/quality_products/{productId}": {
       "schema": "SecagemProduct",
       "description": "Drying/Secagem product configurations."
+    },
+    "/stops_reports/{reportId}": {
+      "schema": "StopReport",
+      "description": "Reports for operational machine stops and corresponding team tasks."
     }
   }
 }
