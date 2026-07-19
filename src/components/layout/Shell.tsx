@@ -128,6 +128,17 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [copied, setCopied] = useState(false);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
 
+  // Manage Font Size globally
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const saved = localStorage.getItem('secapp-font-size');
+    return saved ? parseInt(saved, 10) : 100; // 100% is default
+  });
+
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${fontSize}%`;
+    localStorage.setItem('secapp-font-size', fontSize.toString());
+  }, [fontSize]);
+
   useEffect(() => {
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
     setIsAppInstalled(!!isStandalone);
@@ -352,6 +363,52 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               </nav>
 
               <div className="p-4 border-t border-slate-200 shrink-0">
+                {/* Font Size Adjuster inside Mobile / General Sidebar */}
+                <div className="mb-4 bg-slate-50 border border-slate-200/60 rounded-2xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <span className="inline-flex items-end font-sans select-none leading-none border border-slate-350 rounded bg-white px-1 py-0.5 text-slate-500">
+                        <span className="text-[10px] font-semibold leading-none">a</span>
+                        <span className="text-sm font-black leading-none ml-0.5">A</span>
+                      </span>
+                      Tamanho da Letra
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md">
+                      {fontSize}%
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    <button
+                      onClick={() => setFontSize(prev => Math.max(80, prev - 10))}
+                      disabled={fontSize <= 80}
+                      className="py-1 px-1.5 text-xs font-black rounded-lg bg-white border border-slate-200 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer text-slate-600 hover:text-slate-900"
+                      title="Diminuir texto"
+                    >
+                      A -
+                    </button>
+                    <button
+                      onClick={() => setFontSize(100)}
+                      className={cn(
+                        "py-1 px-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer",
+                        fontSize === 100 
+                          ? "bg-emerald-600 text-white font-black" 
+                          : "bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-slate-900"
+                      )}
+                      title="Tamanho padrão (100%)"
+                    >
+                      Padrão
+                    </button>
+                    <button
+                      onClick={() => setFontSize(prev => Math.min(140, prev + 10))}
+                      disabled={fontSize >= 140}
+                      className="py-1 px-1.5 text-xs font-black rounded-lg bg-white border border-slate-200 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer text-slate-600 hover:text-slate-900"
+                      title="Aumentar texto"
+                    >
+                      A +
+                    </button>
+                  </div>
+                </div>
+
                 {!isAppInstalled ? (
                   <div className="mb-4 p-3.5 bg-gradient-to-br from-emerald-50 to-slate-50 border border-emerald-100/80 rounded-2xl relative overflow-hidden group">
                     <div className="absolute -top-3 -right-3 w-12 h-12 bg-emerald-200/20 rounded-full blur-md transition-transform group-hover:scale-125" />
@@ -446,6 +503,41 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             {navigation.find(item => item.href === location.pathname)?.name || (location.pathname === '/profile' ? 'Meu Perfil' : 'Resumo do Sistema')}
           </h1>
           <div className="flex items-center gap-4">
+            {/* Font Size Adjuster for desktop header */}
+            <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200" title="Acessibilidade: Tamanho do Texto">
+              <span className="inline-flex items-end font-sans select-none leading-none border border-slate-200 rounded bg-white px-2 py-1 text-slate-500 mr-1 shrink-0">
+                <span className="text-[10px] font-semibold leading-none">a</span>
+                <span className="text-sm font-black leading-none ml-0.5">A</span>
+              </span>
+              <button
+                onClick={() => setFontSize(prev => Math.max(80, prev - 10))}
+                disabled={fontSize <= 80}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-600 hover:text-slate-900 transition-all font-black text-xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                title="Diminuir tamanho da letra"
+              >
+                A-
+              </button>
+              <button
+                onClick={() => setFontSize(100)}
+                className={cn(
+                  "h-8 px-2.5 flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer",
+                  fontSize === 100 
+                    ? "bg-emerald-600 text-white font-black shadow-sm" 
+                    : "bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-slate-900"
+                )}
+                title="Tamanho padrão (100%)"
+              >
+                Padrão
+              </button>
+              <button
+                onClick={() => setFontSize(prev => Math.min(140, prev + 10))}
+                disabled={fontSize >= 140}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-600 hover:text-slate-900 transition-all font-black text-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                title="Aumentar tamanho da letra"
+              >
+                A+
+              </button>
+            </div>
           </div>
         </header>
 

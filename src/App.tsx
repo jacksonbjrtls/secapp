@@ -334,6 +334,13 @@ const HomeRedirect = () => {
 };
 
 const App: React.FC = () => {
+  React.useEffect(() => {
+    const saved = localStorage.getItem('secapp-font-size');
+    if (saved) {
+      document.documentElement.style.fontSize = `${saved}%`;
+    }
+  }, []);
+
   return (
     <Router>
       <AuthProvider>
