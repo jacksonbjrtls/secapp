@@ -2082,39 +2082,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
            animate={{ opacity: 1, y: 0 }}
            className="space-y-6"
         >
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full bg-slate-400" />
-                <span className="text-xs font-black text-slate-900 uppercase">Viewer</span>
-              </div>
-              <p className="text-[10px] text-slate-500 leading-tight">Visualização básica de escalas e informações. Não pode realizar alterações.</p>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full bg-blue-500" />
-                <span className="text-xs font-black text-blue-600 uppercase">Manager</span>
-              </div>
-              <p className="text-[10px] text-slate-500 leading-tight">Gestor operacional. Gerencia aprovações de escalas e atividades rotineiras.</p>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full bg-purple-500" />
-                <span className="text-xs font-black text-purple-600 uppercase">Admin</span>
-              </div>
-              <p className="text-[10px] text-slate-500 leading-tight">Administrador do sistema. Controla usuários, domínios e permissões gerais.</p>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-emerald-100 shadow-md shadow-emerald-50 relative overflow-hidden group">
-              <div className="absolute top-0 right-0 p-1">
-                <ShieldCheck className="w-3 h-3 text-emerald-200" />
-              </div>
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-xs font-black text-emerald-600 uppercase">Master</span>
-              </div>
-              <p className="text-[10px] text-slate-500 leading-tight">Acesso absoluto e vitalício. Protegido contra exclusão e alterações por outros admins.</p>
-            </div>
-          </div>
+
 
           <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
             <div className="relative flex-grow w-full">

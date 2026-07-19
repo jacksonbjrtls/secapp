@@ -40,6 +40,243 @@ const colors = {
   emerald600: '#059669',
 };
 
+interface AnnualPDFMonthTableProps {
+  month: number;
+  year: number;
+}
+
+const AnnualPDFMonthTable: React.FC<AnnualPDFMonthTableProps> = ({ month, year }) => {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysArray = Array.from({ length: 31 }, (_, i) => i + 1);
+
+  const getDayName = (day: number) => {
+    if (day > daysInMonth) return '';
+    const date = new Date(year, month, day);
+    const dayName = date.toLocaleDateString('pt-BR', { weekday: 'short' });
+    return dayName.replace('.', '').toLowerCase();
+  };
+
+  const getFolgasForDay = (day: number) => {
+    if (day > daysInMonth) return ['', ''];
+    const date = new Date(year, month, day);
+    const workingGroups = new Set([
+      getGroupForShift(date, 'Turno 1'),
+      getGroupForShift(date, 'Turno 2'),
+      getGroupForShift(date, 'Turno 3')
+    ]);
+    const allGroups: Group[] = ['A', 'B', 'C', 'D', 'E'];
+    return allGroups.filter(g => !workingGroups.has(g));
+  };
+
+  const monthLabel = months[month].toLowerCase() + ' ' + year;
+
+  return (
+    <table 
+      style={{ 
+        width: '100%', 
+        borderCollapse: 'collapse', 
+        tableLayout: 'fixed',
+        fontFamily: 'Inter, sans-serif'
+      }}
+      className="border border-slate-300"
+    >
+      <colgroup>
+        <col style={{ width: '28px' }} />
+        <col style={{ width: '68px' }} />
+        {Array.from({ length: 31 }).map((_, i) => (
+          <col key={i} style={{ width: '33.5px' }} />
+        ))}
+      </colgroup>
+      <tbody>
+        {/* Dia Row */}
+        <tr style={{ height: '15px' }}>
+          {/* Month Label spans all 7 rows */}
+          <td 
+            rowSpan={7} 
+            className="bg-slate-800 text-white font-black text-[8px] uppercase tracking-wider border border-slate-300 text-center select-none"
+            style={{
+              padding: '1px',
+              verticalAlign: 'middle',
+              position: 'relative'
+            }}
+          >
+            <div 
+              style={{ 
+                writingMode: 'vertical-rl', 
+                transform: 'rotate(180deg)',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '95px',
+                width: '100%'
+              }}
+              className="mx-auto"
+            >
+              {monthLabel}
+            </div>
+          </td>
+          
+          <td className="bg-slate-700 text-white font-black text-[8px] uppercase tracking-wider border border-slate-300 px-1 text-left select-none">
+            Dia
+          </td>
+          {daysArray.map(day => {
+            const hasDay = day <= daysInMonth;
+            return (
+              <td 
+                key={`day-${day}`}
+                className={cn(
+                  "border border-slate-300 text-center text-[9px] font-black select-none",
+                  hasDay ? "bg-slate-700 text-white" : "bg-slate-50"
+                )}
+                style={{ padding: 0 }}
+              >
+                {hasDay ? day.toString().padStart(2, '0') : ''}
+              </td>
+            );
+          })}
+        </tr>
+
+        {/* Hora (Weekday) Row */}
+        <tr style={{ height: '15px' }}>
+          <td className="bg-emerald-100 text-emerald-950 font-black text-[8px] uppercase tracking-wider border border-slate-300 px-1 text-left select-none">
+            Hora
+          </td>
+          {daysArray.map(day => {
+            const hasDay = day <= daysInMonth;
+            const isWeekend = hasDay && (new Date(year, month, day).getDay() === 0 || new Date(year, month, day).getDay() === 6);
+            return (
+              <td 
+                key={`dayname-${day}`}
+                className={cn(
+                  "border border-slate-300 text-center text-[8px] font-bold select-none",
+                  hasDay 
+                    ? isWeekend 
+                      ? "bg-emerald-200 text-emerald-950 font-black" 
+                      : "bg-emerald-100 text-emerald-900" 
+                    : "bg-slate-50"
+                )}
+                style={{ padding: 0 }}
+              >
+                {getDayName(day)}
+              </td>
+            );
+          })}
+        </tr>
+
+        {/* 16 às 24 h (Shift 3) */}
+        <tr style={{ height: '17px' }}>
+          <td className="bg-white text-slate-700 font-bold text-[8px] border border-slate-300 px-1 text-left select-none">
+            16 às 24 h
+          </td>
+          {daysArray.map(day => {
+            const hasDay = day <= daysInMonth;
+            if (!hasDay) return <td key={`shift3-${day}`} className="border border-slate-300 bg-slate-50" />;
+            const group = getGroupForShift(new Date(year, month, day), 'Turno 3');
+            return (
+              <td 
+                key={`shift3-${day}`}
+                style={{ 
+                  backgroundColor: groupColors[group].bg, 
+                  color: groupColors[group].text,
+                }}
+                className="border border-slate-300 text-center text-[9px] font-black select-none"
+              >
+                {group}
+              </td>
+            );
+          })}
+        </tr>
+
+        {/* 00 às 08 h (Shift 1) */}
+        <tr style={{ height: '17px' }}>
+          <td className="bg-white text-slate-700 font-bold text-[8px] border border-slate-300 px-1 text-left select-none">
+            00 às 08 h
+          </td>
+          {daysArray.map(day => {
+            const hasDay = day <= daysInMonth;
+            if (!hasDay) return <td key={`shift1-${day}`} className="border border-slate-300 bg-slate-50" />;
+            const group = getGroupForShift(new Date(year, month, day), 'Turno 1');
+            return (
+              <td 
+                key={`shift1-${day}`}
+                style={{ 
+                  backgroundColor: groupColors[group].bg, 
+                  color: groupColors[group].text,
+                }}
+                className="border border-slate-300 text-center text-[9px] font-black select-none"
+              >
+                {group}
+              </td>
+            );
+          })}
+        </tr>
+
+        {/* 08 às 16 h (Shift 2) */}
+        <tr style={{ height: '17px' }}>
+          <td className="bg-white text-slate-700 font-bold text-[8px] border border-slate-300 px-1 text-left select-none">
+            08 às 16 h
+          </td>
+          {daysArray.map(day => {
+            const hasDay = day <= daysInMonth;
+            if (!hasDay) return <td key={`shift2-${day}`} className="border border-slate-300 bg-slate-50" />;
+            const group = getGroupForShift(new Date(year, month, day), 'Turno 2');
+            return (
+              <td 
+                key={`shift2-${day}`}
+                style={{ 
+                  backgroundColor: groupColors[group].bg, 
+                  color: groupColors[group].text,
+                }}
+                className="border border-slate-300 text-center text-[9px] font-black select-none"
+              >
+                {group}
+              </td>
+            );
+          })}
+        </tr>
+
+        {/* Folga Row 1 */}
+        <tr style={{ height: '17px' }}>
+          <td rowSpan={2} className="bg-slate-100 text-slate-600 font-black text-[8px] uppercase tracking-wider border border-slate-300 px-1 text-left select-none">
+            Folga
+          </td>
+          {daysArray.map(day => {
+            const hasDay = day <= daysInMonth;
+            if (!hasDay) return <td key={`folga1-${day}`} className="border border-slate-300 bg-slate-50" />;
+            const folgas = getFolgasForDay(day);
+            return (
+              <td 
+                key={`folga1-${day}`}
+                className="border border-slate-300 text-center text-[9px] font-bold text-slate-700 bg-white select-none"
+              >
+                {folgas[0]}
+              </td>
+            );
+          })}
+        </tr>
+
+        {/* Folga Row 2 */}
+        <tr style={{ height: '17px' }}>
+          {daysArray.map(day => {
+            const hasDay = day <= daysInMonth;
+            if (!hasDay) return <td key={`folga2-${day}`} className="border border-slate-300 bg-slate-50" />;
+            const folgas = getFolgasForDay(day);
+            return (
+              <td 
+                key={`folga2-${day}`}
+                className="border border-slate-300 text-center text-[9px] font-bold text-slate-700 bg-white select-none"
+              >
+                {folgas[1]}
+              </td>
+            );
+          })}
+        </tr>
+      </tbody>
+    </table>
+  );
+};
+
 const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) => {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const daysArray = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -262,70 +499,53 @@ const Schedule: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const exportPDF = async () => {
-    if (!containerRef.current) return;
     setExporting(true);
 
+    // Give React sufficient time to render the off-screen templates in the DOM
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
     try {
-      const element = containerRef.current;
-      
-      // Calculate the actual scroll dimensions to capture everything
-      const scrollWidth = element.scrollWidth;
-      const scrollHeight = element.scrollHeight;
+      if (viewMode === 'monthly') {
+        const pdf = new jsPDF({
+          orientation: 'landscape',
+          unit: 'mm',
+          format: 'a4'
+        });
 
-      // Force high quality capture of the full scrollable area
-      const dataUrl = await htmlToImage.toPng(element, {
-        backgroundColor: '#ffffff',
-        pixelRatio: 2,
-        width: scrollWidth,
-        height: scrollHeight,
-        style: {
-          transform: 'none',
-          overflow: 'visible'
-        }
-      });
+        const element = document.getElementById('pdf-page-monthly');
+        if (!element) throw new Error("Export element not found");
 
-      const img = new Image();
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        img.src = dataUrl;
-      });
+        const dataUrl = await htmlToImage.toPng(element, {
+          backgroundColor: '#ffffff',
+          pixelRatio: 3, // Ultra high-definition crisp output
+          style: {
+            transform: 'none',
+          }
+        });
 
-      const imgWidth = img.width;
-      const imgHeight = img.height;
-      const pdfFormatWidth = 297; // mm
-      const pdfFormatHeight = (imgHeight * pdfFormatWidth) / imgWidth;
+        pdf.addImage(dataUrl, 'PNG', 0, 0, 297, 210);
+        pdf.save(`escala_mensal_${selectedYear}_${selectedMonth + 1}.pdf`);
+      } else {
+        const pdf = new jsPDF({
+          orientation: 'portrait',
+          unit: 'mm',
+          format: 'a4'
+        });
 
-      const pdf = new jsPDF({
-        orientation: 'landscape',
-        unit: 'mm',
-        format: viewMode === 'annual' ? [pdfFormatWidth, pdfFormatHeight] : 'a4'
-      });
+        const element = document.getElementById('pdf-page-annual');
+        if (!element) throw new Error("Export element not found");
 
-      const actualPdfWidth = pdf.internal.pageSize.getWidth();
-      const actualPdfHeight = pdf.internal.pageSize.getHeight();
-      
-      const margin = 10;
-      const targetWidth = actualPdfWidth - (margin * 2);
-      const targetHeight = actualPdfHeight - (margin * 2);
-      
-      const ratio = imgWidth / imgHeight;
+        const dataUrl = await htmlToImage.toPng(element, {
+          backgroundColor: '#ffffff',
+          pixelRatio: 3, // Ultra high-definition crisp output
+          style: {
+            transform: 'none',
+          }
+        });
 
-      let finalWidth = targetWidth;
-      let finalHeight = targetWidth / ratio;
-
-      // For monthly view, we still want to ensure it fits A4 height
-      if (viewMode === 'monthly' && finalHeight > targetHeight) {
-        finalHeight = targetHeight;
-        finalWidth = targetHeight * ratio;
+        pdf.addImage(dataUrl, 'PNG', 0, 0, 210, 297);
+        pdf.save(`escala_anual_${selectedYear}.pdf`);
       }
-
-      // Center it on the page
-      const x = (actualPdfWidth - finalWidth) / 2;
-      const y = (actualPdfHeight - finalHeight) / 2;
-
-      pdf.addImage(dataUrl, 'PNG', x, y, finalWidth, finalHeight);
-      pdf.save(`escala_${viewMode}_${selectedYear}${viewMode === 'monthly' ? '_' + (selectedMonth + 1) : ''}.pdf`);
     } catch (err) {
       console.error("Error generating PDF:", err);
       setShowErrorModal(true);
@@ -482,17 +702,7 @@ const Schedule: React.FC = () => {
         </div>
       </div>
 
-      <div ref={containerRef} className={cn("bg-white rounded-[2rem] p-4 md:p-8", exporting && "export-mode-active")}>
-        {/* Header visible only during PDF export */}
-        {exporting && (
-          <div className="mb-8 border-b pb-6 border-slate-100 uppercase">
-            <h1 className="text-4xl font-black text-emerald-600 tracking-tighter">Escala de Turno {selectedYear}</h1>
-            <p className="text-slate-500 font-bold text-sm mt-1">
-              {viewMode === 'monthly' ? `Competência: ${months[selectedMonth]}` : 'Escala Anual Consolidada'}
-            </p>
-          </div>
-        )}
-
+      <div ref={containerRef} className="bg-white rounded-[2rem] p-4 md:p-8">
         <motion.div 
           key={`${viewMode}-${selectedMonth}-${selectedYear}`}
           initial={{ opacity: 0, y: 20 }}
@@ -508,28 +718,111 @@ const Schedule: React.FC = () => {
                   <MonthTable key={index} month={index} year={selectedYear} isMini={true} />
                 ))}
               </div>
-            <div 
-              style={{ backgroundColor: colors.white, border: `1px solid ${colors.slate200}`, boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)' }}
-              className="rounded-[2rem] p-8"
+              <div 
+                style={{ backgroundColor: colors.white, border: `1px solid ${colors.slate200}`, boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)' }}
+                className="rounded-[2rem] p-8"
+              >
+                <div className="flex flex-wrap gap-8 items-center justify-center">
+                  <div style={{ color: colors.slate400 }} className="text-[10px] font-black uppercase tracking-[0.2em]">Legenda da Escala:</div>
+                  {(['A', 'B', 'C', 'D', 'E'] as Group[]).map(group => (
+                    <div key={group} className="flex items-center gap-2">
+                      <div 
+                        style={{ backgroundColor: groupColors[group].bg, color: groupColors[group].text }}
+                        className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs"
+                      >
+                        {group}
+                      </div>
+                      <span style={{ color: colors.slate600 }} className="text-sm font-bold">Letra {group}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </motion.div>
+      </div>
+
+      {/* Off-screen high-quality container for crisp A4 landscape PDF rendering */}
+      {exporting && (
+        <div
+          style={{
+            position: 'absolute',
+            left: '-9999px',
+            top: '0',
+            width: '1200px',
+            backgroundColor: '#ffffff',
+          }}
+        >
+          {viewMode === 'monthly' ? (
+            <div
+              id="pdf-page-monthly"
+              className="p-10 bg-white flex flex-col justify-between"
+              style={{
+                width: '1200px',
+                height: '848px',
+                boxSizing: 'border-box',
+              }}
             >
-              <div className="flex flex-wrap gap-8 items-center justify-center">
-                <div style={{ color: colors.slate400 }} className="text-[10px] font-black uppercase tracking-[0.2em]">Legenda da Escala:</div>
+              <div>
+                <div className="flex justify-between items-center border-b pb-4 mb-6 border-slate-200">
+                  <div>
+                    <h1 className="text-3xl font-black text-emerald-600 tracking-tight">Escala de Turno</h1>
+                    <p className="text-slate-500 font-bold text-sm mt-0.5">Competência: {months[selectedMonth]} {selectedYear}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-wider">GERADO EM {new Date().toLocaleDateString('pt-BR')}</p>
+                  </div>
+                </div>
+                <MonthTable month={selectedMonth} year={selectedYear} isMini={false} />
+              </div>
+
+              <div className="mt-6 p-5 bg-slate-50 border border-slate-200/60 rounded-[1.5rem] flex flex-wrap gap-6 items-center justify-center">
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-2">Legenda da Escala:</div>
                 {(['A', 'B', 'C', 'D', 'E'] as Group[]).map(group => (
                   <div key={group} className="flex items-center gap-2">
-                    <div 
+                    <div
                       style={{ backgroundColor: groupColors[group].bg, color: groupColors[group].text }}
-                      className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs"
+                      className="w-6 h-6 rounded-lg flex items-center justify-center font-black text-xs"
                     >
                       {group}
                     </div>
-                    <span style={{ color: colors.slate600 }} className="text-sm font-bold">Letra {group}</span>
+                    <span className="text-xs font-bold text-slate-600">Letra {group}</span>
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        )}
-      </motion.div>
+          ) : (
+            <div
+              id="pdf-page-annual"
+              className="p-8 bg-white flex flex-col justify-between"
+              style={{
+                width: '1200px',
+                height: '1697px',
+                boxSizing: 'border-box',
+              }}
+            >
+              <div>
+                <div className="border-[3px] border-slate-800 py-2.5 text-center mb-3">
+                  <h1 className="text-2xl font-black text-slate-800 uppercase tracking-[0.15em]">
+                    ESCALA DE TURNO - {selectedYear}
+                  </h1>
+                </div>
+
+                <div className="space-y-[3.5px]">
+                  {months.map((_, index) => (
+                    <AnnualPDFMonthTable key={index} month={index} year={selectedYear} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold border-t border-slate-200 pt-1.5 mt-2">
+                <div className="uppercase tracking-wider">Gestão de Escalas Inteligente</div>
+                <div className="uppercase tracking-wider">Impresso em {new Date().toLocaleDateString('pt-BR')} - M.A.A.S.</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <ConfirmationModal
         isOpen={showErrorModal}
@@ -538,7 +831,6 @@ const Schedule: React.FC = () => {
         message="Ocorreu um erro ao gerar o PDF. Verifique se o conteúdo é muito extenso ou tente em outro navegador."
         type="error"
       />
-    </div>
     </div>
   );
 };
