@@ -220,6 +220,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     shift_handover: true,
     certificates: true,
     stops_control: true,
+    overtime: true,
   });
 
   useEffect(() => {
@@ -250,6 +251,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'schedule', name: 'Escala', href: '/schedule', icon: CalendarDays, show: activeModules.schedule !== false },
       { id: 'certificates', name: 'Treinamentos/Certificados', href: '/certificates', icon: Award, show: activeModules.certificates !== false },
       { id: 'stops_control', name: 'Controle de Parada', href: '/stops-control', icon: Clock, show: activeModules.stops_control !== false },
+      { id: 'overtime', name: 'Justificativa HE', href: '/overtime', icon: Clock, show: activeModules.overtime !== false },
       { id: 'admin', name: 'Painel Administrativo', href: '/admin', icon: Users, show: !!isAdmin },
       { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
     ];

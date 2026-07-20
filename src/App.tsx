@@ -23,6 +23,7 @@ import SafetyObservations from './pages/SafetyObservations';
 import { ShiftHandover } from './pages/ShiftHandover';
 import Certificates from './pages/Certificates';
 import StopsControl from './pages/StopsControl';
+import Overtime from './pages/Overtime';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean; requireManager?: boolean }> = ({ 
@@ -461,6 +462,15 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <StopsControl />
+              </ProtectedRoute>
+            } 
+          />
+
+          <Route 
+            path="/overtime" 
+            element={
+              <ProtectedRoute>
+                <Overtime />
               </ProtectedRoute>
             } 
           />

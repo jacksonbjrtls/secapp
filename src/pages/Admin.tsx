@@ -126,6 +126,7 @@ const Admin: React.FC = () => {
     shift_handover: true,
     certificates: true,
     stops_control: true,
+    overtime: true,
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
@@ -1672,7 +1673,10 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
         'wire_storage_bays',
         'monthly_production',
         'route_submissions',
-        'route_templates'
+        'route_templates',
+        'overtime_justifications',
+        'overtime_functions',
+        'overtime_areas'
       ];
 
       for (const collName of collectionsToClear) {
@@ -2544,6 +2548,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
               { id: 'consumables', label: 'Controle de Insumos', desc: 'Controle de estoque, entrada de produtos por unidade de medida e consumo de insumos (como tinta) por setor e linha.', icon: 'PackagePlus' },
               { id: 'certificates', label: 'Treinamentos/Certificados', desc: 'Módulo de treinamentos de Secagem para emissão e controle de certificados de qualificação e presença.', icon: 'Award' },
               { id: 'stops_control', label: 'Controle de Parada', desc: 'Módulo de controle de paradas (programadas ou gerais) com registro de frentes de trabalho (mecânica, elétrica, hidráulica, etc.) e estatísticas.', icon: 'Clock' },
+              { id: 'overtime', label: 'Justificativa de Hora-Extra (HE)', desc: 'Módulo de cadastro e justificativa de realização de horas extras com controle administrativo e relatórios.', icon: 'Clock' },
             ].map((mod) => {
               const isEnabled = activeModules[mod.id] !== false;
               return (
@@ -2966,6 +2971,12 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                     title: 'Logs & Notificações',
                     collections: ['user_login_logs', 'notifications'],
                     description: 'Remove todo o histórico de acessos/logins e a fila de notificações enviadas no sistema.'
+                  },
+                  {
+                    id: 'overtime',
+                    title: 'Horas Extras (HE)',
+                    collections: ['overtime_justifications', 'overtime_functions', 'overtime_areas'],
+                    description: 'Apaga todas as justificativas de horas extras lançadas, além das funções e áreas configuradas.'
                   }
                 ].map((mod) => (
                   <div 

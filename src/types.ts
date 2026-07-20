@@ -270,6 +270,39 @@ export interface StopReport {
   updatedAt?: any;
 }
 
+export interface OvertimeJustification {
+  id: string;
+  userId: string;
+  userName: string;
+  group: 'A' | 'B' | 'C' | 'D' | 'E' | string;
+  roleName: string; // Função do usuário
+  shift: string;
+  date: string; // YYYY-MM-DD
+  startTime: string; // HH:MM
+  endTime: string; // HH:MM
+  totalHours: number;
+  area: string;
+  justification: string;
+  createdBy: string;
+  createdByName: string;
+  createdAt: any;
+}
+
+export interface OvertimeFunction {
+  id: string;
+  name: string;
+  active: boolean;
+  createdAt: any;
+}
+
+export interface OvertimeArea {
+  id: string;
+  name: string;
+  active: boolean;
+  createdAt: any;
+}
+
+
 
 
 

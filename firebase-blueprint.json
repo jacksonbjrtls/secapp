@@ -584,6 +584,50 @@
         }
       },
       "required": ["type", "date", "lineId", "startTime", "endTime", "userId"]
+    },
+    "OvertimeJustification": {
+      "title": "Overtime Justification",
+      "description": "Justifications for overtime logged by operators or created for others by admins.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "group": { "type": "string" },
+        "roleName": { "type": "string", "description": "Função do usuário" },
+        "shift": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "totalHours": { "type": "number" },
+        "area": { "type": "string" },
+        "justification": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "group", "roleName", "shift", "date", "startTime", "endTime", "totalHours", "area", "justification", "createdBy", "createdAt"]
+    },
+    "OvertimeFunction": {
+      "title": "Overtime Function",
+      "description": "Functions/positions list for overtime form choices.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "active", "createdAt"]
+    },
+    "OvertimeArea": {
+      "title": "Overtime Area",
+      "description": "Areas list for overtime form choices.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "active", "createdAt"]
     }
   },
   "firestore": {
@@ -726,6 +770,18 @@
     "/stops_reports/{reportId}": {
       "schema": "StopReport",
       "description": "Reports for operational machine stops and corresponding team tasks."
+    },
+    "/overtime_justifications/{justificationId}": {
+      "schema": "OvertimeJustification",
+      "description": "User justifications for overtime hours."
+    },
+    "/overtime_functions/{functionId}": {
+      "schema": "OvertimeFunction",
+      "description": "Positions list for overtime form."
+    },
+    "/overtime_areas/{areaId}": {
+      "schema": "OvertimeArea",
+      "description": "Areas list for overtime form."
     }
   }
 }

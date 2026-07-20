@@ -279,10 +279,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isAdmin = profile?.role === 'admin' || isMaster;
   const isManager = profile?.role === 'manager' || isAdmin;
-  const isApproved = profile?.status === 'approved';
-  const isPending = profile?.status === 'pending';
-  const isBlocked = profile?.status === 'blocked';
-  const isDisabled = !!profile?.disabled || isBlocked;
+  const isApproved = profile?.status === 'approved' || isMaster;
+  const isPending = profile?.status === 'pending' && !isMaster;
+  const isBlocked = profile?.status === 'blocked' && !isMaster;
+  const isDisabled = (!!profile?.disabled || isBlocked) && !isMaster;
   const isEmailVerified = true;
   const mustChangePassword = !!profile?.mustChangePassword;
 
