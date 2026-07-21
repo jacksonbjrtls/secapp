@@ -788,13 +788,45 @@ export default function Vacations() {
 
     try {
       setSaving(true);
-      // Filter users in selected sector
-      const sectorUsers = allUsers.filter(u => u.sectorId === queueSectorId);
       
-      // Clear existing queue items for this sector first
-      const sectorQ = queueItems.filter(qi => qi.sectorId === queueSectorId);
-      for (const sq of sectorQ) {
-        await deleteDoc(doc(db, 'vacation_queue', sq.id));
+      // Filter users in selected sector, de-duplicating by unique fields (uid, email, displayName)
+      const seenUids = new Set<string>();
+      const seenEmails = new Set<string>();
+      const seenNames = new Set<string>();
+      
+      const sectorUsers = allUsers.filter(u => {
+        if (u.sectorId !== queueSectorId) return false;
+        if (u.active === false) return false; // Only include active users
+
+        // Check if UID has been processed
+        if (seenUids.has(u.uid)) return false;
+
+        // Check if email has been processed
+        if (u.email) {
+          const emailLower = u.email.toLowerCase().trim();
+          if (emailLower && seenEmails.has(emailLower)) return false;
+        }
+
+        // Check if displayName has been processed
+        if (u.displayName) {
+          const nameNorm = u.displayName.toLowerCase().trim();
+          if (nameNorm && seenNames.has(nameNorm)) return false;
+        }
+
+        // Mark as seen
+        seenUids.add(u.uid);
+        if (u.email) seenEmails.add(u.email.toLowerCase().trim());
+        if (u.displayName) seenNames.add(u.displayName.toLowerCase().trim());
+
+        return true;
+      });
+      
+      // Clear existing queue items for this sector first by querying Firestore directly
+      const existingQueueSnap = await getDocs(
+        query(collection(db, 'vacation_queue'), where('sectorId', '==', queueSectorId))
+      );
+      for (const d of existingQueueSnap.docs) {
+        await deleteDoc(doc(db, 'vacation_queue', d.id));
       }
 
       if (isSectorFunction) {
