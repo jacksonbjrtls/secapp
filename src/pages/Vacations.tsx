@@ -92,6 +92,7 @@ export default function Vacations() {
     mode: 'sector',
     counts: { secagem: 6, enfardamento: 10 }
   });
+  const [localCounts, setLocalCounts] = useState<{ [key: string]: number }>({ secagem: 6, enfardamento: 10 });
 
   // Confirmation/Justification modal for rejection
   const [rejectingReq, setRejectingReq] = useState<VacationRequest | null>(null);
@@ -401,9 +402,11 @@ export default function Vacations() {
   ];
 
   // Fetch all core module data
-  const fetchData = async () => {
+  const fetchData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       
       // 1. Fetch Sectors
       const sectorSnap = await getDocs(collection(db, 'work_sectors'));
@@ -474,19 +477,25 @@ export default function Vacations() {
       const rotationDoc = await getDoc(doc(db, 'system_config', 'vacation_rotation'));
       if (rotationDoc.exists()) {
         const rData = rotationDoc.data() as { mode: 'sector' | 'sector_function'; counts?: { [key: string]: number } };
-        setRotationConfig({
+        const newCfg = {
           mode: rData.mode || 'sector',
           counts: rData.counts || { secagem: 6, enfardamento: 10 }
-        });
+        };
+        setRotationConfig(newCfg);
+        setLocalCounts(newCfg.counts);
       } else {
-        setRotationConfig({ mode: 'sector', counts: { secagem: 6, enfardamento: 10 } });
+        const defaultCfg = { mode: 'sector', counts: { secagem: 6, enfardamento: 10 } };
+        setRotationConfig(defaultCfg);
+        setLocalCounts(defaultCfg.counts);
       }
 
     } catch (err: any) {
       console.error('Error fetching vacation module data:', err);
       setError('Falha ao carregar as informações de férias.');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -607,7 +616,7 @@ export default function Vacations() {
       await updateDoc(doc(db, 'vacation_requests', editingReq.id), updateData);
       setSuccess('Solicitação de férias atualizada com sucesso pelo administrador!');
       setEditingReq(null);
-      fetchData();
+      fetchData(true);
     } catch (err: any) {
       console.error(err);
       setError('Falha ao atualizar a solicitação de férias.');
@@ -684,7 +693,7 @@ export default function Vacations() {
       setStartDate('');
       setDaysToTake(30);
       setThirteenthAdvance(false);
-      fetchData();
+      fetchData(true);
     } catch (err: any) {
       console.error(err);
       setError('Falha ao enviar solicitação.');
@@ -699,7 +708,7 @@ export default function Vacations() {
     try {
       await deleteDoc(doc(db, 'vacation_requests', id));
       setSuccess('Solicitação cancelada com sucesso.');
-      fetchData();
+      fetchData(true);
     } catch (err) {
       setError('Erro ao cancelar solicitação.');
     }
@@ -715,7 +724,7 @@ export default function Vacations() {
         updatedAt: serverTimestamp()
       });
       setSuccess(`Férias de ${req.userName} aprovadas com sucesso.`);
-      fetchData();
+      fetchData(true);
     } catch (err) {
       setError('Erro ao aprovar solicitação.');
     }
@@ -738,29 +747,33 @@ export default function Vacations() {
       setSuccess(`Férias de ${rejectingReq.userName} recusadas.`);
       setRejectingReq(null);
       setRejectReason('');
-      fetchData();
+      fetchData(true);
     } catch (err) {
       setError('Erro ao recusar solicitação.');
     }
   };
 
   // Save Vacation Rotation Mode and Counts
-  const handleSaveRotationConfig = async (mode: 'sector' | 'sector_function', customCounts?: { [key: string]: number }) => {
+  const handleSaveRotationConfig = async (mode: 'sector' | 'sector_function', customCounts?: { [key: string]: number }, silent = false) => {
     try {
-      setSaving(true);
+      if (!silent) setSaving(true);
       const updatedCounts = customCounts || rotationConfig.counts || { secagem: 6, enfardamento: 10 };
       await setDoc(doc(db, 'system_config', 'vacation_rotation'), {
         mode,
         counts: updatedCounts
       });
       setRotationConfig({ mode, counts: updatedCounts });
-      setSuccess('Configuração de giro de férias salva com sucesso.');
-      fetchData();
+      if (!silent) {
+        setSuccess('Configuração de giro de férias salva com sucesso.');
+      }
+      fetchData(true);
     } catch (err) {
       console.error(err);
-      setError('Erro ao salvar configuração de giro.');
+      if (!silent) {
+        setError('Erro ao salvar configuração de giro.');
+      }
     } finally {
-      setSaving(false);
+      if (!silent) setSaving(false);
     }
   };
 
@@ -821,7 +834,7 @@ export default function Vacations() {
       }
 
       setSuccess('Fila de prioridade de férias inicializada com sucesso.');
-      fetchData();
+      fetchData(true);
     } catch (err) {
       console.error(err);
       setError('Erro ao inicializar fila de prioridade.');
@@ -895,7 +908,7 @@ export default function Vacations() {
       }
 
       setSuccess(`Fila rotacionada com sucesso! Os primeiros ${actualRotateCount} funcionários foram movidos para o final da fila.`);
-      fetchData();
+      fetchData(true);
     } catch (err) {
       console.error(err);
       setError('Erro ao rotacionar a fila de prioridades.');
@@ -935,7 +948,7 @@ export default function Vacations() {
         updatedAt: serverTimestamp()
       });
 
-      fetchData();
+      fetchData(true);
     } catch (err) {
       setError('Erro ao reordenar fila.');
     }
@@ -948,7 +961,7 @@ export default function Vacations() {
     try {
       await setDoc(doc(db, 'system_config', 'vacation_limits'), limitConfig);
       setSuccess('Configuração de limites de férias salva com sucesso.');
-      fetchData();
+      fetchData(true);
     } catch (err) {
       setError('Erro ao salvar configurações de limite.');
     } finally {
@@ -970,7 +983,7 @@ export default function Vacations() {
       });
       setNewSectorName('');
       setSuccess('Setor de trabalho adicionado com sucesso.');
-      fetchData();
+      fetchData(true);
     } catch (err) {
       setError('Erro ao adicionar setor.');
     } finally {
@@ -995,7 +1008,7 @@ export default function Vacations() {
       });
       setNewFunctionName('');
       setSuccess('Função de trabalho adicionada com sucesso.');
-      fetchData();
+      fetchData(true);
     } catch (err) {
       setError('Erro ao adicionar função.');
     } finally {
@@ -1013,7 +1026,7 @@ export default function Vacations() {
         setSaving(true);
         await deleteDoc(doc(db, 'work_sectors', id));
         setSuccess('Setor excluído com sucesso.');
-        fetchData();
+        fetchData(true);
       } catch (err) {
         console.error(err);
         setError('Erro ao excluir setor.');
@@ -1031,7 +1044,7 @@ export default function Vacations() {
         active: !currentStatus
       }, { merge: true });
       setSuccess(`Setor ${!currentStatus ? 'ativado' : 'desativado'} com sucesso.`);
-      fetchData();
+      fetchData(true);
     } catch (err) {
       console.error(err);
       setError('Erro ao atualizar setor.');
@@ -1051,7 +1064,7 @@ export default function Vacations() {
         setSaving(true);
         await deleteDoc(doc(db, 'work_functions', id));
         setSuccess('Função excluída com sucesso.');
-        fetchData();
+        fetchData(true);
       } catch (err) {
         console.error(err);
         setError('Erro ao excluir função.');
@@ -1069,7 +1082,7 @@ export default function Vacations() {
         active: !currentStatus
       }, { merge: true });
       setSuccess(`Função ${!currentStatus ? 'ativada' : 'desativada'} com sucesso.`);
-      fetchData();
+      fetchData(true);
     } catch (err) {
       console.error(err);
       setError('Erro ao atualizar função.');
@@ -1094,7 +1107,7 @@ export default function Vacations() {
       });
 
       setSuccess('Dados de trabalho do usuário atualizados com sucesso.');
-      fetchData();
+      fetchData(true);
     } catch (err) {
       setError('Erro ao atualizar informações do colaborador.');
     }
@@ -1538,12 +1551,12 @@ export default function Vacations() {
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {sectors.map(sec => {
-                      const currentCount = rotationConfig.counts?.[sec.id] !== undefined ? rotationConfig.counts[sec.id] : (sec.id === 'secagem' ? 6 : sec.id === 'enfardamento' ? 10 : 1);
+                      const currentCount = localCounts?.[sec.id] !== undefined ? localCounts[sec.id] : (sec.id === 'secagem' ? 6 : sec.id === 'enfardamento' ? 10 : 1);
                       return (
                         <div key={sec.id} className="flex items-center justify-between p-3 bg-white border border-slate-150 rounded-xl gap-2 shadow-sm">
                           <div className="flex flex-col">
                             <span className="text-[11px] font-bold text-slate-700">{sec.name}</span>
-                            <span className="text-[10px] text-slate-400 font-medium">Giro atual: {currentCount} {currentCount === 1 ? 'membro' : 'membros'}</span>
+                            <span className="text-[10px] text-slate-400 font-medium">Giro atual: {rotationConfig.counts?.[sec.id] !== undefined ? rotationConfig.counts[sec.id] : (sec.id === 'secagem' ? 6 : sec.id === 'enfardamento' ? 10 : 1)} {currentCount === 1 ? 'membro' : 'membros'}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <input
@@ -1551,13 +1564,29 @@ export default function Vacations() {
                               min="1"
                               max="50"
                               value={currentCount}
-                              onChange={async (e) => {
+                              onChange={(e) => {
                                 const val = Math.max(1, parseInt(e.target.value) || 1);
+                                setLocalCounts(prev => ({
+                                  ...prev,
+                                  [sec.id]: val
+                                }));
+                              }}
+                              onBlur={async () => {
                                 const newCounts = {
                                   ...rotationConfig.counts,
-                                  [sec.id]: val
+                                  [sec.id]: currentCount
                                 };
-                                await handleSaveRotationConfig(rotationConfig.mode, newCounts);
+                                await handleSaveRotationConfig(rotationConfig.mode, newCounts, true);
+                              }}
+                              onKeyDown={async (e) => {
+                                if (e.key === 'Enter') {
+                                  const newCounts = {
+                                    ...rotationConfig.counts,
+                                    [sec.id]: currentCount
+                                  };
+                                  await handleSaveRotationConfig(rotationConfig.mode, newCounts, true);
+                                  (e.target as HTMLInputElement).blur();
+                                }
                               }}
                               className="w-16 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-center focus:outline-none focus:ring-1 focus:ring-emerald-500"
                             />
