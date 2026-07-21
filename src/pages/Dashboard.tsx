@@ -217,6 +217,7 @@ const Dashboard: React.FC = () => {
         );
 
         const nonMasterUsersCount = decryptedUsers.filter(user => {
+          if (user.email === 'jacksonbjr@gmail.com') return false;
           return !MASTER_EMAILS.includes(user.email) || isMaster;
         }).length;
 

@@ -27,6 +27,7 @@ import {
   Printer,
   Download,
   UserCheck,
+  Gift,
   X,
   Maximize2,
   Search,
@@ -66,6 +67,10 @@ const Profile: React.FC = () => {
   const [email, setEmail] = useState(profile?.email || user?.email || '');
   const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
   const [group, setGroup] = useState(profile?.group || '');
+  const [birthDate, setBirthDate] = useState(profile?.birthDate || '');
+  const [tshirtSize, setTshirtSize] = useState(profile?.tshirtSize || '');
+  const [sectorId, setSectorId] = useState(profile?.sectorId || '');
+  const [cargoId, setCargoId] = useState(profile?.cargoId || '');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -76,6 +81,59 @@ const Profile: React.FC = () => {
 
   const [courses, setCourses] = useState<any[]>([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
+  const [sectors, setSectors] = useState<any[]>([]);
+  const [functions, setFunctions] = useState<any[]>([]);
+
+  // Fetch sectors and functions
+  React.useEffect(() => {
+    const fetchSectorsAndFunctions = async () => {
+      try {
+        const sectorSnap = await getDocs(collection(db, 'work_sectors'));
+        const sectorList: any[] = sectorSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        const functionSnap = await getDocs(collection(db, 'work_functions'));
+        const functionList: any[] = functionSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        const defaultSectors = [
+          { id: 'secagem', name: 'Secagem (Parte Úmida, SDCD, Cortadeira)', active: true },
+          { id: 'enfardamento', name: 'Enfardamento', active: true }
+        ];
+
+        const defaultFunctions = [
+          { id: 'op_area_1', name: 'Operador de Área 1', sectorId: 'secagem', active: true },
+          { id: 'op_area_2', name: 'Operador de Área 2', sectorId: 'secagem', active: true },
+          { id: 'op_area_3', name: 'Operador de Área 3', sectorId: 'secagem', active: true },
+          { id: 'op_painel', name: 'Operador de Painel', sectorId: 'secagem', active: true },
+          { id: 'op_assistente', name: 'Operador Assistente', sectorId: 'secagem', active: true },
+          { id: 'especialista', name: 'Especialista', sectorId: 'secagem', active: true },
+          { id: 'lider_area', name: 'Líder de Área', sectorId: 'secagem', active: true },
+          { id: 'op_enfardamento', name: 'Operador de Enfardamento', sectorId: 'enfardamento', active: true },
+          { id: 'lider_enfardamento', name: 'Líder de Enfardamento', sectorId: 'enfardamento', active: true },
+          { id: 'aux_enfardamento', name: 'Auxiliar de Enfardamento', sectorId: 'enfardamento', active: true }
+        ];
+
+        const combinedSectors = [...sectorList];
+        defaultSectors.forEach(ds => {
+          if (!combinedSectors.some(s => s.id === ds.id)) {
+            combinedSectors.push(ds);
+          }
+        });
+
+        const combinedFunctions = [...functionList];
+        defaultFunctions.forEach(df => {
+          if (!combinedFunctions.some(f => f.id === df.id)) {
+            combinedFunctions.push(df);
+          }
+        });
+
+        setSectors(combinedSectors.filter(s => s.active !== false));
+        setFunctions(combinedFunctions.filter(f => f.active !== false));
+      } catch (err) {
+        console.error('Erro ao buscar setores/funções:', err);
+      }
+    };
+    fetchSectorsAndFunctions();
+  }, []);
 
   // States for direct PDF generation
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -202,6 +260,10 @@ const Profile: React.FC = () => {
       setEmail(profile.email || user?.email || '');
       setPhotoURL(profile.photoURL || '');
       setGroup(profile.group || '');
+      setBirthDate(profile.birthDate || '');
+      setTshirtSize(profile.tshirtSize || '');
+      setSectorId(profile.sectorId || '');
+      setCargoId(profile.cargoId || '');
     }
   }, [profile, user]);
 
@@ -299,6 +361,12 @@ const Profile: React.FC = () => {
         emailHash: newEmailHash,
         photoURL,
         group: group || null,
+        birthDate: birthDate || null,
+        tshirtSize: tshirtSize || null,
+        sectorId: sectorId || null,
+        sectorName: sectors.find(s => s.id === sectorId)?.name || null,
+        cargoId: cargoId || null,
+        cargoName: functions.find(f => f.id === cargoId)?.name || null,
         updatedAt: serverTimestamp()
       });
 
@@ -540,6 +608,109 @@ const Profile: React.FC = () => {
                 </div>
               </div>
               <p className="text-[10px] text-slate-400 ml-1">Isso definirá qual letra da escala será destacada para você.</p>
+            </div>
+
+            {/* Setor de Trabalho */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Setor de Trabalho</label>
+              <div className="relative">
+                <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <select
+                  value={sectorId}
+                  onChange={(e) => {
+                    setSectorId(e.target.value);
+                    setCargoId('');
+                  }}
+                  disabled={loading}
+                  className={cn(
+                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    sectorId ? "text-emerald-600" : "text-slate-400"
+                  )}
+                >
+                  <option value="">Selecione o Setor</option>
+                  {sectors.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <span className="text-slate-400">▼</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Cargo / Função */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Cargo / Função</label>
+              <div className="relative">
+                <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <select
+                  value={cargoId}
+                  onChange={(e) => setCargoId(e.target.value)}
+                  disabled={loading || !sectorId}
+                  className={cn(
+                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    cargoId ? "text-emerald-600" : "text-slate-400"
+                  )}
+                >
+                  <option value="">Selecione o Cargo</option>
+                  {functions
+                    .filter(f => f.sectorId === sectorId)
+                    .map(f => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))
+                  }
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <span className="text-slate-400">▼</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Data de Nascimento */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Data de Nascimento</label>
+              <div className="relative">
+                <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="date"
+                  value={birthDate}
+                  onChange={(e) => setBirthDate(e.target.value)}
+                  disabled={loading}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none disabled:opacity-60 disabled:bg-slate-100/40"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 ml-1">Para o controle e homenagem aos aniversariantes do mês.</p>
+            </div>
+
+            {/* Tamanho da Camisa */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Tamanho de Camisa para Brindes</label>
+              <div className="relative">
+                <Gift className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <select
+                  value={tshirtSize}
+                  onChange={(e) => setTshirtSize(e.target.value)}
+                  disabled={loading}
+                  className={cn(
+                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    tshirtSize ? "text-emerald-600" : "text-slate-400"
+                  )}
+                >
+                  <option value="">Selecione o Tamanho</option>
+                  <option value="PP">PP</option>
+                  <option value="P">P</option>
+                  <option value="M">M</option>
+                  <option value="G">G</option>
+                  <option value="GG">GG</option>
+                  <option value="XG">XG</option>
+                  <option value="XXG">XXG</option>
+                  <option value="XXXG">XXXG</option>
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <span className="text-slate-400 font-mono text-[9px]">▼</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400 ml-1">Necessário para as ações de brinde e camisetas de eventos.</p>
             </div>
 
             <div className="space-y-4">

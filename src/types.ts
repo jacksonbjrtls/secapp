@@ -17,6 +17,66 @@ export interface UserProfile {
   updatedAt?: Date | any;
   menuOrder?: string[];
   lastOmissionJustifiedAt?: any;
+  birthDate?: string;
+  tshirtSize?: string;
+  cargoId?: string;
+  cargoName?: string;
+  sectorId?: string;
+  sectorName?: string;
+}
+
+export interface WorkSector {
+  id: string;
+  name: string; // Secagem, Enfardamento, etc.
+  active: boolean;
+  createdAt: any;
+}
+
+export interface WorkFunction {
+  id: string;
+  name: string; // Operador de Área 1, Especialista, etc.
+  sectorId: string; // ID do setor de trabalho
+  active: boolean;
+  createdAt: any;
+}
+
+export interface VacationRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  group?: string; // Letra / Escala (A, B, C, D, E)
+  cargoId?: string;
+  cargoName?: string;
+  sectorId?: string;
+  sectorName?: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  days: number;
+  thirteenthAdvance?: boolean;
+  status: 'pending' | 'approved' | 'rejected';
+  rejectedReason?: string;
+  createdAt: any;
+  updatedAt?: any;
+  approvedBy?: string;
+  approvedByName?: string;
+}
+
+export interface VacationQueueItem {
+  id: string;
+  userId: string;
+  userName: string;
+  sectorId: string; // Secagem ou Enfardamento
+  position: number; // Ordem de escolha: 1, 2, 3...
+  lastYearSelectionDate?: string;
+  updatedAt?: any;
+}
+
+export interface VacationLimitConfig {
+  id: string; // E.g., 'global_limits' or custom
+  byCargo: Record<string, number>; // cargoName -> max simultaneous in any month
+  byGroup: Record<string, number>; // groupLetter -> max simultaneous in any month
+  updatedAt: any;
 }
 
 export interface AllowedDomain {

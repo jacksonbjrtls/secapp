@@ -127,6 +127,7 @@ const Admin: React.FC = () => {
     certificates: true,
     stops_control: true,
     overtime: true,
+    vacations: true,
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
@@ -642,6 +643,7 @@ const Admin: React.FC = () => {
             isMaster: isUserMaster 
           } as UserProfile;
         })))
+        .filter(user => user.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
         .filter(user => !user.isMaster || isMaster);
 
       // Group by email and auto-cleanup duplicates (sandbox vs real)
@@ -2549,6 +2551,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
               { id: 'certificates', label: 'Treinamentos/Certificados', desc: 'Módulo de treinamentos de Secagem para emissão e controle de certificados de qualificação e presença.', icon: 'Award' },
               { id: 'stops_control', label: 'Controle de Parada', desc: 'Módulo de controle de paradas (programadas ou gerais) com registro de frentes de trabalho (mecânica, elétrica, hidráulica, etc.) e estatísticas.', icon: 'Clock' },
               { id: 'overtime', label: 'Justificativa de Hora-Extra (HE)', desc: 'Módulo de cadastro e justificativa de realização de horas extras com controle administrativo e relatórios.', icon: 'Clock' },
+              { id: 'vacations', label: 'Controle de Férias', desc: 'Gestão de férias, escalas de folga, edição geral de colaboradores e emissão de relatórios/brindes personalizados.', icon: 'CalendarDays' },
             ].map((mod) => {
               const isEnabled = activeModules[mod.id] !== false;
               return (

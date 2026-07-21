@@ -204,7 +204,7 @@ const Certificates: React.FC = () => {
         const uniqueUsersList = Array.from(uniqueUsersMap.values());
 
         const filteredAndSortedList = uniqueUsersList
-          .filter(u => u.displayName !== 'Sem nome')
+          .filter(u => u.displayName !== 'Sem nome' && u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
           .sort((a, b) => a.displayName.localeCompare(b.displayName));
         setRegisteredUsers(filteredAndSortedList);
       }

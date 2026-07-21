@@ -26,11 +26,13 @@ import {
   PackagePlus,
   ArrowLeftRight,
   Award,
-  Clock
+  Clock,
+  Gift
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
-import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, onSnapshot, collection, getDocs } from 'firebase/firestore';
+import { decryptValue } from '../../lib/crypto';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from '../ui/Logo';
@@ -221,6 +223,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     certificates: true,
     stops_control: true,
     overtime: true,
+    vacations: true,
   });
 
   useEffect(() => {
@@ -233,6 +236,73 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     });
     return () => unsub();
   }, []);
+
+  // Automatic Birthday Alert Popout on Load
+  const [birthdayUsers, setBirthdayUsers] = useState<any[]>([]);
+  const [showBirthdayModal, setShowBirthdayModal] = useState(false);
+
+  useEffect(() => {
+    if (!profile || profile.status !== 'approved') return;
+
+    const checkBirthdays = async () => {
+      try {
+        const today = new Date();
+        const todayMonth = today.getMonth() + 1;
+        const todayDay = today.getDate();
+        const dateKey = `${today.getFullYear()}-${todayMonth}-${todayDay}`;
+        const storageKey = `secapp-birthdays-checked-${dateKey}`;
+
+        // Verify if already shown today in this browser session
+        if (sessionStorage.getItem(storageKey)) {
+          return;
+        }
+
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const todayBirthdays: any[] = [];
+
+        for (const d of usersSnap.docs) {
+          const uData = d.data();
+          if (uData.birthDate) {
+            const parts = uData.birthDate.split('-');
+            if (parts.length === 3) {
+              const birthMonth = parseInt(parts[1], 10);
+              const birthDay = parseInt(parts[2], 10);
+
+              if (birthMonth === todayMonth && birthDay === todayDay) {
+                const decEmail = await decryptValue(uData.email);
+                if (decEmail?.toLowerCase().trim() === 'jacksonbjr@gmail.com') {
+                  continue;
+                }
+                const decName = await decryptValue(uData.displayName);
+                todayBirthdays.push({
+                  id: d.id,
+                  displayName: decName || 'Sem Nome',
+                  sectorName: uData.sectorName || '',
+                  cargoName: uData.cargoName || '',
+                });
+              }
+            }
+          }
+        }
+
+        if (todayBirthdays.length > 0) {
+          setBirthdayUsers(todayBirthdays);
+          setShowBirthdayModal(true);
+        }
+
+        sessionStorage.setItem(storageKey, 'true');
+      } catch (err) {
+        console.error('Error checking birthdays:', err);
+      }
+    };
+
+    // Delay checking slightly to allow smooth initial page load
+    const timer = setTimeout(() => {
+      checkBirthdays();
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [profile]);
 
   const [navigation, setNavigation] = useState<any[]>([]);
 
@@ -252,6 +322,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'certificates', name: 'Treinamentos/Certificados', href: '/certificates', icon: Award, show: activeModules.certificates !== false },
       { id: 'stops_control', name: 'Controle de Parada', href: '/stops-control', icon: Clock, show: activeModules.stops_control !== false },
       { id: 'overtime', name: 'Justificativa HE', href: '/overtime', icon: Clock, show: activeModules.overtime !== false },
+      { id: 'vacations', name: 'Controle de Férias', href: '/vacations', icon: CalendarDays, show: activeModules.vacations !== false },
       { id: 'admin', name: 'Painel Administrativo', href: '/admin', icon: Users, show: !!isAdmin },
       { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
     ];
@@ -712,6 +783,87 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Birthday Celebration Modal */}
+      <AnimatePresence>
+        {showBirthdayModal && birthdayUsers.length > 0 && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.9, y: 20, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.9, y: 20, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+              className="bg-gradient-to-br from-amber-50 via-white to-rose-50 w-full max-w-md rounded-[2.5rem] border-2 border-amber-200/50 shadow-2xl p-6 md:p-8 space-y-6 relative text-center overflow-hidden animate-fade-in"
+            >
+              {/* Confetti Background elements */}
+              <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-pink-500 via-purple-500 via-cyan-500 via-green-500 to-amber-500" />
+              
+              <div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-100 rounded-full mix-blend-multiply filter blur-xl opacity-75 animate-blob" />
+              <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-rose-100 rounded-full mix-blend-multiply filter blur-xl opacity-75 animate-blob animation-delay-2000" />
+
+              {/* Close button */}
+              <button
+                onClick={() => setShowBirthdayModal(false)}
+                className="absolute top-4 right-4 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-all cursor-pointer z-10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="relative z-10 space-y-4">
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-tr from-amber-400 to-rose-400 rounded-3xl text-white shadow-lg shadow-rose-100 animate-bounce">
+                  <Gift className="w-8 h-8" />
+                </div>
+
+                <div className="space-y-1">
+                  <h3 className="text-2xl font-black text-slate-850 tracking-tight flex items-center justify-center gap-2">
+                    <Sparkles className="w-6 h-6 text-amber-500 fill-amber-300 animate-pulse" />
+                    Parabéns Hoje!
+                    <Sparkles className="w-6 h-6 text-amber-500 fill-amber-300 animate-pulse" />
+                  </h3>
+                  <p className="text-sm font-bold text-rose-600">
+                    {birthdayUsers.length === 1 
+                      ? 'Temos um aniversariante do dia na nossa equipe!' 
+                      : 'Temos aniversariantes do dia na nossa equipe!'}
+                  </p>
+                </div>
+
+                {/* Celebrants List */}
+                <div className="py-2 space-y-3 max-h-60 overflow-y-auto">
+                  {birthdayUsers.map((u) => (
+                    <div 
+                      key={u.id} 
+                      className="p-4 bg-white/85 border border-amber-200/40 rounded-2xl shadow-sm hover:scale-[1.02] transition-transform duration-300"
+                    >
+                      <h4 className="text-lg font-black text-slate-800">{u.displayName}</h4>
+                      {(u.cargoName || u.sectorName) && (
+                        <p className="text-xs text-slate-500 font-bold mt-1">
+                          {u.cargoName || 'Colaborador'} 
+                          {u.sectorName && ` • ${u.sectorName}`}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <p className="text-xs text-slate-500 leading-relaxed font-bold">
+                  "Desejamos muitos anos de vida, saúde, paz e que todos os seus sonhos se realizem! Que o seu dia seja repleto de felicidades e comemorações!" 🎉🎂🎈
+                </p>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowBirthdayModal(false)}
+                    className="w-full py-3.5 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white font-extrabold text-sm rounded-2xl shadow-md hover:shadow-lg transition-all cursor-pointer uppercase tracking-wider text-center"
+                  >
+                    Celebrar e Continuar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Privacy Policy Modal */}
       <PrivacyPolicyModal isOpen={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />
     </div>

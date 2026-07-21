@@ -24,6 +24,7 @@ import { ShiftHandover } from './pages/ShiftHandover';
 import Certificates from './pages/Certificates';
 import StopsControl from './pages/StopsControl';
 import Overtime from './pages/Overtime';
+import Vacations from './pages/Vacations';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean; requireManager?: boolean }> = ({ 
@@ -471,6 +472,15 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <Overtime />
+              </ProtectedRoute>
+            } 
+          />
+          
+          <Route 
+            path="/vacations" 
+            element={
+              <ProtectedRoute>
+                <Vacations />
               </ProtectedRoute>
             } 
           />

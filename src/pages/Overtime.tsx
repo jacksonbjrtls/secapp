@@ -180,7 +180,7 @@ export default function Overtime() {
           } as UserProfile;
         });
         const fullList = await Promise.all(listPromises);
-        const approvedList = fullList.filter(u => u.status === 'approved');
+        const approvedList = fullList.filter(u => u.status === 'approved' && u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com');
         
         // Sort users alphabetically
         approvedList.sort((a, b) => a.displayName.localeCompare(b.displayName));

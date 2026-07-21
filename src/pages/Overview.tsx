@@ -123,6 +123,7 @@ export const Overview: React.FC = () => {
       }));
       const filtered = mapped.filter(user => {
         const userEmail = user.email?.toLowerCase().trim() || '';
+        if (userEmail === 'jacksonbjr@gmail.com') return false;
         return !MASTER_EMAILS.includes(userEmail) || isMaster;
       });
       setUsers(filtered);

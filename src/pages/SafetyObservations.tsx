@@ -423,6 +423,7 @@ const SafetyObservations: React.FC = () => {
 
         const uniqueUsersMap = new Map<string, { id: string; name: string }>();
         decryptedUsers.forEach(user => {
+          if (user.email === 'jacksonbjr@gmail.com') return;
           if (MASTER_EMAILS.includes(user.email) && !isMaster) return;
           if (user.name && user.name !== 'Sem nome' && !uniqueUsersMap.has(user.name)) {
             uniqueUsersMap.set(user.name, {
