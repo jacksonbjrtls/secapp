@@ -87,6 +87,11 @@ export default function Vacations() {
   // Filter for reports and priority queue
   const [reportMonth, setReportMonth] = useState<number>(new Date().getMonth() + 1);
   const [queueSectorId, setQueueSectorId] = useState<'secagem' | 'enfardamento'>('secagem');
+  const [queueCargoId, setQueueCargoId] = useState<string>('');
+  const [rotationConfig, setRotationConfig] = useState<{ mode: 'sector' | 'sector_function'; counts?: { [key: string]: number } }>({
+    mode: 'sector',
+    counts: { secagem: 6, enfardamento: 10 }
+  });
 
   // Confirmation/Justification modal for rejection
   const [rejectingReq, setRejectingReq] = useState<VacationRequest | null>(null);
@@ -465,6 +470,18 @@ export default function Vacations() {
         setLimitConfig({ byCargo: {}, byGroup: {} });
       }
 
+      // 7. Fetch Rotation Config
+      const rotationDoc = await getDoc(doc(db, 'system_config', 'vacation_rotation'));
+      if (rotationDoc.exists()) {
+        const rData = rotationDoc.data() as { mode: 'sector' | 'sector_function'; counts?: { [key: string]: number } };
+        setRotationConfig({
+          mode: rData.mode || 'sector',
+          counts: rData.counts || { secagem: 6, enfardamento: 10 }
+        });
+      } else {
+        setRotationConfig({ mode: 'sector', counts: { secagem: 6, enfardamento: 10 } });
+      }
+
     } catch (err: any) {
       console.error('Error fetching vacation module data:', err);
       setError('Falha ao carregar as informações de férias.');
@@ -476,6 +493,18 @@ export default function Vacations() {
   useEffect(() => {
     fetchData();
   }, [user]);
+
+  // Synchronize queueCargoId when sector changes or functions load
+  useEffect(() => {
+    const sectorFuncs = functions.filter(f => f.sectorId === queueSectorId);
+    if (sectorFuncs.length > 0) {
+      if (!sectorFuncs.some(f => f.id === queueCargoId)) {
+        setQueueCargoId(sectorFuncs[0].id);
+      }
+    } else {
+      setQueueCargoId('');
+    }
+  }, [queueSectorId, functions, queueCargoId]);
 
   // Sync profile values for submission default
   useEffect(() => {
@@ -715,9 +744,35 @@ export default function Vacations() {
     }
   };
 
+  // Save Vacation Rotation Mode and Counts
+  const handleSaveRotationConfig = async (mode: 'sector' | 'sector_function', customCounts?: { [key: string]: number }) => {
+    try {
+      setSaving(true);
+      const updatedCounts = customCounts || rotationConfig.counts || { secagem: 6, enfardamento: 10 };
+      await setDoc(doc(db, 'system_config', 'vacation_rotation'), {
+        mode,
+        counts: updatedCounts
+      });
+      setRotationConfig({ mode, counts: updatedCounts });
+      setSuccess('Configuração de giro de férias salva com sucesso.');
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      setError('Erro ao salvar configuração de giro.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Initialize Priority Queue if empty or out of sync
   const handleInitializeQueue = async () => {
-    if (!confirm('Deseja iniciar ou sincronizar a fila de prioridade com todos os usuários ativos do setor?')) return;
+    const isSectorFunction = rotationConfig.mode === 'sector_function';
+    let confirmMsg = 'Deseja iniciar ou sincronizar a fila de prioridade com todos os usuários ativos do setor?';
+    if (isSectorFunction) {
+      confirmMsg = 'Deseja iniciar ou sincronizar a fila de prioridades por setor e função para todos os usuários ativos?';
+    }
+    if (!confirm(confirmMsg)) return;
+
     try {
       setSaving(true);
       // Filter users in selected sector
@@ -729,18 +784,40 @@ export default function Vacations() {
         await deleteDoc(doc(db, 'vacation_queue', sq.id));
       }
 
-      // Add to queue in order (alphabetical by name initially)
-      const sortedUsers = [...sectorUsers].sort((a, b) => a.displayName.localeCompare(b.displayName));
-      for (let i = 0; i < sortedUsers.length; i++) {
-        const u = sortedUsers[i];
-        const newItem: Omit<VacationQueueItem, 'id'> = {
-          userId: u.uid,
-          userName: u.displayName,
-          sectorId: queueSectorId,
-          position: i + 1,
-          updatedAt: serverTimestamp()
-        };
-        await addDoc(collection(db, 'vacation_queue'), newItem);
+      if (isSectorFunction) {
+        // Group by cargoId
+        const sectorCargos = Array.from(new Set(sectorUsers.map(u => u.cargoId || 'sem_cargo')));
+        for (const cargoId of sectorCargos) {
+          const cargoUsers = sectorUsers.filter(u => (u.cargoId || 'sem_cargo') === cargoId);
+          const sortedUsers = [...cargoUsers].sort((a, b) => a.displayName.localeCompare(b.displayName));
+          for (let i = 0; i < sortedUsers.length; i++) {
+            const u = sortedUsers[i];
+            const newItem: any = {
+              userId: u.uid,
+              userName: u.displayName,
+              sectorId: queueSectorId,
+              cargoId: u.cargoId || 'sem_cargo',
+              cargoName: u.cargoName || 'Sem cargo atribuído',
+              position: i + 1,
+              updatedAt: serverTimestamp()
+            };
+            await addDoc(collection(db, 'vacation_queue'), newItem);
+          }
+        }
+      } else {
+        // Add to queue in order (alphabetical by name initially)
+        const sortedUsers = [...sectorUsers].sort((a, b) => a.displayName.localeCompare(b.displayName));
+        for (let i = 0; i < sortedUsers.length; i++) {
+          const u = sortedUsers[i];
+          const newItem: any = {
+            userId: u.uid,
+            userName: u.displayName,
+            sectorId: queueSectorId,
+            position: i + 1,
+            updatedAt: serverTimestamp()
+          };
+          await addDoc(collection(db, 'vacation_queue'), newItem);
+        }
       }
 
       setSuccess('Fila de prioridade de férias inicializada com sucesso.');
@@ -755,36 +832,69 @@ export default function Vacations() {
 
   // Cycle Queue Rule:
   // "o que escolheu ferias primeiro este ano no proximo ano passa a ser o ultimo a escolher, e o segundo depois dele é o proximo a escolher primeiro"
+  // E configurado uma quantidade de gira junto por setor (ex: secagem gira 6, enfardamento gira 10)
   const handleCycleQueue = async () => {
-    const sectorQ = queueItems.filter(qi => qi.sectorId === queueSectorId).sort((a, b) => a.position - b.position);
+    const isSectorFunction = rotationConfig.mode === 'sector_function';
+    let sectorQ: VacationQueueItem[] = [];
+    let confirmMsg = '';
+
+    const configCounts = rotationConfig.counts || { secagem: 6, enfardamento: 10 };
+    const rotateCount = configCounts[queueSectorId] !== undefined ? configCounts[queueSectorId] : (queueSectorId === 'secagem' ? 6 : queueSectorId === 'enfardamento' ? 10 : 1);
+
+    const sectorName = queueSectorId === 'secagem' ? 'Secagem' : 'Enfardamento';
+
+    if (isSectorFunction) {
+      const currentCargo = functions.find(f => f.id === queueCargoId) || defaultFunctions.find(f => f.id === queueCargoId);
+      const cargoName = currentCargo?.name || 'Sem cargo atribuído';
+      sectorQ = queueItems
+        .filter(qi => qi.sectorId === queueSectorId && (qi as any).cargoId === queueCargoId)
+        .sort((a, b) => a.position - b.position);
+    } else {
+      sectorQ = queueItems
+        .filter(qi => qi.sectorId === queueSectorId)
+        .sort((a, b) => a.position - b.position);
+    }
+
     if (sectorQ.length < 2) {
       alert('É necessário ter pelo menos 2 pessoas na fila para realizar o rodízio.');
       return;
     }
 
-    if (!confirm(`Confirmar rotação/ciclo anual da fila de prioridades para o setor de ${queueSectorId === 'secagem' ? 'Secagem' : 'Enfardamento'}? O primeiro passará ao final.`)) return;
+    const actualRotateCount = Math.min(rotateCount, sectorQ.length - 1);
+
+    if (isSectorFunction) {
+      const currentCargo = functions.find(f => f.id === queueCargoId) || defaultFunctions.find(f => f.id === queueCargoId);
+      const cargoName = currentCargo?.name || 'Sem cargo atribuído';
+      confirmMsg = `Confirmar rotação/ciclo anual da fila para o cargo de ${cargoName} no setor de ${sectorName}? Os primeiros ${actualRotateCount} ${actualRotateCount === 1 ? 'funcionário' : 'funcionários'} serão movidos para o final da fila (giro configurado: ${rotateCount}).`;
+    } else {
+      confirmMsg = `Confirmar rotação/ciclo anual da fila para o setor de ${sectorName}? Os primeiros ${actualRotateCount} ${actualRotateCount === 1 ? 'funcionário' : 'funcionários'} serão movidos para o final da fila (giro configurado: ${rotateCount}).`;
+    }
+
+    if (!confirm(confirmMsg)) return;
 
     try {
       setSaving(true);
-      const firstItem = sectorQ[0];
-      
-      // Shift everyone's position down by 1
-      for (let i = 1; i < sectorQ.length; i++) {
+
+      // Shift remaining elements (indices actualRotateCount to length - 1) up
+      for (let i = actualRotateCount; i < sectorQ.length; i++) {
         const item = sectorQ[i];
         await updateDoc(doc(db, 'vacation_queue', item.id), {
-          position: i, // index becomes (1-indexed) position
+          position: i - actualRotateCount + 1,
           updatedAt: serverTimestamp()
         });
       }
 
-      // Put the first item at the very bottom
-      await updateDoc(doc(db, 'vacation_queue', firstItem.id), {
-        position: sectorQ.length,
-        lastYearSelectionDate: new Date().toLocaleDateString('pt-BR'),
-        updatedAt: serverTimestamp()
-      });
+      // Put the rotated elements (indices 0 to actualRotateCount - 1) at the back
+      for (let i = 0; i < actualRotateCount; i++) {
+        const item = sectorQ[i];
+        await updateDoc(doc(db, 'vacation_queue', item.id), {
+          position: sectorQ.length - actualRotateCount + i + 1,
+          lastYearSelectionDate: new Date().toLocaleDateString('pt-BR'),
+          updatedAt: serverTimestamp()
+        });
+      }
 
-      setSuccess('Fila rotacionada com sucesso! O primeiro foi movido para o fim da fila.');
+      setSuccess(`Fila rotacionada com sucesso! Os primeiros ${actualRotateCount} funcionários foram movidos para o final da fila.`);
       fetchData();
     } catch (err) {
       console.error(err);
@@ -796,9 +906,20 @@ export default function Vacations() {
 
   // Reorder queue positions manually (admin override)
   const moveQueueItem = async (index: number, direction: 'up' | 'down') => {
-    const sectorQ = queueItems.filter(qi => qi.sectorId === queueSectorId).sort((a, b) => a.position - b.position);
+    const isSectorFunction = rotationConfig.mode === 'sector_function';
+    let sectorQ: VacationQueueItem[] = [];
+
+    if (isSectorFunction) {
+      sectorQ = queueItems
+        .filter(qi => qi.sectorId === queueSectorId && (qi as any).cargoId === queueCargoId)
+        .sort((a, b) => a.position - b.position);
+    } else {
+      sectorQ = queueItems
+        .filter(qi => qi.sectorId === queueSectorId)
+        .sort((a, b) => a.position - b.position);
+    }
+
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    
     if (targetIndex < 0 || targetIndex >= sectorQ.length) return;
 
     try {
@@ -1313,28 +1434,141 @@ export default function Vacations() {
                 </p>
               </div>
 
-              {/* Sector selector inside queue */}
-              <div className="flex gap-2 p-1 bg-slate-100 rounded-xl border border-slate-200">
-                <button
-                  onClick={() => setQueueSectorId('secagem')}
-                  className={cn(
-                    "px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer",
-                    queueSectorId === 'secagem' ? "bg-white text-emerald-800 shadow-sm" : "hover:text-slate-800 text-slate-500"
-                  )}
-                >
-                  Secagem
-                </button>
-                <button
-                  onClick={() => setQueueSectorId('enfardamento')}
-                  className={cn(
-                    "px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer",
-                    queueSectorId === 'enfardamento' ? "bg-white text-emerald-800 shadow-sm" : "hover:text-slate-800 text-slate-500"
-                  )}
-                >
-                  Enfardamento
-                </button>
+              {/* Sector & Function selector inside queue */}
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex gap-2 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                  <button
+                    onClick={() => setQueueSectorId('secagem')}
+                    className={cn(
+                      "px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer",
+                      queueSectorId === 'secagem' ? "bg-white text-emerald-800 shadow-sm" : "hover:text-slate-800 text-slate-500"
+                    )}
+                  >
+                    Secagem
+                  </button>
+                  <button
+                    onClick={() => setQueueSectorId('enfardamento')}
+                    className={cn(
+                      "px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer",
+                      queueSectorId === 'enfardamento' ? "bg-white text-emerald-800 shadow-sm" : "hover:text-slate-800 text-slate-500"
+                    )}
+                  >
+                    Enfardamento
+                  </button>
+                </div>
+
+                {rotationConfig.mode === 'sector_function' && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-500 uppercase">Função:</span>
+                    <select
+                      value={queueCargoId}
+                      onChange={(e) => setQueueCargoId(e.target.value)}
+                      className="px-3 py-2 bg-white border border-slate-250 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all cursor-pointer"
+                    >
+                      {functions.filter(f => f.sectorId === queueSectorId).map(f => (
+                        <option key={f.id} value={f.id}>{f.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Configuration for Vacation Rotation (Giro de Férias) */}
+            {(isAdmin || profile?.role === 'manager') && (
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Settings className="w-3.5 h-3.5 text-emerald-600" />
+                      Configuração de Regra do Giro de Férias
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Defina como o sistema organizará as prioridades e o ciclo/rodízio anual de escolhas.
+                    </p>
+                  </div>
+                  
+                  <div className="flex bg-slate-200/60 p-1 rounded-xl border border-slate-250 self-start sm:self-auto">
+                    <button
+                      onClick={() => handleSaveRotationConfig('sector')}
+                      disabled={saving}
+                      className={cn(
+                        "px-3.5 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all cursor-pointer",
+                        rotationConfig.mode === 'sector' ? "bg-white text-emerald-800 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+                      )}
+                    >
+                      Apenas por Setor
+                    </button>
+                    <button
+                      onClick={() => handleSaveRotationConfig('sector_function')}
+                      disabled={saving}
+                      className={cn(
+                        "px-3.5 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all cursor-pointer",
+                        rotationConfig.mode === 'sector_function' ? "bg-white text-emerald-800 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+                      )}
+                    >
+                      Por Setor e Função
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="text-[11px] bg-white p-3 rounded-xl border border-slate-150 text-slate-600 font-medium leading-relaxed">
+                  {rotationConfig.mode === 'sector' ? (
+                    <span>
+                      📌 <strong>Modo Atual: Fila por Setor.</strong> Todos os funcionários do setor selecionado disputam a mesma fila de prioridade. Ao ciclar a fila, o primeiro da lista geral do setor passa a ser o último.
+                    </span>
+                  ) : (
+                    <span>
+                      📌 <strong>Modo Atual: Fila por Setor e Função.</strong> Cada cargo/função dentro do setor terá sua própria fila independente de rodízio. O primeiro funcionário daquela função específica passará para o final da fila de sua própria função ao final do ano, sem interferir com outras funções.
+                    </span>
+                  )}
+                </div>
+
+                {/* Custom Rotation Counts Configuration */}
+                <div className="pt-3 border-t border-slate-200 space-y-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[11px] font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin-slow" />
+                      Quantidade de Funcionários a Girar por Ciclo
+                    </span>
+                    <p className="text-[10px] text-slate-500 font-medium">
+                      Defina quantos funcionários do topo da fila serão movidos para o final juntos ao rotacionar a fila de cada setor.
+                    </p>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {sectors.map(sec => {
+                      const currentCount = rotationConfig.counts?.[sec.id] !== undefined ? rotationConfig.counts[sec.id] : (sec.id === 'secagem' ? 6 : sec.id === 'enfardamento' ? 10 : 1);
+                      return (
+                        <div key={sec.id} className="flex items-center justify-between p-3 bg-white border border-slate-150 rounded-xl gap-2 shadow-sm">
+                          <div className="flex flex-col">
+                            <span className="text-[11px] font-bold text-slate-700">{sec.name}</span>
+                            <span className="text-[10px] text-slate-400 font-medium">Giro atual: {currentCount} {currentCount === 1 ? 'membro' : 'membros'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="1"
+                              max="50"
+                              value={currentCount}
+                              onChange={async (e) => {
+                                const val = Math.max(1, parseInt(e.target.value) || 1);
+                                const newCounts = {
+                                  ...rotationConfig.counts,
+                                  [sec.id]: val
+                                };
+                                await handleSaveRotationConfig(rotationConfig.mode, newCounts);
+                              }}
+                              className="w-16 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-center focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Admin actions for queue */}
             {(isAdmin || profile?.role === 'manager') && (
@@ -1361,10 +1595,16 @@ export default function Vacations() {
               </div>
             )}
 
-            {queueItems.filter(qi => qi.sectorId === queueSectorId).length === 0 ? (
+            {queueItems.filter(qi => {
+              if (qi.sectorId !== queueSectorId) return false;
+              if (rotationConfig.mode === 'sector_function') {
+                return (qi as any).cargoId === queueCargoId;
+              }
+              return true;
+            }).length === 0 ? (
               <div className="text-center py-16 px-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
                 <TrendingUp className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <p className="text-slate-600 font-bold">Sem fila configurada para este setor</p>
+                <p className="text-slate-600 font-bold">Sem fila configurada para este critério</p>
                 <p className="text-slate-400 text-xs max-w-sm mx-auto mt-1">
                   Sendo administrador, use o botão "Sincronizar Fila" acima para importar e organizar os membros de {queueSectorId === 'secagem' ? 'Secagem' : 'Enfardamento'}.
                 </p>
@@ -1382,7 +1622,13 @@ export default function Vacations() {
                   </thead>
                   <tbody>
                     {queueItems
-                      .filter(qi => qi.sectorId === queueSectorId)
+                      .filter(qi => {
+                        if (qi.sectorId !== queueSectorId) return false;
+                        if (rotationConfig.mode === 'sector_function') {
+                          return (qi as any).cargoId === queueCargoId;
+                        }
+                        return true;
+                      })
                       .sort((a, b) => a.position - b.position)
                       .map((item, index, arr) => (
                         <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50 font-semibold text-slate-700">
