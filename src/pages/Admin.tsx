@@ -730,7 +730,7 @@ const Admin: React.FC = () => {
   }, [isAdmin]);
 
   const fetchLoginLogs = async () => {
-    if (!isMaster) return;
+    if (!isAdmin) return;
     setLogsLoading(true);
     try {
       const logsSnap = await getDocs(
@@ -740,10 +740,19 @@ const Admin: React.FC = () => {
           limit(300)
         )
       );
-      const logsList = logsSnap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const logsList = await Promise.all(
+        logsSnap.docs.map(async (docSnap) => {
+          const data = docSnap.data();
+          const decryptedDisplayName = await decryptValue(data.displayName);
+          const decryptedEmail = await decryptValue(data.email);
+          return {
+            id: docSnap.id,
+            ...data,
+            displayName: decryptedDisplayName || data.displayName || 'Usuário',
+            email: decryptedEmail || data.email || ''
+          };
+        })
+      );
       setLoginLogs(logsList);
     } catch (err) {
       console.error('Error fetching login logs:', err);

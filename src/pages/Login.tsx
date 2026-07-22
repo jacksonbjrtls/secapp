@@ -23,7 +23,7 @@ import { validateEmailDomain } from '../lib/domainUtils';
 import { ShieldCheck, Loader2, Mail, ArrowLeft, AlertTriangle, Eye, EyeOff, KeyRound } from 'lucide-react';
 import { Logo } from '../components/ui/Logo';
 import { PrivacyPolicyModal } from '../components/ui/PrivacyPolicyModal';
-import { encryptValue, hashEmailForSearch } from '../lib/crypto';
+import { encryptValue, decryptValue, hashEmailForSearch } from '../lib/crypto';
 
 import { MASTER_EMAILS } from '../constants';
 import { recordUserLogin } from '../lib/loginLogger';
@@ -265,7 +265,8 @@ const Login: React.FC = () => {
       // Record successful user login
       try {
         const userDoc = await getDoc(userDocRef);
-        const customName = userDoc.exists() ? (userDoc.data() as any)?.displayName : undefined;
+        const rawName = userDoc.exists() ? (userDoc.data() as any)?.displayName : undefined;
+        const customName = rawName ? await decryptValue(rawName) : undefined;
         await recordUserLogin(user, customName);
       } catch (logErr) {
         console.warn('Could not record login log:', logErr);
@@ -414,7 +415,8 @@ const Login: React.FC = () => {
       try {
         const userDocRef = doc(db, 'users', user.uid);
         const userDoc = await getDoc(userDocRef);
-        const customName = userDoc.exists() ? (userDoc.data() as any)?.displayName : undefined;
+        const rawName = userDoc.exists() ? (userDoc.data() as any)?.displayName : undefined;
+        const customName = rawName ? await decryptValue(rawName) : undefined;
         await recordUserLogin(user, customName);
       } catch (logErr) {
         console.warn('Could not record login log:', logErr);

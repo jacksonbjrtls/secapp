@@ -1,6 +1,7 @@
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
 import { User } from 'firebase/auth';
+import { decryptValue } from './crypto';
 
 /**
  * Records a successful login event in Firestore.
@@ -11,10 +12,17 @@ export async function recordUserLogin(user: User, customDisplayName?: string) {
     const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'Unknown';
     const localTimeStr = new Date().toLocaleString('pt-BR');
 
+    let rawDisplayName = customDisplayName || user.displayName || user.email?.split('@')[0] || 'Usuário';
+    let rawEmail = user.email?.toLowerCase() || '';
+
+    // Decrypt if value was passed encrypted
+    const decryptedName = await decryptValue(rawDisplayName);
+    const decryptedEmail = await decryptValue(rawEmail);
+
     const logData = {
       userId: user.uid,
-      email: user.email?.toLowerCase() || '',
-      displayName: customDisplayName || user.displayName || user.email?.split('@')[0] || 'Usuário',
+      email: decryptedEmail || rawEmail,
+      displayName: decryptedName || rawDisplayName,
       timestamp: serverTimestamp(),
       userAgent: userAgent,
       localTimeStr: localTimeStr,
