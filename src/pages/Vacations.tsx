@@ -46,8 +46,15 @@ import { decryptValue } from '../lib/crypto';
 import { VacationRequest, VacationQueueItem, WorkSector, WorkFunction, UserProfile } from '../types';
 
 export default function Vacations() {
-  const { profile, user, isAdmin } = useAuth();
+  const { profile, user, isAdmin, isManager, isMaster } = useAuth();
+  const isElevated = isAdmin || isManager || isMaster || profile?.role === 'manager' || profile?.role === 'master' || profile?.role === 'admin';
   const [activeTab, setActiveTab] = useState<'my_vacation' | 'admin_panel' | 'queue' | 'limits' | 'reports'>('my_vacation');
+
+  useEffect(() => {
+    if (!isElevated && activeTab !== 'my_vacation') {
+      setActiveTab('my_vacation');
+    }
+  }, [isElevated, activeTab]);
   
   // Data States
   const [sectors, setSectors] = useState<WorkSector[]>([]);
@@ -1230,30 +1237,30 @@ export default function Vacations() {
           Minhas Férias
         </button>
 
-        <button
-          onClick={() => setActiveTab('queue')}
-          className={cn(
-            "px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer",
-            activeTab === 'queue' ? "bg-white text-emerald-800 shadow-md" : "hover:bg-white/50"
-          )}
-        >
-          <TrendingUp className="w-4 h-4" />
-          Fila de Escolha
-        </button>
-
-        <button
-          onClick={() => setActiveTab('reports')}
-          className={cn(
-            "px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer",
-            activeTab === 'reports' ? "bg-white text-emerald-800 shadow-md" : "hover:bg-white/50"
-          )}
-        >
-          <Cake className="w-4 h-4" />
-          Relatório / Aniversariantes
-        </button>
-
-        {(isAdmin || profile?.role === 'manager') && (
+        {isElevated && (
           <>
+            <button
+              onClick={() => setActiveTab('queue')}
+              className={cn(
+                "px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer",
+                activeTab === 'queue' ? "bg-white text-emerald-800 shadow-md" : "hover:bg-white/50"
+              )}
+            >
+              <TrendingUp className="w-4 h-4" />
+              Fila de Escolha
+            </button>
+
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={cn(
+                "px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer",
+                activeTab === 'reports' ? "bg-white text-emerald-800 shadow-md" : "hover:bg-white/50"
+              )}
+            >
+              <Cake className="w-4 h-4" />
+              Relatório / Aniversariantes
+            </button>
+
             <button
               onClick={() => setActiveTab('admin_panel')}
               className={cn(
@@ -1466,7 +1473,7 @@ export default function Vacations() {
         )}
 
         {/* TAB: PRIORITY QUEUE */}
-        {activeTab === 'queue' && (
+        {activeTab === 'queue' && isElevated && (
           <div className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm space-y-6">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
               <div className="space-y-1">
@@ -1826,7 +1833,7 @@ export default function Vacations() {
         )}
 
         {/* TAB: REPORTS & BIRTHDAYS */}
-        {activeTab === 'reports' && (
+        {activeTab === 'reports' && isElevated && (
           <div className="space-y-8">
             <div className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">

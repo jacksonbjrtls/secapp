@@ -65,8 +65,17 @@ import { AuditTab } from '../components/wires/AuditTab';
 
 const WireControl: React.FC = () => {
   const { user, isApproved, isManager, isAdmin, isMaster } = useAuth();
-  const [activeTab, setActiveTab ] = useState<'dashboard' | 'receiving' | 'consumption' | 'history' | 'config' | 'bulk_import' | 'audit'>('dashboard');
+  const isElevated = isManager || isAdmin || isMaster;
+  const [activeTab, setActiveTab ] = useState<'dashboard' | 'receiving' | 'consumption' | 'history' | 'config' | 'bulk_import' | 'audit'>(() =>
+    (isManager || isAdmin || isMaster) ? 'dashboard' : 'receiving'
+  );
   const [showTabMenu, setShowTabMenu] = useState(false);
+
+  useEffect(() => {
+    if (!isElevated && (activeTab === 'dashboard' || activeTab === 'audit' || activeTab === 'history' || activeTab === 'config' || activeTab === 'bulk_import')) {
+      setActiveTab('receiving');
+    }
+  }, [isElevated, activeTab]);
   
   // Filtering State
   const [startDate, setStartDate] = useState('');
@@ -179,17 +188,19 @@ const WireControl: React.FC = () => {
 
           {/* New Desktop Tabs - Visible on lg screens */}
           <div className="hidden lg:flex items-center p-1.5 bg-slate-100/50 rounded-2xl border border-slate-200/60 backdrop-blur-sm">
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={cn(
-                "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                activeTab === 'dashboard' 
-                  ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-              )}
-            >
-              <LayoutDashboard className="w-4 h-4" /> Painel
-            </button>
+            {(isManager || isAdmin || isMaster) && (
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className={cn(
+                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                  activeTab === 'dashboard' 
+                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
+                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                )}
+              >
+                <LayoutDashboard className="w-4 h-4" /> Painel
+              </button>
+            )}
             <button
               onClick={() => setActiveTab('receiving')}
               className={cn(
@@ -212,28 +223,32 @@ const WireControl: React.FC = () => {
             >
               <Barcode className="w-4 h-4" /> Consumo
             </button>
-            <button
-              onClick={() => setActiveTab('audit')}
-              className={cn(
-                "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                activeTab === 'audit' 
-                  ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-              )}
-            >
-              <ClipboardList className="w-4 h-4" /> Auditoria
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={cn(
-                "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                activeTab === 'history' 
-                  ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-              )}
-            >
-              <History className="w-4 h-4" /> Histórico
-            </button>
+            {(isManager || isAdmin || isMaster) && (
+              <button
+                onClick={() => setActiveTab('audit')}
+                className={cn(
+                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                  activeTab === 'audit' 
+                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
+                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                )}
+              >
+                <ClipboardList className="w-4 h-4" /> Auditoria
+              </button>
+            )}
+            {(isManager || isAdmin || isMaster) && (
+              <button
+                onClick={() => setActiveTab('history')}
+                className={cn(
+                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                  activeTab === 'history' 
+                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
+                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
+                )}
+              >
+                <History className="w-4 h-4" /> Histórico
+              </button>
+            )}
             {(isManager || isAdmin || isMaster) && (
               <button
                 onClick={() => setActiveTab('config')}
@@ -294,10 +309,10 @@ const WireControl: React.FC = () => {
                     className="absolute right-0 mt-2 w-full min-w-[240px] bg-white border border-slate-100 rounded-3xl shadow-2xl z-20 overflow-hidden p-2"
                   >
                     {[
-                      { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard },
-                      { id: 'receiving', label: 'Recebimento', icon: PackagePlus, roles: [isManager, isAdmin, isMaster] },
+                      { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard, roles: [isManager, isAdmin, isMaster] },
+                      { id: 'receiving', label: 'Recebimento', icon: PackagePlus },
                       { id: 'consumption', label: 'Registrar Consumo', icon: Barcode },
-                      { id: 'audit', label: 'Auditoria de Arames', icon: ClipboardList },
+                      { id: 'audit', label: 'Auditoria de Arames', icon: ClipboardList, roles: [isManager, isAdmin, isMaster] },
                       { id: 'history', label: 'Histórico de Lotes', icon: History, roles: [isManager, isAdmin, isMaster] },
                       { id: 'config', label: 'Ajustes do Sistema', icon: Settings, roles: [isManager, isAdmin, isMaster] },
                       { id: 'bulk_import', label: 'Importação em Massa', icon: FileSpreadsheet, roles: [isAdmin, isMaster] }
@@ -434,7 +449,7 @@ const WireControl: React.FC = () => {
         )}
 
         {/* Dashboard and Consumption */}
-        {activeTab === 'dashboard' && (
+        {activeTab === 'dashboard' && (isManager || isAdmin || isMaster) && (
           <motion.div
             key="dashboard"
             initial={{ opacity: 0, scale: 0.98 }}
@@ -460,7 +475,7 @@ const WireControl: React.FC = () => {
             <ConsumptionTab lines={lines} />
           </motion.div>
         )}
-        {activeTab === 'audit' && (
+        {activeTab === 'audit' && (isManager || isAdmin || isMaster) && (
           <motion.div
             key="audit"
             initial={{ opacity: 0, x: 20 }}
