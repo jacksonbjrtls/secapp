@@ -164,13 +164,6 @@ const DDS: React.FC = () => {
   const [newExecutor, setNewExecutor] = useState('');
   const [newTotalPrevisto, setNewTotalPrevisto] = useState<number>(9);
 
-  // AI DDS Processor state
-  const [showAIModal, setShowAIModal] = useState(false);
-  const [aiText, setAiText] = useState('');
-  const [aiProcessing, setAiProcessing] = useState(false);
-  const [aiError, setAiError] = useState('');
-  const [aiResult, setAiResult] = useState<any>(null);
-
   // Mood selector state
   const [showMoodModal, setShowMoodModal] = useState(false);
   const [selectedMood, setSelectedMood] = useState<'happy' | 'neutral' | 'sad' | null>(null);
@@ -678,25 +671,23 @@ const DDS: React.FC = () => {
     
     setLoading(true);
     try {
-      // Check if there are any signatures first
+      // Find and delete all signatures linked to this DDS session
       const q = query(collection(db, 'dds_signatures'), where('sessionId', '==', sessionToDelete));
       const sigSnapshot = await getDocs(q);
       
-      if (!sigSnapshot.empty && !isMaster) {
-        setError('Não é possível excluir um DDS que já possui assinaturas. De acordo com as normas de segurança, registros com participações são permanentes.');
-        setLoading(false);
-        setSessionToDelete(null);
-        return;
-      }
-
-      // If isMaster and there are signatures, delete them first to avoid orphaned records
-      if (isMaster && !sigSnapshot.empty) {
+      if (!sigSnapshot.empty) {
         const deletePromises = sigSnapshot.docs.map(d => deleteDoc(d.ref));
         await Promise.all(deletePromises);
       }
 
+      // Delete the session document itself
       await deleteDoc(doc(db, 'dds_sessions', sessionToDelete));
-      setSuccessMessage('Sessão excluída com sucesso!');
+
+      if (activeSession && activeSession.id === sessionToDelete) {
+        setActiveSession(null);
+      }
+
+      setSuccessMessage('Sessão de DDS e todas as assinaturas vinculadas foram excluídas com sucesso!');
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
@@ -720,129 +711,6 @@ const DDS: React.FC = () => {
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `dds_sessions/${sessionId}`);
-    }
-  };
-
-  const handleAIProcess = async () => {
-    if (!aiText) return;
-    setAiProcessing(true);
-    setAiError('');
-    setAiResult(null);
-
-    try {
-      const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
-      const response = await fetch('/api/gemini/process-dds', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ text: aiText })
-      });
-      const data = await response.json();
-      if (!data.success) {
-        setAiError(data.error || 'Erro desconhecido ao processar com a IA.');
-      } else {
-        setAiResult(data.result);
-        
-        // Match turn and group to prefill fields
-        const parsed = data.result;
-        if (parsed.metadados) {
-          setNewTitle(parsed.metadados.assunto || '');
-          setNewExecutor(parsed.metadados.executante || '');
-          
-          const rawTurno = parsed.metadados.turno || '';
-          if (rawTurno.toLowerCase().includes('1') || rawTurno.toLowerCase().includes('a')) {
-            setNewShift('Turno 1');
-          } else if (rawTurno.toLowerCase().includes('2') || rawTurno.toLowerCase().includes('b')) {
-            setNewShift('Turno 2');
-          } else if (rawTurno.toLowerCase().includes('3') || rawTurno.toLowerCase().includes('c')) {
-            setNewShift('Turno 3');
-          }
-
-          const letterMatch = rawTurno.match(/[A-E]/i);
-          if (letterMatch) {
-            setNewGroup(letterMatch[0].toUpperCase());
-          }
-        }
-        if (parsed.indicadores_diarios) {
-          setNewTotalPrevisto(parsed.indicadores_diarios.total_previsto || 9);
-        }
-      }
-    } catch (err: any) {
-      console.error(err);
-      setAiError('Falha na comunicação com o servidor de Inteligência Artificial.');
-    } finally {
-      setAiProcessing(false);
-    }
-  };
-
-  const handleAIConfirmAndSave = async () => {
-    if (!aiResult) return;
-    setLoading(true);
-    setError('');
-
-    try {
-      const parsed = aiResult;
-      const meta = parsed.metadados || {};
-      const generatedPasscode = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + 4);
-
-      // Create DDS session
-      const sessionDocRef = await addDoc(collection(db, 'dds_sessions'), {
-        title: meta.assunto || 'DDS Importado via IA',
-        description: `DDS processado via Inteligência Artificial. Área: ${meta.area || 'Qualidade / Enfardamento'}.`,
-        shift: newShift,
-        group: newGroup,
-        executor: meta.executante || 'Responsável',
-        totalPrevisto: parsed.indicadores_diarios?.total_previsto || 9,
-        passcode: generatedPasscode,
-        expiresAt: Timestamp.fromDate(expiresAt),
-        createdAt: serverTimestamp(),
-        createdBy: auth.currentUser?.uid
-      });
-
-      // Save imported signatures
-      const participants = parsed.participantes || [];
-      const batchPromises = participants.map(async (p: any, idx: number) => {
-        const sigDocId = `imported_${sessionDocRef.id}_${idx}_${Date.now()}`;
-        const ratingMap: Record<string, string> = {
-          'Bom': 'happy',
-          'Regular': 'neutral',
-          'Ruim': 'sad',
-          'Ausente': ''
-        };
-        const mappedMood = ratingMap[p.avaliacao] || 'happy';
-
-        if (p.avaliacao !== 'Ausente') {
-          const encName = await encryptValue(p.nome || 'Colaborador');
-          return setDoc(doc(db, 'dds_signatures', sigDocId), {
-            sessionId: sessionDocRef.id,
-            sessionTitle: meta.assunto || 'DDS Importado via IA',
-            userId: `imported_user_${idx}`,
-            userName: encName,
-            timestamp: serverTimestamp(),
-            passcode: generatedPasscode,
-            mood: mappedMood,
-            evaluation: p.avaliacao || 'Bom'
-          });
-        }
-      });
-
-      await Promise.all(batchPromises);
-
-      setShowAIModal(false);
-      setAiText('');
-      setAiResult(null);
-      setSuccessMessage('DDS e participantes importados com sucesso via Inteligência Artificial!');
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3500);
-    } catch (err: any) {
-      console.error(err);
-      setError('Erro ao salvar o DDS e assinaturas processados.');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -1106,181 +974,6 @@ const DDS: React.FC = () => {
           </motion.div>
         )}
 
-        {showAIModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 overflow-y-auto"
-          >
-            <motion.div
-              initial={{ scale: 0.95, y: 15, opacity: 0 }}
-              animate={{ scale: 1, y: 0, opacity: 1 }}
-              exit={{ scale: 0.95, y: 15, opacity: 0 }}
-              className="bg-white rounded-[2rem] p-8 max-w-2xl w-full shadow-2xl relative border border-slate-100 my-8"
-            >
-              <button 
-                onClick={() => {
-                  setShowAIModal(false);
-                  setAiText('');
-                  setAiResult(null);
-                  setAiError('');
-                }}
-                className="absolute top-6 right-6 p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full hover:text-slate-700 transition-all cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-
-              <div className="flex items-center gap-3.5 mb-6">
-                <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 flex-shrink-0">
-                  <span className="text-xl">✨</span>
-                </div>
-                <div>
-                  <h3 className="text-xl font-extrabold text-slate-800 tracking-tight">Importação de DDS por Inteligência Artificial</h3>
-                  <p className="text-slate-400 text-xs font-semibold">Cole o relatório bruto ou anotações para análise instantânea</p>
-                </div>
-              </div>
-
-              {!aiResult ? (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Relatório ou Transcrição do DDS</label>
-                    <textarea
-                      rows={8}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3.5 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm leading-relaxed"
-                      placeholder="Cole informações brutas aqui... Exemplo:&#10;DDS realizado pelo Danillo Souza no turno B dia 25/08/2025. Assunto abordado foi sobre Cintos de Segurança e Movimentação de Cargas.&#10;Presentes e avaliação:&#10;- João Silva - Reação: Bom&#10;- Maria Oliveira - Reação: Regular&#10;- Pedro Santos - Ausente"
-                      value={aiText}
-                      onChange={(e) => setAiText(e.target.value)}
-                    />
-                  </div>
-
-                  {aiError && (
-                    <div className="p-4 bg-rose-50 rounded-xl border border-rose-100 text-rose-600 text-xs font-semibold">
-                      {aiError}
-                    </div>
-                  )}
-
-                  <div className="flex justify-end gap-3 mt-4">
-                    <button
-                      type="button"
-                      onClick={() => setShowAIModal(false)}
-                      className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold uppercase tracking-widest rounded-xl transition-all"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      disabled={aiProcessing || !aiText}
-                      onClick={handleAIProcess}
-                      className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold uppercase tracking-widest rounded-xl transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-emerald-100 cursor-pointer"
-                    >
-                      {aiProcessing ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Processando...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>Analisar com IA</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  <div className="p-4 bg-emerald-50/60 rounded-2xl border border-emerald-100/50">
-                    <h4 className="text-emerald-800 font-bold text-xs uppercase tracking-wider mb-3">Informações Extraídas por IA</h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs">
-                      <div>
-                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Tema / Assunto</span>
-                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.assunto || 'Não identificado'}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Executante</span>
-                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.executante || 'Não identificado'}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Turno / Escala</span>
-                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.turno || 'Não identificado'}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Data</span>
-                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.data || 'Não identificado'}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Área</span>
-                        <span className="font-bold text-slate-800 block truncate">{aiResult.metadados?.area || 'Não previsto'}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px] mb-1">Total Estimado</span>
-                        <span className="font-bold text-slate-800 block">{aiResult.indicadores_diarios?.total_previsto || 9} colaboradores</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                     <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-                       <h4 className="text-slate-700 font-bold text-xs uppercase tracking-wider">Participantes e Reação</h4>
-                       <span className="bg-emerald-600/10 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
-                         {aiResult.participantes?.length || 0} Colaboradores
-                       </span>
-                     </div>
-                     
-                     <div className="max-h-48 overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-50">
-                       {aiResult.participantes && aiResult.participantes.map((p: any, idx: number) => {
-                         const colorMap: Record<string, string> = {
-                           'Bom': 'bg-emerald-50 text-emerald-700',
-                           'Regular': 'bg-amber-50 text-amber-700',
-                           'Ruim': 'bg-rose-50 text-rose-700',
-                           'Ausente': 'bg-slate-50 text-slate-500'
-                         };
-                         return (
-                           <div key={idx} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                             <span className="text-xs font-bold text-slate-700">{p.nome}</span>
-                             <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg ${colorMap[p.avaliacao] || 'bg-slate-100 text-slate-600'}`}>
-                               {p.avaliacao}
-                             </span>
-                           </div>
-                         );
-                       })}
-                     </div>
-                  </div>
-
-                  <div className="flex bg-slate-50 p-4 rounded-xl border border-slate-100 items-start justify-between">
-                    <div>
-                      <span className="text-slate-400 font-semibold uppercase tracking-wider block text-[9px]">IDDS do Dia Calculado</span>
-                      <span className="text-lg font-black text-emerald-600">
-                        {aiResult.indicadores_diarios ? Math.round(aiResult.indicadores_diarios.idds_do_dia * 100) : 100}%
-                      </span>
-                    </div>
-                    <div className="text-right text-xs">
-                       <span className="text-slate-400 font-semibold block uppercase tracking-wider text-[9px]">Aderência Mínima</span>
-                       <span className="font-extrabold text-slate-600 block">Meta: 75% da Equipe</span>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end gap-3 mt-4">
-                    <button
-                      type="button"
-                      onClick={() => setAiResult(null)}
-                      className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold uppercase tracking-widest rounded-xl transition-all cursor-pointer"
-                    >
-                      Voltar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleAIConfirmAndSave}
-                      className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-emerald-100 cursor-pointer"
-                    >
-                      <span>Confirmar e Salvar DDS</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          </motion.div>
-        )}
       </AnimatePresence>
 
       <div>
@@ -1306,16 +999,6 @@ const DDS: React.FC = () => {
                     {editingSession ? 'Editar DDS' : 'Gestão de DDS'}
                   </h3>
                </div>
-               
-               {!editingSession && (isManager || isAdmin) && (
-                 <button
-                   type="button"
-                   onClick={() => setShowAIModal(true)}
-                   className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl transition-all shadow-md shadow-emerald-900/30 active:scale-95 cursor-pointer flex-shrink-0"
-                 >
-                   <span>Mágico de IA ✨</span>
-                 </button>
-               )}
             </div>
 
             {editingSession && (
@@ -1597,18 +1280,30 @@ const DDS: React.FC = () => {
 
             {activeSession ? (
               <form onSubmit={handleSign} className="space-y-6">
-                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                   <div className="flex items-center gap-2 mb-2">
-                     <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded uppercase">
-                       {activeSession.shift}
-                     </span>
-                     <span className="px-2 py-0.5 bg-slate-200 text-slate-700 text-[10px] font-bold rounded uppercase">
-                       Letra {activeSession.group}
-                     </span>
+                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex items-start justify-between gap-4">
+                   <div>
+                     <div className="flex items-center gap-2 mb-2">
+                       <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded uppercase">
+                         {activeSession.shift}
+                       </span>
+                       <span className="px-2 py-0.5 bg-slate-200 text-slate-700 text-[10px] font-bold rounded uppercase">
+                         Letra {activeSession.group}
+                       </span>
+                     </div>
+                     <h4 className="font-bold text-slate-900 mb-1">{activeSession.title}</h4>
+                     <p className="text-sm text-slate-500 mb-2">{activeSession.description || 'Nenhuma descrição fornecida.'}</p>
+                     <p className="text-xs text-slate-400">Executante: <span className="font-bold text-slate-600">{activeSession.executor}</span></p>
                    </div>
-                   <h4 className="font-bold text-slate-900 mb-1">{activeSession.title}</h4>
-                   <p className="text-sm text-slate-500 mb-2">{activeSession.description || 'Nenhuma descrição fornecida.'}</p>
-                   <p className="text-xs text-slate-400 mb-4">Executante: <span className="font-bold text-slate-600">{activeSession.executor}</span></p>
+                   {(isAdmin || isMaster) && (
+                     <button
+                       type="button"
+                       onClick={() => handleDeleteSession(activeSession.id)}
+                       className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100 flex-shrink-0"
+                       title="Excluir Sessão de DDS e Assinaturas"
+                     >
+                       <Trash2 className="w-5 h-5 text-rose-500" />
+                     </button>
+                   )}
                 </div>
 
                 {!activeSession.passcode ? (
@@ -2118,11 +1813,11 @@ const DDS: React.FC = () => {
                             </div>
                           )}
                           
-                          {isAdmin && (
+                          {(isAdmin || isMaster) && (
                             <button
                               onClick={() => handleDeleteSession(session.id)}
                               className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                              title="Excluir Sessão"
+                              title="Excluir Sessão e Assinaturas"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -2300,9 +1995,9 @@ const DDS: React.FC = () => {
                 <div className="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
                   <AlertTriangle className="w-8 h-8 text-rose-500" />
                 </div>
-                <h3 className="text-xl font-bold text-slate-900 text-center mb-2">Excluir Sessão?</h3>
+                <h3 className="text-xl font-bold text-slate-900 text-center mb-2">Excluir Sessão de DDS?</h3>
                 <p className="text-slate-500 text-center text-sm mb-8">
-                  Esta ação é irreversível. Todas as assinaturas serão mantidas, mas o acesso à sessão será removido.
+                  Esta ação é irreversível. O DDS e todas as assinaturas vinculadas a ele serão excluídos permanentemente.
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <button
