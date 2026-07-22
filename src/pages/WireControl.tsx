@@ -186,113 +186,22 @@ const WireControl: React.FC = () => {
             <p className="text-slate-500 font-medium lg:text-lg">Gestão inteligente de recebimento e consumo de matérias-primas</p>
           </div>
 
-          {/* New Desktop Tabs - Visible on lg screens */}
-          <div className="hidden lg:flex items-center p-1.5 bg-slate-100/50 rounded-2xl border border-slate-200/60 backdrop-blur-sm">
-            {(isManager || isAdmin || isMaster) && (
-              <button
-                onClick={() => setActiveTab('dashboard')}
-                className={cn(
-                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                  activeTab === 'dashboard' 
-                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-                )}
-              >
-                <LayoutDashboard className="w-4 h-4" /> Painel
-              </button>
-            )}
-            <button
-              onClick={() => setActiveTab('receiving')}
-              className={cn(
-                "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                activeTab === 'receiving' 
-                  ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-              )}
-            >
-              <PackagePlus className="w-4 h-4" /> Receber
-            </button>
-            <button
-              onClick={() => setActiveTab('consumption')}
-              className={cn(
-                "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                activeTab === 'consumption' 
-                  ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-              )}
-            >
-              <Barcode className="w-4 h-4" /> Consumo
-            </button>
-            {(isManager || isAdmin || isMaster) && (
-              <button
-                onClick={() => setActiveTab('audit')}
-                className={cn(
-                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                  activeTab === 'audit' 
-                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-                )}
-              >
-                <ClipboardList className="w-4 h-4" /> Auditoria
-              </button>
-            )}
-            {(isManager || isAdmin || isMaster) && (
-              <button
-                onClick={() => setActiveTab('history')}
-                className={cn(
-                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                  activeTab === 'history' 
-                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-                )}
-              >
-                <History className="w-4 h-4" /> Histórico
-              </button>
-            )}
-            {(isManager || isAdmin || isMaster) && (
-              <button
-                onClick={() => setActiveTab('config')}
-                className={cn(
-                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                  activeTab === 'config' 
-                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-                )}
-              >
-                <Settings className="w-4 h-4" /> Ajustes
-              </button>
-            )}
-            {(isAdmin || isMaster) && (
-              <button
-                onClick={() => setActiveTab('bulk_import')}
-                className={cn(
-                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                  activeTab === 'bulk_import' 
-                    ? "bg-white text-emerald-600 shadow-md shadow-slate-200/50" 
-                    : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-                )}
-              >
-                <FileSpreadsheet className="w-4 h-4" /> Importar Massa
-              </button>
-            )}
-          </div>
-
-          {/* Mobile Tab Control - Visible on md and below */}
-          <div className="lg:hidden relative">
+          {/* Dropdown Navigation Submenu - Style matching other modules */}
+          <div className="relative z-30">
             <button
               onClick={() => setShowTabMenu(!showTabMenu)}
-              className="w-full flex items-center justify-between gap-3 px-5 py-4 bg-white border border-slate-200 rounded-2xl text-sm font-black uppercase tracking-tight text-slate-700 shadow-sm transition-all active:scale-[0.98]"
+              className="w-full sm:w-auto flex items-center justify-between gap-3 px-5 py-3.5 bg-white border border-slate-200/90 hover:border-emerald-300 rounded-2xl text-xs font-black uppercase tracking-wider text-slate-800 shadow-sm transition-all focus:outline-none min-w-[240px] cursor-pointer active:scale-95"
             >
-              <div className="flex items-center gap-3">
-                {activeTab === 'dashboard' && <><LayoutDashboard className="w-5 h-5 text-emerald-600" /> Painel</>}
-                {activeTab === 'receiving' && <><PackagePlus className="w-5 h-5 text-emerald-600" /> Receber</>}
-                {activeTab === 'consumption' && <><Barcode className="w-5 h-5 text-emerald-600" /> Consumo</>}
-                {activeTab === 'audit' && <><ClipboardList className="w-5 h-5 text-emerald-600" /> Auditoria</>}
-                {activeTab === 'history' && <><History className="w-5 h-5 text-emerald-600" /> Histórico</>}
-                {activeTab === 'config' && <><Settings className="w-5 h-5 text-emerald-600" /> Ajustes</>}
-                {activeTab === 'bulk_import' && <><FileSpreadsheet className="w-5 h-5 text-emerald-600" /> Importar Massa</>}
+              <div className="flex items-center gap-2.5">
+                {activeTab === 'dashboard' && <><LayoutDashboard className="w-4 h-4 text-emerald-600" /> Painel Geral</>}
+                {activeTab === 'receiving' && <><PackagePlus className="w-4 h-4 text-emerald-600" /> Recebimento</>}
+                {activeTab === 'consumption' && <><Barcode className="w-4 h-4 text-emerald-600" /> Registrar Consumo</>}
+                {activeTab === 'audit' && <><ClipboardList className="w-4 h-4 text-emerald-600" /> Auditoria de Arames</>}
+                {activeTab === 'history' && <><History className="w-4 h-4 text-emerald-600" /> Histórico de Lotes</>}
+                {activeTab === 'config' && <><Settings className="w-4 h-4 text-emerald-600" /> Ajustes do Sistema</>}
+                {activeTab === 'bulk_import' && <><FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Importação em Massa</>}
               </div>
-              <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showTabMenu && "rotate-180")} />
+              <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform duration-200", showTabMenu && "rotate-180")} />
             </button>
 
             <AnimatePresence>
@@ -303,11 +212,15 @@ const WireControl: React.FC = () => {
                     onClick={() => setShowTabMenu(false)} 
                   />
                   <motion.div
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    initial={{ opacity: 0, y: 8, scale: 0.95 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                    className="absolute right-0 mt-2 w-full min-w-[240px] bg-white border border-slate-100 rounded-3xl shadow-2xl z-20 overflow-hidden p-2"
+                    exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute right-0 left-0 sm:left-auto mt-2 w-full sm:w-64 bg-white border border-slate-150 rounded-2xl shadow-2xl z-20 overflow-hidden p-1.5 focus:outline-none"
                   >
+                    <div className="px-3 py-1.5 mb-1 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Selecione o Submenu
+                    </div>
                     {[
                       { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard, roles: [isManager, isAdmin, isMaster] },
                       { id: 'receiving', label: 'Recebimento', icon: PackagePlus },
@@ -318,16 +231,26 @@ const WireControl: React.FC = () => {
                       { id: 'bulk_import', label: 'Importação em Massa', icon: FileSpreadsheet, roles: [isAdmin, isMaster] }
                     ].map((tab: any) => {
                       if (tab.roles && !tab.roles.some(Boolean)) return null;
+                      const isSelected = activeTab === tab.id;
+                      const IconComp = tab.icon;
                       return (
                         <button
                           key={tab.id}
                           onClick={() => { setActiveTab(tab.id); setShowTabMenu(false); }}
                           className={cn(
-                            "w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-left text-xs font-black uppercase tracking-tight transition-all",
-                            activeTab === tab.id ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                            "w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all cursor-pointer",
+                            isSelected
+                              ? "bg-emerald-50 text-emerald-700 font-bold"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                           )}
                         >
-                          <tab.icon className="w-4 h-4" /> {tab.label}
+                          <div className="flex items-center gap-2.5">
+                            <IconComp className={cn("w-4 h-4", isSelected ? "text-emerald-600" : "text-slate-400")} />
+                            <span>{tab.label}</span>
+                          </div>
+                          {isSelected && (
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                          )}
                         </button>
                       );
                     })}

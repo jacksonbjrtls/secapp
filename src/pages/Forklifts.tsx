@@ -524,8 +524,9 @@ Este é um teste do SecApp - Sistema de Gestão de Segurança.`;
     }
   };
 
-  const deleteChecklist = async (id: string) => {
-    if (!isAdmin && !isManager && !isMaster) return;
+  const deleteChecklist = async (id: string, logUserId?: string) => {
+    const isOwner = !!(logUserId && auth.currentUser?.uid && logUserId === auth.currentUser.uid);
+    if (!isAdmin && !isManager && !isMaster && !isOwner) return;
     setSubmitting(true);
     try {
       await deleteDoc(doc(db, 'forklift_checklists', id));
@@ -980,12 +981,13 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                         </td>
                         <td className="px-6 py-4 text-right">
                            <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
-                             {(isAdmin || isManager || isMaster) && (
+                             {(isAdmin || isManager || isMaster || (log.userId && auth.currentUser?.uid && log.userId === auth.currentUser.uid)) && (
                                <button 
                                  onClick={(e) => {
                                    e.stopPropagation();
                                    setDeleteConfirm({
                                      id: log.id,
+                                     userId: log.userId,
                                      type: 'checklist',
                                      title: `Inspeção de ${log.conductorName} (${log.forkliftNumber})`
                                    });
@@ -2025,7 +2027,7 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                     if (deleteConfirm.type === 'forklift') {
                       deleteForklift(deleteConfirm.id);
                     } else if (deleteConfirm.type === 'checklist') {
-                      deleteChecklist(deleteConfirm.id);
+                      deleteChecklist(deleteConfirm.id, deleteConfirm.userId);
                     } else {
                       deleteCheckItem(deleteConfirm.id);
                     }
