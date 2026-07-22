@@ -36,7 +36,8 @@ import {
   Gauge,
   X,
   FileDown,
-  Activity
+  Activity,
+  Loader2
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -75,7 +76,7 @@ const WORK_FRONT_OPTIONS = [
 ] as const;
 
 export default function StopsControl() {
-  const { user, isManager, isAdmin, isMaster } = useAuth();
+  const { user, isManager, isAdmin, isMaster, logoUrl } = useAuth();
   
   // Tabs: 'register' | 'history' | 'stats'
   const [activeTab, setActiveTab] = useState<'register' | 'history' | 'stats'>('register');
@@ -129,6 +130,9 @@ export default function StopsControl() {
 
   // Selected report for viewing details modal
   const [viewingReport, setViewingReport] = useState<StopReport | null>(null);
+
+  // Selected report for deletion confirmation modal
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; title: string } | null>(null);
 
   // Report that was just saved (to display success modal and download PDF)
   const [justSavedReport, setJustSavedReport] = useState<StopReport | null>(null);
@@ -399,18 +403,27 @@ export default function StopsControl() {
   };
 
   // Delete a report
-  const handleDeleteReport = async (reportId: string) => {
-    if (!window.confirm("Deseja realmente excluir este registro de parada permanentemente?")) return;
-    
+  const handleDeleteReport = (report: StopReport) => {
+    setDeleteConfirm({
+      id: report.id,
+      title: `Parada de ${report.lineName || report.lineId} (${formatDateToBR(report.date)})`
+    });
+  };
+
+  const confirmDeleteReport = async () => {
+    if (!deleteConfirm) return;
+    setSubmitting(true);
     try {
-      await deleteDoc(doc(db, 'stops_reports', reportId));
-      alert("Registro excluído com sucesso!");
-      if (viewingReport?.id === reportId) {
+      await deleteDoc(doc(db, 'stops_reports', deleteConfirm.id));
+      if (viewingReport?.id === deleteConfirm.id) {
         setViewingReport(null);
       }
+      setDeleteConfirm(null);
     } catch (err) {
       console.error("Error deleting stop report:", err);
-      alert("Erro ao excluir registro.");
+      handleFirestoreError(err, OperationType.DELETE, `stops_reports/${deleteConfirm.id}`);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -598,8 +611,94 @@ export default function StopsControl() {
     };
   }, [filteredReports]);
 
+  // Sanitize text for jsPDF output
+  const sanitizePdfText = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return text
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x00-\x7F]/g, '');
+  };
+
+  // Render small SecApp branding footer on all PDF pages
+  const addSecAppPdfFooter = async (docPdf: jsPDF) => {
+    const totalPages = (docPdf as any).internal.getNumberOfPages();
+    let logoBase64: string | null = null;
+    
+    try {
+      logoBase64 = await new Promise<string | null>((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              resolve(canvas.toDataURL('image/png'));
+              return;
+            }
+          } catch {
+            // ignore canvas error
+          }
+          resolve(null);
+        };
+        img.onerror = () => resolve(null);
+        img.src = logoUrl || '/logo_file/logo_400pixel.png';
+      });
+    } catch {
+      logoBase64 = null;
+    }
+
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      docPdf.setPage(pageNum);
+      
+      const pageWidth = docPdf.internal.pageSize.getWidth();
+      const pageHeight = docPdf.internal.pageSize.getHeight();
+      const footerY = pageHeight - 10;
+
+      // Subtle horizontal divider
+      docPdf.setDrawColor(226, 232, 240); // slate-200
+      docPdf.setLineWidth(0.3);
+      docPdf.line(15, footerY - 4, pageWidth - 15, footerY - 4);
+
+      let textStartX = 15;
+      if (logoBase64) {
+        try {
+          docPdf.addImage(logoBase64, 'PNG', 15, footerY - 3, 10, 4);
+          textStartX = 27;
+        } catch {
+          // ignore addImage fallback
+        }
+      }
+
+      if (logoBase64) {
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(8);
+        docPdf.setTextColor(148, 163, 184); // slate-400
+        docPdf.text('| Sistema de Gestão Operacional', textStartX, footerY + 0.8);
+      } else {
+        // Fallback text if logo is unavailable
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8);
+        docPdf.setTextColor(5, 150, 105); // emerald-600
+        docPdf.text('SecApp', textStartX, footerY + 0.8);
+
+        const secAppWidth = docPdf.getTextWidth('SecApp');
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setTextColor(148, 163, 184); // slate-400
+        docPdf.text(' | Sistema de Gestão Operacional', textStartX + secAppWidth, footerY + 0.8);
+      }
+
+      // Page numbers on right
+      docPdf.text(`Página ${pageNum} de ${totalPages}`, pageWidth - 15, footerY + 0.8, { align: 'right' });
+    }
+  };
+
   // Export selected Stop Report to PDF
-  const handleExportSinglePDF = (report: StopReport) => {
+  const handleExportSinglePDF = async (report: StopReport) => {
     const docPdf = new jsPDF();
     const duration = getMinutesDiff(report.startTime, report.endTime);
 
@@ -612,42 +711,40 @@ export default function StopsControl() {
       return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
     };
 
-    // Header styling
-    docPdf.setFillColor(30, 41, 59); // slate-800
+    // Header styling - Standardized Emerald Theme
+    docPdf.setFillColor(5, 150, 105); // emerald-600
     docPdf.rect(0, 0, 210, 40, 'F');
     
     docPdf.setTextColor(255, 255, 255);
     docPdf.setFont('helvetica', 'bold');
-    docPdf.setFontSize(20);
-    docPdf.text('RELATÓRIO DE CONTROLE DE PARADA', 15, 25);
+    docPdf.setFontSize(18);
+    docPdf.text(sanitizePdfText('RELATÓRIO DE CONTROLE DE PARADA'), 15, 22);
     
-    // Footer / Metadata line
+    // Subtitle / Metadata line
     docPdf.setFontSize(9);
     docPdf.setFont('helvetica', 'normal');
-    docPdf.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 150, 35);
+    docPdf.setTextColor(190, 242, 219); // emerald-100
+    docPdf.text(sanitizePdfText(`Gerado em: ${new Date().toLocaleString('pt-BR')}`), 15, 32);
 
     // Section 1: General Info
-    docPdf.setTextColor(30, 41, 59);
-    docPdf.setFontSize(14);
+    docPdf.setTextColor(5, 150, 105);
+    docPdf.setFontSize(13);
     docPdf.setFont('helvetica', 'bold');
-    docPdf.text('Informações Gerais da Parada', 15, 55);
-    
-    docPdf.setFontSize(10);
-    docPdf.setFont('helvetica', 'normal');
+    docPdf.text(sanitizePdfText('Informações Gerais da Parada'), 15, 53);
     
     const generalData = [
-      ['Data:', formatDateToBR(report.date), 'Tipo de Parada:', report.type.toUpperCase()],
-      ['Local (Linha):', report.lineName || report.lineId, 'Tempo de Rejeição:', `${report.rejectionTime} min`],
-      ['Hora Início:', report.startTime, 'Hora Término:', report.endTime],
-      ['Duração:', formatDurationString(duration), 'Registrado por:', report.userName]
+      [sanitizePdfText('Data:'), formatDateToBR(report.date), sanitizePdfText('Tipo de Parada:'), report.type.toUpperCase()],
+      [sanitizePdfText('Local (Linha):'), sanitizePdfText(report.lineName || report.lineId), sanitizePdfText('Tempo de Rejeição:'), `${report.rejectionTime || 0} min`],
+      [sanitizePdfText('Hora Início:'), report.startTime, sanitizePdfText('Hora Término:'), report.endTime],
+      [sanitizePdfText('Duração:'), formatDurationString(duration), sanitizePdfText('Registrado por:'), sanitizePdfText(report.userName)]
     ];
 
     autoTable(docPdf, {
-      startY: 60,
+      startY: 58,
       head: [],
       body: generalData,
       theme: 'plain',
-      styles: { cellPadding: 2, fontSize: 10, textColor: [51, 65, 85] },
+      styles: { cellPadding: 2, fontSize: 9.5, textColor: [51, 65, 85] },
       columnStyles: {
         0: { fontStyle: 'bold', cellWidth: 35 },
         1: { cellWidth: 65 },
@@ -657,22 +754,23 @@ export default function StopsControl() {
     });
 
     // Section 2: Cutter speeds
-    let currentY = (docPdf as any).lastAutoTable.finalY + 10;
-    docPdf.setFontSize(14);
+    let currentY = (docPdf as any).lastAutoTable.finalY + 8;
+    docPdf.setTextColor(5, 150, 105);
+    docPdf.setFontSize(13);
     docPdf.setFont('helvetica', 'bold');
-    docPdf.text('Velocidade das Cortadeiras', 15, currentY);
+    docPdf.text(sanitizePdfText('Velocidade das Cortadeiras'), 15, currentY);
 
     const speedData = [
-      ['Cortadeira Linha MS1:', `${report.cutterSpeedMS1 || 0} m/min`],
-      ['Cortadeira Linha MS2:', `${report.cutterSpeedMS2 || 0} m/min`]
+      [sanitizePdfText('Cortadeira Linha MS1:'), `${report.cutterSpeedMS1 || 0} m/min`],
+      [sanitizePdfText('Cortadeira Linha MS2:'), `${report.cutterSpeedMS2 || 0} m/min`]
     ];
 
     autoTable(docPdf, {
-      startY: currentY + 5,
+      startY: currentY + 4,
       head: [],
       body: speedData,
       theme: 'plain',
-      styles: { cellPadding: 2, fontSize: 10, textColor: [51, 65, 85] },
+      styles: { cellPadding: 2, fontSize: 9.5, textColor: [51, 65, 85] },
       columnStyles: {
         0: { fontStyle: 'bold', cellWidth: 60 },
         1: { cellWidth: 130 }
@@ -680,24 +778,31 @@ export default function StopsControl() {
     });
 
     // Section 3: Work fronts
-    currentY = (docPdf as any).lastAutoTable.finalY + 10;
-    docPdf.setFontSize(14);
+    currentY = (docPdf as any).lastAutoTable.finalY + 8;
+    docPdf.setTextColor(5, 150, 105);
+    docPdf.setFontSize(13);
     docPdf.setFont('helvetica', 'bold');
-    docPdf.text('Atividades e Frentes de Trabalho', 15, currentY);
+    docPdf.text(sanitizePdfText('Atividades e Frentes de Trabalho'), 15, currentY);
 
     if (report.workFronts.length === 0) {
-      docPdf.setFontSize(10);
+      docPdf.setFontSize(9.5);
       docPdf.setFont('helvetica', 'italic');
       docPdf.setTextColor(100, 116, 139);
-      docPdf.text('Nenhuma frente de trabalho foi registrada nesta parada.', 15, currentY + 8);
+      docPdf.text(sanitizePdfText('Nenhuma frente de trabalho foi registrada nesta parada.'), 15, currentY + 8);
       currentY += 15;
     } else {
-      const frontsHeaders = [['Frente de Trabalho', 'Descrição das Atividades Realizadas', 'Início', 'Fim', 'Duração']];
+      const frontsHeaders = [[
+        sanitizePdfText('Frente de Trabalho'),
+        sanitizePdfText('Descrição das Atividades Realizadas'),
+        sanitizePdfText('Início'),
+        sanitizePdfText('Fim'),
+        sanitizePdfText('Duração')
+      ]];
       const frontsBody = report.workFronts.map(wf => {
         const wfDuration = getMinutesDiff(wf.startTime, wf.endTime);
         return [
-          wf.front,
-          wf.description || 'Sem detalhes informados.',
+          sanitizePdfText(wf.front),
+          sanitizePdfText(wf.description || 'Sem detalhes informados.'),
           wf.startTime,
           wf.endTime,
           formatDurationString(wfDuration)
@@ -705,12 +810,12 @@ export default function StopsControl() {
       });
 
       autoTable(docPdf, {
-        startY: currentY + 5,
+        startY: currentY + 4,
         head: frontsHeaders,
         body: frontsBody,
         theme: 'striped',
-        headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255] },
-        styles: { fontSize: 9, cellPadding: 3 },
+        headStyles: { fillColor: [5, 150, 105], textColor: [255, 255, 255], fontStyle: 'bold' },
+        styles: { fontSize: 8.5, cellPadding: 3 },
         columnStyles: {
           0: { cellWidth: 35, fontStyle: 'bold' },
           1: { cellWidth: 100 },
@@ -730,9 +835,10 @@ export default function StopsControl() {
         currentY = 20;
       }
 
-      docPdf.setFontSize(14);
+      docPdf.setTextColor(5, 150, 105);
+      docPdf.setFontSize(13);
       docPdf.setFont('helvetica', 'bold');
-      docPdf.text('Cronograma de Frentes de Trabalho', 15, currentY);
+      docPdf.text(sanitizePdfText('Cronograma de Frentes de Trabalho'), 15, currentY);
       currentY += 8;
 
       const chartX = 55;
@@ -767,10 +873,10 @@ export default function StopsControl() {
         const rowY = currentY + (index * 10);
         
         // Front label on the left
-        docPdf.setFontSize(9);
+        docPdf.setFontSize(8.5);
         docPdf.setFont('helvetica', 'bold');
         docPdf.setTextColor(51, 65, 85); // slate-700
-        docPdf.text(wf.front, 15, rowY + 5);
+        docPdf.text(sanitizePdfText(wf.front), 15, rowY + 5);
 
         // Calculate offsets and clamp to total duration
         let startMins = getMinutesDiff(report.startTime, wf.startTime);
@@ -793,13 +899,14 @@ export default function StopsControl() {
 
         // Color coding for each work front
         let color = [100, 116, 139]; // Default Slate
-        if (wf.front === 'Mecânica') color = [249, 115, 22]; // Orange
-        else if (wf.front === 'Elétrica') color = [245, 158, 11]; // Amber
-        else if (wf.front === 'Instrumentação') color = [59, 130, 246]; // Blue
-        else if (wf.front === 'Hidráulica') color = [6, 182, 212]; // Cyan
-        else if (wf.front === 'Civil') color = [16, 185, 129]; // Emerald
-        else if (wf.front === 'Caldeiraria') color = [244, 63, 94]; // Rose
-        else if (wf.front === 'Operacional') color = [139, 92, 246]; // Violet / Purple
+        const frontStr: string = wf.front;
+        if (frontStr.includes('Mecân') || frontStr.includes('Mecan')) color = [249, 115, 22]; // Orange
+        else if (frontStr.includes('Elétr') || frontStr.includes('Eletr')) color = [245, 158, 11]; // Amber
+        else if (frontStr.includes('Instrumenta')) color = [16, 185, 129]; // Emerald
+        else if (frontStr.includes('Hidrául') || frontStr.includes('Hidraul')) color = [6, 182, 212]; // Cyan
+        else if (frontStr.includes('Civil')) color = [16, 185, 129]; // Emerald
+        else if (frontStr.includes('Caldeiraria')) color = [244, 63, 94]; // Rose
+        else if (frontStr.includes('Operacional')) color = [139, 92, 246]; // Violet / Purple
 
         // Draw the colored bar
         docPdf.setFillColor(color[0], color[1], color[2]);
@@ -827,66 +934,85 @@ export default function StopsControl() {
       currentY = 20;
     }
 
-    docPdf.setFontSize(14);
+    docPdf.setTextColor(5, 150, 105);
+    docPdf.setFontSize(13);
     docPdf.setFont('helvetica', 'bold');
-    docPdf.text('Observações Finais', 15, currentY);
+    docPdf.text(sanitizePdfText('Observações Finais'), 15, currentY);
     
-    docPdf.setFontSize(10);
+    docPdf.setFontSize(9.5);
     docPdf.setFont('helvetica', 'normal');
     docPdf.setTextColor(51, 65, 85);
     
-    const obsText = report.observation || 'Nenhuma observação informada.';
+    const obsText = sanitizePdfText(report.observation || 'Nenhuma observação informada.');
     const splitObs = docPdf.splitTextToSize(obsText, 180);
     docPdf.text(splitObs, 15, currentY + 6);
 
+    // Add SecApp footer branding
+    await addSecAppPdfFooter(docPdf);
+
     // Save File
-    docPdf.save(`Controle_Parada_${formatDateToBR(report.date).replace(/\//g, '-')}_${report.lineName || 'Linha'}.pdf`);
+    docPdf.save(`Controle_Parada_${formatDateToBR(report.date).replace(/\//g, '-')}_${sanitizePdfText(report.lineName || 'Linha')}.pdf`);
   };
 
   // Export full table of stops to PDF
-  const handleExportFullPDF = () => {
+  const handleExportFullPDF = async () => {
     const docPdf = new jsPDF('landscape');
     
-    // Header
-    docPdf.setFillColor(30, 41, 59);
+    // Header styling - Standardized Emerald Theme
+    docPdf.setFillColor(5, 150, 105); // emerald-600
     docPdf.rect(0, 0, 297, 35, 'F');
     
     docPdf.setTextColor(255, 255, 255);
     docPdf.setFont('helvetica', 'bold');
     docPdf.setFontSize(18);
-    docPdf.text('CONTROLE DE PARADAS - RELATÓRIO GERAL', 15, 20);
+    docPdf.text(sanitizePdfText('CONTROLE DE PARADAS - RELATÓRIO GERAL'), 15, 18);
     
     docPdf.setFontSize(9);
     docPdf.setFont('helvetica', 'normal');
-    docPdf.text(`Filtrado por data: ${filterStartDate ? formatDateToBR(filterStartDate) : 'Início'} até ${filterEndDate ? formatDateToBR(filterEndDate) : 'Fim'} | Total registros: ${filteredReports.length}`, 15, 28);
-    docPdf.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 220, 28);
+    docPdf.setTextColor(190, 242, 219); // emerald-100
+    docPdf.text(sanitizePdfText(`Filtrado por data: ${filterStartDate ? formatDateToBR(filterStartDate) : 'Início'} até ${filterEndDate ? formatDateToBR(filterEndDate) : 'Fim'} | Total registros: ${filteredReports.length}`), 15, 27);
+    docPdf.text(sanitizePdfText(`Gerado em: ${new Date().toLocaleString('pt-BR')}`), 210, 27);
 
-    const headers = [['Data', 'Tipo', 'Local/Linha', 'Início', 'Término', 'Duração', 'Rejeição', 'MS1 Speed', 'MS2 Speed', 'Frentes de Trabalho']];
+    const headers = [[
+      sanitizePdfText('Data'),
+      sanitizePdfText('Tipo'),
+      sanitizePdfText('Local/Linha'),
+      sanitizePdfText('Início'),
+      sanitizePdfText('Término'),
+      sanitizePdfText('Duração'),
+      sanitizePdfText('Rejeição'),
+      sanitizePdfText('MS1 Speed'),
+      sanitizePdfText('MS2 Speed'),
+      sanitizePdfText('Frentes de Trabalho')
+    ]];
     const body = filteredReports.map(r => {
       const duration = getMinutesDiff(r.startTime, r.endTime);
       const frontsStr = r.workFronts.map(wf => wf.front).join(', ');
       return [
         formatDateToBR(r.date),
         r.type.toUpperCase(),
-        r.lineName || r.lineId,
+        sanitizePdfText(r.lineName || r.lineId),
         r.startTime,
         r.endTime,
         formatDurationString(duration),
         `${r.rejectionTime || 0}m`,
         `${r.cutterSpeedMS1 || 0} m/min`,
         `${r.cutterSpeedMS2 || 0} m/min`,
-        frontsStr || 'Nenhuma'
+        sanitizePdfText(frontsStr || 'Nenhuma')
       ];
     });
 
     autoTable(docPdf, {
-      startY: 45,
+      startY: 42,
       head: headers,
       body: body,
       theme: 'grid',
-      headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontSize: 9 },
-      styles: { fontSize: 8, cellPadding: 2 }
+      headStyles: { fillColor: [5, 150, 105], textColor: [255, 255, 255], fontSize: 8.5, fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 2.5 }
     });
+
+    // Add SecApp footer branding
+    await addSecAppPdfFooter(docPdf);
 
     docPdf.save(`Controle_Paradas_Geral_${new Date().toISOString().split('T')[0]}.pdf`);
   };
@@ -895,11 +1021,11 @@ export default function StopsControl() {
     <div className="max-w-7xl mx-auto space-y-6 pb-12 px-4" id="stops-control-container">
       {/* Top Banner with animated background */}
       <div className="relative overflow-hidden bg-slate-900 rounded-[2.5rem] text-white p-8 md:p-10 shadow-xl border border-slate-800">
-        <div className="absolute inset-0 bg-radial-gradient from-blue-900/30 via-transparent to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-radial-gradient from-emerald-900/30 via-transparent to-transparent pointer-events-none" />
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <div className="p-3 bg-blue-600/20 text-blue-400 rounded-2xl border border-blue-500/20">
+              <div className="p-3 bg-emerald-600/20 text-emerald-400 rounded-2xl border border-emerald-500/20">
                 <Clock className="w-8 h-8" />
               </div>
               <h1 className="text-3xl font-black tracking-tight font-sans">Controle de Parada</h1>
@@ -915,7 +1041,7 @@ export default function StopsControl() {
               className={cn(
                 "px-5 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all",
                 activeTab === 'register'
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20 border border-blue-500"
+                  ? "bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 border border-emerald-500"
                   : "bg-slate-800/60 text-slate-300 hover:bg-slate-800 border border-slate-700/50"
               )}
             >
@@ -929,7 +1055,7 @@ export default function StopsControl() {
               className={cn(
                 "px-5 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all",
                 activeTab === 'history'
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20 border border-blue-500"
+                  ? "bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 border border-emerald-500"
                   : "bg-slate-800/60 text-slate-300 hover:bg-slate-800 border border-slate-700/50"
               )}
             >
@@ -943,7 +1069,7 @@ export default function StopsControl() {
               className={cn(
                 "px-5 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all",
                 activeTab === 'stats'
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20 border border-blue-500"
+                  ? "bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 border border-emerald-500"
                   : "bg-slate-800/60 text-slate-300 hover:bg-slate-800 border border-slate-700/50"
               )}
             >
@@ -988,7 +1114,7 @@ export default function StopsControl() {
                 {/* General parameters Card */}
                 <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
-                    <Sliders className="w-5 h-5 text-blue-500" />
+                    <Sliders className="w-5 h-5 text-emerald-600" />
                     <h2 className="text-lg font-bold text-slate-900">Parâmetros da Parada</h2>
                   </div>
 
@@ -1002,7 +1128,7 @@ export default function StopsControl() {
                           className={cn(
                             "py-3 rounded-xl text-xs font-bold uppercase transition-all border",
                             formType === 'programada'
-                              ? "bg-sky-50 text-sky-700 border-sky-300 shadow-sm"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-300 shadow-sm"
                               : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
                           )}
                         >
@@ -1032,7 +1158,7 @@ export default function StopsControl() {
                           required
                           value={formDate}
                           onChange={(e) => setFormDate(e.target.value)}
-                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-800"
+                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-800"
                         />
                       </div>
                     </div>
@@ -1044,7 +1170,7 @@ export default function StopsControl() {
                         <select
                           value={formLineId}
                           onChange={(e) => setFormLineId(e.target.value)}
-                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-800 appearance-none"
+                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-800 appearance-none"
                         >
                           {availableLines.map(line => (
                             <option key={line.id} value={line.id}>{line.name}</option>
@@ -1063,7 +1189,7 @@ export default function StopsControl() {
                           placeholder="Ex: 15"
                           value={formRejectionTime}
                           onChange={(e) => setFormRejectionTime(e.target.value)}
-                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-800"
+                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-800"
                         />
                       </div>
                     </div>
@@ -1077,7 +1203,7 @@ export default function StopsControl() {
                           required
                           value={formStartTime}
                           onChange={(e) => setFormStartTime(e.target.value)}
-                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-800"
+                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-800"
                         />
                       </div>
                     </div>
@@ -1091,16 +1217,16 @@ export default function StopsControl() {
                           required
                           value={formEndTime}
                           onChange={(e) => setFormEndTime(e.target.value)}
-                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-800"
+                          className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-800"
                         />
                       </div>
                     </div>
                   </div>
 
                   {/* Downtime display pill */}
-                  <div className="flex items-center gap-2 p-4 bg-blue-50 border border-blue-100 rounded-2xl">
-                    <Info className="w-5 h-5 text-blue-500 shrink-0" />
-                    <span className="text-xs font-bold text-blue-800">
+                  <div className="flex items-center gap-2 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl">
+                    <Info className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span className="text-xs font-bold text-emerald-800">
                       Duração Total Calculada da Parada: <span className="underline">{formatDurationString(calculatedStopDuration)}</span>
                     </span>
                   </div>
@@ -1109,7 +1235,7 @@ export default function StopsControl() {
                 {/* Cutter speeds Card */}
                 <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
-                    <Gauge className="w-5 h-5 text-blue-500" />
+                    <Gauge className="w-5 h-5 text-emerald-600" />
                     <h2 className="text-lg font-bold text-slate-900">Velocidade das Cortadeiras durante a Parada</h2>
                   </div>
 
@@ -1117,16 +1243,16 @@ export default function StopsControl() {
                     <div>
                       <div className="flex justify-between items-center mb-1">
                         <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Linha MS1 (m/min)</label>
-                        <span className="text-xs font-extrabold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100">{formSpeedMS1} m/min</span>
+                        <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">{formSpeedMS1} m/min</span>
                       </div>
                       <input
                         type="range"
                         min="0"
                         max="250"
-                        step="5"
+                        step="1"
                         value={formSpeedMS1}
                         onChange={(e) => setFormSpeedMS1(Number(e.target.value))}
-                        className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                        className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-600"
                       />
                       <div className="flex justify-between text-[10px] font-bold text-slate-400 px-1 mt-1">
                         <span>0 m/min</span>
@@ -1138,16 +1264,16 @@ export default function StopsControl() {
                     <div>
                       <div className="flex justify-between items-center mb-1">
                         <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Linha MS2 (m/min)</label>
-                        <span className="text-xs font-extrabold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100">{formSpeedMS2} m/min</span>
+                        <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">{formSpeedMS2} m/min</span>
                       </div>
                       <input
                         type="range"
                         min="0"
                         max="250"
-                        step="5"
+                        step="1"
                         value={formSpeedMS2}
                         onChange={(e) => setFormSpeedMS2(Number(e.target.value))}
-                        className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                        className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-600"
                       />
                       <div className="flex justify-between text-[10px] font-bold text-slate-400 px-1 mt-1">
                         <span>0 m/min</span>
@@ -1161,7 +1287,7 @@ export default function StopsControl() {
                 {/* Work fronts (Frentes de trabalho) registration */}
                 <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
-                    <Wrench className="w-5 h-5 text-blue-500" />
+                    <Wrench className="w-5 h-5 text-emerald-600" />
                     <h2 className="text-lg font-bold text-slate-900">Envolvimento de Frentes de Trabalho</h2>
                   </div>
                   
@@ -1180,7 +1306,7 @@ export default function StopsControl() {
                           className={cn(
                             "border rounded-2xl transition-all overflow-hidden shadow-sm",
                             item.active 
-                              ? "bg-slate-50/50 border-blue-200" 
+                              ? "bg-slate-50/50 border-emerald-200" 
                               : "bg-white border-slate-100 hover:border-slate-200"
                           )}
                         >
@@ -1194,7 +1320,7 @@ export default function StopsControl() {
                                 type="checkbox"
                                 checked={item.active}
                                 onChange={() => {}} // Controlled by click on parent
-                                className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                className="w-5 h-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                               />
                               <span className={cn("text-sm font-extrabold", item.active ? "text-slate-800" : "text-slate-400")}>
                                 {front}
@@ -1202,7 +1328,7 @@ export default function StopsControl() {
                             </div>
 
                             {item.active && (
-                              <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-100/60 border border-blue-100 rounded-full text-[10px] font-bold text-blue-700">
+                              <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-100/60 border border-emerald-100 rounded-full text-[10px] font-bold text-emerald-800">
                                 <Clock className="w-3 h-3" />
                                 {formatDurationString(frontDuration)}
                               </div>
@@ -1227,7 +1353,7 @@ export default function StopsControl() {
                                     <button
                                       type="button"
                                       onClick={() => handleAddWorkFrontBullet(front)}
-                                      className="flex items-center gap-1 text-[11px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 px-2.5 py-0.5 rounded-lg transition-all cursor-pointer active:scale-95"
+                                      className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 px-2.5 py-0.5 rounded-lg transition-all cursor-pointer active:scale-95"
                                     >
                                       <Plus className="w-3 h-3" /> Adicionar item (-)
                                     </button>
@@ -1243,7 +1369,7 @@ export default function StopsControl() {
                                         handleWorkFrontChange(front, 'description', '- ');
                                       }
                                     }}
-                                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-700 text-xs leading-relaxed"
+                                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-700 text-xs leading-relaxed"
                                     rows={4}
                                   />
                                   <p className="text-[10px] text-slate-400 font-medium">
@@ -1258,7 +1384,7 @@ export default function StopsControl() {
                                     required
                                     value={item.startTime}
                                     onChange={(e) => handleWorkFrontChange(front, 'startTime', e.target.value)}
-                                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-700 text-xs"
+                                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-700 text-xs"
                                   />
                                 </div>
 
@@ -1269,7 +1395,7 @@ export default function StopsControl() {
                                     required
                                     value={item.endTime}
                                     onChange={(e) => handleWorkFrontChange(front, 'endTime', e.target.value)}
-                                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-700 text-xs"
+                                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-700 text-xs"
                                   />
                                 </div>
                               </motion.div>
@@ -1289,7 +1415,7 @@ export default function StopsControl() {
                 {/* Observations Card */}
                 <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
-                    <ClipboardList className="w-5 h-5 text-blue-500" />
+                    <ClipboardList className="w-5 h-5 text-emerald-600" />
                     <h2 className="text-lg font-bold text-slate-900">Observações</h2>
                   </div>
 
@@ -1299,7 +1425,7 @@ export default function StopsControl() {
                       placeholder="Espaço para notas de encerramento, observações das frentes, pendências de término e horário final do término."
                       value={formObservation}
                       onChange={(e) => setFormObservation(e.target.value)}
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-700 text-xs leading-relaxed"
+                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-700 text-xs leading-relaxed"
                       rows={5}
                     />
                   </div>
@@ -1370,7 +1496,7 @@ export default function StopsControl() {
                     placeholder="Buscar operador, observações..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
 
@@ -1379,7 +1505,7 @@ export default function StopsControl() {
                   <select
                     value={filterType}
                     onChange={(e) => setFilterType(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                   >
                     <option value="all">Todos os Tipos</option>
                     <option value="programada">Programadas</option>
@@ -1392,7 +1518,7 @@ export default function StopsControl() {
                   <select
                     value={filterLine}
                     onChange={(e) => setFilterLine(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                   >
                     <option value="all">Todas as Linhas</option>
                     {availableLines.map(line => (
@@ -1407,7 +1533,7 @@ export default function StopsControl() {
                     type="date"
                     value={filterStartDate}
                     onChange={(e) => setFilterStartDate(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
 
@@ -1417,7 +1543,7 @@ export default function StopsControl() {
                     type="date"
                     value={filterEndDate}
                     onChange={(e) => setFilterEndDate(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
               </div>
@@ -1426,7 +1552,7 @@ export default function StopsControl() {
             {/* List / Table */}
             {loading ? (
               <div className="p-12 text-center bg-white rounded-3xl border border-slate-100">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto" />
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600 mx-auto" />
                 <p className="text-slate-400 font-bold text-xs mt-3">Carregando histórico de paradas...</p>
               </div>
             ) : filteredReports.length === 0 ? (
@@ -1466,7 +1592,7 @@ export default function StopsControl() {
                               <span className={cn(
                                 "px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border",
                                 report.type === 'programada'
-                                  ? "bg-sky-50 border-sky-100 text-sky-700"
+                                  ? "bg-emerald-50 border-emerald-100 text-emerald-800"
                                   : "bg-amber-50 border-amber-100 text-amber-700"
                               )}>
                                 {report.type === 'programada' ? 'Programada' : 'Geral'}
@@ -1479,7 +1605,7 @@ export default function StopsControl() {
                               {report.startTime} - {report.endTime}
                             </td>
                             <td className="p-4 text-center whitespace-nowrap">
-                              <span className="text-blue-600">{formatDurationString(duration)}</span>
+                              <span className="text-emerald-700 font-extrabold">{formatDurationString(duration)}</span>
                             </td>
                             <td className="p-4 text-center whitespace-nowrap text-slate-500 font-mono text-[11px]">
                               {report.cutterSpeedMS1 || 0} / {report.cutterSpeedMS2 || 0} m/min
@@ -1504,7 +1630,7 @@ export default function StopsControl() {
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   onClick={() => setViewingReport(report)}
-                                  className="p-1.5 bg-blue-50 border border-blue-100 hover:bg-blue-100 text-blue-600 rounded-lg transition-all"
+                                  className="p-1.5 bg-emerald-50 border border-emerald-100 hover:bg-emerald-100 text-emerald-700 rounded-lg transition-all"
                                   title="Ver Detalhes"
                                 >
                                   <FileText className="w-3.5 h-3.5" />
@@ -1527,7 +1653,7 @@ export default function StopsControl() {
                                 )}
                                 {canDeleteReport(report) && (
                                   <button
-                                    onClick={() => handleDeleteReport(report.id)}
+                                    onClick={() => handleDeleteReport(report)}
                                     className="p-1.5 bg-rose-50 border border-rose-100 hover:bg-rose-100 text-rose-600 rounded-lg transition-all"
                                     title="Excluir"
                                   >
@@ -1560,7 +1686,7 @@ export default function StopsControl() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               
               <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex items-center gap-4">
-                <div className="p-3 bg-blue-50 text-blue-500 rounded-2xl border border-blue-100">
+                <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100">
                   <Activity className="w-6 h-6" />
                 </div>
                 <div>
@@ -1580,7 +1706,7 @@ export default function StopsControl() {
               </div>
 
               <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex items-center gap-4">
-                <div className="p-3 bg-emerald-50 text-emerald-500 rounded-2xl border border-emerald-100">
+                <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100">
                   <Gauge className="w-6 h-6" />
                 </div>
                 <div>
@@ -1607,7 +1733,7 @@ export default function StopsControl() {
               {/* Stops by Type (Pie Chart) */}
               <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-4">
                 <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2 border-b border-slate-50 pb-3">
-                  <span className="w-1.5 h-3 bg-blue-500 rounded" />
+                  <span className="w-1.5 h-3 bg-emerald-600 rounded" />
                   Divisão por Tipo de Parada
                 </h3>
                 {metrics.typeData.length === 0 ? (
@@ -1650,7 +1776,7 @@ export default function StopsControl() {
               {/* Downtime Hours by Line (Bar Chart) */}
               <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-4 lg:col-span-2">
                 <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2 border-b border-slate-50 pb-3">
-                  <span className="w-1.5 h-3 bg-blue-500 rounded" />
+                  <span className="w-1.5 h-3 bg-emerald-600 rounded" />
                   Horas de Parada por Linha de Produção
                 </h3>
                 {metrics.lineChartData.length === 0 ? (
@@ -1663,7 +1789,7 @@ export default function StopsControl() {
                         <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} fontWeight="bold" />
                         <YAxis stroke="#94a3b8" fontSize={11} fontWeight="bold" />
                         <Tooltip formatter={(value) => [`${value} horas`, 'Downtime']} />
-                        <Bar dataKey="hours" fill="#0ea5e9" radius={[8, 8, 0, 0]} />
+                        <Bar dataKey="hours" fill="#059669" radius={[8, 8, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -1673,7 +1799,7 @@ export default function StopsControl() {
               {/* Work fronts frequency */}
               <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-4 lg:col-span-3">
                 <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2 border-b border-slate-50 pb-3">
-                  <span className="w-1.5 h-3 bg-blue-500 rounded" />
+                  <span className="w-1.5 h-3 bg-emerald-600 rounded" />
                   Frequência de Atuação de Frentes de Trabalho (Ocorrências)
                 </h3>
                 <div className="h-64">
@@ -1683,7 +1809,7 @@ export default function StopsControl() {
                       <XAxis dataKey="front" stroke="#94a3b8" fontSize={11} fontWeight="bold" />
                       <YAxis stroke="#94a3b8" fontSize={11} fontWeight="bold" />
                       <Tooltip formatter={(value) => [`${value} atuação(ões)`, 'Total']} />
-                      <Bar dataKey="frequencia" fill="#6366f1" radius={[8, 8, 0, 0]} />
+                      <Bar dataKey="frequencia" fill="#10b981" radius={[8, 8, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1739,7 +1865,7 @@ export default function StopsControl() {
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Duração</span>
-                    <span className="text-xs font-bold text-blue-600">
+                    <span className="text-xs font-bold text-emerald-700">
                       {formatDurationString(getMinutesDiff(viewingReport.startTime, viewingReport.endTime))}
                     </span>
                   </div>
@@ -1757,13 +1883,13 @@ export default function StopsControl() {
                 <div className="space-y-2">
                   <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">Velocidade das Cortadeiras</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl flex items-center justify-between">
+                    <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-600">Cortadeira MS1</span>
-                      <span className="text-xs font-black text-blue-700">{viewingReport.cutterSpeedMS1 || 0} m/min</span>
+                      <span className="text-xs font-black text-emerald-800">{viewingReport.cutterSpeedMS1 || 0} m/min</span>
                     </div>
-                    <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl flex items-center justify-between">
+                    <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-600">Cortadeira MS2</span>
-                      <span className="text-xs font-black text-blue-700">{viewingReport.cutterSpeedMS2 || 0} m/min</span>
+                      <span className="text-xs font-black text-emerald-800">{viewingReport.cutterSpeedMS2 || 0} m/min</span>
                     </div>
                   </div>
                 </div>
@@ -1810,6 +1936,15 @@ export default function StopsControl() {
 
               {/* Footer */}
               <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+                {canDeleteReport(viewingReport) && (
+                  <button
+                    onClick={() => handleDeleteReport(viewingReport)}
+                    className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Excluir
+                  </button>
+                )}
                 {canEditReport(viewingReport) && (
                   <button
                     onClick={() => {
@@ -1917,6 +2052,53 @@ export default function StopsControl() {
                   className="py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-[10px] uppercase tracking-wider transition-all"
                 >
                   Ver no Histórico
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {deleteConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteConfirm(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative bg-white w-full max-w-sm rounded-[2rem] shadow-2xl p-8 text-center"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-black text-slate-900 mb-2">Confirmar Exclusão</h3>
+              <p className="text-slate-500 text-sm mb-8">
+                Tem certeza que deseja excluir <strong>{deleteConfirm.title}</strong>? Esta ação não pode ser desfeita.
+              </p>
+              <div className="flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="flex-1 py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="button"
+                  onClick={confirmDeleteReport}
+                  disabled={submitting}
+                  className="flex-1 py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-rose-600/20"
+                >
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Excluir'}
                 </button>
               </div>
             </motion.div>
