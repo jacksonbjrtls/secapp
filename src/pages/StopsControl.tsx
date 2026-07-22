@@ -75,7 +75,7 @@ const WORK_FRONT_OPTIONS = [
 ] as const;
 
 export default function StopsControl() {
-  const { user, isManager, isAdmin } = useAuth();
+  const { user, isManager, isAdmin, isMaster } = useAuth();
   
   // Tabs: 'register' | 'history' | 'stats'
   const [activeTab, setActiveTab] = useState<'register' | 'history' | 'stats'>('register');
@@ -237,6 +237,17 @@ export default function StopsControl() {
     return `${m} min`;
   };
 
+  const canEditReport = (report: StopReport | null) => {
+    if (!report) return false;
+    if (isManager || isAdmin || isMaster) return true;
+    return !!(user?.uid && report.userId === user.uid);
+  };
+
+  const canDeleteReport = (report: StopReport | null) => {
+    if (!report) return false;
+    return isManager || isAdmin || isMaster;
+  };
+
   // Set form fields for editing
   const handleStartEdit = (report: StopReport) => {
     setEditingReport(report);
@@ -347,8 +358,8 @@ export default function StopsControl() {
         cutterSpeedMS2: Number(formSpeedMS2) || 0,
         workFronts: activeWorkFronts,
         observation: formObservation,
-        userId: user?.uid || 'anonymous',
-        userName: user?.displayName || 'Operador',
+        userId: editingReport ? (editingReport.userId || user?.uid || 'anonymous') : (user?.uid || 'anonymous'),
+        userName: editingReport ? (editingReport.userName || user?.displayName || 'Operador') : (user?.displayName || 'Operador'),
       };
 
       if (editingReport) {
@@ -1432,23 +1443,23 @@ export default function StopsControl() {
                                 >
                                   <Download className="w-3.5 h-3.5" />
                                 </button>
-                                {(isManager || isAdmin) && (
-                                  <>
-                                    <button
-                                      onClick={() => handleStartEdit(report)}
-                                      className="p-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-lg transition-all"
-                                      title="Editar"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteReport(report.id)}
-                                      className="p-1.5 bg-rose-50 border border-rose-100 hover:bg-rose-100 text-rose-600 rounded-lg transition-all"
-                                      title="Excluir"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </>
+                                {canEditReport(report) && (
+                                  <button
+                                    onClick={() => handleStartEdit(report)}
+                                    className="p-1.5 bg-amber-50 border border-amber-100 hover:bg-amber-100 text-amber-600 rounded-lg transition-all"
+                                    title="Editar"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                {canDeleteReport(report) && (
+                                  <button
+                                    onClick={() => handleDeleteReport(report.id)}
+                                    className="p-1.5 bg-rose-50 border border-rose-100 hover:bg-rose-100 text-rose-600 rounded-lg transition-all"
+                                    title="Excluir"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
                                 )}
                               </div>
                             </td>
@@ -1726,6 +1737,19 @@ export default function StopsControl() {
 
               {/* Footer */}
               <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+                {canEditReport(viewingReport) && (
+                  <button
+                    onClick={() => {
+                      const rep = viewingReport;
+                      setViewingReport(null);
+                      handleStartEdit(rep);
+                    }}
+                    className="px-4 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 transition-all"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    Editar
+                  </button>
+                )}
                 <button
                   onClick={() => handleExportSinglePDF(viewingReport)}
                   className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
