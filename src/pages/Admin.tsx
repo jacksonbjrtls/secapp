@@ -126,6 +126,7 @@ const Admin: React.FC = () => {
     shift_handover: true,
     certificates: true,
     stops_control: true,
+    maintenance: true,
     overtime: true,
     vacations: true,
   });
@@ -2559,6 +2560,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
               { id: 'consumables', label: 'Controle de Insumos', desc: 'Controle de estoque, entrada de produtos por unidade de medida e consumo de insumos (como tinta) por setor e linha.', icon: 'PackagePlus' },
               { id: 'certificates', label: 'Treinamentos/Certificados', desc: 'Módulo de treinamentos de Secagem para emissão e controle de certificados de qualificação e presença.', icon: 'Award' },
               { id: 'stops_control', label: 'Controle de Parada', desc: 'Módulo de controle de paradas (programadas ou gerais) com registro de frentes de trabalho (mecânica, elétrica, hidráulica, etc.) e estatísticas.', icon: 'Clock' },
+              { id: 'maintenance', label: 'Módulo de Manutenção', desc: 'Gestão de pendências de equipamentos, importação de TAGs, cadastro de tipos/nomes de inspeção, centros responsáveis e integração com rotas.', icon: 'Wrench' },
               { id: 'overtime', label: 'Justificativa de Hora-Extra (HE)', desc: 'Módulo de cadastro e justificativa de realização de horas extras com controle administrativo e relatórios.', icon: 'Clock' },
               { id: 'vacations', label: 'Controle de Férias', desc: 'Gestão de férias, escalas de folga, edição geral de colaboradores e emissão de relatórios/brindes personalizados.', icon: 'CalendarDays' },
             ].map((mod) => {

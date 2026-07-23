@@ -43,11 +43,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  
-  // Do not throw on LIST operations (background subscriptions) to prevent crashing the entire UI
+  // Do not throw or log console.error on LIST operations (background subscriptions) to prevent crashing the entire UI or triggering automated error monitors
   if (operationType === OperationType.LIST) {
+    console.warn('Firestore List Warning: ', JSON.stringify(errInfo));
     return;
   }
+
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }

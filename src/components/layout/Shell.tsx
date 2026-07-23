@@ -27,7 +27,8 @@ import {
   ArrowLeftRight,
   Award,
   Clock,
-  Gift
+  Gift,
+  Wrench
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
@@ -321,25 +322,52 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'schedule', name: 'Escala', href: '/schedule', icon: CalendarDays, show: activeModules.schedule !== false },
       { id: 'certificates', name: 'Treinamentos/Certificados', href: '/certificates', icon: Award, show: activeModules.certificates !== false },
       { id: 'stops_control', name: 'Controle de Parada', href: '/stops-control', icon: Clock, show: activeModules.stops_control !== false },
+      { id: 'maintenance', name: 'Manutenção', href: '/maintenance', icon: Wrench, show: activeModules.maintenance !== false },
       { id: 'overtime', name: 'Justificativa HE', href: '/overtime', icon: Clock, show: activeModules.overtime !== false },
       { id: 'vacations', name: 'Controle de Férias', href: '/vacations', icon: CalendarDays, show: activeModules.vacations !== false },
       { id: 'admin', name: 'Painel Administrativo', href: '/admin', icon: Users, show: !!isAdmin },
       { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
     ];
 
+    // Default alphabetical sorting
+    const sortedNav = [...defaultNav].sort((a, b) =>
+      a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
+    );
+
     if (profile?.menuOrder && profile.menuOrder.length > 0) {
-      const ordered = [...defaultNav].sort((a, b) => {
+      const ordered = [...sortedNav].sort((a, b) => {
         const indexA = profile.menuOrder!.indexOf(a.id);
         const indexB = profile.menuOrder!.indexOf(b.id);
+        if (indexA === -1 && indexB === -1) {
+          return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+        }
         if (indexA === -1) return 1;
         if (indexB === -1) return -1;
         return indexA - indexB;
       });
       setNavigation(ordered);
     } else {
-      setNavigation(defaultNav);
+      setNavigation(sortedNav);
     }
   }, [profile?.menuOrder, isAdmin, isManager, activeModules]);
+
+  const handleSortAlphabetically = async () => {
+    const alphabetical = [...navigation].sort((a, b) =>
+      a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
+    );
+    setNavigation(alphabetical);
+
+    if (user) {
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          menuOrder: alphabetical.map((item: any) => item.id),
+          updatedAt: serverTimestamp()
+        });
+      } catch (error) {
+        console.error("Erro ao redefinir ordem alfabética do menu:", error);
+      }
+    }
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -412,6 +440,20 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               </div>
 
               <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+                <div className="flex items-center justify-between px-2 pb-1.5 mb-1 border-b border-slate-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                    Menu
+                  </span>
+                  <button
+                    onClick={handleSortAlphabetically}
+                    title="Organizar o menu em ordem alfabética (A-Z)"
+                    className="text-[10px] font-bold text-slate-500 hover:text-emerald-700 transition-all flex items-center gap-1 bg-slate-50 hover:bg-emerald-50 px-2 py-0.5 rounded-lg border border-slate-200 hover:border-emerald-200 active:scale-95"
+                  >
+                    <span>A-Z</span>
+                    <span className="text-[9px] text-slate-400 font-normal">(Ordenar)</span>
+                  </button>
+                </div>
+
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}

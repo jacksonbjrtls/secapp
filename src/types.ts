@@ -27,9 +27,11 @@ export interface UserProfile {
 
 export interface WorkSector {
   id: string;
-  name: string; // Secagem, Enfardamento, etc.
+  name: string; // Cortadeira, Prensa, etc.
+  area?: string; // Secagem, Enfardamento, etc.
+  areaId?: string;
   active: boolean;
-  createdAt: any;
+  createdAt?: any;
 }
 
 export interface WorkFunction {
@@ -98,6 +100,9 @@ export interface Metric {
 export interface ProductionLine {
   id: string;
   name: string;
+  sector?: string;
+  sectorId?: string;
+  area?: string;
   active: boolean;
   order?: number;
 }
@@ -361,6 +366,87 @@ export interface OvertimeArea {
   active: boolean;
   createdAt: any;
 }
+
+// Maintenance Module Interfaces
+export interface MaintenanceEquipment {
+  id: string;
+  tag: string;
+  name: string;
+  area?: string;
+  sector?: string;
+  line?: string;
+  active: boolean;
+  createdAt?: any;
+}
+
+export interface MaintenanceInspectionType {
+  id: string;
+  name: string;
+  active: boolean;
+  createdAt?: any;
+}
+
+export interface MaintenanceInspectionName {
+  id: string;
+  inspectionTypeId: string;
+  inspectionTypeName: string;
+  name: string;
+  active: boolean;
+  createdAt?: any;
+}
+
+export interface MaintenanceResponsibleCenter {
+  id: string;
+  name: string;
+  active: boolean;
+  createdAt?: any;
+}
+
+export interface MaintenanceProgrammingType {
+  id: string;
+  name: string;
+  active: boolean;
+  createdAt?: any;
+}
+
+export interface MaintenanceStatus {
+  id: string;
+  name: string;
+  color?: string;
+  isCompleted?: boolean;
+  active: boolean;
+  createdAt?: any;
+}
+
+export interface MaintenanceIssue {
+  id: string;
+  date: string; // YYYY-MM-DD
+  area: string;
+  sector: string;
+  line: string;
+  shift: string;
+  teamLetter: string; // Letra (A, B, C, D)
+  equipmentTag: string;
+  equipmentName: string;
+  inspectionType: string;
+  inspectionName: string;
+  responsibleCenter: string;
+  programmingType: string;
+  status: string; // 'Pendente', 'Concluído', etc.
+  sapNote: string; // Número da nota do SAP
+  description: string;
+  attachments: string[]; // URLs or base64 photo strings
+  origin?: 'Manual' | 'Rota Operacional';
+  routeSubmissionId?: string;
+  createdBy: string;
+  createdByName: string;
+  resolvedAt?: any;
+  resolvedBy?: string;
+  resolvedByName?: string;
+  createdAt: any;
+  updatedAt?: any;
+}
+
 
 
 

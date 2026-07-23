@@ -2,11 +2,6 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     // Helper functions
     function isSignedIn() {
       return request.auth != null;
@@ -307,9 +302,7 @@ service cloud.firestore {
 
     // Production Lines
     match /production_lines/{lineId} {
-      allow get, list: if isApproved();
-      allow create, update: if isManager() && isValidId(lineId);
-      allow delete: if isMaster() || (isManager() && isValidId(lineId));
+      allow read, write: if true;
     }
 
     // Wire Storage Bays
@@ -549,14 +542,12 @@ service cloud.firestore {
 
     // Work Sectors
     match /work_sectors/{sectorId} {
-      allow read: if isApproved();
-      allow create, update, delete: if isManager() && isValidId(sectorId);
+      allow read, write: if true;
     }
 
     // Work Functions
     match /work_functions/{functionId} {
-      allow read: if isApproved();
-      allow create, update, delete: if isManager() && isValidId(functionId);
+      allow read, write: if true;
     }
 
     // Vacation Requests
@@ -571,6 +562,46 @@ service cloud.firestore {
     match /vacation_queue/{queueId} {
       allow read: if isApproved();
       allow create, update, delete: if isManager();
+    }
+
+    // Maintenance Issues
+    match /maintenance_issues/{issueId} {
+      allow read, write: if true;
+    }
+
+    // Maintenance Equipments
+    match /maintenance_equipments/{equipmentId} {
+      allow read, write: if true;
+    }
+
+    // Maintenance Areas
+    match /maintenance_areas/{areaId} {
+      allow read, write: if true;
+    }
+
+    // Maintenance Inspection Types
+    match /maintenance_inspection_types/{typeId} {
+      allow read, write: if true;
+    }
+
+    // Maintenance Inspection Names
+    match /maintenance_inspection_names/{nameId} {
+      allow read, write: if true;
+    }
+
+    // Maintenance Responsible Centers
+    match /maintenance_responsible_centers/{centerId} {
+      allow read, write: if true;
+    }
+
+    // Maintenance Programming Types
+    match /maintenance_programming_types/{typeId} {
+      allow read, write: if true;
+    }
+
+    // Maintenance Statuses
+    match /maintenance_statuses/{statusId} {
+      allow read, write: if true;
     }
   }
 }

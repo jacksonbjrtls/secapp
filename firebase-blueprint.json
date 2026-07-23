@@ -628,6 +628,99 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "active", "createdAt"]
+    },
+    "MaintenanceIssue": {
+      "title": "Maintenance Issue",
+      "description": "Maintenance pendencies and defect reports.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "tag": { "type": "string" },
+        "equipmentName": { "type": "string" },
+        "area": { "type": "string" },
+        "line": { "type": "string" },
+        "sector": { "type": "string" },
+        "responsibleCenter": { "type": "string" },
+        "inspectionType": { "type": "string" },
+        "inspectionName": { "type": "string" },
+        "programmingType": { "type": "string" },
+        "status": { "type": "string" },
+        "description": { "type": "string" },
+        "reporterName": { "type": "string" },
+        "reporterId": { "type": "string" },
+        "shift": { "type": "string" },
+        "team": { "type": "string" },
+        "notes": { "type": "string" },
+        "origin": { "type": "string" },
+        "photoUrls": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tag", "equipmentName", "description", "createdAt"]
+    },
+    "MaintenanceEquipment": {
+      "title": "Maintenance Equipment",
+      "description": "Equipment TAG records for maintenance module.",
+      "type": "object",
+      "properties": {
+        "tag": { "type": "string" },
+        "name": { "type": "string" },
+        "area": { "type": "string" },
+        "line": { "type": "string" },
+        "sector": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tag", "name", "createdAt"]
+    },
+    "MaintenanceInspectionType": {
+      "title": "Maintenance Inspection Type",
+      "description": "Types of maintenance inspections (e.g. Mechanical, Electrical).",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "MaintenanceInspectionName": {
+      "title": "Maintenance Inspection Name",
+      "description": "Names or itineraries of inspection.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "MaintenanceResponsibleCenter": {
+      "title": "Maintenance Responsible Center",
+      "description": "Responsible work centers for maintenance items.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "MaintenanceProgrammingType": {
+      "title": "Maintenance Programming Type",
+      "description": "Types of programming for maintenance tasks.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "MaintenanceStatus": {
+      "title": "Maintenance Status",
+      "description": "Status options for maintenance pendencies.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
     }
   },
   "firestore": {
@@ -782,6 +875,34 @@
     "/overtime_areas/{areaId}": {
       "schema": "OvertimeArea",
       "description": "Areas list for overtime form."
+    },
+    "/maintenance_issues/{issueId}": {
+      "schema": "MaintenanceIssue",
+      "description": "Maintenance pendencies and defect issues."
+    },
+    "/maintenance_equipments/{equipmentId}": {
+      "schema": "MaintenanceEquipment",
+      "description": "Maintenance TAG equipment database."
+    },
+    "/maintenance_inspection_types/{typeId}": {
+      "schema": "MaintenanceInspectionType",
+      "description": "Maintenance inspection types database."
+    },
+    "/maintenance_inspection_names/{nameId}": {
+      "schema": "MaintenanceInspectionName",
+      "description": "Maintenance inspection names database."
+    },
+    "/maintenance_responsible_centers/{centerId}": {
+      "schema": "MaintenanceResponsibleCenter",
+      "description": "Maintenance responsible centers database."
+    },
+    "/maintenance_programming_types/{typeId}": {
+      "schema": "MaintenanceProgrammingType",
+      "description": "Maintenance programming types database."
+    },
+    "/maintenance_statuses/{statusId}": {
+      "schema": "MaintenanceStatus",
+      "description": "Maintenance status options database."
     }
   }
 }

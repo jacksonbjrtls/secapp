@@ -400,6 +400,16 @@ const OperationalRoutes: React.FC = () => {
             createdAt: serverTimestamp()
           });
         }
+
+        // 3. Upload related maintenance issues
+        if (item.maintenanceIssues && Array.isArray(item.maintenanceIssues)) {
+          for (const mIssue of item.maintenanceIssues) {
+            await addDoc(collection(db, 'maintenance_issues'), {
+              ...mIssue,
+              createdAt: serverTimestamp()
+            });
+          }
+        }
         successCount++;
       }
       
@@ -1482,18 +1492,45 @@ const OperationalRoutes: React.FC = () => {
         };
 
         const safetyObsData: any[] = [];
+        const maintenanceIssuesData: any[] = [];
+
         for (const resp of finalResponses) {
-          if (resp.status === 'not_ok' && (resp.observationGenerated || resp.diagnostic || resp.notes)) {
-            safetyObsData.push({
-              equipmentId: resp.equipmentId,
-              equipmentName: resp.equipmentName,
-              routeTemplateId: selectedTemplate.id,
-              routeName: selectedTemplate.name,
-              reportedBy: profile?.displayName || user.email || 'Operador',
-              reportedById: user.uid,
-              description: resp.observationText || `Falha identificada: ${resp.diagnostic || 'Anomalia no equipamento'}. Comentário: ${resp.notes || 'Nenhum'}. Providência: ${resp.actionTaken || 'Tomar providências'}`,
-              photoUrl: resp.photoUrl || '',
-              status: 'pending' // pending, working, resolved
+          if (resp.status === 'not_ok') {
+            if (resp.observationGenerated || resp.diagnostic || resp.notes) {
+              safetyObsData.push({
+                equipmentId: resp.equipmentId,
+                equipmentName: resp.equipmentName,
+                routeTemplateId: selectedTemplate.id,
+                routeName: selectedTemplate.name,
+                reportedBy: profile?.displayName || user.email || 'Operador',
+                reportedById: user.uid,
+                description: resp.observationText || `Falha identificada: ${resp.diagnostic || 'Anomalia no equipamento'}. Comentário: ${resp.notes || 'Nenhum'}. Providência: ${resp.actionTaken || 'Tomar providências'}`,
+                photoUrl: resp.photoUrl || '',
+                status: 'pending' // pending, working, resolved
+              });
+            }
+
+            // Create maintenance issue entry
+            maintenanceIssuesData.push({
+              date: new Date().toISOString().split('T')[0],
+              area: submissionData.areaName || 'SECAGEM',
+              sector: submissionData.sectorName || '',
+              line: submissionData.lineName || '',
+              shift: submissionData.shift || '1º Turno',
+              teamLetter: submissionData.team || 'A',
+              equipmentTag: resp.equipmentTag || resp.equipmentId || 'N/A',
+              equipmentName: resp.equipmentName || 'Equipamento Rota',
+              inspectionType: resp.inspectionType || 'Inspeção de Rota',
+              inspectionName: resp.diagnostic || resp.inspectionName || 'Anomalia de Rota Operacional',
+              responsibleCenter: resp.responsibleCenter || 'PCM / Manutenção',
+              programmingType: resp.schedule || 'Oportunidade',
+              status: 'Pendente',
+              sapNote: resp.sapNote || '',
+              description: resp.observationText || resp.notes || `Falha/anomalia identificada durante Rota Operacional (${selectedTemplate.name}). Providência: ${resp.actionTaken || 'Tomar providências'}.`,
+              attachments: resp.photoUrl ? [resp.photoUrl] : [],
+              origin: 'Rota Operacional',
+              createdBy: user.uid,
+              createdByName: profile?.displayName || user.email || 'Operador',
             });
           }
         }
@@ -1508,6 +1545,10 @@ const OperationalRoutes: React.FC = () => {
             },
             safetyObservations: safetyObsData.map(obs => ({
               ...obs,
+              createdAt: new Date().toISOString()
+            })),
+            maintenanceIssues: maintenanceIssuesData.map(mIssue => ({
+              ...mIssue,
               createdAt: new Date().toISOString()
             }))
           };
@@ -1553,6 +1594,14 @@ const OperationalRoutes: React.FC = () => {
           for (const obs of safetyObsData) {
             await addDoc(collection(db, 'safety_observations'), {
               ...obs,
+              createdAt: serverTimestamp()
+            });
+          }
+
+          // 3. Create Maintenance Issues Online
+          for (const mIssue of maintenanceIssuesData) {
+            await addDoc(collection(db, 'maintenance_issues'), {
+              ...mIssue,
               createdAt: serverTimestamp()
             });
           }
