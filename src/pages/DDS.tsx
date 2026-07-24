@@ -163,6 +163,7 @@ const DDS: React.FC = () => {
   const [newGroup, setNewGroup] = useState('A');
   const [newExecutor, setNewExecutor] = useState('');
   const [newTotalPrevisto, setNewTotalPrevisto] = useState<number>(9);
+  const [isCreateFormExpanded, setIsCreateFormExpanded] = useState(false);
 
   // Mood selector state
   const [showMoodModal, setShowMoodModal] = useState(false);
@@ -627,6 +628,7 @@ const DDS: React.FC = () => {
       setNewDescription('');
       setNewExecutor(profile?.displayName || '');
       setNewTotalPrevisto(9);
+      setIsCreateFormExpanded(false);
       setSuccessMessage(editingSession ? 'Sessão atualizada com sucesso!' : 'Novo DDS criado com sucesso!');
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
@@ -653,6 +655,7 @@ const DDS: React.FC = () => {
     setNewGroup(session.group);
     setNewExecutor(session.executor);
     setNewTotalPrevisto(session.totalPrevisto || 9);
+    setIsCreateFormExpanded(true);
     
     // Scroll to form
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -990,194 +993,227 @@ const DDS: React.FC = () => {
             animate={{ opacity: 1, x: 0 }}
             className="bg-slate-900 rounded-[2rem] p-8 text-white shadow-2xl h-full"
           >
-            <div className="flex items-center justify-between gap-2 mb-8">
-               <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0">
-                    <ShieldCheck className="w-6 h-6 text-white" />
-                  </div>
-                  <h3 className="text-xl font-bold tracking-tight">
-                    {editingSession ? 'Editar DDS' : 'Gestão de DDS'}
-                  </h3>
-               </div>
-            </div>
-
-            {editingSession && (
-              <button 
-                onClick={() => {
-                  setEditingSession(null);
-                  setNewTitle('');
-                  setNewDescription('');
-                  setNewExecutor(profile?.displayName || '');
-                }}
-                className="mb-6 flex items-center gap-2 text-emerald-300 hover:text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
-              >
-                <X className="w-3 h-3" />
-                Cancelar Edição
-              </button>
-            )}
-
-            <form onSubmit={handleCreateSession} className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Turno</label>
-                  <select
-                    value={newShift}
-                    onChange={(e) => setNewShift(e.target.value)}
-                    className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="Turno 1">Turno 1 (00h-08h)</option>
-                    <option value="Turno 2">Turno 2 (08h-16h)</option>
-                    <option value="Turno 3">Turno 3 (16h-00h)</option>
-                  </select>
+            {/* Collapsible Header Button for Creating / Editing DDS */}
+            <button
+              type="button"
+              onClick={() => setIsCreateFormExpanded(prev => !prev)}
+              className="w-full flex items-center justify-between p-4 bg-slate-800/90 hover:bg-slate-800 rounded-2xl border border-slate-700/60 transition-all text-left group mb-2"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform">
+                  {editingSession ? <Edit2 className="w-5 h-5 text-white" /> : <Plus className="w-5 h-5 text-white" />}
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Letra</label>
-                  <select
-                    value={newGroup}
-                    onChange={(e) => setNewGroup(e.target.value)}
-                    className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="A">Letra A</option>
-                    <option value="B">Letra B</option>
-                    <option value="C">Letra C</option>
-                    <option value="D">Letra D</option>
-                    <option value="E">Letra E</option>
-                  </select>
+                  <h3 className="text-base font-extrabold tracking-tight text-white group-hover:text-emerald-300 transition-colors">
+                    {editingSession ? 'EDITAR DDS' : 'CRIE NOVO DDS'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    {editingSession ? 'Clique para alterar os dados da sessão' : 'Clique aqui para expandir o formulário'}
+                  </p>
                 </div>
               </div>
-
-              <div ref={executorRef} className="relative">
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Executante (Responsável)</label>
-                <div className="relative flex items-center">
-                  <input
-                    type="text"
-                    className="w-full bg-slate-800 border-none rounded-xl pl-4 pr-10 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500 text-sm"
-                    placeholder="Nome do responsável ou visitante"
-                    value={newExecutor || ''}
-                    onChange={(e) => {
-                      setNewExecutor(e.target.value);
-                      setShowExecutorDropdown(true);
-                    }}
-                    onFocus={() => setShowExecutorDropdown(true)}
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowExecutorDropdown(prev => !prev)}
-                    className="absolute right-3 text-slate-400 hover:text-white transition-colors"
-                  >
-                    {showExecutorDropdown ? (
-                      <ChevronUp className="w-4 h-4" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-
-                {showExecutorDropdown && (
-                  <div className="absolute left-0 right-0 mt-1 bg-slate-800 border border-slate-700/50 rounded-xl shadow-2xl z-50 max-h-60 overflow-y-auto">
-                    {/* Indicador de novo usuário sem cadastro */}
-                    {newExecutor && !registeredUsers.some(user => (user.displayName || '').toLowerCase() === newExecutor.toLowerCase()) && (
-                      <div 
-                        onClick={() => setShowExecutorDropdown(false)}
-                        className="px-4 py-2.5 border-b border-slate-700/30 font-bold text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 cursor-pointer flex items-center justify-between transition-colors"
-                      >
-                        <span className="truncate">Usar novo executor sem cadastro: "{newExecutor}"</span>
-                        <span className="text-[9px] bg-amber-500 text-slate-900 font-extrabold px-1.5 py-0.5 rounded flex-shrink-0 ml-2">Novo</span>
-                      </div>
-                    )}
-                    
-                    {registeredUsers.filter(user => {
-                      const queryStr = (newExecutor || '').toLowerCase();
-                      return (user.displayName || '').toLowerCase().includes(queryStr) || (user.email || '').toLowerCase().includes(queryStr);
-                    }).length === 0 ? (
-                      <div className="px-4 py-3 text-slate-400 text-xs text-center">
-                        Nenhum usuário cadastrado encontrado com "{newExecutor}"
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-slate-700/20">
-                        {registeredUsers.filter(user => {
-                          const queryStr = (newExecutor || '').toLowerCase();
-                          return (user.displayName || '').toLowerCase().includes(queryStr) || (user.email || '').toLowerCase().includes(queryStr);
-                        }).map((user, idx) => {
-                          const isSelected = newExecutor === user.displayName;
-                          return (
-                            <div
-                              key={`${user.uid}-${idx}`}
-                              onClick={() => {
-                                setNewExecutor(user.displayName);
-                                setShowExecutorDropdown(false);
-                              }}
-                              className={`px-4 py-3 text-xs flex flex-col hover:bg-slate-700/50 cursor-pointer transition-colors ${
-                                isSelected ? 'bg-emerald-500/15 border-l-2 border-emerald-500' : ''
-                              }`}
-                            >
-                              <span className="text-white font-bold text-[13px]">{user.displayName}</span>
-                              <span className="text-slate-400 text-[10px] mt-0.5">{user.email}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  {isCreateFormExpanded || editingSession ? 'Recolher' : 'Expandir'}
+                </span>
+                {isCreateFormExpanded || editingSession ? (
+                  <ChevronUp className="w-5 h-5 text-emerald-400" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-slate-400 group-hover:text-emerald-400 transition-colors" />
                 )}
               </div>
+            </button>
 
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Título do DDS (Tema)</label>
-                <input
-                  type="text"
-                  className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
-                  placeholder="ex: Prevenção de Quedas"
-                  value={newTitle || ''}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Descrição (Opcional)</label>
-                <textarea
-                  rows={3}
-                  className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Tópicos abordados..."
-                  value={newDescription || ''}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                />
-              </div>
+            <AnimatePresence>
+              {(isCreateFormExpanded || editingSession) && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.25 }}
+                  className="overflow-hidden pt-2"
+                >
+                  {editingSession && (
+                    <button 
+                      onClick={() => {
+                        setEditingSession(null);
+                        setNewTitle('');
+                        setNewDescription('');
+                        setNewExecutor(profile?.displayName || '');
+                        setIsCreateFormExpanded(false);
+                      }}
+                      className="mb-6 flex items-center gap-2 text-emerald-300 hover:text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                      Cancelar Edição
+                    </button>
+                  )}
 
-              {(isManager || isAdmin) && (
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Total Previsto no Turno (Colaboradores)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
-                    placeholder="ex: 15"
-                    value={newTotalPrevisto}
-                    onChange={(e) => setNewTotalPrevisto(Math.max(1, parseInt(e.target.value) || 1))}
-                    required
-                  />
-                </div>
+                  <form onSubmit={handleCreateSession} className="space-y-6 pt-2 pb-2">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Turno</label>
+                        <select
+                          value={newShift}
+                          onChange={(e) => setNewShift(e.target.value)}
+                          className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="Turno 1">Turno 1 (00h-08h)</option>
+                          <option value="Turno 2">Turno 2 (08h-16h)</option>
+                          <option value="Turno 3">Turno 3 (16h-00h)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Letra</label>
+                        <select
+                          value={newGroup}
+                          onChange={(e) => setNewGroup(e.target.value)}
+                          className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="A">Letra A</option>
+                          <option value="B">Letra B</option>
+                          <option value="C">Letra C</option>
+                          <option value="D">Letra D</option>
+                          <option value="E">Letra E</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div ref={executorRef} className="relative">
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Executante (Responsável)</label>
+                      <div className="relative flex items-center">
+                        <input
+                          type="text"
+                          className="w-full bg-slate-800 border-none rounded-xl pl-4 pr-10 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500 text-sm"
+                          placeholder="Nome do responsável ou visitante"
+                          value={newExecutor || ''}
+                          onChange={(e) => {
+                            setNewExecutor(e.target.value);
+                            setShowExecutorDropdown(true);
+                          }}
+                          onFocus={() => setShowExecutorDropdown(true)}
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowExecutorDropdown(prev => !prev)}
+                          className="absolute right-3 text-slate-400 hover:text-white transition-colors"
+                        >
+                          {showExecutorDropdown ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+
+                      {showExecutorDropdown && (
+                        <div className="absolute left-0 right-0 mt-1 bg-slate-800 border border-slate-700/50 rounded-xl shadow-2xl z-50 max-h-60 overflow-y-auto">
+                          {/* Indicador de novo usuário sem cadastro */}
+                          {newExecutor && !registeredUsers.some(user => (user.displayName || '').toLowerCase() === newExecutor.toLowerCase()) && (
+                            <div 
+                              onClick={() => setShowExecutorDropdown(false)}
+                              className="px-4 py-2.5 border-b border-slate-700/30 font-bold text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 cursor-pointer flex items-center justify-between transition-colors"
+                            >
+                              <span className="truncate">Usar novo executor sem cadastro: "{newExecutor}"</span>
+                              <span className="text-[9px] bg-amber-500 text-slate-900 font-extrabold px-1.5 py-0.5 rounded flex-shrink-0 ml-2">Novo</span>
+                            </div>
+                          )}
+                          
+                          {registeredUsers.filter(user => {
+                            const queryStr = (newExecutor || '').toLowerCase();
+                            return (user.displayName || '').toLowerCase().includes(queryStr) || (user.email || '').toLowerCase().includes(queryStr);
+                          }).length === 0 ? (
+                            <div className="px-4 py-3 text-slate-400 text-xs text-center">
+                              Nenhum usuário cadastrado encontrado com "{newExecutor}"
+                            </div>
+                          ) : (
+                            <div className="divide-y divide-slate-700/20">
+                              {registeredUsers.filter(user => {
+                                const queryStr = (newExecutor || '').toLowerCase();
+                                return (user.displayName || '').toLowerCase().includes(queryStr) || (user.email || '').toLowerCase().includes(queryStr);
+                              }).map((user, idx) => {
+                                const isSelected = newExecutor === user.displayName;
+                                return (
+                                  <div
+                                    key={`${user.uid}-${idx}`}
+                                    onClick={() => {
+                                      setNewExecutor(user.displayName);
+                                      setShowExecutorDropdown(false);
+                                    }}
+                                    className={`px-4 py-3 text-xs flex flex-col hover:bg-slate-700/50 cursor-pointer transition-colors ${
+                                      isSelected ? 'bg-emerald-500/15 border-l-2 border-emerald-500' : ''
+                                    }`}
+                                  >
+                                    <span className="text-white font-bold text-[13px]">{user.displayName}</span>
+                                    <span className="text-slate-400 text-[10px] mt-0.5">{user.email}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Título do DDS (Tema)</label>
+                      <input
+                        type="text"
+                        className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
+                        placeholder="ex: Prevenção de Quedas"
+                        value={newTitle || ''}
+                        onChange={(e) => setNewTitle(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Descrição (Opcional)</label>
+                      <textarea
+                        rows={3}
+                        className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
+                        placeholder="Tópicos abordados..."
+                        value={newDescription || ''}
+                        onChange={(e) => setNewDescription(e.target.value)}
+                      />
+                    </div>
+
+                    {(isManager || isAdmin) && (
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Total Previsto no Turno (Colaboradores)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
+                          placeholder="ex: 15"
+                          value={newTotalPrevisto}
+                          onChange={(e) => setNewTotalPrevisto(Math.max(1, parseInt(e.target.value) || 1))}
+                          required
+                        />
+                      </div>
+                    )}
+
+                    <div className="bg-emerald-800/50 p-4 rounded-xl border border-emerald-700/50 flex items-start gap-3">
+                       <Key className="w-5 h-5 text-emerald-300 flex-shrink-0" />
+                       <p className="text-xs text-emerald-100 leading-relaxed font-medium">
+                         {isManager 
+                          ? "Ao criar, uma senha aleatória será gerada com validade de 4 horas."
+                          : "Após criar o DDS, solicite a validação (senha) ao seu gestor para que os colaboradores possam assinar."}
+                       </p>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                    >
+                      {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (editingSession ? <CheckCircle2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />)}
+                      {editingSession ? 'Salvar Alterações' : 'Novo DDS do Período'}
+                    </button>
+                  </form>
+                </motion.div>
               )}
-
-              <div className="bg-emerald-800/50 p-4 rounded-xl border border-emerald-700/50 flex items-start gap-3">
-                 <Key className="w-5 h-5 text-emerald-300 flex-shrink-0" />
-                 <p className="text-xs text-emerald-100 leading-relaxed font-medium">
-                   {isManager 
-                    ? "Ao criar, uma senha aleatória será gerada com validade de 4 horas."
-                    : "Após criar o DDS, solicite a validação (senha) ao seu gestor para que os colaboradores possam assinar."}
-                 </p>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2"
-              >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (editingSession ? <CheckCircle2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />)}
-                {editingSession ? 'Salvar Alterações' : 'Novo DDS do Período'}
-              </button>
-            </form>
+            </AnimatePresence>
 
             {activeSession && (isManager || isAdmin) && (
               <div className="mt-8 pt-8 border-t border-slate-800">
