@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { getCurrentShift, getGroupForShift, Shift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -67,7 +68,20 @@ const DEFAULT_RESPONSIBLE_CENTERS = ['PCM / Manutenção Mecânica', 'Oficina El
 const DEFAULT_PROGRAMMING_TYPES = ['Parada Programada', 'Oportunidade de Operação', 'Manutenção Corretiva', 'Intervenção Emergencial', 'Inspeção Sistemática'];
 const DEFAULT_STATUSES = ['Pendente', 'Em Andamento', 'Aguardando Peça', 'Concluído'];
 const DEFAULT_SHIFTS = ['1º Turno', '2º Turno', '3º Turno', 'Central'];
-const DEFAULT_TEAMS = ['A', 'B', 'C', 'D'];
+const DEFAULT_TEAMS = ['A', 'B', 'C', 'D', 'E'];
+
+// Scale Shift Mappers
+const mapFormShiftToScaleShift = (fShift: string): Shift => {
+  if (fShift.includes('2')) return 'Turno 2';
+  if (fShift.includes('3')) return 'Turno 3';
+  return 'Turno 1';
+};
+
+const mapScaleShiftToFormShift = (sShift: Shift): string => {
+  if (sShift === 'Turno 2') return '2º Turno';
+  if (sShift === 'Turno 3') return '3º Turno';
+  return '1º Turno';
+};
 
 export default function Maintenance() {
   const { user, profile, isAdmin, isMaster, logoUrl } = useAuth();
@@ -374,11 +388,18 @@ export default function Maintenance() {
   // Reset Issue Form
   const handleOpenNewIssueModal = () => {
     setEditingIssue(null);
-    setFormDate(new Date().toISOString().split('T')[0]);
+    const todayStr = new Date().toISOString().split('T')[0];
+    setFormDate(todayStr);
     setFormSector(sectors[0]?.name || '');
     setFormLine(lines[0]?.name || '');
-    setFormShift('1º Turno');
-    setFormTeamLetter('A');
+
+    // Auto calculate current shift and team letter based on system scale
+    const currentScaleShift = getCurrentShift();
+    const autoShift = mapScaleShiftToFormShift(currentScaleShift);
+    const autoGroup = getGroupForShift(new Date(), currentScaleShift);
+
+    setFormShift(autoShift);
+    setFormTeamLetter(autoGroup);
     setFormEquipmentTag('');
     setFormEquipmentName('');
     setTagSearchQuery('');
@@ -1658,8 +1679,8 @@ export default function Maintenance() {
                     </p>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-96 overflow-y-auto pr-2">
-                      {filteredEquipments.map((eq) => (
-                        <div key={eq.id} className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl flex items-start justify-between gap-2 hover:border-slate-300 transition-all">
+                      {filteredEquipments.map((eq, idx) => (
+                        <div key={`${eq.id}-${eq.tag}-${idx}`} className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl flex items-start justify-between gap-2 hover:border-slate-300 transition-all">
                           <div className="space-y-1 min-w-0">
                             <span className="font-mono font-black text-xs text-slate-900 block truncate">{eq.tag}</span>
                             <span className="text-[11px] text-slate-600 block line-clamp-1 font-medium">{eq.name}</span>
@@ -2228,7 +2249,15 @@ export default function Maintenance() {
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1">Turno</label>
                     <select
                       value={formShift}
-                      onChange={(e) => setFormShift(e.target.value)}
+                      onChange={(e) => {
+                        const newShift = e.target.value;
+                        setFormShift(newShift);
+                        if (newShift !== 'Central') {
+                          const dt = formDate ? new Date(`${formDate}T12:00:00`) : new Date();
+                          const calculatedGroup = getGroupForShift(dt, mapFormShiftToScaleShift(newShift));
+                          setFormTeamLetter(calculatedGroup);
+                        }
+                      }}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       {DEFAULT_SHIFTS.map(s => (
@@ -2295,9 +2324,9 @@ export default function Maintenance() {
                             Nenhuma TAG encontrada para os filtros selecionados.
                           </div>
                         ) : (
-                          searchedTags.map(eq => (
+                          searchedTags.map((eq, idx) => (
                             <button
-                              key={eq.id}
+                              key={`${eq.id}-${eq.tag}-${idx}`}
                               type="button"
                               onClick={() => {
                                 setFormEquipmentTag(eq.tag);

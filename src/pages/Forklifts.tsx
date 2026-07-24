@@ -362,45 +362,13 @@ const Forklifts: React.FC = () => {
     }
 
     if (!automaticSent) {
-      try {
-        const recipientEmails = settings.responsiblePersons.map(p => p.email).join(',');
-        const subject = `SecApp - Teste de Envio de E-mail`;
-        
-        const localTimeStr = new Date().toLocaleString('pt-BR');
-        const body = `Olá,
-
-Este é um e-mail de teste de não conformidade de empilhadeira enviado utilizando o cliente de e-mail do aparelho.
-
-Data/Hora Local: ${localTimeStr}
-Equipamento de Teste: TESTE-001
-Condutor: ${profile?.displayName || auth.currentUser?.email || 'Administrador'}
-
-Itens Não Conformes (Exemplo):
-- Motor de Partida: Ruído excessivo detectado no acionamento.
-- Nível de Óleo: Abaixo do limite mínimo recomendado.
-
-Este é um teste do SecApp - Sistema de Gestão de Segurança.`;
-
-        const mailtoLink = `mailto:${recipientEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-        window.location.href = mailtoLink;
-
-        setModalConfig({
-          isOpen: true,
-          title: 'Cliente de E-mail Aberto',
-          message: `O envio automático em segundo plano não está configurado (${errorMessage || 'sem variáveis GMAIL_USER/RESEND_API_KEY'}). Abrimos o cliente de e-mail nativo do seu aparelho com os destinatários preenchidos.`,
-          type: 'success'
-        });
-      } catch (err: any) {
-        console.error("Test email error:", err);
-        setModalConfig({
-          isOpen: true,
-          title: 'Erro',
-          message: `Não foi possível enviar nem abrir o cliente de e-mail local: ${err.message}`,
-          type: 'error'
-        });
-      } finally {
-        setTestingEmail(false);
-      }
+      setModalConfig({
+        isOpen: true,
+        title: 'Envio Direto Indisponível',
+        message: `Não foi possível enviar o e-mail de teste automaticamente em segundo plano (${errorMessage || 'sem variáveis GMAIL_USER/RESEND_API_KEY configuradas no servidor'}).`,
+        type: 'warning'
+      });
+      setTestingEmail(false);
     } else {
       setTestingEmail(false);
     }
@@ -681,39 +649,11 @@ Este é um teste do SecApp - Sistema de Gestão de Segurança.`;
               console.error("Error calling server email API:", err);
             }
 
-            // Fallback to client-side mailto if automatic email could not be sent
-            if (!automaticSent) {
-              try {
-                const recipientEmails = responsibleList.map(p => p.email).join(',');
-                const subject = `SecApp - Alerta de Não Conformidade: ${showCheckModal.number}`;
-                
-                const localTimeStr = new Date().toLocaleString('pt-BR');
-                const failuresText = failures.map(f => `- ${f.name}: ${f.observation || 'Sem observação.'}`).join('\n');
-                
-                const body = `Olá,
-
-Uma não conformidade crítica foi detectada durante a inspeção do equipamento do SecApp:
-
-Equipamento: ${showCheckModal.number}
-Condutor: ${profile?.displayName || auth.currentUser.email}
-Data/Hora Local: ${localTimeStr}
-
-Itens Não Conformes:
-${failuresText}
-
-Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
-
-                const mailtoLink = `mailto:${recipientEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                window.location.href = mailtoLink;
-              } catch (err) {
-                console.error("Error launching device mailto:", err);
-              }
-            }
           }
           
           const notificationSummary = automaticSent 
-            ? `Notificação automática enviada com sucesso para os responsáveis via servidor.`
-            : `Envio automático pendente de configuração (${errorMessage || 'sem serviço configurado'}). Cliente de e-mail aberto localmente.`;
+            ? `Notificação por e-mail enviada automaticamente pelo servidor para os responsáveis.`
+            : `O alerta de não conformidade foi registrado no sistema (Notificações). Para envio por e-mail sem abrir gerenciador local, configure as credenciais GMAIL_USER e GMAIL_APP_PASSWORD no servidor.`;
 
           setModalConfig({
             isOpen: true,
@@ -1661,7 +1601,7 @@ Este é um e-mail enviado via SecApp - Sistema de Gestão de Segurança.`;
                         const isAnswered = result !== undefined;
                         
                         return (
-                          <div key={item.id} className={cn(
+                          <div key={`${item.id}-${index}`} className={cn(
                             "bg-white p-6 rounded-[2rem] border transition-all shadow-sm space-y-4",
                             isAnswered ? "border-emerald-100 bg-emerald-50/10" : "border-slate-200 hover:border-emerald-200"
                           )}>

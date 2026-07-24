@@ -301,8 +301,8 @@ async function startServer() {
     try {
       const { recipients, forkliftNumber, conductorName, failures = [], localTime } = req.body;
       
-      const gmailUser = process.env.GMAIL_USER;
-      const gmailPass = process.env.GMAIL_APP_PASSWORD;
+      const gmailUser = process.env.GMAIL_USER || process.env.GMAIL_EMAIL || process.env.GMAIL_ACCOUNT;
+      const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASS || process.env.GMAIL_PASSWORD;
       const resendApiKey = process.env.RESEND_API_KEY;
 
       if (gmailUser && gmailPass) {
@@ -397,8 +397,8 @@ async function startServer() {
     try {
       const { userEmail, displayName } = req.body;
       
-      const gmailUser = process.env.GMAIL_USER;
-      const gmailPass = process.env.GMAIL_APP_PASSWORD;
+      const gmailUser = process.env.GMAIL_USER || process.env.GMAIL_EMAIL || process.env.GMAIL_ACCOUNT;
+      const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASS || process.env.GMAIL_PASSWORD;
 
       if (!gmailUser || !gmailPass) {
         return res.status(200).json({ success: false, message: "E-mail de notificação não enviado (GMAIL não configurado)." });
@@ -556,8 +556,8 @@ async function startServer() {
         return res.status(500).json({ success: false, error: "Serviço de autenticação administratória indisponível (Firebase não inicializado)." });
       }
       const { type, email, name } = req.body;
-      const gmailUser = process.env.GMAIL_USER;
-      const gmailPass = process.env.GMAIL_APP_PASSWORD;
+      const gmailUser = process.env.GMAIL_USER || process.env.GMAIL_EMAIL || process.env.GMAIL_ACCOUNT;
+      const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASS || process.env.GMAIL_PASSWORD;
 
       if (!gmailUser || !gmailPass) {
         return res.status(400).json({ success: false, error: "Serviço de e-mail Gmail não configurado." });
