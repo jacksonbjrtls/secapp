@@ -1306,6 +1306,51 @@ const Quality: React.FC = () => {
     }
   }, [activeScanner]);
 
+  
+  const sanitizeResponses = (rawResponses: Record<string, any>) => {
+    const clean: Record<string, any> = {};
+    Object.entries(rawResponses).forEach(([key, val]) => {
+      if (val === undefined || val === null) return;
+      if (typeof val === 'object' && !Array.isArray(val)) {
+        const cleanedSub: Record<string, any> = {};
+        Object.entries(val).forEach(([subK, subV]) => {
+          if (subV !== undefined && subV !== null && subV !== '') {
+            cleanedSub[subK] = subV;
+          }
+        });
+        if (Object.keys(cleanedSub).length > 0) {
+          clean[key] = cleanedSub;
+        }
+      } else if (val !== '') {
+        clean[key] = val;
+      }
+    });
+    return clean;
+  };
+
+  const isItemValueComplete = (item: any, value: any, templateName: string = '') => {
+    if (value === undefined || value === null || value === '') return false;
+    if (typeof value === 'object' && value !== null) {
+      const match = item.id ? item.id.match(/^door_(\d+)_level_([a-d])$/) : null;
+      const doorNum = match ? parseInt(match[1], 10) : -1;
+      const isSpecialDoor = item.radiatorCount !== undefined
+        ? item.radiatorCount === 2
+        : (match ? (doorNum === 0 || doorNum === 24) : false);
+      const isDryerItem = (item.radiatorCount !== undefined && item.radiatorCount > 0) ||
+        (((templateName.toLowerCase().includes('limpeza') || templateName.toLowerCase().includes('secador')) && item.id && item.id.startsWith('door_')) && item.radiatorCount !== 0);
+
+      if (isDryerItem) {
+        if (isSpecialDoor) {
+          return Boolean(value.left && value.right);
+        } else {
+          return Boolean(value.left_top && value.right_top && value.left_bottom && value.right_bottom);
+        }
+      }
+      return Object.values(value).some(v => v !== undefined && v !== null && v !== '');
+    }
+    return true;
+  };
+
   // Auto-save quality checklist draft
   useEffect(() => {
     if (!fillingTemplate || !user) return;
@@ -1365,7 +1410,7 @@ const Quality: React.FC = () => {
     }
 
     // Validate requirements
-    const missing = fillingTemplate.items.find(item => item.required && !responses[item.id]);
+    const missing = fillingTemplate.items.find(item => item.required && !isItemValueComplete(item, responses[item.id], fillingTemplate.name));
     if (missing) {
       setModalConfig({
         isOpen: true,
@@ -1427,7 +1472,7 @@ const Quality: React.FC = () => {
             shift: shiftIdentifier, // Format: "A - Turno 1"
             productId: selectedProductId || '',
             productName: matchedProd ? matchedProd.name : '',
-            responses: Object.entries(responses).map(([itemId, value]) => ({ 
+            responses: Object.entries(sanitizeResponses(responses)).map(([itemId, value]) => ({ 
               itemId, 
               value,
               observation: observations[itemId] || ''
@@ -2704,7 +2749,7 @@ const Quality: React.FC = () => {
 
                   {/* PROGRESS BAR VISUAL INDICATOR */}
                   {(() => {
-                    const answeredCount = fillingTemplate.items.filter(item => responses[item.id] !== undefined && responses[item.id] !== '').length;
+                    const answeredCount = fillingTemplate.items.filter(item => isItemValueComplete(item, responses[item.id], fillingTemplate.name)).length;
                     const totalQuestionsCount = fillingTemplate.items.length;
                     const progressPct = totalQuestionsCount > 0 ? (answeredCount / totalQuestionsCount) * 100 : 0;
                     return (
@@ -2734,7 +2779,7 @@ const Quality: React.FC = () => {
                   <div className="space-y-3">
                     {fillingTemplate.items.map((item, idx) => {
                       const isExpanded = expandedItemId === item.id;
-                      const isAnswered = responses[item.id] !== undefined && responses[item.id] !== '';
+                      const isAnswered = isItemValueComplete(item, responses[item.id], fillingTemplate.name);
                       const currentValue = responses[item.id];
 
                       // Helper to advance to the next item
@@ -2927,14 +2972,7 @@ const Quality: React.FC = () => {
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
-                                                              setResponses(prev => ({
-                                                                ...prev,
-                                                                [item.id]: {
-                                                                  ...prevVal,
-                                                                  left: opt,
-                                                                  right: (prevVal as any).right
-                                                                }
-                                                              }));
+                                                              const updated: any = { ...prevVal, left: opt }; if (updated.right === undefined) delete updated.right; setResponses(prev => ({ ...prev, [item.id]: updated }));
                                                             }}
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
@@ -2969,14 +3007,7 @@ const Quality: React.FC = () => {
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
-                                                              setResponses(prev => ({
-                                                                ...prev,
-                                                                [item.id]: {
-                                                                  ...prevVal,
-                                                                  left: (prevVal as any).left,
-                                                                  right: opt
-                                                                }
-                                                              }));
+                                                              const updated: any = { ...prevVal, right: opt }; if (updated.left === undefined) delete updated.left; setResponses(prev => ({ ...prev, [item.id]: updated }));
                                                             }}
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
@@ -3014,16 +3045,7 @@ const Quality: React.FC = () => {
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
-                                                              setResponses(prev => ({
-                                                                ...prev,
-                                                                [item.id]: {
-                                                                  ...prevVal,
-                                                                  left_top: opt,
-                                                                  right_top: (prevVal as any).right_top,
-                                                                  left_bottom: (prevVal as any).left_bottom,
-                                                                  right_bottom: (prevVal as any).right_bottom
-                                                                }
-                                                              }));
+                                                              const updated: any = { ...prevVal, left_top: opt }; Object.keys(updated).forEach(k => { if (updated[k] === undefined) delete updated[k]; }); setResponses(prev => ({ ...prev, [item.id]: updated }));
                                                             }}
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
@@ -3058,16 +3080,7 @@ const Quality: React.FC = () => {
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
-                                                              setResponses(prev => ({
-                                                                ...prev,
-                                                                [item.id]: {
-                                                                  ...prevVal,
-                                                                  left_top: (prevVal as any).left_top,
-                                                                  right_top: opt,
-                                                                  left_bottom: (prevVal as any).left_bottom,
-                                                                  right_bottom: (prevVal as any).right_bottom
-                                                                }
-                                                              }));
+                                                              const updated: any = { ...prevVal, right_top: opt }; Object.keys(updated).forEach(k => { if (updated[k] === undefined) delete updated[k]; }); setResponses(prev => ({ ...prev, [item.id]: updated }));
                                                             }}
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
@@ -3102,16 +3115,7 @@ const Quality: React.FC = () => {
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
-                                                              setResponses(prev => ({
-                                                                ...prev,
-                                                                [item.id]: {
-                                                                  ...prevVal,
-                                                                  left_top: (prevVal as any).left_top,
-                                                                  right_top: (prevVal as any).right_top,
-                                                                  left_bottom: opt,
-                                                                  right_bottom: (prevVal as any).right_bottom
-                                                                }
-                                                              }));
+                                                              const updated: any = { ...prevVal, left_bottom: opt }; Object.keys(updated).forEach(k => { if (updated[k] === undefined) delete updated[k]; }); setResponses(prev => ({ ...prev, [item.id]: updated }));
                                                             }}
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
@@ -3146,16 +3150,7 @@ const Quality: React.FC = () => {
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
-                                                              setResponses(prev => ({
-                                                                ...prev,
-                                                                [item.id]: {
-                                                                  ...prevVal,
-                                                                  left_top: (prevVal as any).left_top,
-                                                                  right_top: (prevVal as any).right_top,
-                                                                  left_bottom: (prevVal as any).left_bottom,
-                                                                  right_bottom: opt
-                                                                }
-                                                              }));
+                                                              const updated: any = { ...prevVal, right_bottom: opt }; Object.keys(updated).forEach(k => { if (updated[k] === undefined) delete updated[k]; }); setResponses(prev => ({ ...prev, [item.id]: updated }));
                                                             }}
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
