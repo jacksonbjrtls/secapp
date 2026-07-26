@@ -221,6 +221,8 @@ export interface QualityChecklistSubmission {
     observation?: string;
   }[];
   createdAt: any;
+  editedAt?: any;
+  editedBy?: string;
   productId?: string;
   productName?: string;
 }

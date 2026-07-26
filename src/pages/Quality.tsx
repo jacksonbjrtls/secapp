@@ -338,6 +338,114 @@ const getIconColorClasses = (value: any, isCompliant: boolean) => {
     : "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-rose-50 text-rose-600";
 };
 
+const findDoorResponse = (responsesList: any[], doorNum: number, level: string, itemsList: any[] = []) => {
+  if (!responsesList || !Array.isArray(responsesList)) return null;
+  const targetLvl = level.toLowerCase();
+  
+  // 1. Direct itemId match
+  let foundResp = responsesList.find(r => {
+    if (!r || !r.itemId) return false;
+    const itemId = String(r.itemId).toLowerCase();
+    
+    if (itemId === `door_${doorNum}_level_${targetLvl}`) return true;
+    if (itemId.endsWith(`_door_${doorNum}_level_${targetLvl}`)) return true;
+    if (itemId.endsWith(`_${doorNum}_level_${targetLvl}`)) return true;
+    
+    const match = itemId.match(/door_(\d+)_level_([a-d])/i);
+    if (match) {
+      return parseInt(match[1], 10) === doorNum && match[2].toLowerCase() === targetLvl;
+    }
+    return false;
+  });
+
+  if (foundResp) return foundResp;
+
+  // 2. Search template itemsList by label
+  if (itemsList && Array.isArray(itemsList)) {
+    const matchedItem = itemsList.find(it => {
+      if (!it) return false;
+      const combined = `${String(it.id || '')} ${String(it.label || '')}`.toLowerCase();
+
+      let itemLvl: string | null = null;
+      const lvlMatch = combined.match(/n[ií]vel\s*([a-d])/i) || combined.match(/level\s*([a-d])/i) || combined.match(/door_\d+_level_([a-d])/i);
+      if (lvlMatch) itemLvl = lvlMatch[1].toLowerCase();
+
+      let itemDoor: number | null = null;
+      const doorMatch = combined.match(/porta\s*(00|\d+)/i) || combined.match(/door_(\d+)/i);
+      if (doorMatch) {
+        const dStr = doorMatch[1];
+        itemDoor = dStr === '00' ? 24 : parseInt(dStr, 10);
+      }
+
+      return itemDoor === doorNum && itemLvl === targetLvl;
+    });
+
+    if (matchedItem) {
+      foundResp = responsesList.find(r => r.itemId === matchedItem.id);
+      if (foundResp) return foundResp;
+    }
+  }
+
+  // 3. Fallback: match inside responsesList directly if r contains item/label info
+  return responsesList.find(r => {
+    const combined = `${String(r.itemId || '')} ${String(r.label || '')}`.toLowerCase();
+    const lvlMatch = combined.match(/n[ií]vel\s*([a-d])/i) || combined.match(/level\s*([a-d])/i);
+    const doorMatch = combined.match(/porta\s*(00|\d+)/i);
+    if (lvlMatch && doorMatch) {
+      const itemLvl = lvlMatch[1].toLowerCase();
+      const dStr = doorMatch[1];
+      const itemDoor = dStr === '00' ? 24 : parseInt(dStr, 10);
+      return itemDoor === doorNum && itemLvl === targetLvl;
+    }
+    return false;
+  }) || null;
+};
+
+const findDoorItem = (itemsList: any[], doorNum: number, level: string) => {
+  if (!itemsList || !Array.isArray(itemsList)) return null;
+  const targetLvl = level.toLowerCase();
+  return itemsList.find(it => {
+    if (!it) return false;
+    const combined = `${String(it.id || '')} ${String(it.label || '')}`.toLowerCase();
+    let itemLvl: string | null = null;
+    const lvlMatch = combined.match(/n[ií]vel\s*([a-d])/i) || combined.match(/level\s*([a-d])/i) || combined.match(/door_\d+_level_([a-d])/i);
+    if (lvlMatch) itemLvl = lvlMatch[1].toLowerCase();
+
+    let itemDoor: number | null = null;
+    const doorMatch = combined.match(/porta\s*(00|\d+)/i) || combined.match(/door_(\d+)/i);
+    if (doorMatch) {
+      const dStr = doorMatch[1];
+      itemDoor = dStr === '00' ? 24 : parseInt(dStr, 10);
+    }
+    return itemDoor === doorNum && itemLvl === targetLvl;
+  }) || null;
+};
+
+const getRadiatorValueObj = (val: any) => {
+  if (!val) return {};
+  if (typeof val === 'object' && val !== null) return val;
+  if (typeof val === 'string') {
+    const clean = val.replace(/\n/g, ' | ');
+    const res: Record<string, string> = {};
+    const parts = clean.split('|');
+    parts.forEach(p => {
+      const trimmed = p.trim();
+      if (!trimmed) return;
+      if (/esq.*sup/i.test(trimmed)) res.left_top = (trimmed.split(':')[1] || trimmed).trim();
+      else if (/dir.*sup/i.test(trimmed)) res.right_top = (trimmed.split(':')[1] || trimmed).trim();
+      else if (/esq.*inf/i.test(trimmed)) res.left_bottom = (trimmed.split(':')[1] || trimmed).trim();
+      else if (/dir.*inf/i.test(trimmed)) res.right_bottom = (trimmed.split(':')[1] || trimmed).trim();
+      else if (/^esq\s*:/i.test(trimmed)) res.left = (trimmed.split(':')[1] || trimmed).trim();
+      else if (/^dir\s*:/i.test(trimmed)) res.right = (trimmed.split(':')[1] || trimmed).trim();
+    });
+    if (Object.keys(res).length === 0) {
+      res.left = val; res.right = val;
+    }
+    return res;
+  }
+  return {};
+};
+
 interface SortableChecklistItemProps {
   id: string;
   item: ChecklistItemDefinition;
@@ -1252,6 +1360,7 @@ const Quality: React.FC = () => {
 
   // Perform Checklist Logic
   const [fillingTemplate, setFillingTemplate] = useState<QualityChecklistTemplate | null>(null);
+  const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [responses, setResponses] = useState<Record<string, any>>({});
   const [observations, setObservations] = useState<Record<string, string>>({});
@@ -1353,7 +1462,7 @@ const Quality: React.FC = () => {
 
   // Auto-save quality checklist draft
   useEffect(() => {
-    if (!fillingTemplate || !user) return;
+    if (!fillingTemplate || !user || editingSubmissionId) return;
     
     // Only save draft if there are some responses or observations or line selected or product selected
     if (Object.keys(responses).length === 0 && Object.keys(observations).length === 0 && !submissionLineId && !selectedProductId) return;
@@ -1377,7 +1486,43 @@ const Quality: React.FC = () => {
     }, 1500);
 
     return () => clearTimeout(timeoutId);
-  }, [responses, observations, submissionLineId, selectedProductId, fillingTemplate, user]);
+  }, [responses, observations, submissionLineId, selectedProductId, fillingTemplate, user, editingSubmissionId]);
+
+  const handleEditSubmission = (sub: QualityChecklistSubmission) => {
+    const template = templates.find(t => t.id === sub.templateId);
+    if (!template) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Modelo Não Encontrado',
+        message: 'O modelo deste checklist foi excluído ou não está mais disponível.',
+        type: 'error'
+      });
+      return;
+    }
+
+    const loadedResponses: Record<string, any> = {};
+    const loadedObservations: Record<string, string> = {};
+
+    (sub.responses || []).forEach(r => {
+      if (r.itemId) {
+        loadedResponses[r.itemId] = r.value;
+        if (r.observation) {
+          loadedObservations[r.itemId] = r.observation;
+        }
+      }
+    });
+
+    setEditingSubmissionId(sub.id);
+    setFillingTemplate(template);
+    setExpandedItemId(template.items[0]?.id || null);
+    setResponses(loadedResponses);
+    setObservations(loadedObservations);
+    setSubmissionLineId(sub.lineId || sub.sectorId);
+    setSelectedProductId(sub.productId || template.productId || '');
+    setIsDraftLoaded(false);
+    setViewingSubmission(null);
+    setActiveTab('perform');
+  };
 
   const generateRangeOptions = (min?: number, max?: number, step?: number) => {
     if (min === undefined || max === undefined) return [];
@@ -1421,7 +1566,7 @@ const Quality: React.FC = () => {
       return;
     }
 
-    // Shift frequency validation
+    // Shift frequency validation (skip check for the submission currently being edited)
     const currentShiftName = getCurrentShift();
     const currentGroup = getGroupForShift(new Date(), currentShiftName);
     const shiftIdentifier = `${currentGroup} - ${currentShiftName}`;
@@ -1429,6 +1574,7 @@ const Quality: React.FC = () => {
 
     const isDayBased = fillingTemplate.scheduleType && fillingTemplate.scheduleType !== 'shift';
     const existingSubmissions = submissions.filter(sub => 
+      sub.id !== editingSubmissionId &&
       sub.templateId === fillingTemplate.id && 
       (sub.lineId === submissionLineId || sub.lineId === fillingTemplate.sectorId) &&
       (isDayBased ? true : sub.shift === shiftIdentifier) &&
@@ -1451,43 +1597,61 @@ const Quality: React.FC = () => {
     const lineObj = lines.find(l => l.id === targetLineId) || sectors.find(s => s.id === targetLineId);
     const lineSuffix = lineObj ? ` para a ${lineObj.name}` : '';
 
+    const isEditing = Boolean(editingSubmissionId);
+
     setModalConfig({
       isOpen: true,
-      title: 'Confirmar Envio?',
-      message: `Deseja realmente concluir e transmitir as respostas deste checklist de qualidade${lineSuffix}?`,
+      title: isEditing ? 'Salvar Alterações?' : 'Confirmar Envio?',
+      message: isEditing 
+        ? `Deseja atualizar e salvar as alterações feitas nesta inspeção de qualidade${lineSuffix}?`
+        : `Deseja realmente concluir e transmitir as respostas deste checklist de qualidade${lineSuffix}?`,
       type: 'info',
       showConfirmButton: true,
-      confirmText: 'Sim, Enviar',
+      confirmText: isEditing ? 'Sim, Salvar' : 'Sim, Enviar',
       onConfirm: async () => {
         closeModal();
         try {
           const encName = await encryptValue(profile.displayName || user.email);
           const matchedProd = products.find(p => p.id === selectedProductId);
-          await addDoc(collection(db, 'quality_checklist_submissions'), {
-            templateId: fillingTemplate.id,
-            sectorId: fillingTemplate.sectorId,
-            lineId: targetLineId,
-            userId: user.uid,
-            userName: encName,
-            shift: shiftIdentifier, // Format: "A - Turno 1"
-            productId: selectedProductId || '',
-            productName: matchedProd ? matchedProd.name : '',
-            responses: Object.entries(sanitizeResponses(responses)).map(([itemId, value]) => ({ 
-              itemId, 
-              value,
-              observation: observations[itemId] || ''
-            })),
-            createdAt: serverTimestamp()
-          });
-          
-          try {
-            const draftId = `${user.uid}_${fillingTemplate.id}`;
-            await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
-          } catch (e) {
-            console.warn("Erro ao deletar rascunho de checklist:", e);
+          const sanitizedResponses = Object.entries(sanitizeResponses(responses)).map(([itemId, value]) => ({ 
+            itemId, 
+            value,
+            observation: observations[itemId] || ''
+          }));
+
+          if (editingSubmissionId) {
+            await updateDoc(doc(db, 'quality_checklist_submissions', editingSubmissionId), {
+              lineId: targetLineId,
+              productId: selectedProductId || '',
+              productName: matchedProd ? matchedProd.name : '',
+              responses: sanitizedResponses,
+              editedAt: serverTimestamp(),
+              editedBy: encName
+            });
+          } else {
+            await addDoc(collection(db, 'quality_checklist_submissions'), {
+              templateId: fillingTemplate.id,
+              sectorId: fillingTemplate.sectorId,
+              lineId: targetLineId,
+              userId: user.uid,
+              userName: encName,
+              shift: shiftIdentifier, // Format: "A - Turno 1"
+              productId: selectedProductId || '',
+              productName: matchedProd ? matchedProd.name : '',
+              responses: sanitizedResponses,
+              createdAt: serverTimestamp()
+            });
+
+            try {
+              const draftId = `${user.uid}_${fillingTemplate.id}`;
+              await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
+            } catch (e) {
+              console.warn("Erro ao deletar rascunho de checklist:", e);
+            }
           }
           
           setFillingTemplate(null);
+          setEditingSubmissionId(null);
           setResponses({});
           setObservations({});
           setSubmissionLineId('');
@@ -1496,12 +1660,14 @@ const Quality: React.FC = () => {
           
           setModalConfig({
             isOpen: true,
-            title: 'Check-list Enviado',
-            message: `O check-list de qualidade${lineSuffix} foi enviado com sucesso!`,
+            title: isEditing ? 'Inspeção Atualizada' : 'Check-list Enviado',
+            message: isEditing
+              ? `A inspeção de qualidade${lineSuffix} foi atualizada com sucesso!`
+              : `O check-list de qualidade${lineSuffix} foi enviado com sucesso!`,
             type: 'success'
           });
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, 'quality_checklist_submissions');
+          handleFirestoreError(err, isEditing ? OperationType.UPDATE : OperationType.CREATE, 'quality_checklist_submissions');
         }
       }
     });
@@ -1868,85 +2034,49 @@ const Quality: React.FC = () => {
       // Count across all 384 radiators (doors 0..24, levels A,B,C,D)
       for (let door = 0; door <= 24; door++) {
         for (const level of ['a', 'b', 'c', 'd']) {
-          const respId = `door_${door}_level_${level}`;
-          const response = sub.responses.find(r => 
-            r.itemId === respId || 
-            r.itemId.endsWith(`_door_${door}_level_${level}`) || 
-            r.itemId.endsWith(`_${door}_level_${level}`)
-          );
-
+          const response = findDoorResponse(sub.responses, door, level, template?.items);
           const val = response?.value;
-          const tObj = templates.find(t => t.id === sub.templateId);
-          const itemObj = tObj?.items.find(it => 
-            it.id === respId || 
-            it.id.endsWith(`_door_${door}_level_${level}`) || 
-            it.id.endsWith(`_${door}_level_${level}`)
-          );
-          let radCount = 4;
-          if (val && typeof val === 'object') {
-            if (val.left_top !== undefined || val.right_top !== undefined || val.left_bottom !== undefined || val.right_bottom !== undefined) {
+          const valObj = getRadiatorValueObj(val);
+          const itemObj = findDoorItem(template?.items || [], door, level);
+
+          let radCount = (door === 0 || door === 24 || itemObj?.radiatorCount === 2) ? 2 : 4;
+          if (radCount !== 2) {
+            if (valObj.left_top !== undefined || valObj.right_top !== undefined || valObj.left_bottom !== undefined || valObj.right_bottom !== undefined) {
               radCount = 4;
-            } else if (val.left !== undefined || val.right !== undefined) {
+            } else if (valObj.left !== undefined || valObj.right !== undefined) {
               radCount = 2;
             } else if (itemObj?.radiatorCount !== undefined) {
               radCount = itemObj.radiatorCount;
-            } else {
-              radCount = (door === 0 || door === 24) ? 2 : 4;
             }
-          } else if (itemObj?.radiatorCount !== undefined) {
-            radCount = itemObj.radiatorCount;
-          } else {
-            radCount = (door === 0 || door === 24) ? 2 : 4;
           }
           const isSpecial = radCount === 2;
 
-          if (isSpecial) {
-            // 2 Radiators: Superior (left) and Inferior (right)
-            const checkRad = (statusStr: any) => {
-              const ls = String(statusStr || '').toLowerCase();
-              if (ls === 'sujo' || ls === 'suja' || ls.includes('amarelo') || ls.includes('suj')) {
-                sujoCount++;
-              } else if (ls.includes('tamponado') || ls.includes('tamponada') || ls === 'vermelho') {
-                tamponadoCount++;
-              } else {
-                // Default unclicked or 'pouco sujo' to green
-                pocoSujoCount++;
-              }
-            };
-            if (val && typeof val === 'object') {
-              checkRad(val.left);
-              checkRad(val.right);
-            } else {
-              checkRad(val);
-              checkRad(val);
+          const checkRad = (statusStr: any) => {
+            if (statusStr === undefined || statusStr === null || statusStr === '') {
+              pocoSujoCount++;
+              return;
             }
+            const ls = String(statusStr).toLowerCase();
+            if (ls.includes('tamponad') || ls.includes('vermelh') || ls === 'not_ok' || ls.includes('obstru')) {
+              tamponadoCount++;
+            } else if (!ls.includes('pouco') && (ls.includes('suj') || ls.includes('amarel'))) {
+              sujoCount++;
+            } else {
+              // Default unclicked or 'pouco sujo' to green
+              pocoSujoCount++;
+            }
+          };
+
+          if (isSpecial) {
+            // 2 Radiators: Superior and Inferior
+            checkRad(valObj.left ?? valObj.left_top);
+            checkRad(valObj.right ?? valObj.right_bottom ?? valObj.left_bottom);
           } else {
             // 4 Radiators: left_top, right_top, left_bottom, right_bottom
-            const checkRad = (statusStr: any) => {
-              const ls = String(statusStr || '').toLowerCase();
-              if (ls === 'sujo' || ls === 'suja' || ls.includes('amarelo') || ls.includes('suj')) {
-                sujoCount++;
-              } else if (ls.includes('tamponado') || ls.includes('tamponada') || ls === 'vermelho') {
-                tamponadoCount++;
-              } else {
-                pocoSujoCount++;
-              }
-            };
-            if (val && typeof val === 'object') {
-              const lt = val.left_top ?? val.left ?? val;
-              const rt = val.right_top ?? val.left ?? val;
-              const lb = val.left_bottom ?? val.right ?? val;
-              const rb = val.right_bottom ?? val.right ?? val;
-              checkRad(lt);
-              checkRad(rt);
-              checkRad(lb);
-              checkRad(rb);
-            } else {
-              checkRad(val);
-              checkRad(val);
-              checkRad(val);
-              checkRad(val);
-            }
+            checkRad(valObj.left_top);
+            checkRad(valObj.right_top);
+            checkRad(valObj.left_bottom);
+            checkRad(valObj.right_bottom);
           }
         }
       }
@@ -2034,72 +2164,38 @@ const Quality: React.FC = () => {
           doors.forEach((doorNum, colIdx) => {
             const x = gridStartX + labelWidth + colIdx * cellWidth;
             
-            // Get the response for this specific door and level
-            const respId = `door_${doorNum}_level_${level.toLowerCase()}`;
-            const response = sub.responses.find(r => 
-              r.itemId === respId || 
-              r.itemId.endsWith(`_door_${doorNum}_level_${level.toLowerCase()}`) || 
-              r.itemId.endsWith(`_${doorNum}_level_${level.toLowerCase()}`)
-            );
+            // Get the response for this specific door and level accurately
+            const response = findDoorResponse(sub.responses, doorNum, level, template?.items);
+            const itemObj = findDoorItem(template?.items || [], doorNum, level);
             
-            // Default color for unclicked/unselected items is Green (Pouco Sujo)
-            const getPdfColorForOverallValue = (value: any, defaultColor = [16, 185, 129]) => {
-              if (!value) return defaultColor;
-              if (typeof value === 'object' && value !== null) {
-                const statuses = Object.values(value);
-                const hasTamponado = statuses.some(s => {
-                  const ls = String(s || '').toLowerCase();
-                  return ls.includes('tamponado') || ls.includes('vermelho');
-                });
-                const hasSujo = statuses.some(s => {
-                  const ls = String(s || '').toLowerCase();
-                  return !ls.includes('pouco') && (ls.includes('sujo') || ls.includes('suja') || ls.includes('amarelo'));
-                });
-
-                if (hasTamponado) return [239, 68, 68]; // Red
-                if (hasSujo) return [245, 158, 11]; // Yellow
+            // Color resolver helpers
+            const getPdfColorForStatus = (status: any, defaultColor = [16, 185, 129]) => {
+              if (status === undefined || status === null || status === '') return defaultColor;
+              const s = String(status).trim().toLowerCase();
+              if (s.includes('tamponad') || s.includes('vermelh') || s === 'not_ok' || s.includes('obstru') || s.includes('nao') || s.includes('não')) {
+                return [239, 68, 68]; // Red
+              }
+              if (!s.includes('pouco') && (s.includes('suj') || s.includes('amarel'))) {
+                return [245, 158, 11]; // Yellow
+              }
+              if (s.includes('pouco') || s.includes('verd') || s === 'limpo' || s === 'ok' || s.includes('conform')) {
                 return [16, 185, 129]; // Green
               }
-              const valStr = String(value).toLowerCase();
-              if (valStr.includes('tamponado') || valStr.includes('vermelho')) return [239, 68, 68]; // Red
-              if (valStr.includes('pouco') || valStr.includes('verde') || valStr === 'limpo' || valStr === 'ok') return [16, 185, 129]; // Green
-              if (valStr.includes('sujo') || valStr.includes('suja') || valStr.includes('amarelo')) return [245, 158, 11]; // Yellow
-              return [16, 185, 129]; // Green
+              return defaultColor;
             };
 
-            const getPdfColorForStatus = (status: string | undefined, defaultColor = [16, 185, 129]) => {
-              if (!status) return defaultColor;
-              const s = String(status).toLowerCase();
-              if (s.includes('tamponado') || s.includes('vermelho')) return [239, 68, 68]; // Red
-              if (s.includes('pouco') || s.includes('verde') || s === 'limpo' || s === 'ok') return [16, 185, 129]; // Green
-              if (s.includes('sujo') || s.includes('suja') || s.includes('amarelo')) return [245, 158, 11]; // Yellow
-              return [16, 185, 129]; // Green
-            };
+            const val = response?.value;
+            const valObj = getRadiatorValueObj(val);
 
-            const overallColor = getPdfColorForOverallValue(response?.value);
-            const valObj = (response && typeof response.value === 'object' && response.value !== null) ? response.value : null;
-
-            const tObj = templates.find(t => t.id === sub.templateId);
-            const itemObj = tObj?.items.find(it => 
-              it.id === respId || 
-              it.id.endsWith(`_door_${doorNum}_level_${level.toLowerCase()}`) || 
-              it.id.endsWith(`_${doorNum}_level_${level.toLowerCase()}`)
-            );
-            let radiatorCount = 4;
-            if (valObj) {
+            let radiatorCount = (doorNum === 0 || doorNum === 24 || itemObj?.radiatorCount === 2) ? 2 : 4;
+            if (radiatorCount !== 2) {
               if (valObj.left_top !== undefined || valObj.right_top !== undefined || valObj.left_bottom !== undefined || valObj.right_bottom !== undefined) {
                 radiatorCount = 4;
               } else if (valObj.left !== undefined || valObj.right !== undefined) {
                 radiatorCount = 2;
               } else if (itemObj?.radiatorCount !== undefined) {
                 radiatorCount = itemObj.radiatorCount;
-              } else {
-                radiatorCount = (doorNum === 0 || doorNum === 24) ? 2 : 4;
               }
-            } else if (itemObj?.radiatorCount !== undefined) {
-              radiatorCount = itemObj.radiatorCount;
-            } else {
-              radiatorCount = (doorNum === 0 || doorNum === 24) ? 2 : 4;
             }
 
             // Base white background for clean contrast
@@ -2108,6 +2204,7 @@ const Quality: React.FC = () => {
 
             if (radiatorCount === 0) {
               // Single block/no split
+              const overallColor = getPdfColorForStatus(val, [16, 185, 129]);
               doc.setFillColor(overallColor[0], overallColor[1], overallColor[2]);
               doc.setDrawColor(255, 255, 255);
               doc.setLineWidth(0.2);
@@ -2123,11 +2220,11 @@ const Quality: React.FC = () => {
               const subW = cellWidth - (pad * 2); // 13 - 0.8 = 12.2mm (wide horizontal block)
               const subH = (cellHeight - (pad * 2) - gapY) / 2; // (7 - 0.8 - 0.6) / 2 = 2.8mm
 
-              const valTop = valObj?.left ?? valObj?.left_top;
-              const valBottom = valObj?.right ?? valObj?.left_bottom;
+              const valTop = valObj.left ?? valObj.left_top;
+              const valBottom = valObj.right ?? valObj.right_bottom ?? valObj.left_bottom;
 
-              const colorTop = getPdfColorForStatus(valTop, overallColor);
-              const colorBottom = getPdfColorForStatus(valBottom, overallColor);
+              const colorTop = getPdfColorForStatus(valTop, [16, 185, 129]);
+              const colorBottom = getPdfColorForStatus(valBottom, [16, 185, 129]);
               
               doc.setDrawColor(71, 85, 105); // slate-700 border around radiator blocks
               doc.setLineWidth(0.12);
@@ -2152,15 +2249,15 @@ const Quality: React.FC = () => {
               const subW = (cellWidth - (pad * 2) - gapX) / 2;  // (13 - 0.8 - 0.8) / 2 = 5.7mm
               const subH = (cellHeight - (pad * 2) - gapY) / 2; // (7 - 0.8 - 0.6) / 2 = 2.8mm
               
-              const valLT = valObj?.left_top ?? valObj?.left;
-              const valRT = valObj?.right_top ?? valObj?.left;
-              const valLB = valObj?.left_bottom ?? valObj?.right;
-              const valRB = valObj?.right_bottom ?? valObj?.right;
+              const valLT = valObj.left_top;
+              const valRT = valObj.right_top;
+              const valLB = valObj.left_bottom;
+              const valRB = valObj.right_bottom;
 
-              const colorLeftTop = getPdfColorForStatus(valLT, overallColor);
-              const colorRightTop = getPdfColorForStatus(valRT, overallColor);
-              const colorLeftBottom = getPdfColorForStatus(valLB, overallColor);
-              const colorRightBottom = getPdfColorForStatus(valRB, overallColor);
+              const colorLeftTop = getPdfColorForStatus(valLT, [16, 185, 129]);
+              const colorRightTop = getPdfColorForStatus(valRT, [16, 185, 129]);
+              const colorLeftBottom = getPdfColorForStatus(valLB, [16, 185, 129]);
+              const colorRightBottom = getPdfColorForStatus(valRB, [16, 185, 129]);
 
               // Dark outline around each of the 4 individual sub-squares so they are always 4 distinct boxes
               doc.setDrawColor(71, 85, 105); // slate-700
@@ -2593,6 +2690,7 @@ const Quality: React.FC = () => {
                   <button
                     onClick={() => {
                       setFillingTemplate(null);
+                      setEditingSubmissionId(null);
                       setSubmissionLineId('');
                       setResponses({});
                       setObservations({});
@@ -2609,6 +2707,11 @@ const Quality: React.FC = () => {
                   <div className="space-y-0.5">
                     <h2 className="text-base font-black tracking-wide uppercase leading-tight">{fillingTemplate.name}</h2>
                     <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider line-clamp-1 max-w-[320px] mx-auto">{fillingTemplate.description || 'Check-list de Qualidade'}</p>
+                    {editingSubmissionId && (
+                      <span className="inline-block mt-1 bg-amber-400 text-slate-950 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
+                        Modo Edição de Inspeção Realizada
+                      </span>
+                    )}
                   </div>
 
                   {/* Right Close Button with safety modal */}
@@ -2623,7 +2726,7 @@ const Quality: React.FC = () => {
                         confirmText: 'Sair e Descartar',
                         onConfirm: async () => {
                           closeModal();
-                          if (user && fillingTemplate) {
+                          if (user && fillingTemplate && !editingSubmissionId) {
                             try {
                               const draftId = `${user.uid}_${fillingTemplate.id}`;
                               await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
@@ -2632,6 +2735,7 @@ const Quality: React.FC = () => {
                             }
                           }
                           setFillingTemplate(null);
+                          setEditingSubmissionId(null);
                           setResponses({});
                           setObservations({});
                           setSubmissionLineId('');
@@ -3545,6 +3649,7 @@ const Quality: React.FC = () => {
                             }
                           }
                           setFillingTemplate(null);
+                          setEditingSubmissionId(null);
                           setResponses({});
                           setObservations({});
                           setSubmissionLineId('');
@@ -3563,7 +3668,7 @@ const Quality: React.FC = () => {
                     className="px-8 py-3 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-700 shadow-md shadow-emerald-100 text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                   >
                     <Save className="w-4 h-4 shrink-0" />
-                    Finalizar Inspeção
+                    {editingSubmissionId ? 'Salvar Alterações' : 'Finalizar Inspeção'}
                   </button>
                 </div>
               </div>
@@ -3641,6 +3746,7 @@ const Quality: React.FC = () => {
                         }
 
                         setFillingTemplate(template);
+                        setEditingSubmissionId(null);
                         setExpandedItemId(template.items[0]?.id || null);
 
                         if (loadedDraft) {
@@ -4692,7 +4798,7 @@ const Quality: React.FC = () => {
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-8">
+                      <div className="flex items-center gap-4 sm:gap-8">
                          <div className="text-right">
                            <p className="text-xs font-black text-slate-900 uppercase tracking-widest">
                              {safeToDate(sub.createdAt)?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -4700,7 +4806,21 @@ const Quality: React.FC = () => {
                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
                              {safeToDate(sub.createdAt)?.toLocaleDateString('pt-BR')}
                            </p>
+                           {sub.editedAt && (
+                             <span className="inline-block text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/50 uppercase tracking-wider mt-0.5">
+                               Editado
+                             </span>
+                           )}
                          </div>
+                         {(isManager || isAdmin || isMaster || sub.userId === user?.uid) && (
+                           <button 
+                             onClick={() => handleEditSubmission(sub)}
+                             className="p-2 text-slate-300 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                             title="Editar Inspeção"
+                           >
+                             <Edit2 className="w-5 h-5" />
+                           </button>
+                         )}
                          {(isManager || isAdmin || isMaster) && (
                            <button 
                              onClick={() => setSubmissionToDelete(sub)}
@@ -5493,43 +5613,40 @@ const Quality: React.FC = () => {
                               </span>
                               <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-1 flex flex-col gap-1 min-h-[60px] justify-center">
                                 {activeLevels.map(lvl => {
-                                  const respId = `door_${doorNum}_level_${lvl}`;
-                                  const resp = viewingSubmission.responses.find(r => 
-                                    r.itemId === respId || 
-                                    r.itemId.endsWith(`_door_${doorNum}_level_${lvl}`) || 
-                                    r.itemId.endsWith(`_${doorNum}_level_${lvl}`)
-                                  );
+                                  const targetLvl = lvl.toLowerCase();
+                                  const resp = findDoorResponse(viewingSubmission.responses, doorNum, targetLvl, subTemplate?.items);
                                   const val = resp?.value;
-                                  const isObj = typeof val === 'object' && val !== null;
+                                  const valObj = getRadiatorValueObj(val);
 
-                                  const has4Rads = isObj && (val.left_top !== undefined || val.right_top !== undefined || val.left_bottom !== undefined || val.right_bottom !== undefined);
-                                  const is2Rads = !has4Rads && ((isObj && (val.left !== undefined || val.right !== undefined)) || doorNum === 0 || doorNum === 24);
+                                  const itemObj = findDoorItem(subTemplate?.items || [], doorNum, targetLvl);
+                                  const isSpecialDoor = doorNum === 0 || doorNum === 24 || itemObj?.radiatorCount === 2;
+                                  const has4Rads = !isSpecialDoor && (valObj.left_top !== undefined || valObj.right_top !== undefined || valObj.left_bottom !== undefined || valObj.right_bottom !== undefined);
+                                  const is2Rads = isSpecialDoor || (!has4Rads && (valObj.left !== undefined || valObj.right !== undefined));
 
                                   const getRadiatorColorClass = (s?: string) => {
                                     if (!s) return "bg-emerald-500";
                                     const ls = String(s).toLowerCase();
-                                    if (ls.includes('tamponado') || ls.includes('vermelho')) return "bg-rose-500";
-                                    if (ls.includes('pouco') || ls.includes('verde') || ls === 'limpo' || ls === 'ok') return "bg-emerald-500";
-                                    if (ls.includes('sujo') || ls.includes('suja') || ls.includes('amarelo')) return "bg-amber-400";
+                                    if (ls.includes('tamponad') || ls.includes('vermelh') || ls === 'not_ok' || ls.includes('obstru')) return "bg-rose-500";
+                                    if (!ls.includes('pouco') && (ls.includes('suj') || ls.includes('amarel'))) return "bg-amber-400";
                                     return "bg-emerald-500";
                                   };
 
-                                  if (!is2Rads && (has4Rads || (doorNum !== 0 && doorNum !== 24))) {
+                                  if (!is2Rads) {
                                     // 4 Radiators (Esquerdo Sup, Direito Sup, Esquerdo Inf, Direito Inf)
                                     return (
                                       <div key={lvl} className="grid grid-cols-2 gap-0.5 p-0.5 bg-slate-950/50 rounded-lg border border-slate-700/40" title={`Porta ${displayLabel} - Nível ${lvl.toUpperCase()}`}>
-                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(val?.left_top || (typeof val === 'string' ? val : undefined)))} title="Esquerdo Superior" />
-                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(val?.right_top || (typeof val === 'string' ? val : undefined)))} title="Direito Superior" />
-                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(val?.left_bottom || (typeof val === 'string' ? val : undefined)))} title="Esquerdo Inferior" />
-                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(val?.right_bottom || (typeof val === 'string' ? val : undefined)))} title="Direito Inferior" />
+                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.left_top))} title="Esquerdo Superior" />
+                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.right_top))} title="Direito Superior" />
+                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.left_bottom))} title="Esquerdo Inferior" />
+                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.right_bottom))} title="Direito Inferior" />
                                       </div>
                                     );
                                   } else {
                                     // 2 Radiators (Superior, Inferior)
                                     return (
                                       <div key={lvl} className="flex flex-col gap-0.5 p-0.5 bg-slate-950/50 rounded-lg border border-slate-700/40" title={`Porta ${displayLabel} - Nível ${lvl.toUpperCase()}`}>
-                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(val?.left || val?.left_top || (typeof val === 'string' ? val : undefined)))} title="Superior" />
-                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(val?.right || val?.left_bottom || (typeof val === 'string' ? val : undefined)))} title="Inferior" />
+                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.left ?? valObj.left_top))} title="Superior" />
+                                        <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.right ?? valObj.right_bottom ?? valObj.left_bottom))} title="Inferior" />
                                       </div>
                                     );
                                   }
@@ -5668,6 +5785,14 @@ const Quality: React.FC = () => {
               </div>
 
               <div className="mt-10 flex flex-col sm:flex-row gap-3">
+                 {(isManager || isAdmin || isMaster || viewingSubmission.userId === user?.uid) && (
+                   <button
+                     onClick={() => handleEditSubmission(viewingSubmission)}
+                     className="flex-1 py-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-2xl transition-all shadow-xl shadow-amber-100 flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
+                   >
+                     <Edit2 className="w-5 h-5" /> Editar Inspeção
+                   </button>
+                 )}
                  <button
                    onClick={() => generateSubmissionPDF(viewingSubmission)}
                    className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
