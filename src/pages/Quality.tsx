@@ -2781,10 +2781,31 @@ const Quality: React.FC = () => {
                                   {item.required && <span className="text-rose-500 ml-1 font-black">*</span>}
                                 </h4>
                                 {!isExpanded && isAnswered && (
-                                  <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest mt-1 flex items-center gap-1.5 font-mono">
+                                  <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest mt-1 flex flex-wrap items-center gap-1.5 font-mono">
                                     <span>CONCLUÍDO</span>
                                     <span className="opacity-40">•</span>
-                                    <span>VALOR: <strong className="bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-150">{String(currentValue).toUpperCase()}</strong></span>
+                                    <span>VALOR: <strong className="bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 text-emerald-800">
+                                      {(() => {
+                                        if (typeof currentValue === 'object' && currentValue !== null) {
+                                          if ('left_top' in currentValue || 'right_top' in currentValue || 'left_bottom' in currentValue || 'right_bottom' in currentValue) {
+                                            const lt = currentValue.left_top || 'Pouco Sujo';
+                                            const rt = currentValue.right_top || 'Pouco Sujo';
+                                            const lb = currentValue.left_bottom || 'Pouco Sujo';
+                                            const rb = currentValue.right_bottom || 'Pouco Sujo';
+                                            return `ESQ.SUP: ${lt} • DIR.SUP: ${rt} • ESQ.INF: ${lb} • DIR.INF: ${rb}`.toUpperCase();
+                                          }
+                                          if ('left' in currentValue || 'right' in currentValue) {
+                                            const l = currentValue.left || 'Pouco Sujo';
+                                            const r = currentValue.right || 'Pouco Sujo';
+                                            return `SUPERIOR: ${l} • INFERIOR: ${r}`.toUpperCase();
+                                          }
+                                          return Object.entries(currentValue).map(([k, v]) => `${k}: ${v}`).join(' • ').toUpperCase();
+                                        }
+                                        if (currentValue === 'ok') return 'CONFORME (OK)';
+                                        if (currentValue === 'not_ok') return 'NÃO CONFORME (NOK)';
+                                        return String(currentValue).toUpperCase();
+                                      })()}
+                                    </strong></span>
                                   </p>
                                 )}
                               </div>
@@ -2834,7 +2855,7 @@ const Quality: React.FC = () => {
                                           if (currentVal && typeof currentVal === 'object' && (currentVal as any)[key]) {
                                             return (currentVal as any)[key];
                                           }
-                                          return typeof currentVal === 'string' ? currentVal : 'Pouco Sujo';
+                                          return typeof currentVal === 'string' ? currentVal : '';
                                         };
 
                                         return (
@@ -2911,7 +2932,7 @@ const Quality: React.FC = () => {
                                                                 [item.id]: {
                                                                   ...prevVal,
                                                                   left: opt,
-                                                                  right: (prevVal as any).right || getSubVal('right')
+                                                                  right: (prevVal as any).right
                                                                 }
                                                               }));
                                                             }}
@@ -2952,7 +2973,7 @@ const Quality: React.FC = () => {
                                                                 ...prev,
                                                                 [item.id]: {
                                                                   ...prevVal,
-                                                                  left: (prevVal as any).left || getSubVal('left'),
+                                                                  left: (prevVal as any).left,
                                                                   right: opt
                                                                 }
                                                               }));
@@ -2998,9 +3019,9 @@ const Quality: React.FC = () => {
                                                                 [item.id]: {
                                                                   ...prevVal,
                                                                   left_top: opt,
-                                                                  right_top: (prevVal as any).right_top || getSubVal('right_top'),
-                                                                  left_bottom: (prevVal as any).left_bottom || getSubVal('left_bottom'),
-                                                                  right_bottom: (prevVal as any).right_bottom || getSubVal('right_bottom')
+                                                                  right_top: (prevVal as any).right_top,
+                                                                  left_bottom: (prevVal as any).left_bottom,
+                                                                  right_bottom: (prevVal as any).right_bottom
                                                                 }
                                                               }));
                                                             }}
@@ -3041,10 +3062,10 @@ const Quality: React.FC = () => {
                                                                 ...prev,
                                                                 [item.id]: {
                                                                   ...prevVal,
-                                                                  left_top: (prevVal as any).left_top || getSubVal('left_top'),
+                                                                  left_top: (prevVal as any).left_top,
                                                                   right_top: opt,
-                                                                  left_bottom: (prevVal as any).left_bottom || getSubVal('left_bottom'),
-                                                                  right_bottom: (prevVal as any).right_bottom || getSubVal('right_bottom')
+                                                                  left_bottom: (prevVal as any).left_bottom,
+                                                                  right_bottom: (prevVal as any).right_bottom
                                                                 }
                                                               }));
                                                             }}
@@ -3085,10 +3106,10 @@ const Quality: React.FC = () => {
                                                                 ...prev,
                                                                 [item.id]: {
                                                                   ...prevVal,
-                                                                  left_top: (prevVal as any).left_top || getSubVal('left_top'),
-                                                                  right_top: (prevVal as any).right_top || getSubVal('right_top'),
+                                                                  left_top: (prevVal as any).left_top,
+                                                                  right_top: (prevVal as any).right_top,
                                                                   left_bottom: opt,
-                                                                  right_bottom: (prevVal as any).right_bottom || getSubVal('right_bottom')
+                                                                  right_bottom: (prevVal as any).right_bottom
                                                                 }
                                                               }));
                                                             }}
@@ -3129,9 +3150,9 @@ const Quality: React.FC = () => {
                                                                 ...prev,
                                                                 [item.id]: {
                                                                   ...prevVal,
-                                                                  left_top: (prevVal as any).left_top || getSubVal('left_top'),
-                                                                  right_top: (prevVal as any).right_top || getSubVal('right_top'),
-                                                                  left_bottom: (prevVal as any).left_bottom || getSubVal('left_bottom'),
+                                                                  left_top: (prevVal as any).left_top,
+                                                                  right_top: (prevVal as any).right_top,
+                                                                  left_bottom: (prevVal as any).left_bottom,
                                                                   right_bottom: opt
                                                                 }
                                                               }));
