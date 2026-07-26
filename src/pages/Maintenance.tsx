@@ -335,9 +335,10 @@ export default function Maintenance() {
     ? inspectionTypes.map(t => t.name)
     : DEFAULT_INSPECTION_TYPES;
 
-  const availableResponsibleCenters = responsibleCenters.length > 0
+  const availableResponsibleCenters = (responsibleCenters.length > 0
     ? responsibleCenters.map(c => c.name)
-    : DEFAULT_RESPONSIBLE_CENTERS;
+    : DEFAULT_RESPONSIBLE_CENTERS
+  ).slice().sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
 
   const availableProgrammingTypes = programmingTypes.length > 0
     ? programmingTypes.map(p => p.name)
@@ -346,6 +347,9 @@ export default function Maintenance() {
   const availableStatuses = statuses.length > 0
     ? statuses.map(s => s.name)
     : DEFAULT_STATUSES;
+
+  // Sorted lines in alphabetical order
+  const sortedLines = [...lines].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
 
   // Filter inspection names based on current form Inspection Type
   const filteredInspectionNames = inspectionNames
@@ -435,24 +439,72 @@ export default function Maintenance() {
     setIsIssueModalOpen(true);
   };
 
-  // Image Upload handler (Convert to Base64)
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    Array.from(files).forEach((file: File) => {
-      if (file.size > 5 * 1024 * 1024) {
-        alert('A imagem deve ter no máximo 5MB.');
-        return;
-      }
+  // Helper to compress camera / album photos into lightweight JPEG base64 (max 1280px, ~150-250KB)
+  const processAndCompressImage = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setFormAttachments(prev => [...prev, reader.result as string]);
-        }
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxDim = 1280;
+
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            }
+          } else {
+            if (height > maxDim) {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+            resolve(dataUrl);
+          } else {
+            resolve((e.target?.result as string) || '');
+          }
+        };
+        img.onerror = () => {
+          resolve((e.target?.result as string) || '');
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => {
+        resolve('');
       };
       reader.readAsDataURL(file);
     });
+  };
+
+  // Image Upload handler (Convert to Base64 with compression)
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const inputEl = e.target;
+    const files = inputEl.files;
+    if (!files || files.length === 0) return;
+
+    const fileList = Array.from(files) as File[];
+    for (const file of fileList) {
+      try {
+        const compressedDataUrl = await processAndCompressImage(file);
+        if (compressedDataUrl) {
+          setFormAttachments(prev => [...prev, compressedDataUrl]);
+        }
+      } catch (err) {
+        console.error('Erro ao processar foto:', err);
+      }
+    }
+    // Reseta o input para permitir capturar/selecionar novamente
+    inputEl.value = '';
   };
 
   const handleRemoveAttachment = (index: number) => {
@@ -1283,7 +1335,7 @@ export default function Maintenance() {
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="all">Todas as Linhas</option>
-                  {lines.map(l => (
+                  {sortedLines.map(l => (
                     <option key={l.id} value={l.name}>{l.name}</option>
                   ))}
                 </select>
@@ -1609,7 +1661,7 @@ export default function Maintenance() {
                         className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                       >
                         <option value="">Selecione a Linha...</option>
-                        {lines
+                        {sortedLines
                           .filter(l => !newEquipmentSectorInput || l.sector === newEquipmentSectorInput)
                           .map(l => (
                             <option key={l.id} value={l.name}>{l.name}</option>
@@ -1877,7 +1929,7 @@ export default function Maintenance() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                    {lines.map((l) => (
+                    {sortedLines.map((l) => (
                       <div key={l.id} className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl flex items-start justify-between gap-2 hover:border-slate-300 transition-all">
                         <div className="space-y-1 min-w-0">
                           <div className="flex items-center gap-1.5">
@@ -2047,19 +2099,21 @@ export default function Maintenance() {
                     <p className="text-xs text-slate-400 italic">Nenhum centro responsável cadastrado.</p>
                   </div>
                 ) : (
-                  responsibleCenters.map((rc) => (
-                    <div key={rc.id} className="p-3 bg-slate-50 border border-slate-200/70 rounded-xl flex items-center justify-between hover:border-slate-300 transition-all">
-                      <span className="text-xs font-bold text-slate-800">{rc.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteAdminItem('maintenance_responsible_centers', rc.id, rc.name)}
-                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                        title="Excluir Centro Responsável"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))
+                  [...responsibleCenters]
+                    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
+                    .map((rc) => (
+                      <div key={rc.id} className="p-3 bg-slate-50 border border-slate-200/70 rounded-xl flex items-center justify-between hover:border-slate-300 transition-all">
+                        <span className="text-xs font-bold text-slate-800">{rc.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAdminItem('maintenance_responsible_centers', rc.id, rc.name)}
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="Excluir Centro Responsável"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))
                 )}
               </div>
             </div>
@@ -2191,7 +2245,15 @@ export default function Maintenance() {
                       type="date"
                       required
                       value={formDate}
-                      onChange={(e) => setFormDate(e.target.value)}
+                      onChange={(e) => {
+                        const newDateStr = e.target.value;
+                        setFormDate(newDateStr);
+                        if (newDateStr && formShift !== 'Central') {
+                          const dt = new Date(`${newDateStr}T12:00:00`);
+                          const calculatedGroup = getGroupForShift(dt, mapFormShiftToScaleShift(formShift));
+                          setFormTeamLetter(calculatedGroup);
+                        }
+                      }}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
@@ -2236,7 +2298,7 @@ export default function Maintenance() {
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="">Selecione a Linha...</option>
-                      {lines
+                      {sortedLines
                         .filter(l => !formSector || !l.sector || l.sector === formSector)
                         .map(l => (
                           <option key={l.id} value={l.name}>{l.name}{l.sector ? ` (${l.sector})` : ''}</option>
@@ -2246,7 +2308,10 @@ export default function Maintenance() {
 
                   {/* Turno */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1">Turno</label>
+                    <div className="flex items-center justify-between mb-1 ml-1">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Turno</label>
+                      <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">Escala Atual</span>
+                    </div>
                     <select
                       value={formShift}
                       onChange={(e) => {
@@ -2268,7 +2333,10 @@ export default function Maintenance() {
 
                   {/* Letra */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1">Letra / Escala</label>
+                    <div className="flex items-center justify-between mb-1 ml-1">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Letra / Escala</label>
+                      <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">Turma {formTeamLetter}</span>
+                    </div>
                     <select
                       value={formTeamLetter}
                       onChange={(e) => setFormTeamLetter(e.target.value)}
@@ -2493,7 +2561,12 @@ export default function Maintenance() {
 
                     <button
                       type="button"
-                      onClick={() => cameraInputRef.current?.click()}
+                      onClick={() => {
+                        if (cameraInputRef.current) {
+                          cameraInputRef.current.value = '';
+                          cameraInputRef.current.click();
+                        }
+                      }}
                       className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
                     >
                       <Camera className="w-4 h-4 text-emerald-600" /> Tirar Foto
@@ -2501,7 +2574,12 @@ export default function Maintenance() {
 
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => {
+                        if (fileInputRef.current) {
+                          fileInputRef.current.value = '';
+                          fileInputRef.current.click();
+                        }
+                      }}
                       className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
                     >
                       <Upload className="w-4 h-4 text-slate-500" /> Escolher do Álbum
@@ -2708,7 +2786,7 @@ export default function Maintenance() {
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="">Selecione a Linha...</option>
-                      {lines.map(l => (
+                      {sortedLines.map(l => (
                         <option key={l.id} value={l.name}>{l.name}</option>
                       ))}
                     </select>

@@ -204,6 +204,7 @@ export interface QualityChecklistTemplate {
   createdBy: string;
   createdAt: any;
   productId?: string;
+  requireProductSelection?: boolean;
 }
 
 export interface QualityChecklistSubmission {

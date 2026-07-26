@@ -985,19 +985,21 @@ const DDS: React.FC = () => {
       </div>
 
       {/* Sections rearranged: Management and Validation at the top */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Admin/Creation Tools Side - Now at the Top Left */}
         <div className="lg:col-span-5 space-y-6">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="bg-slate-900 rounded-[2rem] p-8 text-white shadow-2xl h-full"
+            className="bg-slate-900 rounded-[2rem] p-6 sm:p-8 text-white shadow-2xl"
           >
             {/* Collapsible Header Button for Creating / Editing DDS */}
             <button
               type="button"
               onClick={() => setIsCreateFormExpanded(prev => !prev)}
-              className="w-full flex items-center justify-between p-4 bg-slate-800/90 hover:bg-slate-800 rounded-2xl border border-slate-700/60 transition-all text-left group mb-2"
+              className={`w-full flex items-center justify-between p-4 bg-slate-800/90 hover:bg-slate-800 rounded-2xl border border-slate-700/60 transition-all text-left group ${
+                isCreateFormExpanded || editingSession || (activeSession && (isManager || isAdmin)) ? 'mb-2' : 'mb-0'
+              }`}
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform">

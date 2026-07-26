@@ -1343,7 +1343,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
         const items = [];
         for (let door = 0; door <= 24; door++) {
           for (const level of ['A', 'B', 'C', 'D']) {
-            const isSpecial = door === 0 || door === 1 || door === 24;
+            const isSpecial = door === 0 || door === 24;
             items.push({
               id: `door_${door}_level_${level.toLowerCase()}`,
               label: `Porta ${door === 24 ? '00' : door} - Nivel ${level}`,
