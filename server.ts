@@ -296,6 +296,85 @@ async function startServer() {
     }
   });
 
+  // API Route for AI Inspection of Unit/Bale Photos
+  app.post("/api/analyze-unit-photo", async (req: Request, res: Response) => {
+    try {
+      const { image, sideLabel } = req.body;
+      if (!image) {
+        return res.status(400).json({ error: "Imagem não fornecida" });
+      }
+
+      if (!ai) {
+        return res.json({
+          available: false,
+          message: "API Key do Gemini não configurada no servidor."
+        });
+      }
+
+      let mimeType = "image/jpeg";
+      let base64Data = image;
+      if (image.startsWith("data:")) {
+        const parts = image.split(";base64,");
+        mimeType = parts[0].replace("data:", "");
+        base64Data = parts[1];
+      }
+
+      const prompt = `Você é um inspetor de qualidade industrial especialista em fardos e unidades (units) de celulose/papel e embalagens industriais.
+Analise a imagem enviada (correspondente ao lado: ${sideLabel || 'da unit'}).
+
+Avalie com rigor absoluto:
+1. A imagem realmente mostra um fardo, unit de celulose, amarração de arame, etiqueta de fardo ou capa envelopada de pacote industrial? Se for qualquer outra coisa (por exemplo: pessoa, selfie, chão, parede, teto, objeto residencial/estranho, veículo, imagem preta/turva), defina "isValidUnitPhoto": false e explique em "invalidReason".
+2. Se for um fardo/unit de celulose válido, analise o estado visual:
+- Amarração dos arames (wireTyingStatus): "Conforme" se arames estão esticados e intactos, "Não Conforme" se arame arrebentado/frouxo/faltando.
+- Qualidade da capa (coverQualityStatus): "Conforme" se capa limpa e intacta, "Não Conforme" se rasgada/suja/molhada.
+- Impressão de etiqueta (labelPrintingStatus): "Conforme" se etiqueta visível e legível, "Não Conforme" se ilegível/faltando.
+- Altura e Geometria da Unit (unitHeightStatus): "Conforme" se empilhamento alinhado e retangular, "Não Conforme" se desalinhado/tombado.
+
+Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
+{
+  "isValidUnitPhoto": boolean,
+  "invalidReason": "string",
+  "wireTyingStatus": "Conforme" | "Não Conforme" | "N/A",
+  "coverQualityStatus": "Conforme" | "Não Conforme" | "N/A",
+  "labelPrintingStatus": "Conforme" | "Não Conforme" | "N/A",
+  "unitHeightStatus": "Conforme" | "Não Conforme" | "N/A",
+  "aiSummary": "string"
+}`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType
+            }
+          },
+          prompt
+        ],
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const responseText = response.text || "{}";
+      let parsed = {};
+      try {
+        parsed = JSON.parse(responseText);
+      } catch (e) {
+        console.error("Error parsing Gemini JSON response:", e);
+      }
+
+      return res.json({
+        available: true,
+        analysis: parsed
+      });
+    } catch (err: any) {
+      console.error("[API] Error analyzing unit photo with Gemini:", err);
+      return res.status(500).json({ error: err.message || "Erro na análise de imagem por IA" });
+    }
+  });
+
   // API Route to send email
   app.post("/api/send-notification", requireAuth, async (req, res) => {
     try {

@@ -909,21 +909,43 @@ const OperationalRoutes: React.FC = () => {
     const startScanner = async () => {
       try {
         scanner = new Html5Qrcode("qr-reader-route");
-        await scanner.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          (decodedText) => {
-            setRouteResponses(prev => ({
-              ...prev,
-              [activeScanner]: { ...prev[activeScanner], value: decodedText }
-            }));
-            setActiveScanner(null);
-          },
-          () => {}
-        );
+        try {
+          await scanner.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText) => {
+              setRouteResponses(prev => ({
+                ...prev,
+                [activeScanner]: { ...prev[activeScanner], value: decodedText }
+              }));
+              setActiveScanner(null);
+            },
+            () => {}
+          );
+        } catch {
+          await scanner.start(
+            { facingMode: "user" },
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText) => {
+              setRouteResponses(prev => ({
+                ...prev,
+                [activeScanner]: { ...prev[activeScanner], value: decodedText }
+              }));
+              setActiveScanner(null);
+            },
+            () => {}
+          );
+        }
       } catch (err: any) {
         console.error("Camera access error:", err);
-        setCameraError("Não foi possível acessar a câmera do dispositivo. Verifique as permissões de acesso.");
+        const errStr = String(err?.message || err || '').toLowerCase();
+        if (errStr.includes("notallowed") || errStr.includes("permission")) {
+          setCameraError("Acesso à câmera negado. Por favor, permita o acesso nas configurações do navegador.");
+        } else if (errStr.includes("notfound") || errStr.includes("device not found") || errStr.includes("requested device")) {
+          setCameraError("Nenhuma câmera foi encontrada no dispositivo. Digite o código manualmente.");
+        } else {
+          setCameraError("Não foi possível acessar a câmera do dispositivo. Verifique as permissões de acesso.");
+        }
       }
     };
 

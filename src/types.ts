@@ -175,6 +175,8 @@ export interface ChecklistItemDefinition {
   min?: number;
   max?: number;
   step?: number;
+  defaultValue?: number | string; // Valor padrão/alvo pré-definido (ex: 1.85, 2000, "normal")
+  expectedValue?: string; // Resposta considerada CONFORME/ESPERADA (ex: "NÃO", "SIM", "ok", "not_ok", etc.)
   conditionOptionsId?: string; // ID for custom options (e.g., ["OK", "NOK"])
   isInteger?: boolean; // For 'number' type
   isRangeDropdown?: boolean; // For 'range' type
@@ -188,6 +190,28 @@ export interface QualityChecklistOptionSet {
   options: string[]; // e.g., ["OK", "NÃO OK"]
   active: boolean;
   createdAt: any;
+}
+
+export interface TemplatePhotoRequirement {
+  id: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface UnitPhotoInspectionData {
+  enabled: boolean;
+  photos: Record<string, string>; // e.g. { front: "...", back: "...", top: "..." } or custom photo ids
+  photoLabels?: Record<string, string>; // e.g. { front: "Lado Frontal", top: "Topo / Em Cima" }
+  evaluation?: {
+    sideEvaluations?: Record<string, 'Conforme' | 'Não Conforme' | 'N/A'>;
+    wireTyingStatus?: 'Conforme' | 'Não Conforme' | 'N/A';
+    coverQualityStatus?: 'Conforme' | 'Não Conforme' | 'N/A';
+    labelPrintingStatus?: 'Conforme' | 'Não Conforme' | 'N/A';
+    unitHeightStatus?: 'Conforme' | 'Não Conforme' | 'N/A';
+    notes?: string;
+    overallStatus?: 'Conforme' | 'Não Conforme';
+  };
 }
 
 export interface QualityChecklistTemplate {
@@ -205,6 +229,8 @@ export interface QualityChecklistTemplate {
   createdAt: any;
   productId?: string;
   requireProductSelection?: boolean;
+  enableUnitPhotoInspection?: boolean;
+  photoRequirements?: TemplatePhotoRequirement[];
 }
 
 export interface QualityChecklistSubmission {
@@ -225,6 +251,7 @@ export interface QualityChecklistSubmission {
   editedBy?: string;
   productId?: string;
   productName?: string;
+  unitInspection?: UnitPhotoInspectionData;
 }
 
 export interface QualityChecklistOmission {

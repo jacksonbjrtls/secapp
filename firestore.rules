@@ -399,6 +399,13 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin() && isValidId(productId);
     }
 
+    // Quality Settings
+    match /quality_settings/{settingId} {
+      allow read: if isSignedIn();
+      allow create, update: if isApproved() && isNotDisabled();
+      allow delete: if isMaster() || isManager();
+    }
+
     // Quality Checklist Drafts
     match /quality_checklist_drafts/{draftId} {
       allow get, list: if isSignedIn() && !isUserBlocked() && (draftId is string && draftId.size() <= 128);

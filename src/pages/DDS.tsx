@@ -796,37 +796,54 @@ const DDS: React.FC = () => {
             aspectRatio: 1.0
           };
 
-          html5QrCode.start(
-            { facingMode: "environment" },
-            config,
-            (decodedText) => {
-              try {
-                if (decodedText.includes('passcode=')) {
-                  const url = new URL(decodedText);
-                  const code = url.searchParams.get('passcode') || new URLSearchParams(url.hash.split('?')[1] || '').get('passcode');
-                  if (code) {
-                    setPasscode(code);
-                    setIsScanning(false);
-                  }
-                } else if (/^\d{6}$/.test(decodedText)) {
-                  setPasscode(decodedText);
+          const onScanSuccess = (decodedText: string) => {
+            try {
+              if (decodedText.includes('passcode=')) {
+                const url = new URL(decodedText);
+                const code = url.searchParams.get('passcode') || new URLSearchParams(url.hash.split('?')[1] || '').get('passcode');
+                if (code) {
+                  setPasscode(code);
                   setIsScanning(false);
                 }
-              } catch (e) {
-                if (/^\d{6}$/.test(decodedText)) {
-                  setPasscode(decodedText);
-                  setIsScanning(false);
-                }
+              } else if (/^\d{6}$/.test(decodedText)) {
+                setPasscode(decodedText);
+                setIsScanning(false);
               }
-            },
-            () => {} // ignore scan failures
-          ).catch((err) => {
+            } catch (e) {
+              if (/^\d{6}$/.test(decodedText)) {
+                setPasscode(decodedText);
+                setIsScanning(false);
+              }
+            }
+          };
+
+          const startDdsScanner = async () => {
+            try {
+              await html5QrCode.start(
+                { facingMode: "environment" },
+                config,
+                onScanSuccess,
+                () => {}
+              );
+            } catch {
+              await html5QrCode.start(
+                { facingMode: "user" },
+                config,
+                onScanSuccess,
+                () => {}
+              );
+            }
+          };
+
+          startDdsScanner().catch((err) => {
             console.error("Camera start error:", err);
             if (isMounted) {
               setIsScanning(false);
-              const message = err?.message || String(err);
-              if (message.includes("NotAllowedError") || message.includes("Permission denied")) {
+              const message = (err?.message || String(err)).toLowerCase();
+              if (message.includes("notallowed") || message.includes("permission")) {
                 setError("Acesso à câmera negado. Por favor, permita o acesso nas configurações do seu navegador.");
+              } else if (message.includes("notfound") || message.includes("device not found") || message.includes("requested device")) {
+                setError("Nenhuma câmera encontrada no dispositivo. Digite a senha de 6 dígitos manualmente.");
               } else {
                 setError("Ocorreu um erro ao acessar a câmera. Tente novamente ou digite a senha manualmente.");
               }

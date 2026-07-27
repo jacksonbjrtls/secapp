@@ -257,31 +257,47 @@ const Certificates: React.FC = () => {
           const container = document.getElementById('qr-reader-container');
           if (container) {
             html5QrCode = new Html5Qrcode("qr-reader-container");
-            html5QrCode.start(
-              { facingMode: "environment" },
-              {
-                fps: 10,
-                qrbox: { width: 250, height: 250 }
-              },
-              (decodedText: string) => {
-                let extractedCode = decodedText.trim();
-                // If scanned is a URL, extract code
-                if (decodedText.includes('code=')) {
-                  const urlParams = new URLSearchParams(decodedText.split('?')[1]);
-                  extractedCode = urlParams.get('code') || decodedText;
-                } else if (decodedText.includes('/')) {
-                  const parts = decodedText.split('/');
-                  extractedCode = parts[parts.length - 1] || decodedText;
-                }
-                
-                handleOperatorSign(activeCourseToSign.id, extractedCode);
-              },
-              (errorMessage: string) => {
-                // scanning feedback, safe to ignore
+            const handleCertScan = (decodedText: string) => {
+              let extractedCode = decodedText.trim();
+              if (decodedText.includes('code=')) {
+                const urlParams = new URLSearchParams(decodedText.split('?')[1]);
+                extractedCode = urlParams.get('code') || decodedText;
+              } else if (decodedText.includes('/')) {
+                const parts = decodedText.split('/');
+                extractedCode = parts[parts.length - 1] || decodedText;
               }
-            ).catch((err: any) => {
+              
+              handleOperatorSign(activeCourseToSign.id, extractedCode);
+            };
+
+            const startCertScanner = async () => {
+              try {
+                await html5QrCode.start(
+                  { facingMode: "environment" },
+                  { fps: 10, qrbox: { width: 250, height: 250 } },
+                  handleCertScan,
+                  () => {}
+                );
+              } catch {
+                await html5QrCode.start(
+                  { facingMode: "user" },
+                  { fps: 10, qrbox: { width: 250, height: 250 } },
+                  handleCertScan,
+                  () => {}
+                );
+              }
+            };
+
+            startCertScanner().catch((err: any) => {
               console.error("Camera scan start error:", err);
-              setScannerError("Permissão de câmera negada ou não disponível. Por favor, insira o código manualmente.");
+              const message = (err?.message || String(err)).toLowerCase();
+              if (message.includes("notallowed") || message.includes("permission")) {
+                setScannerError("Permissão de câmera negada. Por favor, libere as permissões no navegador ou insira o código manualmente.");
+              } else if (message.includes("notfound") || message.includes("device not found") || message.includes("requested device")) {
+                setScannerError("Nenhuma câmera foi encontrada no dispositivo. Por favor, insira o código manualmente.");
+              } else {
+                setScannerError("Câmera não disponível ou em uso por outro app. Por favor, insira o código manualmente.");
+              }
             });
           }
         } catch (e) {

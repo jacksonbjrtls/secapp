@@ -27,7 +27,9 @@ import {
   ProductionLine,
   QualitySector,
   QualityChecklistOptionSet,
-  SecagemProduct
+  SecagemProduct,
+  UnitPhotoInspectionData,
+  TemplatePhotoRequirement
 } from '../types';
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 import { jsPDF } from 'jspdf';
@@ -61,7 +63,17 @@ import {
   GripVertical,
   Package,
   Upload,
-  Image
+  Image as ImageIcon,
+  Loader2,
+  Camera,
+  Scan,
+  ShieldCheck,
+  Eye,
+  Maximize2,
+  RotateCcw,
+  Check,
+  AlertTriangle,
+  Target
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
@@ -90,6 +102,58 @@ const getLocalDateString = (dateObj: Date): string => {
   const day = String(dateObj.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+const DEFAULT_4_SIDES_PHOTO_REQUIREMENTS: TemplatePhotoRequirement[] = [
+  { id: 'front', label: 'Lado Frontal (Frente)', description: 'Vista frontal do item/fardo', required: true },
+  { id: 'back', label: 'Lado Traseiro (Verso)', description: 'Vista traseira ou oposta', required: true },
+  { id: 'left', label: 'Lado Esquerdo', description: 'Lateral esquerda e amarração', required: true },
+  { id: 'right', label: 'Lado Direito', description: 'Lateral direita e alinhamento', required: true },
+];
+
+const PRESET_PHOTO_CONFIGS: { name: string; requirements: TemplatePhotoRequirement[] }[] = [
+  {
+    name: '1 Foto (Foto Única / Visão Geral)',
+    requirements: [
+      { id: 'general', label: 'Visão Geral / Foto Única', description: 'Registro fotográfico geral do ponto de inspeção', required: true }
+    ]
+  },
+  {
+    name: '2 Fotos (Frente e Verso)',
+    requirements: [
+      { id: 'front', label: 'Lado Frontal (Frente)', description: 'Vista frontal', required: true },
+      { id: 'back', label: 'Lado Traseiro (Verso)', description: 'Vista traseira', required: true }
+    ]
+  },
+  {
+    name: '4 Fotos (4 Lados - Padrão Unit)',
+    requirements: DEFAULT_4_SIDES_PHOTO_REQUIREMENTS
+  },
+  {
+    name: '6 Fotos (Cubo Completo)',
+    requirements: [
+      { id: 'front', label: 'Lado Frontal (Frente)', description: 'Vista frontal', required: true },
+      { id: 'back', label: 'Lado Traseiro (Verso)', description: 'Vista traseira', required: true },
+      { id: 'left', label: 'Lado Esquerdo', description: 'Lateral esquerda', required: true },
+      { id: 'right', label: 'Lado Direito', description: 'Lateral direita', required: true },
+      { id: 'top', label: 'Em Cima / Topo', description: 'Vista superior', required: true },
+      { id: 'bottom', label: 'Em Baixo / Base', description: 'Vista inferior / palete', required: true }
+    ]
+  }
+];
+
+const COMMON_PHOTO_ANGLE_OPTIONS = [
+  'Lado Frontal (Frente)',
+  'Lado Traseiro (Verso)',
+  'Lado Direito',
+  'Lado Esquerdo',
+  'Em Cima / Topo',
+  'Em Baixo / Base',
+  'Perspectiva / Ângulo',
+  'Etiqueta do Lote / Código',
+  'Placa de Identificação',
+  'Visão Geral',
+  'Personalizado'
+];
 
 const isTemplateDueOnDate = (template: QualityChecklistTemplate, dateObj: Date): boolean => {
   if (!template.scheduleType || template.scheduleType === 'shift') {
@@ -122,7 +186,25 @@ const isTemplateDueOnDate = (template: QualityChecklistTemplate, dateObj: Date):
 // Tabs
 type QualityTab = 'perform' | 'templates' | 'sectors' | 'options' | 'omissions' | 'dashboard' | 'products';
 
-const getOptionColorClasses = (option: string, isSelected: boolean) => {
+const getOptionColorClasses = (option: string, isSelected: boolean, expectedValue?: string) => {
+  if (expectedValue !== undefined && expectedValue !== null && expectedValue !== '') {
+    const normOpt = String(option).trim().toLowerCase();
+    const normExpected = String(expectedValue).trim().toLowerCase();
+    const isCompliantOpt = normOpt === normExpected || 
+      (normExpected === 'ok' && (normOpt === 'conforme' || normOpt === 'ok' || normOpt === 'sim')) || 
+      (normExpected === 'not_ok' && (normOpt === 'não conforme' || normOpt === 'nao conforme' || normOpt === 'nok' || normOpt === 'not_ok' || normOpt === 'não' || normOpt === 'nao'));
+    
+    if (isCompliantOpt) {
+      return isSelected
+        ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-black border-2 text-xs uppercase tracking-wider transition-all bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100"
+        : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50/20";
+    } else {
+      return isSelected
+        ? "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-black border-2 text-xs uppercase tracking-wider transition-all bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100"
+        : "flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold border-2 text-xs uppercase tracking-wider transition-all bg-white border-slate-200 text-rose-600 hover:border-rose-300 hover:bg-rose-50/20";
+    }
+  }
+
   const optLower = option.toLowerCase();
   
   // Limpo / Limpa
@@ -446,6 +528,40 @@ const getRadiatorValueObj = (val: any) => {
   return {};
 };
 
+const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new window.Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(event.target?.result as string);
+        }
+      };
+      img.onerror = (err) => reject(err);
+    };
+    reader.onerror = (err) => reject(err);
+  });
+};
+
 interface SortableChecklistItemProps {
   id: string;
   item: ChecklistItemDefinition;
@@ -537,33 +653,95 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pl-0 sm:pl-12 max-w-full overflow-hidden">
         {item.type === 'condition' && (
-          <div className="col-span-full max-w-full">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Conjunto de Opções</label>
-            <select
-              value={item.conditionOptionsId || ''}
-              onChange={(e) => {
-                const optId = e.target.value;
-                const selectedOptSet = optionSets.find(s => s.id === optId);
-                const isDryerOs = selectedOptSet?.name?.toLowerCase().includes('limpeza') || selectedOptSet?.name?.toLowerCase().includes('secador');
-                updateItemInTemplate(item.id, { 
-                  conditionOptionsId: optId,
-                  radiatorCount: isDryerOs ? (item.radiatorCount !== undefined ? item.radiatorCount : 0) : undefined
-                });
-              }}
-              className="w-full max-w-full md:max-w-md px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none text-xs font-bold focus:ring-2 focus:ring-emerald-500 truncate"
-            >
-              <option value="">Padrão (OK / NÃO OK)</option>
-              {optionSets.map(set => (
-                <option key={set.id} value={set.id}>{set.name}</option>
-              ))}
-            </select>
+          <div className="col-span-full max-w-full space-y-3">
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Conjunto de Opções</label>
+              <select
+                value={item.conditionOptionsId || ''}
+                onChange={(e) => {
+                  const optId = e.target.value;
+                  const selectedOptSet = optionSets.find(s => s.id === optId);
+                  const isDryerOs = selectedOptSet?.name?.toLowerCase().includes('limpeza') || selectedOptSet?.name?.toLowerCase().includes('secador');
+                  updateItemInTemplate(item.id, { 
+                    conditionOptionsId: optId,
+                    expectedValue: undefined,
+                    radiatorCount: isDryerOs ? (item.radiatorCount !== undefined ? item.radiatorCount : 0) : undefined
+                  });
+                }}
+                className="w-full max-w-full md:max-w-md px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none text-xs font-bold focus:ring-2 focus:ring-emerald-500 truncate"
+              >
+                <option value="">Padrão (OK / NÃO OK)</option>
+                {optionSets.map(set => (
+                  <option key={set.id} value={set.id}>{set.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Conformity Rule Selection (O que é BOM / Esperado) */}
+            <div className="col-span-full bg-emerald-50/70 border border-emerald-200/80 p-3.5 rounded-2xl space-y-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-900 uppercase tracking-wider">
+                <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                Regra de Conformidade (Resposta Esperada pela Norma)
+              </div>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-0.5">
+                <select
+                  value={item.expectedValue !== undefined ? item.expectedValue : ''}
+                  onChange={(e) => updateItemInTemplate(item.id, { expectedValue: e.target.value || undefined })}
+                  className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
+                >
+                  <option value="">
+                    Padrão ({item.conditionOptionsId ? `Primeira opção do grupo "${optionSets.find(s => s.id === item.conditionOptionsId)?.options[0] || 'OK'}" é Bom` : 'CONFORME / OK é Bom'})
+                  </option>
+                  {item.conditionOptionsId ? (
+                    optionSets.find(s => s.id === item.conditionOptionsId)?.options.map((opt, oIdx) => (
+                      <option key={`exp-${opt}-${oIdx}`} value={opt}>
+                        "{opt}" é a resposta CONFORME (Esperada)
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="ok">"CONFORME (OK)" é a resposta Esperada (Padrão)</option>
+                      <option value="not_ok">"NÃO CONFORME (NOK)" é a resposta Esperada (Invertido)</option>
+                    </>
+                  )}
+                </select>
+                {item.expectedValue !== undefined && item.expectedValue !== '' && (
+                  <button
+                    type="button"
+                    onClick={() => updateItemInTemplate(item.id, { expectedValue: undefined })}
+                    className="px-2.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 rounded-xl border border-rose-200 shrink-0"
+                    title="Restaurar regra padrão"
+                  >
+                    Limpar
+                  </button>
+                )}
+              </div>
+
+              {item.expectedValue !== undefined && item.expectedValue !== '' ? (
+                <div className="p-2.5 bg-white/90 border border-emerald-200 rounded-xl text-[11px] space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                    <span>
+                      Norma Esperada: <strong className="text-emerald-700 font-extrabold uppercase">"{item.expectedValue === 'ok' ? 'CONFORME (OK)' : item.expectedValue === 'not_ok' ? 'NÃO CONFORME (NOK)' : item.expectedValue}"</strong>
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    Se o operador responder <strong>"{item.expectedValue === 'ok' ? 'CONFORME (OK)' : item.expectedValue === 'not_ok' ? 'NÃO CONFORME (NOK)' : item.expectedValue}"</strong>, o item será registrado como <strong className="text-emerald-700">CONFORME (Verdadeiro)</strong>. Qualquer outra opção gerará <strong className="text-rose-600">Não Conformidade</strong>.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[10px] text-emerald-700 font-semibold">
+                  Exemplo: Se a pergunta for "Arame Quebrado?", selecione "NÃO" como resposta esperada acima para que "NÃO" seja gravado como Conforme.
+                </p>
+              )}
+            </div>
             
             {(() => {
               const selectedOptSet = optionSets.find(s => s.id === item.conditionOptionsId);
               const isDryerOs = selectedOptSet?.name?.toLowerCase().includes('limpeza') || selectedOptSet?.name?.toLowerCase().includes('secador');
               if (isDryerOs) {
                 return (
-                  <div className="mt-4 max-w-full">
+                  <div className="mt-2 max-w-full">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">
                       Quantidade de Radiadores nesta Porta
                     </label>
@@ -639,7 +817,60 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
                 />
               </div>
             )}
+            <div className="col-span-full bg-emerald-50/70 border border-emerald-200/80 p-3.5 rounded-2xl space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-900 uppercase tracking-wider">
+                <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                Valor Padrão Esperado (Alvo Norma / Pré-preenchido)
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="number"
+                  step={item.isInteger ? "1" : (item.step || "0.01")}
+                  placeholder="Informe o valor padrão esperado (norma/alvo)"
+                  value={item.defaultValue !== undefined && item.defaultValue !== null ? item.defaultValue : ''}
+                  onChange={(e) => updateItemInTemplate(item.id, { defaultValue: e.target.value !== '' ? parseFloat(e.target.value) : undefined })}
+                  className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+                {item.defaultValue !== undefined && item.defaultValue !== null && (
+                  <button
+                    type="button"
+                    onClick={() => updateItemInTemplate(item.id, { defaultValue: undefined })}
+                    className="px-2.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 rounded-xl border border-rose-200 shrink-0"
+                    title="Remover valor padrão"
+                  >
+                    Limpar
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-emerald-700 font-semibold">
+                Este valor virá pré-preenchido como padrão da norma ao abrir o checklist. O operador só altera se houver variação no parâmetro.
+              </p>
+            </div>
           </>
+        )}
+
+        {item.type === 'range' && (
+          <div className="col-span-full bg-emerald-50/70 border border-emerald-200/80 p-3.5 rounded-2xl space-y-1">
+            <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-900 uppercase tracking-wider">
+              <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              Valor Padrão Esperado (Pré-selecionado)
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <select
+                value={item.defaultValue !== undefined ? String(item.defaultValue) : 'normal'}
+                onChange={(e) => updateItemInTemplate(item.id, { defaultValue: e.target.value || undefined })}
+                className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
+              >
+                <option value="normal">NORMAL / OK (Padrão)</option>
+                <option value="low">BAIXO</option>
+                <option value="high">ALTO</option>
+                <option value="">Nenhum (Vazio / Operador escolhe)</option>
+              </select>
+            </div>
+            <p className="text-[10px] text-emerald-700 font-semibold">
+              O range virá pré-selecionado nesta opção ao abrir o checklist.
+            </p>
+          </div>
         )}
         {item.type === 'product' && (
           <div className="col-span-full">
@@ -738,6 +969,227 @@ const Quality: React.FC = () => {
   const [viewingSubmission, setViewingSubmission] = useState<QualityChecklistSubmission | null>(null);
   const [selectedVisualLevel, setSelectedVisualLevel] = useState<'ALL' | 'A' | 'B' | 'C' | 'D'>('ALL');
 
+  // Unit Photo Inspection Module State
+  const [unitPhotoModuleEnabled, setUnitPhotoModuleEnabled] = useState<boolean>(false);
+  const [unitPhotos, setUnitPhotos] = useState<Record<string, string>>({});
+  const [unitEvaluation, setUnitEvaluation] = useState<{
+    sideEvaluations: Record<string, 'Conforme' | 'Não Conforme' | 'N/A' | ''>;
+    wireTyingStatus?: 'Conforme' | 'Não Conforme' | 'N/A' | '';
+    coverQualityStatus?: 'Conforme' | 'Não Conforme' | 'N/A' | '';
+    labelPrintingStatus?: 'Conforme' | 'Não Conforme' | 'N/A' | '';
+    unitHeightStatus?: 'Conforme' | 'Não Conforme' | 'N/A' | '';
+    notes: string;
+  }>({
+    sideEvaluations: {},
+    wireTyingStatus: '',
+    coverQualityStatus: '',
+    labelPrintingStatus: '',
+    unitHeightStatus: '',
+    notes: ''
+  });
+  const [aiAnalyzingPhoto, setAiAnalyzingPhoto] = useState<boolean>(false);
+  const [photoAiAlerts, setPhotoAiAlerts] = useState<Record<string, { isValid: boolean; reason?: string; summary?: string }>>({});
+  const [viewingPhotoModal, setViewingPhotoModal] = useState<{ url: string; title: string } | null>(null);
+
+  const [activeCameraCapture, setActiveCameraCapture] = useState<{
+    side: string;
+    label: string;
+  } | null>(null);
+  const cameraVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [unitCamError, setUnitCamError] = useState<string | null>(null);
+  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
+
+  useEffect(() => {
+    if (!activeCameraCapture) {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        setCameraStream(null);
+      }
+      setUnitCamError(null);
+      return;
+    }
+
+    let isMounted = true;
+    async function startCam() {
+      try {
+        setUnitCamError(null);
+        if (cameraStream) {
+          cameraStream.getTracks().forEach(track => track.stop());
+        }
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: cameraFacing },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          });
+        } catch {
+          // Fallback to basic camera request
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        }
+
+        if (!isMounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        setCameraStream(stream);
+        if (cameraVideoRef.current) {
+          cameraVideoRef.current.srcObject = stream;
+        }
+      } catch (err: any) {
+        console.error("Camera access error:", err);
+        if (isMounted) {
+          const errStr = String(err?.message || err || '').toLowerCase();
+          if (errStr.includes('notallowed') || errStr.includes('permission')) {
+            setUnitCamError("Acesso à câmera foi negado nas permissões do seu navegador. Por favor, libere a permissão de câmera ou envie uma foto da galeria.");
+          } else if (errStr.includes('notfound') || errStr.includes('device not found') || errStr.includes('requested device')) {
+            setUnitCamError("Nenhuma câmera foi encontrada no seu dispositivo. Você pode selecionar a foto diretamente da galeria.");
+          } else {
+            setUnitCamError("Não foi possível carregar a transmissão de vídeo da câmera neste navegador/dispositivo. Você pode selecionar a foto direto da galeria.");
+          }
+        }
+      }
+    }
+
+    startCam();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeCameraCapture, cameraFacing]);
+
+  const analyzeCapturedPhoto = async (photoBase64: string, side: string, label: string) => {
+    try {
+      setAiAnalyzingPhoto(true);
+      const res = await fetch('/api/analyze-unit-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: photoBase64, sideLabel: label })
+      });
+      const data = await res.json();
+      if (data.available && data.analysis) {
+        const { isValidUnitPhoto, invalidReason, wireTyingStatus, coverQualityStatus, labelPrintingStatus, unitHeightStatus, aiSummary } = data.analysis;
+        
+        setPhotoAiAlerts(prev => ({
+          ...prev,
+          [side]: {
+            isValid: isValidUnitPhoto !== false,
+            reason: invalidReason,
+            summary: aiSummary
+          }
+        }));
+
+        if (isValidUnitPhoto === false) {
+          setModalConfig({
+            isOpen: true,
+            title: '⚠️ Foto Incompatível / Não Reconhecida (AI)',
+            message: `A imagem capturada para a face "${label}" não aparenta ser de um fardo ou unit de celulose / embalagem industrial.\n\nMotivo apontado pela AI: ${invalidReason || 'Imagem sem elementos industriais visíveis'}.\n\nRecomenda-se refazer a foto enquadrando o fardo no retângulo guia de leitura.`,
+            type: 'warning'
+          });
+          setUnitEvaluation(prev => ({
+            ...prev,
+            sideEvaluations: {
+              ...(prev.sideEvaluations || {}),
+              [side]: prev.sideEvaluations?.[side] || 'Não Conforme'
+            },
+            notes: (prev.notes ? prev.notes + '\n' : '') + `[Alerta AI - Face ${label}]: Imagem não reconhecida (${invalidReason || 'foto incompatível'}).`
+          }));
+        } else {
+          setUnitEvaluation(prev => ({
+            ...prev,
+            sideEvaluations: {
+              ...(prev.sideEvaluations || {}),
+              [side]: prev.sideEvaluations?.[side] || 'Conforme'
+            },
+            wireTyingStatus: prev.wireTyingStatus || wireTyingStatus || '',
+            coverQualityStatus: prev.coverQualityStatus || coverQualityStatus || '',
+            labelPrintingStatus: prev.labelPrintingStatus || labelPrintingStatus || '',
+            unitHeightStatus: prev.unitHeightStatus || unitHeightStatus || ''
+          }));
+        }
+      }
+    } catch (err) {
+      console.warn("AI photo analysis error:", err);
+    } finally {
+      setAiAnalyzingPhoto(false);
+    }
+  };
+
+  const handleCaptureFromCamera = async () => {
+    if (!cameraVideoRef.current || !activeCameraCapture) return;
+    const video = cameraVideoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+    const side = activeCameraCapture.side;
+    const label = activeCameraCapture.label;
+    let finalPhoto = dataUrl;
+
+    try {
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      const file = new File([blob], `unit_${side}.jpg`, { type: 'image/jpeg' });
+      const compressed = await compressImage(file, 800, 0.7);
+      finalPhoto = compressed;
+      setUnitPhotos(prev => ({ ...prev, [side]: compressed }));
+    } catch (err) {
+      setUnitPhotos(prev => ({ ...prev, [side]: dataUrl }));
+    }
+
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      setCameraStream(null);
+    }
+    setActiveCameraCapture(null);
+
+    // Call AI analysis in background
+    analyzeCapturedPhoto(finalPhoto, side, label);
+  };
+
+  const handleUnitPhotoUpload = async (side: string, e: React.ChangeEvent<HTMLInputElement>, customLabel?: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImage(file, 800, 0.7);
+      setUnitPhotos(prev => ({ ...prev, [side]: compressed }));
+      analyzeCapturedPhoto(compressed, side, customLabel || side);
+    } catch (err) {
+      console.error("Erro ao processar foto da unit:", err);
+    }
+  };
+
+  const toggleUnitPhotoModule = async (newValue: boolean) => {
+    try {
+      await setDoc(doc(db, 'quality_settings', 'modules'), {
+        unitPhotoModuleEnabled: newValue,
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.displayName || user?.email || 'Admin'
+      }, { merge: true });
+      setModalConfig({
+        isOpen: true,
+        title: newValue ? 'Módulo Ativado' : 'Módulo Desativado',
+        message: newValue 
+          ? 'O módulo de Inspeção Fotográfica e Avaliação de Unit (4 Lados) foi ativado no sistema.'
+          : 'O módulo foi desativado. Nenhuma alteração foi realizada nas inspeções salvas.',
+        type: 'success'
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'quality_settings');
+    }
+  };
+
   // Performance Filtering
   const [selectedLineId, setSelectedLineId] = useState<string>('');
 
@@ -776,7 +1228,9 @@ const Quality: React.FC = () => {
     sectorId: '',
     frequencyPerShift: 1,
     items: [],
-    active: true
+    active: true,
+    enableUnitPhotoInspection: false,
+    photoRequirements: DEFAULT_4_SIDES_PHOTO_REQUIREMENTS
   });
 
   const itemSensors = useSensors(
@@ -1067,6 +1521,15 @@ const Quality: React.FC = () => {
       setProducts(fetchedProducts);
     }, (error) => console.error("Error in quality_products listener:", error));
 
+    const unsubSettings = onSnapshot(doc(db, 'quality_settings', 'modules'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setUnitPhotoModuleEnabled(Boolean(data?.unitPhotoModuleEnabled));
+      } else {
+        setUnitPhotoModuleEnabled(false);
+      }
+    }, (error) => console.warn("Note in quality_settings listener:", error));
+
     setLoading(false);
 
     return () => {
@@ -1077,6 +1540,7 @@ const Quality: React.FC = () => {
       unsubSubmissions();
       unsubOmissions();
       unsubProducts();
+      unsubSettings();
     };
   }, [user, seedingLoading, seedingConfig]);
 
@@ -1300,6 +1764,18 @@ const Quality: React.FC = () => {
         }
       });
 
+      if (cleanTemplate.items && Array.isArray(cleanTemplate.items)) {
+        cleanTemplate.items = cleanTemplate.items.map(it => {
+          const itemCopy = { ...it };
+          Object.keys(itemCopy).forEach(k => {
+            if ((itemCopy as any)[k] === undefined) {
+              delete (itemCopy as any)[k];
+            }
+          });
+          return itemCopy;
+        });
+      }
+
       if (editingTemplate) {
         await updateDoc(doc(db, 'quality_checklist_templates', editingTemplate.id), {
           ...cleanTemplate,
@@ -1324,7 +1800,9 @@ const Quality: React.FC = () => {
         specificDate: '',
         items: [],
         active: true,
-        productId: ''
+        productId: '',
+        enableUnitPhotoInspection: false,
+        photoRequirements: DEFAULT_4_SIDES_PHOTO_REQUIREMENTS
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'quality_checklist_templates');
@@ -1381,25 +1859,46 @@ const Quality: React.FC = () => {
         if (!element) return;
 
         scanner = new Html5Qrcode("qr-reader");
-        scanner.start(
-          { facingMode: "environment" },
-          {
-            fps: 10,
-            qrbox: { width: 250, height: 250 },
-          },
-          (decodedText) => {
-            setResponses(prev => ({ ...prev, [activeScanner]: decodedText }));
-            setActiveScanner(null);
-          },
-          (errorMessage) => {
-            // ignore common errors
+        const startScanner = async () => {
+          try {
+            await scanner.start(
+              { facingMode: "environment" },
+              {
+                fps: 10,
+                qrbox: { width: 250, height: 250 },
+              },
+              (decodedText) => {
+                setResponses(prev => ({ ...prev, [activeScanner]: decodedText }));
+                setActiveScanner(null);
+              },
+              () => {}
+            );
+          } catch {
+            // Fallback to front/user camera or default
+            await scanner.start(
+              { facingMode: "user" },
+              {
+                fps: 10,
+                qrbox: { width: 250, height: 250 },
+              },
+              (decodedText) => {
+                setResponses(prev => ({ ...prev, [activeScanner]: decodedText }));
+                setActiveScanner(null);
+              },
+              () => {}
+            );
           }
-        ).catch(err => {
+        };
+
+        startScanner().catch(err => {
           console.error("Scanner error:", err);
-          if (err?.toString().includes("NotAllowedError")) {
+          const errStr = String(err?.message || err || '').toLowerCase();
+          if (errStr.includes("notallowed") || errStr.includes("permission")) {
             setCameraError("Acesso à câmera negado. Por favor, permita o acesso nas configurações do seu navegador.");
+          } else if (errStr.includes("notfound") || errStr.includes("device not found") || errStr.includes("requested device")) {
+            setCameraError("Nenhuma câmera foi encontrada no seu dispositivo. Digite o código manualmente no campo de texto.");
           } else {
-            setCameraError("Erro ao iniciar a câmera. Verifique se outro aplicativo está usando a câmera.");
+            setCameraError("Erro ao iniciar a câmera. Verifique se outro aplicativo está usando a câmera ou digite o código.");
           }
         });
       }, 500);
@@ -1501,6 +2000,11 @@ const Quality: React.FC = () => {
     }
 
     const loadedResponses: Record<string, any> = {};
+    (template.items || []).forEach(it => {
+      if (it.defaultValue !== undefined && it.defaultValue !== null && it.defaultValue !== '') {
+        loadedResponses[it.id] = it.defaultValue;
+      }
+    });
     const loadedObservations: Record<string, string> = {};
 
     (sub.responses || []).forEach(r => {
@@ -1520,6 +2024,31 @@ const Quality: React.FC = () => {
     setSubmissionLineId(sub.lineId || sub.sectorId);
     setSelectedProductId(sub.productId || template.productId || '');
     setIsDraftLoaded(false);
+
+    if (sub.unitInspection) {
+      setUnitPhotos(sub.unitInspection.photos || {});
+      if (sub.unitInspection.evaluation) {
+        setUnitEvaluation({
+          sideEvaluations: sub.unitInspection.evaluation.sideEvaluations || {},
+          wireTyingStatus: sub.unitInspection.evaluation.wireTyingStatus || '',
+          coverQualityStatus: sub.unitInspection.evaluation.coverQualityStatus || '',
+          labelPrintingStatus: sub.unitInspection.evaluation.labelPrintingStatus || '',
+          unitHeightStatus: sub.unitInspection.evaluation.unitHeightStatus || '',
+          notes: sub.unitInspection.evaluation.notes || ''
+        });
+      }
+    } else {
+      setUnitPhotos({});
+      setUnitEvaluation({
+        sideEvaluations: {},
+        wireTyingStatus: '',
+        coverQualityStatus: '',
+        labelPrintingStatus: '',
+        unitHeightStatus: '',
+        notes: ''
+      });
+    }
+
     setViewingSubmission(null);
     setActiveTab('perform');
   };
@@ -1564,6 +2093,42 @@ const Quality: React.FC = () => {
         type: 'warning'
       });
       return;
+    }
+
+    // Validate unit photo evaluation & mandatory photos if unit photo module is enabled
+    const templatePhotoReqs = fillingTemplate.photoRequirements?.length 
+      ? fillingTemplate.photoRequirements 
+      : DEFAULT_4_SIDES_PHOTO_REQUIREMENTS;
+
+    if (unitPhotoModuleEnabled && fillingTemplate.enableUnitPhotoInspection) {
+      const missingPhoto = templatePhotoReqs.find(req => (req.required !== false) && !unitPhotos[req.id]);
+      if (missingPhoto) {
+        setModalConfig({
+          isOpen: true,
+          title: 'Foto Obrigatória Pendente',
+          message: `A foto "${missingPhoto.label}" é obrigatória para este checklist. Por favor, capture ou anexe a foto antes de enviar.`,
+          type: 'warning'
+        });
+        return;
+      }
+    }
+
+    const hasPhotos = Object.values(unitPhotos).some(p => Boolean(p));
+    if (unitPhotoModuleEnabled && (fillingTemplate.enableUnitPhotoInspection || hasPhotos)) {
+      const sideEvals = unitEvaluation.sideEvaluations || {};
+      const missingEval = templatePhotoReqs.find(req => 
+        !sideEvals[req.id] && 
+        !unitEvaluation.wireTyingStatus
+      );
+      if (missingEval) {
+        setModalConfig({
+          isOpen: true,
+          title: 'Avaliação da Inspeção Pendente',
+          message: `Por favor, selecione o status de avaliação (Conforme, Não Conforme ou N/A) para a posição "${missingEval.label}" antes de enviar.`,
+          type: 'warning'
+        });
+        return;
+      }
     }
 
     // Shift frequency validation (skip check for the submission currently being edited)
@@ -1619,6 +2184,34 @@ const Quality: React.FC = () => {
             observation: observations[itemId] || ''
           }));
 
+          const hasPhotos = Object.values(unitPhotos).some(p => Boolean(p));
+          const templatePhotoReqs = fillingTemplate.photoRequirements?.length 
+            ? fillingTemplate.photoRequirements 
+            : DEFAULT_4_SIDES_PHOTO_REQUIREMENTS;
+
+          const photoLabels: Record<string, string> = {};
+          templatePhotoReqs.forEach(req => {
+            photoLabels[req.id] = req.label;
+          });
+
+          const sideEvals = unitEvaluation.sideEvaluations || {};
+          const isNonConforming = templatePhotoReqs.some(req => sideEvals[req.id] === 'Não Conforme') ||
+            unitEvaluation.wireTyingStatus === 'Não Conforme' ||
+            unitEvaluation.coverQualityStatus === 'Não Conforme' ||
+            unitEvaluation.labelPrintingStatus === 'Não Conforme' ||
+            unitEvaluation.unitHeightStatus === 'Não Conforme';
+
+          const unitInspectionPayload: UnitPhotoInspectionData | undefined = (unitPhotoModuleEnabled && (hasPhotos || unitEvaluation.notes)) ? {
+            enabled: true,
+            photos: unitPhotos,
+            photoLabels,
+            evaluation: {
+              ...unitEvaluation,
+              sideEvaluations: sideEvals,
+              overallStatus: isNonConforming ? 'Não Conforme' : 'Conforme'
+            }
+          } : undefined;
+
           if (editingSubmissionId) {
             await updateDoc(doc(db, 'quality_checklist_submissions', editingSubmissionId), {
               lineId: targetLineId,
@@ -1626,7 +2219,8 @@ const Quality: React.FC = () => {
               productName: matchedProd ? matchedProd.name : '',
               responses: sanitizedResponses,
               editedAt: serverTimestamp(),
-              editedBy: encName
+              editedBy: encName,
+              ...(unitInspectionPayload ? { unitInspection: unitInspectionPayload } : {})
             });
           } else {
             await addDoc(collection(db, 'quality_checklist_submissions'), {
@@ -1639,7 +2233,8 @@ const Quality: React.FC = () => {
               productId: selectedProductId || '',
               productName: matchedProd ? matchedProd.name : '',
               responses: sanitizedResponses,
-              createdAt: serverTimestamp()
+              createdAt: serverTimestamp(),
+              ...(unitInspectionPayload ? { unitInspection: unitInspectionPayload } : {})
             });
 
             try {
@@ -1657,6 +2252,15 @@ const Quality: React.FC = () => {
           setSubmissionLineId('');
           setIsDraftLoaded(false);
           setDraftSavedAt(null);
+          setUnitPhotos({});
+          setUnitEvaluation({
+            sideEvaluations: {},
+            wireTyingStatus: '',
+            coverQualityStatus: '',
+            labelPrintingStatus: '',
+            unitHeightStatus: '',
+            notes: ''
+          });
           
           setModalConfig({
             isOpen: true,
@@ -1827,6 +2431,19 @@ const Quality: React.FC = () => {
       }
     }
 
+    // Check explicit expectedValue defined by template creator
+    if (item.expectedValue !== undefined && item.expectedValue !== null && item.expectedValue !== '') {
+      if (value === undefined || value === null || value === '') return true;
+      const normVal = String(value).trim().toLowerCase();
+      const normExp = String(item.expectedValue).trim().toLowerCase();
+      
+      if (normVal === normExp) return true;
+      if (normExp === 'ok' && (normVal === 'conforme' || normVal === 'ok' || normVal === 'sim')) return true;
+      if (normExp === 'not_ok' && (normVal === 'não conforme' || normVal === 'nao conforme' || normVal === 'nok' || normVal === 'not_ok' || normVal === 'não' || normVal === 'nao')) return true;
+      
+      return false;
+    }
+
     if (item.type === 'condition') {
       // If custom options are used
       if (item.conditionOptionsId) {
@@ -1905,8 +2522,82 @@ const Quality: React.FC = () => {
 
   const complianceRate = calculateComplianceRate();
 
+  // Helper PDF branding footer (aligned with Maintenance & StopsControl visual identity)
+  const addSecAppPdfFooter = async (docPdf: jsPDF) => {
+    const totalPages = (docPdf as any).internal.getNumberOfPages();
+    let logoBase64: string | null = null;
+    
+    try {
+      logoBase64 = await new Promise<string | null>((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              resolve(canvas.toDataURL('image/png'));
+            } else {
+              resolve(null);
+            }
+          } catch {
+            resolve(null);
+          }
+        };
+        img.onerror = () => resolve(null);
+        img.src = '/icon-secapp.png';
+      });
+    } catch {
+      logoBase64 = null;
+    }
+
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      docPdf.setPage(pageNum);
+      
+      const pageWidth = docPdf.internal.pageSize.getWidth();
+      const pageHeight = docPdf.internal.pageSize.getHeight();
+      const footerY = pageHeight - 10;
+
+      docPdf.setDrawColor(226, 232, 240);
+      docPdf.setLineWidth(0.3);
+      docPdf.line(15, footerY - 4, pageWidth - 15, footerY - 4);
+
+      let textStartX = 15;
+      if (logoBase64) {
+        try {
+          docPdf.addImage(logoBase64, 'PNG', 15, footerY - 3, 10, 4);
+          textStartX = 27;
+        } catch {
+          // ignore
+        }
+      }
+
+      if (logoBase64) {
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(8);
+        docPdf.setTextColor(148, 163, 184);
+        docPdf.text('| Sistema de Gestão Operacional', textStartX, footerY + 0.8);
+      } else {
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8);
+        docPdf.setTextColor(5, 150, 105);
+        docPdf.text('SecApp', textStartX, footerY + 0.8);
+
+        const secAppWidth = docPdf.getTextWidth('SecApp');
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setTextColor(148, 163, 184);
+        docPdf.text(' | Sistema de Gestão Operacional', textStartX + secAppWidth, footerY + 0.8);
+      }
+
+      docPdf.text(`Página ${pageNum} de ${totalPages}`, pageWidth - 15, footerY + 0.8, { align: 'right' });
+    }
+  };
+
   // Function to generate and download PDF of a quality inspection submission
-  const generateSubmissionPDF = (sub: QualityChecklistSubmission) => {
+  const generateSubmissionPDF = async (sub: QualityChecklistSubmission) => {
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.width;
     const template = templates.find(t => t.id === sub.templateId);
@@ -2328,7 +3019,113 @@ const Quality: React.FC = () => {
       doc.rect(140, currentY + 2, 6, 4, 'F');
       doc.text(sanitizePdfText('Tamponado (Codigo 1) - Vermelho'), 148, currentY + 5);
     }
+
+    if (sub.unitInspection) {
+      let unitY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 12 : 180;
+      if (unitY > 230) {
+        doc.addPage();
+        unitY = 20;
+      }
+
+      doc.setFillColor(15, 23, 42); // slate-900
+      doc.rect(14, unitY, pageWidth - 28, 8, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(sanitizePdfText('AVALIAÇÃO VISUAL DA UNIT DE FARDOS (4 LADOS)'), 18, unitY + 5.5);
+
+      unitY += 12;
+
+      if (sub.unitInspection.evaluation) {
+        const evalData = [
+          ['Amarração de Arames:', sub.unitInspection.evaluation.wireTyingStatus || 'N/A', 'Qualidade da Capa:', sub.unitInspection.evaluation.coverQualityStatus || 'N/A'],
+          ['Impressão de Etiquetas:', sub.unitInspection.evaluation.labelPrintingStatus || 'N/A', 'Geometria e Altura:', sub.unitInspection.evaluation.unitHeightStatus || 'N/A'],
+          ['Status Geral da Unit:', sub.unitInspection.evaluation.overallStatus || 'Conforme', '', '']
+        ];
+
+        autoTable(doc, {
+          startY: unitY,
+          body: evalData,
+          theme: 'grid',
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold' },
+          columnStyles: {
+            0: { fontStyle: 'bold', cellWidth: 40 },
+            1: { cellWidth: 45 },
+            2: { fontStyle: 'bold', cellWidth: 40 },
+            3: { cellWidth: 45 }
+          }
+        });
+
+        unitY = (doc as any).lastAutoTable.finalY + 8;
+
+        if (sub.unitInspection.evaluation.notes) {
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(51, 65, 85);
+          doc.text(sanitizePdfText(`Observações: ${sub.unitInspection.evaluation.notes}`), 14, unitY);
+          unitY += 8;
+        }
+      }
+
+      // Render 4 photos if present
+      const photos = sub.unitInspection.photos || {};
+      const photoKeys: Array<{ key: 'front' | 'back' | 'left' | 'right'; label: string }> = [
+        { key: 'front', label: 'Lado Frontal' },
+        { key: 'back', label: 'Lado Traseiro' },
+        { key: 'left', label: 'Lado Esquerdo' },
+        { key: 'right', label: 'Lado Direito' }
+      ];
+
+      const availablePhotos = photoKeys.filter(p => Boolean(photos[p.key]));
+      if (availablePhotos.length > 0) {
+        if (unitY > 210) {
+          doc.addPage();
+          unitY = 20;
+        }
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.text(sanitizePdfText('Registros Fotográficos da Unit:'), 14, unitY);
+        unitY += 5;
+
+        const imgWidth = 40;
+        const imgHeight = 26;
+        let startX = 14;
+
+        availablePhotos.forEach((p) => {
+          const url = photos[p.key];
+          if (url) {
+            if (startX + imgWidth > pageWidth - 14) {
+              startX = 14;
+              unitY += imgHeight + 10;
+              if (unitY > 250) {
+                doc.addPage();
+                unitY = 20;
+              }
+            }
+
+            try {
+              doc.setFontSize(7);
+              doc.setFont('helvetica', 'bold');
+              doc.setTextColor(71, 85, 105);
+              doc.text(sanitizePdfText(p.label), startX, unitY);
+              doc.addImage(url, 'JPEG', startX, unitY + 2, imgWidth, imgHeight);
+              doc.setDrawColor(203, 213, 225);
+              doc.rect(startX, unitY + 2, imgWidth, imgHeight, 'S');
+            } catch (err) {
+              console.warn("Erro ao renderizar imagem no PDF:", err);
+            }
+
+            startX += imgWidth + 5;
+          }
+        });
+      }
+    }
     
+    await addSecAppPdfFooter(doc);
+
     const fileName = `inspecao_qualidade_${sanitizePdfText(sub.userName).replace(/\s+/g, '_')}_${safeToDate(sub.createdAt)?.getTime()}.pdf`;
     doc.save(fileName);
   };
@@ -3281,54 +4078,66 @@ const Quality: React.FC = () => {
                                       }
 
                                       // Normal Item rendering
-                                      return item.conditionOptionsId ? (
-                                        optionSets.find(s => s.id === item.conditionOptionsId)?.options.map((opt, optIdx) => (
-                                          <button
-                                            key={`${opt}-${optIdx}`}
-                                            type="button"
-                                            onClick={() => {
-                                              setResponses(prev => ({ ...prev, [item.id]: opt }));
-                                              setTimeout(advanceToNext, 250);
-                                            }}
-                                            className={getOptionColorClasses(opt, responses[item.id] === opt)}
-                                          >
-                                            {opt}
-                                          </button>
-                                        ))
-                                      ) : (
-                                        <>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setResponses(prev => ({ ...prev, [item.id]: 'ok' }));
-                                              setTimeout(advanceToNext, 250);
-                                            }}
-                                            className={cn(
-                                              "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
-                                              responses[item.id] === 'ok' 
-                                                ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100" 
-                                                : "bg-white border-slate-200 text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/10"
+                                      return (
+                                        <div className="w-full flex flex-col gap-2.5">
+                                          {item.expectedValue !== undefined && item.expectedValue !== null && item.expectedValue !== '' && (
+                                            <div className="w-full flex items-center gap-1.5 text-[11px] font-extrabold text-emerald-900 bg-emerald-50 border border-emerald-200/80 px-3.5 py-2 rounded-xl">
+                                              <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                              <span>Norma / Resposta Esperada: <strong className="uppercase text-emerald-950 font-black">{item.expectedValue === 'ok' ? 'CONFORME (OK)' : item.expectedValue === 'not_ok' ? 'NÃO CONFORME (NOK)' : item.expectedValue}</strong></span>
+                                            </div>
+                                          )}
+                                          <div className="flex flex-wrap gap-2.5 w-full">
+                                            {item.conditionOptionsId ? (
+                                              optionSets.find(s => s.id === item.conditionOptionsId)?.options.map((opt, optIdx) => (
+                                                <button
+                                                  key={`${opt}-${optIdx}`}
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setResponses(prev => ({ ...prev, [item.id]: opt }));
+                                                    setTimeout(advanceToNext, 250);
+                                                  }}
+                                                  className={getOptionColorClasses(opt, responses[item.id] === opt, item.expectedValue)}
+                                                >
+                                                  {opt}
+                                                </button>
+                                              ))
+                                            ) : (
+                                              <>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setResponses(prev => ({ ...prev, [item.id]: 'ok' }));
+                                                    setTimeout(advanceToNext, 250);
+                                                  }}
+                                                  className={cn(
+                                                    "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
+                                                    responses[item.id] === 'ok' 
+                                                      ? (item.expectedValue === 'not_ok' ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100" : "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100") 
+                                                      : "bg-white border-slate-200 text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/10"
+                                                  )}
+                                                >
+                                                  <CheckCircle2 className="w-4 h-4" />
+                                                  CONFORME (OK)
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setResponses(prev => ({ ...prev, [item.id]: 'not_ok' }));
+                                                  }}
+                                                  className={cn(
+                                                    "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
+                                                    responses[item.id] === 'not_ok' 
+                                                      ? (item.expectedValue === 'not_ok' ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-100" : "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100") 
+                                                      : "bg-white border-slate-200 text-slate-500 hover:border-rose-300 hover:bg-rose-50/10"
+                                                  )}
+                                                >
+                                                  <AlertCircle className="w-4 h-4" />
+                                                  NÃO CONFORME
+                                                </button>
+                                              </>
                                             )}
-                                          >
-                                            <CheckCircle2 className="w-4 h-4" />
-                                            CONFORME (OK)
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setResponses(prev => ({ ...prev, [item.id]: 'not_ok' }));
-                                            }}
-                                            className={cn(
-                                              "flex-1 py-3 px-4 rounded-xl font-black border-2 flex items-center justify-center gap-1.5 text-xs transition-all uppercase tracking-wider",
-                                              responses[item.id] === 'not_ok' 
-                                                ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100" 
-                                                : "bg-white border-slate-200 text-slate-500 hover:border-rose-300 hover:bg-rose-50/10"
-                                            )}
-                                          >
-                                            <AlertCircle className="w-4 h-4" />
-                                            NÃO CONFORME
-                                          </button>
-                                        </>
+                                          </div>
+                                        </div>
                                       );
                                     })()}
                                   </div>
@@ -3336,6 +4145,23 @@ const Quality: React.FC = () => {
 
                                 {item.type === 'number' && (
                                   <div className="space-y-3">
+                                    {item.defaultValue !== undefined && item.defaultValue !== null && item.defaultValue !== '' && (
+                                      <div className="flex items-center justify-between text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200/80 px-3.5 py-2 rounded-xl">
+                                        <span className="flex items-center gap-1.5">
+                                          <Target className="w-4 h-4 text-emerald-600 shrink-0" />
+                                          <span>Valor Norma Esperado: <strong>{item.defaultValue}</strong></span>
+                                        </span>
+                                        {String(responses[item.id]) === String(item.defaultValue) ? (
+                                          <span className="bg-emerald-200/80 text-emerald-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
+                                            Pré-definido
+                                          </span>
+                                        ) : responses[item.id] !== undefined && responses[item.id] !== '' ? (
+                                          <span className="bg-amber-100 text-amber-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
+                                            Alterado
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    )}
                                     {item.isRangeDropdown ? (
                                       <select
                                         value={responses[item.id] || ''}
@@ -3377,7 +4203,21 @@ const Quality: React.FC = () => {
                                 )}
 
                                 {item.type === 'range' && (
-                                  <div className="flex flex-wrap gap-2.5">
+                                  <div className="space-y-3">
+                                    {item.defaultValue !== undefined && item.defaultValue !== null && item.defaultValue !== '' && (
+                                      <div className="flex items-center justify-between text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200/80 px-3.5 py-2 rounded-xl">
+                                        <span className="flex items-center gap-1.5">
+                                          <Target className="w-4 h-4 text-emerald-600 shrink-0" />
+                                          <span>Range Norma Esperado: <strong className="uppercase">{item.defaultValue === 'normal' ? 'NORMAL / OK' : item.defaultValue === 'low' ? 'BAIXO' : item.defaultValue === 'high' ? 'ALTO' : item.defaultValue}</strong></span>
+                                        </span>
+                                        {String(responses[item.id]) === String(item.defaultValue) && (
+                                          <span className="bg-emerald-200/80 text-emerald-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
+                                            Pré-definido
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                    <div className="flex flex-wrap gap-2.5">
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -3424,7 +4264,8 @@ const Quality: React.FC = () => {
                                       ALTO
                                     </button>
                                   </div>
-                                )}
+                                </div>
+                              )}
 
                                 {item.type === 'product' && (
                                   <div className="space-y-4">
@@ -3626,6 +4467,250 @@ const Quality: React.FC = () => {
                   </div>
                 </div>
 
+                {/* MÓDULO DE INSPEÇÃO FOTOGRÁFICA DE UNIT (4 LADOS) */}
+                {unitPhotoModuleEnabled && (
+                  fillingTemplate.enableUnitPhotoInspection === true ||
+                  (fillingTemplate.enableUnitPhotoInspection !== false && (
+                    fillingTemplate.name.toLowerCase().includes('fard') ||
+                    fillingTemplate.name.toLowerCase().includes('enfard') ||
+                    fillingTemplate.name.toLowerCase().includes('unid') ||
+                    fillingTemplate.name.toLowerCase().includes('bale') ||
+                    fillingTemplate.name.toLowerCase().includes('unit')
+                  ))
+                ) && (
+                  <div className="border border-slate-700/60 rounded-[2rem] overflow-hidden bg-slate-900 text-white shadow-xl space-y-4 p-6 my-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+                          <Camera className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-black tracking-tight text-white flex items-center gap-2">
+                            Inspeção Fotográfica Guiada ({
+                              (fillingTemplate.photoRequirements?.length ? fillingTemplate.photoRequirements : DEFAULT_4_SIDES_PHOTO_REQUIREMENTS).length
+                            } {(fillingTemplate.photoRequirements?.length ? fillingTemplate.photoRequirements : DEFAULT_4_SIDES_PHOTO_REQUIREMENTS).length === 1 ? 'Foto' : 'Fotos'})
+                            <span className="text-[10px] font-extrabold uppercase bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">Módulo Ativo</span>
+                          </h3>
+                          <p className="text-xs text-slate-400 font-medium">Capture/Anexe a(s) foto(s) configurada(s) para este modelo e verifique a conformidade com a especificação.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Dynamic Photo Slots Grid */}
+                    <div className={cn(
+                      "grid gap-4",
+                      (fillingTemplate.photoRequirements?.length || 4) === 1
+                        ? "grid-cols-1 max-w-lg mx-auto"
+                        : (fillingTemplate.photoRequirements?.length || 4) === 2
+                        ? "grid-cols-1 sm:grid-cols-2"
+                        : (fillingTemplate.photoRequirements?.length || 4) === 3
+                        ? "grid-cols-1 sm:grid-cols-3"
+                        : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
+                    )}>
+                      {(fillingTemplate.photoRequirements?.length ? fillingTemplate.photoRequirements : DEFAULT_4_SIDES_PHOTO_REQUIREMENTS).map((sideReq) => {
+                        const photoUrl = unitPhotos[sideReq.id];
+                        return (
+                          <div key={sideReq.id} className="bg-slate-800/80 rounded-2xl p-4 border border-slate-700 flex flex-col justify-between relative group">
+                            <div className="space-y-1 mb-3">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                                  {sideReq.label}
+                                  {sideReq.required !== false && <span className="text-rose-400 font-bold ml-0.5">*</span>}
+                                </span>
+                                {photoUrl && <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-md flex items-center gap-1"><Check className="w-3 h-3" /> OK</span>}
+                              </div>
+                              <p className="text-[10px] text-slate-400">{sideReq.description || 'Registro em enquadramento guiado'}</p>
+                            </div>
+
+                            {photoUrl ? (
+                              <div className="relative aspect-video rounded-xl overflow-hidden border border-slate-600 bg-black group/img">
+                                <img src={photoUrl} alt={sideReq.label} className="w-full h-full object-cover" />
+                                
+                                {/* AI Status Badge on photo */}
+                                {photoAiAlerts[sideReq.id] && (
+                                  <div className="absolute top-2 left-2 z-10">
+                                    {photoAiAlerts[sideReq.id].isValid ? (
+                                      <span className="bg-emerald-600/90 text-white text-[9px] font-black px-2 py-0.5 rounded-md backdrop-blur-sm shadow flex items-center gap-1 border border-emerald-400/30">
+                                        <CheckCircle2 className="w-3 h-3 text-emerald-200" />
+                                        AI: Foto Válida
+                                      </span>
+                                    ) : (
+                                      <span className="bg-rose-600/90 text-white text-[9px] font-black px-2 py-0.5 rounded-md backdrop-blur-sm shadow flex items-center gap-1 border border-rose-400/30 animate-pulse">
+                                        <AlertTriangle className="w-3 h-3 text-rose-200" />
+                                        AI: Foto Não Reconhecida
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {aiAnalyzingPhoto && (
+                                  <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center gap-1.5 text-emerald-400 font-bold text-xs">
+                                    <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
+                                    <span className="text-[10px] text-emerald-300">Analisando imagem via IA...</span>
+                                  </div>
+                                )}
+
+                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingPhotoModal({ url: photoUrl, title: sideReq.label })}
+                                    className="p-2 bg-white/20 hover:bg-white/40 text-white rounded-lg backdrop-blur-sm transition-all cursor-pointer"
+                                    title="Ampliar"
+                                  >
+                                    <Eye className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveCameraCapture({ side: sideReq.id, label: sideReq.label })}
+                                    className="p-2 bg-emerald-500/80 hover:bg-emerald-500 text-white rounded-lg backdrop-blur-sm transition-all cursor-pointer"
+                                    title="Substituir Câmera c/ Enquadramento"
+                                  >
+                                    <Camera className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setUnitPhotos(prev => {
+                                      const copy = { ...prev };
+                                      delete copy[sideReq.id];
+                                      return copy;
+                                    })}
+                                    className="p-2 bg-rose-500/80 hover:bg-rose-500 text-white rounded-lg backdrop-blur-sm transition-all cursor-pointer"
+                                    title="Remover"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveCameraCapture({ side: sideReq.id, label: sideReq.label })}
+                                  className="w-full border-2 border-dashed border-emerald-500/60 hover:border-emerald-400 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition-all bg-emerald-950/30 hover:bg-emerald-900/40 group/btn shadow-md"
+                                >
+                                  <div className="w-10 h-10 rounded-full bg-emerald-500/20 group-hover/btn:bg-emerald-500/30 text-emerald-400 flex items-center justify-center mb-1.5 transition-all border border-emerald-500/30">
+                                    <Scan className="w-5 h-5 animate-pulse" />
+                                  </div>
+                                  <span className="text-xs font-black text-emerald-300 group-hover/btn:text-white uppercase tracking-wider">Abrir Câmera Guiada</span>
+                                  <span className="text-[9px] font-bold text-emerald-400/80 mt-0.5">c/ Retângulo de Leitura</span>
+                                </button>
+                                
+                                <label className="w-full bg-slate-900/70 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700 rounded-lg py-1.5 px-2 text-[10px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all">
+                                  <Upload className="w-3 h-3" />
+                                  <span>Anexar da Galeria</span>
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => handleUnitPhotoUpload(sideReq.id, e, sideReq.label)}
+                                  />
+                                </label>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Dynamic Verification per Photo Position / Side */}
+                    <div className="bg-slate-800/90 rounded-2xl p-5 border border-slate-700/80 space-y-4">
+                      <div className="flex items-center justify-between border-b border-slate-700/80 pb-3">
+                        <div className="flex items-center gap-2">
+                          <Scan className="w-4 h-4 text-emerald-400" />
+                          <h4 className="text-xs font-black uppercase tracking-wider text-slate-200">
+                            Avaliação de Conformidade Fotográfica por Posição/Lado ({
+                              (fillingTemplate.photoRequirements?.length ? fillingTemplate.photoRequirements : DEFAULT_4_SIDES_PHOTO_REQUIREMENTS).length
+                            })
+                          </h4>
+                        </div>
+                        {selectedProductId && (
+                          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-800/50">
+                            {products.find(p => p.id === selectedProductId)?.code} - {products.find(p => p.id === selectedProductId)?.name}
+                          </span>
+                        )}
+                      </div>
+
+                      {(() => {
+                        const photoReqs = fillingTemplate.photoRequirements?.length 
+                          ? fillingTemplate.photoRequirements 
+                          : DEFAULT_4_SIDES_PHOTO_REQUIREMENTS;
+
+                        return (
+                          <div className={cn(
+                            "grid gap-4 text-xs",
+                            photoReqs.length === 1 ? "grid-cols-1 max-w-lg" : photoReqs.length === 2 ? "grid-cols-1 md:grid-cols-2" : photoReqs.length === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
+                          )}>
+                            {photoReqs.map((sideReq, idx) => {
+                              const currentStatus = unitEvaluation.sideEvaluations?.[sideReq.id] || '';
+                              return (
+                                <div key={sideReq.id} className="bg-slate-900/90 p-4 rounded-xl border border-slate-700/70 space-y-3 flex flex-col justify-between overflow-hidden shadow-sm">
+                                  <div className="space-y-1.5 min-w-0">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-[10px] font-black text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/60 shrink-0">
+                                        #{idx + 1}
+                                      </span>
+                                      <span className="font-extrabold text-slate-100 text-xs sm:text-sm leading-tight break-words" title={sideReq.label}>
+                                        {sideReq.label}
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-slate-400 leading-snug">
+                                      {sideReq.description || `Conformidade visual do enquadramento e padrão técnico de ${sideReq.label}`}
+                                    </p>
+                                  </div>
+
+                                  <div className="pt-2.5 border-t border-slate-800 flex items-center justify-between gap-2 min-w-0">
+                                    <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider shrink-0">
+                                      Avaliação:
+                                    </span>
+                                    <select
+                                      value={currentStatus}
+                                      onChange={(e) => {
+                                        const val = e.target.value as any;
+                                        setUnitEvaluation(prev => ({
+                                          ...prev,
+                                          sideEvaluations: {
+                                            ...(prev.sideEvaluations || {}),
+                                            [sideReq.id]: val
+                                          }
+                                        }));
+                                      }}
+                                      className={cn(
+                                        "w-full max-w-[140px] text-[11px] font-black px-2.5 py-1.5 rounded-lg border outline-none cursor-pointer uppercase transition-all shadow-inner truncate",
+                                        currentStatus === 'Conforme' ? "bg-emerald-950 text-emerald-300 border-emerald-700/80" :
+                                        currentStatus === 'Não Conforme' ? "bg-rose-950 text-rose-300 border-rose-700/80" :
+                                        currentStatus === 'N/A' ? "bg-slate-800 text-slate-300 border-slate-700" :
+                                        "bg-amber-950/80 text-amber-300 border-amber-600/80 animate-pulse font-bold"
+                                      )}
+                                    >
+                                      <option value="" className="bg-slate-900 text-slate-300 font-medium">Selecione...</option>
+                                      <option value="Conforme" className="bg-slate-900 text-emerald-400 font-bold">Conforme</option>
+                                      <option value="Não Conforme" className="bg-slate-900 text-rose-400 font-bold">Não Conforme</option>
+                                      <option value="N/A" className="bg-slate-900 text-slate-300 font-bold">N/A</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                          Observações Específicas da Unit (Opcional):
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={unitEvaluation.notes}
+                          onChange={(e) => setUnitEvaluation(prev => ({ ...prev, notes: e.target.value }))}
+                          placeholder="Ex: Arame do lado direito com folga leve, porém dentro do limite aceitável..."
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder-slate-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* VISUAL BOTTOM ACTION FOOTER FOR SUBMISSION */}
                 <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row justify-end gap-3 rounded-b-[2.5rem]">
                   <button
@@ -3749,8 +4834,15 @@ const Quality: React.FC = () => {
                         setEditingSubmissionId(null);
                         setExpandedItemId(template.items[0]?.id || null);
 
+                        const initialDefaultResponses: Record<string, any> = {};
+                        (template.items || []).forEach(it => {
+                          if (it.defaultValue !== undefined && it.defaultValue !== null && it.defaultValue !== '') {
+                            initialDefaultResponses[it.id] = it.defaultValue;
+                          }
+                        });
+
                         if (loadedDraft) {
-                          setResponses(loadedDraft.responses || {});
+                          setResponses({ ...initialDefaultResponses, ...(loadedDraft.responses || {}) });
                           setObservations(loadedDraft.observations || {});
                           setSubmissionLineId(loadedDraft.submissionLineId || '');
                           setSelectedProductId(loadedDraft.productId || template.productId || '');
@@ -3764,7 +4856,7 @@ const Quality: React.FC = () => {
                             type: 'success'
                           });
                         } else {
-                          setResponses({});
+                          setResponses(initialDefaultResponses);
                           setObservations({});
                           setIsDraftLoaded(false);
                           setDraftSavedAt(null);
@@ -3873,7 +4965,8 @@ const Quality: React.FC = () => {
                     specificDate: '',
                     items: [],
                     active: true,
-                    productId: ''
+                    productId: '',
+                    enableUnitPhotoInspection: false
                   });
                 }}
                 className="bg-slate-900 text-white px-6 py-3 rounded-xl font-black flex items-center gap-2 hover:bg-slate-800 transition-all shadow-lg"
@@ -3914,6 +5007,15 @@ const Quality: React.FC = () => {
                             {template.scheduleType === 'specific_date' && `Agendado (${template.specificDate ? new Date(template.specificDate + 'T00:00:00').toLocaleDateString('pt-BR') : ''})`}
                             {(!template.scheduleType || template.scheduleType === 'shift') && `${template.frequencyPerShift}x por turno`}
                           </span>
+                          {((unitPhotoModuleEnabled && template.enableUnitPhotoInspection) || 
+                            (unitPhotoModuleEnabled && template.enableUnitPhotoInspection === undefined && (
+                              template.name.toLowerCase().includes('fard') || template.name.toLowerCase().includes('enfard') || template.name.toLowerCase().includes('unid') || template.name.toLowerCase().includes('unit')
+                            ))) && (
+                            <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/80 border border-emerald-300/80 px-2.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                              <Camera className="w-3 h-3 text-emerald-600" />
+                              Fotos 4 Lados
+                            </span>
+                          )}
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded w-fit">
                               {locationName}
@@ -4168,6 +5270,212 @@ const Quality: React.FC = () => {
                           className="w-5 h-5 accent-emerald-600 rounded cursor-pointer shrink-0"
                         />
                       </div>
+
+                      {/* OPÇÃO DE ADICIONAR MÓDULO DE INSPEÇÃO FOTOGRÁFICA COM CONFIGURAÇÃO DE FOTOS E LADOS */}
+                      {unitPhotoModuleEnabled ? (
+                        <div className="bg-slate-900 text-white p-5 sm:p-6 border border-slate-800 rounded-3xl space-y-4 shadow-xl">
+                          <div className="flex items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                                <Camera className="w-6 h-6" />
+                              </div>
+                              <div className="space-y-0.5">
+                                <label htmlFor="enableUnitPhotoInspection" className="text-sm font-black text-white cursor-pointer flex items-center gap-2">
+                                  Módulo de Inspeção Fotográfica Personalizável
+                                  <span className="text-[9px] font-black uppercase bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
+                                    Ativo
+                                  </span>
+                                </label>
+                                <p className="text-xs text-slate-400 font-medium">
+                                  Defina a quantidade exata e as posições/ângulos das fotos a serem capturadas nesta inspeção (ex: 1 foto geral, 2 lados, 4 lados ou personalizadas).
+                                </p>
+                              </div>
+                            </div>
+                            <input
+                              type="checkbox"
+                              id="enableUnitPhotoInspection"
+                              checked={!!newTemplate.enableUnitPhotoInspection}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setNewTemplate(prev => ({
+                                  ...prev,
+                                  enableUnitPhotoInspection: checked,
+                                  photoRequirements: checked && (!prev.photoRequirements || prev.photoRequirements.length === 0)
+                                    ? DEFAULT_4_SIDES_PHOTO_REQUIREMENTS
+                                    : prev.photoRequirements
+                                }));
+                              }}
+                              className="w-5 h-5 accent-emerald-500 rounded cursor-pointer shrink-0"
+                            />
+                          </div>
+
+                          {newTemplate.enableUnitPhotoInspection && (
+                            <div className="space-y-4 pt-1">
+                              {/* Presets Row */}
+                              <div>
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-2">
+                                  Predefinições Rápidas de Fotos:
+                                </span>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                  {PRESET_PHOTO_CONFIGS.map((preset, pIdx) => (
+                                    <button
+                                      key={pIdx}
+                                      type="button"
+                                      onClick={() => {
+                                        setNewTemplate(prev => ({
+                                          ...prev,
+                                          photoRequirements: preset.requirements
+                                        }));
+                                      }}
+                                      className={cn(
+                                        "px-3 py-2 rounded-xl text-xs font-extrabold border transition-all flex flex-col items-start gap-0.5 text-left",
+                                        (newTemplate.photoRequirements?.length === preset.requirements.length &&
+                                         newTemplate.photoRequirements[0]?.label === preset.requirements[0]?.label)
+                                          ? "bg-emerald-600 border-emerald-500 text-white shadow-md shadow-emerald-950"
+                                          : "bg-slate-800/80 hover:bg-slate-800 text-slate-300 border-slate-700"
+                                      )}
+                                    >
+                                      <span>{preset.name}</span>
+                                      <span className="text-[9px] opacity-70 font-normal">{preset.requirements.length} {preset.requirements.length === 1 ? 'Foto' : 'Fotos'}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* List of photo requirements */}
+                              <div className="space-y-3 pt-2 border-t border-slate-800">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                                    <Camera className="w-4 h-4" />
+                                    Posições de Captura Configuradas ({newTemplate.photoRequirements?.length || 0})
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const currentReqs = newTemplate.photoRequirements || [];
+                                      const newId = `photo_${Date.now()}`;
+                                      setNewTemplate(prev => ({
+                                        ...prev,
+                                        photoRequirements: [
+                                          ...currentReqs,
+                                          { id: newId, label: `Foto ${currentReqs.length + 1}`, description: 'Registro fotográfico em enquadramento guiado', required: true }
+                                        ]
+                                      }));
+                                    }}
+                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1 border border-emerald-400/30 cursor-pointer"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    Adicionar Posição
+                                  </button>
+                                </div>
+
+                                <div className="space-y-2.5">
+                                  {(newTemplate.photoRequirements || DEFAULT_4_SIDES_PHOTO_REQUIREMENTS).map((req, reqIdx) => (
+                                    <div key={req.id || reqIdx} className="bg-slate-800/90 p-3.5 rounded-2xl border border-slate-700/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                                      <div className="flex items-center gap-2.5 shrink-0">
+                                        <span className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-black text-xs flex items-center justify-center shrink-0">
+                                          #{reqIdx + 1}
+                                        </span>
+                                      </div>
+
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1 w-full">
+                                        {/* Select preset angle */}
+                                        <select
+                                          value={COMMON_PHOTO_ANGLE_OPTIONS.includes(req.label) ? req.label : 'Personalizado'}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setNewTemplate(prev => {
+                                              const reqs = [...(prev.photoRequirements || [])];
+                                              if (val !== 'Personalizado') {
+                                                reqs[reqIdx] = { ...reqs[reqIdx], label: val };
+                                              } else {
+                                                reqs[reqIdx] = { ...reqs[reqIdx], label: `Foto ${reqIdx + 1} (Personalizada)` };
+                                              }
+                                              return { ...prev, photoRequirements: reqs };
+                                            });
+                                          }}
+                                          className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-emerald-500"
+                                        >
+                                          {COMMON_PHOTO_ANGLE_OPTIONS.map((opt) => (
+                                            <option key={opt} value={opt}>{opt}</option>
+                                          ))}
+                                        </select>
+
+                                        {/* Custom name input */}
+                                        <input
+                                          type="text"
+                                          value={req.label}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setNewTemplate(prev => {
+                                              const reqs = [...(prev.photoRequirements || [])];
+                                              reqs[reqIdx] = { ...reqs[reqIdx], label: val };
+                                              return { ...prev, photoRequirements: reqs };
+                                            });
+                                          }}
+                                          placeholder="Nome da posição (ex: Frente, Verso)"
+                                          className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                                        />
+                                      </div>
+
+                                      <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                                        <label className="flex items-center gap-1.5 text-xs text-slate-300 font-bold cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={req.required !== false}
+                                            onChange={(e) => {
+                                              const checked = e.target.checked;
+                                              setNewTemplate(prev => {
+                                                const reqs = [...(prev.photoRequirements || [])];
+                                                reqs[reqIdx] = { ...reqs[reqIdx], required: checked };
+                                                return { ...prev, photoRequirements: reqs };
+                                              });
+                                            }}
+                                            className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
+                                          />
+                                          <span>Obrigatória</span>
+                                        </label>
+
+                                        {(newTemplate.photoRequirements?.length || 0) > 1 && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setNewTemplate(prev => {
+                                                const reqs = (prev.photoRequirements || []).filter((_, idx) => idx !== reqIdx);
+                                                return { ...prev, photoRequirements: reqs };
+                                              });
+                                            }}
+                                            className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all cursor-pointer"
+                                            title="Remover Posição"
+                                          >
+                                            <Trash2 className="w-4 h-4" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="bg-slate-50 p-4 border border-slate-200 rounded-2xl flex items-center justify-between gap-4 opacity-70">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-slate-200 text-slate-500 flex items-center justify-center shrink-0">
+                              <Camera className="w-4 h-4" />
+                            </div>
+                            <div className="space-y-0.5">
+                              <span className="text-xs font-bold text-slate-700 block">
+                                Módulo de Inspeção Fotográfica Personalizável
+                              </span>
+                              <p className="text-[11px] text-slate-500 font-medium">
+                                Desativado nas Opções do Sistema. Para vincular esta funcionalidade a modelos de inspeção, ative o módulo em Opções.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="space-y-4 pt-4">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -4515,6 +5823,62 @@ const Quality: React.FC = () => {
             exit={{ opacity: 0, y: -10 }}
             className="space-y-6"
           >
+            {/* MÓDULOS OPCIONAIS DO SISTEMA */}
+            <div className="bg-slate-900 text-white p-8 rounded-[2.5rem] border border-slate-800 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                    <Camera className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-white flex items-center gap-2">
+                      Módulo: Inspeção Fotográfica de Unit (4 Lados)
+                      {unitPhotoModuleEnabled ? (
+                        <span className="text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">Ativo</span>
+                      ) : (
+                        <span className="text-[10px] font-black uppercase bg-slate-800 text-slate-400 border border-slate-700 px-2.5 py-0.5 rounded-full">Inativo</span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-slate-400 font-medium mt-0.5">
+                      Permite que operadores realizem a captura de 4 fotos (Frontal, Traseira, Esquerda, Direita) e avaliem a conformidade por especificação do produto (amarração de arames, capa, impressão de etiqueta e altura) na etapa de enfardamento.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => toggleUnitPhotoModule(!unitPhotoModuleEnabled)}
+                  className={cn(
+                    "px-6 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2 shrink-0 border",
+                    unitPhotoModuleEnabled
+                      ? "bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30"
+                      : "bg-emerald-600 text-white border-emerald-500 hover:bg-emerald-500 shadow-lg shadow-emerald-950/50"
+                  )}
+                >
+                  {unitPhotoModuleEnabled ? (
+                    <>Desativar Módulo</>
+                  ) : (
+                    <>Ativar Módulo</>
+                  )}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-300 pt-2">
+                <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
+                  <span className="font-extrabold text-emerald-400 block mb-1">📸 Captura de 4 Lados</span>
+                  <p className="text-[11px] text-slate-400">Guia o operador com área de captura para os 4 lados do fardo/unit.</p>
+                </div>
+                <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
+                  <span className="font-extrabold text-emerald-400 block mb-1">📋 Avaliação Técnica</span>
+                  <p className="text-[11px] text-slate-400">Compara os arames, capas e etiquetas com o cadastro técnico do produto.</p>
+                </div>
+                <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
+                  <span className="font-extrabold text-emerald-400 block mb-1">📄 Renderização em Relatório</span>
+                  <p className="text-[11px] text-slate-400">Exibe as fotos e a matriz de conformidade na visualização e no PDF gerado.</p>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-black text-slate-900">Opções Customizáveis</h2>
@@ -5784,6 +7148,173 @@ const Quality: React.FC = () => {
                 */})}
               </div>
 
+              {/* EXIBIÇÃO DE INSPEÇÃO FOTOGRÁFICA DA UNIT DA SUBMISSÃO */}
+              {viewingSubmission.unitInspection && (
+                <div className="bg-slate-900 text-white p-6 rounded-[2rem] border border-slate-800 shadow-lg space-y-4 my-6">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+                        <Camera className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-white uppercase tracking-wider">Registros Fotográficos da Inspeção</h4>
+                        <p className="text-[10px] text-slate-400">Fotos e status por especificação do modelo de inspeção</p>
+                      </div>
+                    </div>
+                    {viewingSubmission.unitInspection.evaluation?.overallStatus && (
+                      <span className={cn(
+                        "px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider border",
+                        viewingSubmission.unitInspection.evaluation.overallStatus === 'Conforme'
+                          ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                          : "bg-rose-500/20 text-rose-400 border-rose-500/30"
+                      )}>
+                        Unit {viewingSubmission.unitInspection.evaluation.overallStatus}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Dynamic Photos Grid */}
+                  {(() => {
+                    const inspection = viewingSubmission.unitInspection;
+                    if (!inspection?.photos) return null;
+
+                    const photoEntries = Object.entries(inspection.photos);
+                    const matchedTemplate = templates.find(t => t.id === viewingSubmission.templateId);
+
+                    const getLabelForPhotoKey = (key: string) => {
+                      if (inspection.photoLabels && inspection.photoLabels[key]) {
+                        return inspection.photoLabels[key];
+                      }
+                      const req = matchedTemplate?.photoRequirements?.find(r => r.id === key);
+                      if (req) return req.label;
+
+                      const legacyMap: Record<string, string> = {
+                        front: 'Lado Frontal (Frente)',
+                        back: 'Lado Traseiro (Verso)',
+                        left: 'Lado Esquerdo',
+                        right: 'Lado Direito'
+                      };
+                      return legacyMap[key] || key.replace('_', ' ').toUpperCase();
+                    };
+
+                    return (
+                      <div className={cn(
+                        "grid gap-3",
+                        photoEntries.length === 1 ? "grid-cols-1 max-w-xs" : photoEntries.length === 2 ? "grid-cols-1 sm:grid-cols-2" : photoEntries.length === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-4"
+                      )}>
+                        {photoEntries.map(([photoKey, photoUrl]) => {
+                          const photoLabel = getLabelForPhotoKey(photoKey);
+                          return (
+                            <div key={photoKey} className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/80 flex flex-col justify-between space-y-2">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300">{photoLabel}</span>
+                              {photoUrl ? (
+                                <div
+                                  onClick={() => setViewingPhotoModal({ url: photoUrl, title: photoLabel })}
+                                  className="relative aspect-video rounded-lg overflow-hidden border border-slate-600 cursor-pointer group bg-black"
+                                >
+                                  <img src={photoUrl} alt={photoLabel} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <Eye className="w-5 h-5 text-white" />
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="aspect-video rounded-lg border border-dashed border-slate-700 bg-slate-900/50 flex items-center justify-center text-[10px] text-slate-500 font-mono">
+                                  Sem Foto
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Evaluation Criteria per Position / Side */}
+                  {viewingSubmission.unitInspection.evaluation && (() => {
+                    const evalObj = viewingSubmission.unitInspection.evaluation;
+                    const sideEvals = evalObj.sideEvaluations;
+                    const matchedTemplate = templates.find(t => t.id === viewingSubmission.templateId);
+                    const photoReqs = matchedTemplate?.photoRequirements?.length 
+                      ? matchedTemplate.photoRequirements 
+                      : DEFAULT_4_SIDES_PHOTO_REQUIREMENTS;
+
+                    const getLabel = (key: string) => {
+                      if (viewingSubmission.unitInspection?.photoLabels?.[key]) {
+                        return viewingSubmission.unitInspection.photoLabels[key];
+                      }
+                      const found = photoReqs.find(r => r.id === key);
+                      if (found) return found.label;
+                      const legacyMap: Record<string, string> = {
+                        front: 'Lado Frontal (Frente)',
+                        back: 'Lado Traseiro (Verso)',
+                        left: 'Lado Esquerdo',
+                        right: 'Lado Direito'
+                      };
+                      return legacyMap[key] || key.replace('_', ' ').toUpperCase();
+                    };
+
+                    let evalItems: { key: string; label: string; status: string }[] = [];
+
+                    if (sideEvals && Object.keys(sideEvals).length > 0) {
+                      evalItems = Object.entries(sideEvals).map(([k, st]) => ({
+                        key: k,
+                        label: getLabel(k),
+                        status: st || 'N/A'
+                      }));
+                    } else {
+                      // Fallback for legacy evaluation records
+                      if (evalObj.wireTyingStatus) evalItems.push({ key: 'wire', label: 'Amarração Arames', status: evalObj.wireTyingStatus });
+                      if (evalObj.coverQualityStatus) evalItems.push({ key: 'cover', label: 'Qualidade Capa', status: evalObj.coverQualityStatus });
+                      if (evalObj.labelPrintingStatus) evalItems.push({ key: 'label', label: 'Impressão Etiquetas', status: evalObj.labelPrintingStatus });
+                      if (evalObj.unitHeightStatus) evalItems.push({ key: 'height', label: 'Geometria / Altura', status: evalObj.unitHeightStatus });
+                    }
+
+                    if (evalItems.length === 0) {
+                      const photos = viewingSubmission.unitInspection.photos || {};
+                      evalItems = Object.keys(photos).map(k => ({
+                        key: k,
+                        label: getLabel(k),
+                        status: 'Conforme'
+                      }));
+                    }
+
+                    return (
+                      <div className="bg-slate-800/90 p-4 rounded-xl border border-slate-700/80 space-y-3 text-xs">
+                        <span className="font-extrabold uppercase text-[10px] tracking-wider text-slate-400 block">
+                          Avaliação de Conformidade por Posição/Lado ({evalItems.length})
+                        </span>
+                        <div className={cn(
+                          "grid gap-2",
+                          evalItems.length === 1 ? "grid-cols-1 max-w-xs" : evalItems.length === 2 ? "grid-cols-1 sm:grid-cols-2" : evalItems.length === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-4"
+                        )}>
+                          {evalItems.map(item => (
+                            <div key={item.key} className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-700/60 flex flex-col justify-between">
+                              <span className="text-[9px] font-bold text-slate-400 block uppercase truncate" title={item.label}>
+                                {item.label}
+                              </span>
+                              <span className={cn(
+                                "font-black text-xs uppercase block mt-1",
+                                item.status === 'Conforme' ? "text-emerald-400" :
+                                item.status === 'Não Conforme' ? "text-rose-400" : "text-slate-400"
+                              )}>
+                                {item.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {evalObj.notes && (
+                          <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-700/60 text-slate-300">
+                            <span className="text-[9px] font-bold uppercase text-slate-400 block mb-1">Observações do Avaliador:</span>
+                            <p className="text-xs whitespace-pre-line">{evalObj.notes}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
               <div className="mt-10 flex flex-col sm:flex-row gap-3">
                  {(isManager || isAdmin || isMaster || viewingSubmission.userId === user?.uid) && (
                    <button
@@ -5805,6 +7336,180 @@ const Quality: React.FC = () => {
                  >
                    Fechar
                  </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* LIGHTBOX PHOTO PREVIEW MODAL */}
+      <AnimatePresence>
+        {viewingPhotoModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-slate-900 border border-slate-700 rounded-3xl max-w-3xl w-full p-6 text-white space-y-4 shadow-2xl relative"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="text-base font-black text-white flex items-center gap-2">
+                  <Camera className="w-5 h-5 text-emerald-400" />
+                  {viewingPhotoModal.title}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setViewingPhotoModal(null)}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="rounded-2xl overflow-hidden bg-black max-h-[70vh] flex items-center justify-center border border-slate-800">
+                <img src={viewingPhotoModal.url} alt={viewingPhotoModal.title} className="max-h-[70vh] w-auto object-contain" />
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* CÂMERA AO VIVO COM RETÂNGULO GUIA DE LEITURA DA UNIT */}
+      <AnimatePresence>
+        {activeCameraCapture && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/90 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full p-5 text-white space-y-4 shadow-2xl relative flex flex-col max-h-[92vh]"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+                    <Scan className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                      Enquadramento da Unit: {activeCameraCapture.label}
+                    </h3>
+                    <p className="text-[11px] text-slate-400">Posicione o fardo/unit dentro do retângulo verde de leitura</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (cameraStream) {
+                      cameraStream.getTracks().forEach(t => t.stop());
+                      setCameraStream(null);
+                    }
+                    setActiveCameraCapture(null);
+                  }}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Viewfinder with Retângulo Guia Overlay */}
+              <div className="relative w-full aspect-[4/3] sm:aspect-video rounded-2xl overflow-hidden bg-black flex items-center justify-center border-2 border-emerald-500/40 shadow-inner group">
+                <video
+                  ref={cameraVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+
+                {/* Overlaid Retângulo Guia de Leitura */}
+                {!unitCamError && (
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                    {/* Shadowed vignette mask around box */}
+                    <div className="absolute inset-0 bg-slate-950/30 backdrop-blur-[0.5px]" />
+                    
+                    {/* Glowing Retângulo Guia Box */}
+                    <div className="relative w-[84%] h-[80%] border-2 border-emerald-400 rounded-2xl shadow-[0_0_30px_rgba(52,211,153,0.35)] z-10 flex flex-col justify-between p-3">
+                      {/* Corner brackets */}
+                      <div className="absolute -top-1.5 -left-1.5 w-7 h-7 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl shadow-[0_0_10px_#34d399]" />
+                      <div className="absolute -top-1.5 -right-1.5 w-7 h-7 border-t-4 border-r-4 border-emerald-400 rounded-tr-xl shadow-[0_0_10px_#34d399]" />
+                      <div className="absolute -bottom-1.5 -left-1.5 w-7 h-7 border-b-4 border-l-4 border-emerald-400 rounded-bl-xl shadow-[0_0_10px_#34d399]" />
+                      <div className="absolute -bottom-1.5 -right-1.5 w-7 h-7 border-b-4 border-r-4 border-emerald-400 rounded-br-xl shadow-[0_0_10px_#34d399]" />
+
+                      {/* Crosshairs */}
+                      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-dashed border-emerald-400/30" />
+                      <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 border-l border-dashed border-emerald-400/30" />
+
+                      {/* Top instruction badge */}
+                      <div className="self-center bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-full border border-emerald-500/50 text-[10px] font-black uppercase text-emerald-300 tracking-wider shadow-lg flex items-center gap-1.5">
+                        <Scan className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+                        Retângulo de Leitura da Unit
+                      </div>
+
+                      {/* Bottom side indicator */}
+                      <div className="self-center bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-full border border-slate-700 text-[10px] font-black uppercase text-slate-200 tracking-wider shadow-lg">
+                        {activeCameraCapture.label}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Camera Access Error Fallback */}
+                {unitCamError && (
+                  <div className="absolute inset-0 bg-slate-950/90 p-6 flex flex-col items-center justify-center text-center space-y-3 z-20">
+                    <AlertTriangle className="w-10 h-10 text-amber-400" />
+                    <p className="text-xs text-slate-300 max-w-sm font-medium">{unitCamError}</p>
+                    <label className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-lg flex items-center gap-2">
+                      <Upload className="w-4 h-4" />
+                      <span>Selecionar Arquivo / Galeria</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          handleUnitPhotoUpload(activeCameraCapture.side, e);
+                          setActiveCameraCapture(null);
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer Controls */}
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCameraFacing(prev => prev === 'environment' ? 'user' : 'environment')}
+                  className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-slate-700"
+                  title="Alternar Câmera"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span className="hidden sm:inline">Virar Câmera</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!!unitCamError}
+                  onClick={handleCaptureFromCamera}
+                  className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 font-black rounded-xl text-xs transition-all shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Camera className="w-5 h-5" />
+                  <span>Capturar Foto no Enquadramento</span>
+                </button>
+
+                <label className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-slate-700 cursor-pointer" title="Galeria">
+                  <Upload className="w-4 h-4" />
+                  <span className="hidden sm:inline">Galeria</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      handleUnitPhotoUpload(activeCameraCapture.side, e);
+                      setActiveCameraCapture(null);
+                    }}
+                  />
+                </label>
               </div>
             </motion.div>
           </div>
