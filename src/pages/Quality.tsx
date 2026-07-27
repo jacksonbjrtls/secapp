@@ -3032,7 +3032,7 @@ const Quality: React.FC = () => {
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'bold');
-      doc.text(sanitizePdfText('AVALIAÇÃO VISUAL DA UNIT DE FARDOS (4 LADOS)'), 18, unitY + 5.5);
+      doc.text(sanitizePdfText('REGISTROS E AVALIAÇÕES DA INSPEÇÃO FOTOGRÁFICA'), 18, unitY + 5.5);
 
       unitY += 12;
 
@@ -5012,8 +5012,8 @@ const Quality: React.FC = () => {
                               template.name.toLowerCase().includes('fard') || template.name.toLowerCase().includes('enfard') || template.name.toLowerCase().includes('unid') || template.name.toLowerCase().includes('unit')
                             ))) && (
                             <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/80 border border-emerald-300/80 px-2.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-1 shadow-sm">
-                              <Camera className="w-3 h-3 text-emerald-600" />
-                              Fotos 4 Lados
+                              <Camera className="w-3 h-3 text-emerald-600 shrink-0" />
+                              {`Inspeção Fotográfica (${(template.photoRequirements?.length || 4)} ${(template.photoRequirements?.length || 4) === 1 ? 'Foto' : 'Fotos'})`}
                             </span>
                           )}
                           <div className="flex flex-col gap-1">
@@ -5832,7 +5832,7 @@ const Quality: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-lg font-black text-white flex items-center gap-2">
-                      Módulo: Inspeção Fotográfica de Unit (4 Lados)
+                      Módulo: Inspeção Fotográfica Personalizável
                       {unitPhotoModuleEnabled ? (
                         <span className="text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">Ativo</span>
                       ) : (
@@ -5840,7 +5840,7 @@ const Quality: React.FC = () => {
                       )}
                     </h3>
                     <p className="text-xs text-slate-400 font-medium mt-0.5">
-                      Permite que operadores realizem a captura de 4 fotos (Frontal, Traseira, Esquerda, Direita) e avaliem a conformidade por especificação do produto (amarração de arames, capa, impressão de etiqueta e altura) na etapa de enfardamento.
+                      Permite que operadores realizem a captura de fotos configuradas por modelo (1 ou mais posições/ângulos) e avaliem a conformidade técnica das posições e especificações na etapa de inspeção.
                     </p>
                   </div>
                 </div>
@@ -5865,8 +5865,8 @@ const Quality: React.FC = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-300 pt-2">
                 <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
-                  <span className="font-extrabold text-emerald-400 block mb-1">📸 Captura de 4 Lados</span>
-                  <p className="text-[11px] text-slate-400">Guia o operador com área de captura para os 4 lados do fardo/unit.</p>
+                  <span className="font-extrabold text-emerald-400 block mb-1">📸 Captura Guiada por Modelo</span>
+                  <p className="text-[11px] text-slate-400">Guia o operador com áreas de captura personalizadas para cada posição do modelo.</p>
                 </div>
                 <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
                   <span className="font-extrabold text-emerald-400 block mb-1">📋 Avaliação Técnica</span>
