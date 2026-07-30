@@ -8,7 +8,8 @@ import {
   doc, 
   serverTimestamp, 
   query, 
-  orderBy 
+  orderBy,
+  getDocs
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -295,7 +296,26 @@ export default function Maintenance() {
       }
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_statuses'));
 
-    const unsubLines = onSnapshot(collection(db, 'production_lines'), (snap) => {
+    const unsubLines = onSnapshot(collection(db, 'maintenance_lines'), async (snap) => {
+      if (snap.empty) {
+        try {
+          const prodLinesSnap = await getDocs(collection(db, 'production_lines'));
+          if (!prodLinesSnap.empty) {
+            for (const docSnap of prodLinesSnap.docs) {
+              const data = docSnap.data();
+              await addDoc(collection(db, 'maintenance_lines'), {
+                name: data.name || '',
+                sector: data.sector || '',
+                active: data.active !== false,
+                createdAt: serverTimestamp()
+              });
+            }
+            return;
+          }
+        } catch (e) {
+          console.error("Error migrating initial lines to maintenance_lines:", e);
+        }
+      }
       const list: ProductionLine[] = [];
       snap.forEach(docSnap => {
         const d = docSnap.data();
@@ -304,7 +324,7 @@ export default function Maintenance() {
         }
       });
       setLines(list);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'production_lines'));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_lines'));
 
     const unsubSectors = onSnapshot(collection(db, 'work_sectors'), (snap) => {
       const list: WorkSector[] = [];
@@ -791,7 +811,7 @@ export default function Maintenance() {
         const lineKey = `${sectorStr.toUpperCase()}::${lineValStr.toUpperCase()}`;
         if (lineValStr && !knownLines.has(lineKey)) {
           try {
-            await addDoc(collection(db, 'production_lines'), {
+            await addDoc(collection(db, 'maintenance_lines'), {
               name: lineValStr,
               sector: sectorStr,
               active: true,
@@ -959,12 +979,12 @@ export default function Maintenance() {
     }
   };
 
-  // Admin Add Production Line
+  // Admin Add Maintenance Line
   const handleAddLine = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newLineNameInput.trim()) return;
     try {
-      await addDoc(collection(db, 'production_lines'), {
+      await addDoc(collection(db, 'maintenance_lines'), {
         name: newLineNameInput.trim(),
         sector: newLineSectorInput.trim(),
         active: true,
@@ -973,23 +993,23 @@ export default function Maintenance() {
       setNewLineNameInput('');
       setNewLineSectorInput('');
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'production_lines');
+      handleFirestoreError(err, OperationType.CREATE, 'maintenance_lines');
     }
   };
 
-  // Admin Save Edit Production Line
+  // Admin Save Edit Maintenance Line
   const handleSaveEditLine = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLine || !editingLine.name.trim()) return;
     try {
-      await updateDoc(doc(db, 'production_lines', editingLine.id), {
+      await updateDoc(doc(db, 'maintenance_lines', editingLine.id), {
         name: editingLine.name.trim(),
         sector: editingLine.sector ? editingLine.sector.trim() : '',
         updatedAt: serverTimestamp()
       });
       setEditingLine(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'production_lines');
+      handleFirestoreError(err, OperationType.UPDATE, 'maintenance_lines');
     }
   };
 
@@ -1955,7 +1975,7 @@ export default function Maintenance() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDeleteAdminItem('production_lines', l.id, `Linha ${l.name}`)}
+                            onClick={() => handleDeleteAdminItem('maintenance_lines', l.id, `Linha ${l.name}`)}
                             className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                             title="Excluir Linha"
                           >

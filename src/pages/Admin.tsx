@@ -290,6 +290,25 @@ const Admin: React.FC = () => {
       getKey: (row: Record<string, string>) => row.name?.toLowerCase().replace(/[^a-z0-9]/g, '')
     },
     {
+      id: 'maintenance_lines',
+      name: 'Linhas de Manutenção',
+      collection: 'maintenance_lines',
+      description: 'Crie ou atualize as linhas de produção cadastradas especificamente para a área de Manutenção.',
+      headers: ['name', 'sector', 'active'],
+      examples: [
+        ['Prensa 01', 'Prensas', 'true'],
+        ['MS1', 'Metalurgia', 'true']
+      ],
+      notes: 'Linhas exclusivas da área de Manutenção, independentes da Qualidade. O campo "active" aceita "true" ou "false".',
+      processRow: (row: Record<string, string>) => ({
+        name: row.name?.trim() || '',
+        sector: row.sector?.trim() || '',
+        active: row.active?.toLowerCase().trim() !== 'false',
+        createdAt: serverTimestamp(),
+      }),
+      getKey: (row: Record<string, string>) => row.name?.toLowerCase().replace(/[^a-z0-9]/g, '')
+    },
+    {
       id: 'wire_suppliers',
       name: 'Fornecedores de Bobinas (Arames)',
       collection: 'wire_suppliers',
@@ -2991,6 +3010,12 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                     title: 'Horas Extras (HE)',
                     collections: ['overtime_justifications', 'overtime_functions', 'overtime_areas'],
                     description: 'Apaga todas as justificativas de horas extras lançadas, além das funções e áreas configuradas.'
+                  },
+                  {
+                    id: 'maintenance',
+                    title: 'Módulo de Manutenção',
+                    collections: ['maintenance_issues', 'maintenance_lines', 'work_sectors', 'maintenance_statuses', 'maintenance_programming_types', 'maintenance_responsible_centers', 'maintenance_inspection_types', 'maintenance_inspection_names'],
+                    description: 'Apaga pendências de equipamentos, linhas de manutenção, setores de trabalho e cadastros auxiliares de manutenção.'
                   }
                 ].map((mod) => (
                   <div 

@@ -721,6 +721,18 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "createdAt"]
+    },
+    "MaintenanceLine": {
+      "title": "Maintenance Line",
+      "description": "Production lines registered specifically for Maintenance.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "sector": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "active", "createdAt"]
     }
   },
   "firestore": {
@@ -903,6 +915,10 @@
     "/maintenance_statuses/{statusId}": {
       "schema": "MaintenanceStatus",
       "description": "Maintenance status options database."
+    },
+    "/maintenance_lines/{lineId}": {
+      "schema": "MaintenanceLine",
+      "description": "Production lines registered specifically for Maintenance."
     }
   }
 }

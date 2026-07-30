@@ -610,5 +610,10 @@ service cloud.firestore {
     match /maintenance_statuses/{statusId} {
       allow read, write: if true;
     }
+
+    // Maintenance Lines
+    match /maintenance_lines/{lineId} {
+      allow read, write: if true;
+    }
   }
 }
