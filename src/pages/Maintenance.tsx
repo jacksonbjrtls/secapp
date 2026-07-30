@@ -296,26 +296,7 @@ export default function Maintenance() {
       }
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_statuses'));
 
-    const unsubLines = onSnapshot(collection(db, 'maintenance_lines'), async (snap) => {
-      if (snap.empty) {
-        try {
-          const prodLinesSnap = await getDocs(collection(db, 'production_lines'));
-          if (!prodLinesSnap.empty) {
-            for (const docSnap of prodLinesSnap.docs) {
-              const data = docSnap.data();
-              await addDoc(collection(db, 'maintenance_lines'), {
-                name: data.name || '',
-                sector: data.sector || '',
-                active: data.active !== false,
-                createdAt: serverTimestamp()
-              });
-            }
-            return;
-          }
-        } catch (e) {
-          console.error("Error migrating initial lines to maintenance_lines:", e);
-        }
-      }
+    const unsubLines = onSnapshot(collection(db, 'maintenance_lines'), (snap) => {
       const list: ProductionLine[] = [];
       snap.forEach(docSnap => {
         const d = docSnap.data();
