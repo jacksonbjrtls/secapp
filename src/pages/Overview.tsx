@@ -25,7 +25,9 @@ import {
   Grid,
   Barcode,
   RefreshCw,
-  FileText
+  FileText,
+  Wrench,
+  ArrowLeftRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -52,6 +54,8 @@ export const Overview: React.FC = () => {
   const [consumableItems, setConsumableItems] = useState<any[]>([]);
   const [consumableLogs, setConsumableLogs] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
+  const [stopsReports, setStopsReports] = useState<any[]>([]);
+  const [maintenanceIssues, setMaintenanceIssues] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
@@ -71,6 +75,9 @@ export const Overview: React.FC = () => {
 
   // Active modules state
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
+    overview: true,
+    dashboard: true,
+    shift_handover: true,
     dds: true,
     forklifts: true,
     wires: true,
@@ -79,8 +86,11 @@ export const Overview: React.FC = () => {
     operational_routes: true,
     safety_observations: true,
     consumables: true,
-    shift_handover: true,
     certificates: true,
+    stops_control: true,
+    maintenance: true,
+    overtime: true,
+    vacations: true,
   });
 
   useEffect(() => {
@@ -284,6 +294,20 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'training_courses');
     });
 
+    const unsubStops = onSnapshot(collection(db, 'stops_reports'), (snap) => {
+      setStopsReports(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLastUpdated(new Date());
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'stops_reports');
+    });
+
+    const unsubMaint = onSnapshot(collection(db, 'maintenance_issues'), (snap) => {
+      setMaintenanceIssues(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLastUpdated(new Date());
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'maintenance_issues');
+    });
+
     setLoading(false);
     setLastUpdated(new Date());
 
@@ -307,6 +331,8 @@ export const Overview: React.FC = () => {
       unsubConsumableItems();
       unsubConsumableLogs();
       unsubCourses();
+      unsubStops();
+      unsubMaint();
     };
   }, [authLoading, user, isApproved, refreshTrigger]);
 
@@ -330,6 +356,9 @@ export const Overview: React.FC = () => {
   // Daily Scale Details
   const activeShift = useMemo(() => getCurrentShift(), [currentHour]);
   const activeGroups = useMemo(() => getTodayGroups(new Date()), [currentDateString]);
+  const activeShiftGroup = useMemo(() => {
+    return getGroupForShift(new Date(), activeShift) || 'A';
+  }, [activeShift]);
 
   // 1. DDS Today's Compliance Data
   const ddsTodayStats = useMemo(() => {
@@ -743,6 +772,30 @@ export const Overview: React.FC = () => {
     };
   }, [safetyObservations, currentYearAndMonth, todayStart, todayEnd]);
 
+  // Stops Control Stats
+  const stopsTodayStats = useMemo(() => {
+    const todayStops = stopsReports.filter(s => {
+      const created = safeToDate(s.createdAt || s.date);
+      return created && created >= todayStart && created <= todayEnd;
+    });
+    const totalDowntimeMinutes = todayStops.reduce((acc, s) => acc + (Number(s.downtimeMinutes || s.durationMinutes) || 0), 0);
+    return {
+      count: todayStops.length,
+      downtimeHours: (totalDowntimeMinutes / 60).toFixed(1)
+    };
+  }, [stopsReports, todayStart, todayEnd]);
+
+  // Maintenance Stats
+  const maintenanceTodayStats = useMemo(() => {
+    const openIssues = maintenanceIssues.filter(i => i.status !== 'concluido' && i.status !== 'fechado');
+    const urgentCount = openIssues.filter(i => i.priority === 'alta' || i.priority === 'urgente' || i.urgency === 'urgente').length;
+    return {
+      openCount: openIssues.length,
+      urgentCount,
+      totalCount: maintenanceIssues.length
+    };
+  }, [maintenanceIssues]);
+
   // Overall Operations Health Score Index (Daily KPIs consolidated)
   const healthIndex = useMemo(() => {
     let score = 100;
@@ -789,6 +842,26 @@ export const Overview: React.FC = () => {
 
     return Math.max(0, Math.min(100, score));
   }, [activeShift, activeModules, ddsTodayStats, qualityTodayStats, forkliftTodayStats, safetyOverviewStats]);
+
+  const healthDescription = useMemo(() => {
+    const activeList = [];
+    if (activeModules.dds !== false) activeList.push("DDS");
+    if (activeModules.quality !== false) activeList.push("Qualidade");
+    if (activeModules.forklifts !== false) activeList.push("Empilhadeiras");
+    if (activeModules.safety_observations !== false) activeList.push("Segurança");
+
+    if (activeList.length === 0) {
+      return "Módulos de conformidade e auditoria desabilitados no painel administrativo.";
+    }
+
+    if (healthIndex >= 95) {
+      return `Planta fabril operando com elevado índice de conformidade nos módulos ativos.`;
+    } else if (healthIndex >= 80) {
+      return `Status dentro da tolerância de riscos, atenção a verificações pendentes.`;
+    } else {
+      return `Alerta: Baixo índice de auditoria preventiva hoje. Priorize assinaturas e checklists mecânicos.`;
+    }
+  }, [healthIndex, activeModules]);
 
   // Combined Non-Conformities list (Quality failing checklist submissions + Forklift checklists failing/anormal)
   const combinedNonConformities = useMemo(() => {
@@ -1002,11 +1075,7 @@ export const Overview: React.FC = () => {
 
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
               <p className="text-xs font-bold text-slate-500 leading-relaxed text-center">
-                {healthIndex >= 95 
-                  ? "Flg fabril operando sem atrasos em DDS, sem omissões de qualidade registradas e empilhadeiras auditadas."
-                  : healthIndex >= 80
-                  ? "Status dentro da tolerância de riscos, porém atente-se para inspeções complementares ou DDS faltante."
-                  : "Alerta: Baixo índice de auditoria preventiva hoje. Priorize assinaturas e checklists mecânicos."}
+                {healthDescription}
               </p>
             </div>
           </div>
@@ -1304,6 +1373,114 @@ export const Overview: React.FC = () => {
               <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
                 <span>Último: <strong className="text-slate-700">{courses.length > 0 ? (courses[courses.length - 1].title || courses[courses.length - 1].name) : 'Nenhum'}</strong></span>
                 <span className="text-slate-500 font-bold">Gerenciado na Secagem</span>
+              </div>
+            </div>
+          )}
+
+          {/* Card 9: Controle de Parada */}
+          {activeModules.stops_control !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-amber-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-0.5 rounded-md">Controle de Parada</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Paradas & Ocorrências</h3>
+                </div>
+                <div className="w-10 h-10 bg-amber-50/50 text-amber-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                </div>
+              </div>
+
+              <div className="my-4 flex justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Paradas Hoje</p>
+                  <p className="text-2xl font-black text-slate-900 leading-tight">
+                    {stopsTodayStats.count} <span className="text-xs text-slate-400 font-bold">registros</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Tempo Parado</p>
+                  <p className="text-2xl font-black text-right leading-tight text-amber-600">
+                    {stopsTodayStats.downtimeHours} <span className="text-xs text-slate-400 font-bold">h</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
+                <span>Relatórios Registrados</span>
+                <span className="text-slate-500 font-bold">Total: {stopsReports.length}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Card 10: Manutenção */}
+          {activeModules.maintenance !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-rose-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-rose-600 uppercase tracking-widest bg-rose-50 px-2 py-0.5 rounded-md">Manutenção</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Pendências Mecânicas</h3>
+                </div>
+                <div className="w-10 h-10 bg-rose-50/50 text-rose-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <Wrench className="w-5 h-5 text-rose-600" />
+                </div>
+              </div>
+
+              <div className="my-4 flex justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Abertas</p>
+                  <p className="text-2xl font-black text-slate-900 leading-tight">
+                    {maintenanceTodayStats.openCount} <span className="text-xs text-slate-400 font-bold">pendentes</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Urgentes</p>
+                  <p className={cn(
+                    "text-2xl font-black text-right leading-tight",
+                    maintenanceTodayStats.urgentCount > 0 ? "text-rose-600" : "text-slate-400"
+                  )}>
+                    {maintenanceTodayStats.urgentCount}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
+                <span>Total de Chamados</span>
+                <span className="text-slate-500 font-bold">{maintenanceTodayStats.totalCount} historico</span>
+              </div>
+            </div>
+          )}
+
+          {/* Card 11: Passagem de Turno */}
+          {activeModules.shift_handover !== false && (
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-200/90 shadow-sm flex flex-col justify-between transition-all hover:shadow-md hover:border-sky-100 group">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-sky-600 uppercase tracking-widest bg-sky-50 px-2 py-0.5 rounded-md">Passagem de Turno</span>
+                  <h3 className="text-base md:text-lg font-black text-slate-900 mt-2">Troca de Operação</h3>
+                </div>
+                <div className="w-10 h-10 bg-sky-50/50 text-sky-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
+                  <ArrowLeftRight className="w-5 h-5 text-sky-600" />
+                </div>
+              </div>
+
+              <div className="my-4 flex justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Turno Atual</p>
+                  <p className="text-2xl font-black text-slate-900 leading-tight">
+                    {activeShift}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Grupo Ativo</p>
+                  <p className="text-2xl font-black text-right leading-tight text-sky-600">
+                    Letra {activeShiftGroup}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center pt-3 border-t border-slate-100 justify-between text-[10px] font-semibold text-slate-400 mt-1">
+                <span>Registros Operacionais</span>
+                <span className="text-slate-500 font-bold">Ativo no Turno</span>
               </div>
             </div>
           )}

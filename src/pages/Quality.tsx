@@ -7259,7 +7259,7 @@ const Quality: React.FC = () => {
                       evalItems = Object.entries(sideEvals).map(([k, st]) => ({
                         key: k,
                         label: getLabel(k),
-                        status: st || 'N/A'
+                        status: String(st || 'N/A')
                       }));
                     } else {
                       // Fallback for legacy evaluation records
