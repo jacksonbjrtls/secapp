@@ -545,12 +545,9 @@ const getLastMeasurementValue = (
   // Filter submissions for this template
   let matching = submissionsList.filter(s => s.templateId === templateId);
 
-  // If lineId is specified, try line-specific match first
+  // If lineId is specified, match strictly by that production line
   if (lineId) {
-    const lineMatching = matching.filter(s => s.lineId === lineId);
-    if (lineMatching.length > 0) {
-      matching = lineMatching;
-    }
+    matching = matching.filter(s => s.lineId === lineId);
   }
 
   if (matching.length === 0) return null;
@@ -569,7 +566,8 @@ const getLastMeasurementValue = (
         return {
           value: resp.value,
           createdAt: sub.createdAt,
-          userName: sub.userName
+          userName: sub.userName,
+          lineId: sub.lineId
         };
       }
     }
@@ -4031,12 +4029,20 @@ const Quality: React.FC = () => {
                               >
                                 {item.showPreviousValue && (() => {
                                   if (!fillingTemplate) return null;
+                                  const currentLineObj = lines.find(l => l.id === submissionLineId) || sectors.find(s => s.id === submissionLineId);
+                                  const lineNameStr = currentLineObj ? currentLineObj.name : '';
+
                                   const prevMeas = getLastMeasurementValue(fillingTemplate.id, item.id, submissionLineId, submissions);
                                   if (!prevMeas) {
                                     return (
                                       <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 bg-slate-100/90 border border-slate-200 px-3.5 py-2 rounded-xl">
                                         <History className="w-4 h-4 text-slate-400 shrink-0" />
-                                        <span>Última Medição: <span className="italic text-slate-400">Sem histórico anterior para este modelo</span></span>
+                                        <span>Última Medição: <span className="italic text-slate-400">
+                                          {submissionLineId 
+                                            ? `Sem histórico anterior registrado especificamente para ${lineNameStr ? `a ${lineNameStr}` : 'esta linha'}` 
+                                            : 'Selecione uma linha de produção para carregar o histórico anterior'
+                                          }
+                                        </span></span>
                                       </div>
                                     );
                                   }
@@ -4063,7 +4069,9 @@ const Quality: React.FC = () => {
                                       <div className="flex items-center gap-2">
                                         <History className="w-4 h-4 text-blue-600 shrink-0" />
                                         <div>
-                                          <span className="block text-[10px] uppercase font-black tracking-wider text-blue-600">Última Medição Registrada (Referência)</span>
+                                          <span className="block text-[10px] uppercase font-black tracking-wider text-blue-600">
+                                            Última Medição Registrada {lineNameStr ? `(${lineNameStr})` : ''}
+                                          </span>
                                           <div className="flex items-center gap-2 mt-0.5">
                                             <span className="text-sm font-black text-blue-950">{displayVal}</span>
                                             {dateStr && (
@@ -4081,7 +4089,7 @@ const Quality: React.FC = () => {
                                             setResponses(prev => ({ ...prev, [item.id]: prevMeas.value }));
                                           }}
                                           className="px-3 py-1.5 text-xs font-black bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all shadow-xs cursor-pointer flex items-center gap-1 shrink-0"
-                                          title="Preencher campo com o valor da última medição"
+                                          title="Preencher campo com o valor da última medição desta linha"
                                         >
                                           Usar Valor
                                         </button>
