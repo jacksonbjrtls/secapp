@@ -393,6 +393,11 @@ service cloud.firestore {
       allow delete: if isMaster() || (isManager() && isValidId(optionSetId));
     }
 
+    // Quality Measurement Units
+    match /quality_measurement_units/{unitId} {
+      allow read, write: if true;
+    }
+
     // Quality Products
     match /quality_products/{productId} {
       allow read: if isApproved();
