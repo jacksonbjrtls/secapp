@@ -73,7 +73,8 @@ import {
   RotateCcw,
   Check,
   AlertTriangle,
-  Target
+  Target,
+  History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
@@ -528,6 +529,50 @@ const getRadiatorValueObj = (val: any) => {
   return {};
 };
 
+const getLastMeasurementValue = (
+  templateId: string, 
+  itemId: string, 
+  lineId?: string, 
+  submissionsList: QualityChecklistSubmission[] = []
+) => {
+  if (!submissionsList || !Array.isArray(submissionsList) || submissionsList.length === 0) return null;
+
+  // Filter submissions for this template
+  let matching = submissionsList.filter(s => s.templateId === templateId);
+
+  // If lineId is specified, try line-specific match first
+  if (lineId) {
+    const lineMatching = matching.filter(s => s.lineId === lineId);
+    if (lineMatching.length > 0) {
+      matching = lineMatching;
+    }
+  }
+
+  if (matching.length === 0) return null;
+
+  // Sort by createdAt date descending
+  const sorted = [...matching].sort((a, b) => {
+    const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : new Date(a.createdAt || 0).getTime());
+    const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : new Date(b.createdAt || 0).getTime());
+    return timeB - timeA;
+  });
+
+  for (const sub of sorted) {
+    if (sub.responses && Array.isArray(sub.responses)) {
+      const resp = sub.responses.find(r => String(r.itemId).toLowerCase() === String(itemId).toLowerCase());
+      if (resp && resp.value !== undefined && resp.value !== null && resp.value !== '') {
+        return {
+          value: resp.value,
+          createdAt: sub.createdAt,
+          userName: sub.userName
+        };
+      }
+    }
+  }
+
+  return null;
+};
+
 const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -766,76 +811,137 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
         )}
 
         {item.type === 'number' && (
-          <>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={item.isInteger || false}
-                onChange={(e) => updateItemInTemplate(item.id, { isInteger: e.target.checked })}
-                id={`int-${item.id}`}
-                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-              />
-              <label htmlFor={`int-${item.id}`} className="text-xs font-bold text-slate-600">Número Inteiro</label>
+          <div className="col-span-full space-y-3 bg-slate-50/80 border border-slate-200/80 p-4 rounded-2xl">
+            {/* Unidade / Tipo de Dado da Grandeza */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-black text-slate-700 uppercase tracking-wider block">
+                Unidade de Medida / Tipo de Dado (Ex: %, Hz, kN, bar, kPa, ms, mm, N/m)
+              </label>
+              
+              {/* Common Unit Quick Select Pills */}
+              <div className="flex flex-wrap gap-1.5 items-center">
+                {['%', 'Hz', 'kN', 'bar', 'kPa', 'ms', 'mm', 'N/m', 'ºC', 'rpm', 'kg', 'm/s', 'V', 'A', 'kW'].map(u => (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => updateItemInTemplate(item.id, { unit: u })}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-xs font-black transition-all border cursor-pointer",
+                      item.unit === u 
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs" 
+                        : "bg-white text-slate-600 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/50"
+                    )}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+
+              {/* Custom Unit Input */}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="text"
+                  placeholder="Ou digite outra unidade (ex: L/min, psi, mm/s)..."
+                  value={item.unit || ''}
+                  onChange={(e) => updateItemInTemplate(item.id, { unit: e.target.value })}
+                  className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+                {item.unit && (
+                  <button
+                    type="button"
+                    onClick={() => updateItemInTemplate(item.id, { unit: undefined })}
+                    className="px-2.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 rounded-xl border border-rose-200 shrink-0 cursor-pointer"
+                    title="Remover unidade"
+                  >
+                    Limpar
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={item.isRangeDropdown || false}
-                onChange={(e) => updateItemInTemplate(item.id, { isRangeDropdown: e.target.checked })}
-                id={`range-${item.id}`}
-                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-              />
-              <label htmlFor={`range-${item.id}`} className="text-xs font-bold text-slate-600">Usar Dropdown (Range)</label>
+
+            {/* Checkboxes: Inteiro e Dropdown */}
+            <div className="flex flex-wrap items-center gap-4 pt-1">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={item.isInteger || false}
+                  onChange={(e) => updateItemInTemplate(item.id, { isInteger: e.target.checked })}
+                  id={`int-${item.id}`}
+                  className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <label htmlFor={`int-${item.id}`} className="text-xs font-bold text-slate-700 cursor-pointer">Número Inteiro</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={item.isRangeDropdown || false}
+                  onChange={(e) => updateItemInTemplate(item.id, { isRangeDropdown: e.target.checked })}
+                  id={`range-${item.id}`}
+                  className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <label htmlFor={`range-${item.id}`} className="text-xs font-bold text-slate-700 cursor-pointer">Usar Dropdown de Opções (Range Min/Max)</label>
+              </div>
             </div>
+
             {item.isRangeDropdown && (
-              <div className="flex flex-wrap gap-2 items-center col-span-full md:col-span-1">
+              <div className="flex flex-wrap gap-2 items-center bg-white p-3 rounded-xl border border-slate-200">
+                <span className="text-slate-500 text-xs font-bold">Faixa de:</span>
                 <input
                   type="number"
                   step="0.01"
                   placeholder="Min"
                   value={item.min || ''}
                   onChange={(e) => updateItemInTemplate(item.id, { min: parseFloat(e.target.value) })}
-                  className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                  className="w-20 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
                 />
-                <span className="text-slate-400 text-xs font-bold">até</span>
+                <span className="text-slate-500 text-xs font-bold">até</span>
                 <input
                   type="number"
                   step="0.01"
                   placeholder="Max"
                   value={item.max || ''}
                   onChange={(e) => updateItemInTemplate(item.id, { max: parseFloat(e.target.value) })}
-                  className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                  className="w-20 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
                 />
-                <span className="text-slate-400 text-xs font-bold">Passo:</span>
+                <span className="text-slate-500 text-xs font-bold">Passo:</span>
                 <input
                   type="number"
                   step="0.01"
                   placeholder="Step"
                   value={item.step || ''}
                   onChange={(e) => updateItemInTemplate(item.id, { step: parseFloat(e.target.value) })}
-                  className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                  className="w-20 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
                 />
               </div>
             )}
-            <div className="col-span-full bg-emerald-50/70 border border-emerald-200/80 p-3.5 rounded-2xl space-y-1">
+
+            {/* Valor Padrão Desejado (Alvo Norma / Pré-preenchido) */}
+            <div className="bg-emerald-50/80 border border-emerald-200/90 p-3.5 rounded-2xl space-y-1 mt-2">
               <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-900 uppercase tracking-wider">
                 <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                Valor Padrão Esperado (Alvo Norma / Pré-preenchido)
+                Valor Padrão Desejado (Meta / Norma Técnica Pré-preenchida)
               </div>
               <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="number"
-                  step={item.isInteger ? "1" : (item.step || "0.01")}
-                  placeholder="Informe o valor padrão esperado (norma/alvo)"
-                  value={item.defaultValue !== undefined && item.defaultValue !== null ? item.defaultValue : ''}
-                  onChange={(e) => updateItemInTemplate(item.id, { defaultValue: e.target.value !== '' ? parseFloat(e.target.value) : undefined })}
-                  className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
+                <div className="relative flex-1">
+                  <input
+                    type="number"
+                    step={item.isInteger ? "1" : (item.step || "0.01")}
+                    placeholder="Informe o valor padrão esperado/norma"
+                    value={item.defaultValue !== undefined && item.defaultValue !== null ? item.defaultValue : ''}
+                    onChange={(e) => updateItemInTemplate(item.id, { defaultValue: e.target.value !== '' ? parseFloat(e.target.value) : undefined })}
+                    className="w-full pl-3 pr-16 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                  {item.unit && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md pointer-events-none">
+                      {item.unit}
+                    </span>
+                  )}
+                </div>
                 {item.defaultValue !== undefined && item.defaultValue !== null && (
                   <button
                     type="button"
                     onClick={() => updateItemInTemplate(item.id, { defaultValue: undefined })}
-                    className="px-2.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 rounded-xl border border-rose-200 shrink-0"
+                    className="px-2.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 rounded-xl border border-rose-200 shrink-0 cursor-pointer"
                     title="Remover valor padrão"
                   >
                     Limpar
@@ -843,10 +949,10 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
                 )}
               </div>
               <p className="text-[10px] text-emerald-700 font-semibold">
-                Este valor virá pré-preenchido como padrão da norma ao abrir o checklist. O operador só altera se houver variação no parâmetro.
+                Este valor {item.unit ? `(${item.defaultValue ?? ''} ${item.unit})` : ''} virá pré-preenchido como a meta/norma ao abrir a inspeção para o operador.
               </p>
             </div>
-          </>
+          </div>
         )}
 
         {item.type === 'range' && (
@@ -905,10 +1011,23 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
                 checked={item.allowObservation || false}
                 onChange={(e) => updateItemInTemplate(item.id, { allowObservation: e.target.checked })}
                 id={`allow-obs-${item.id}`}
-                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
               />
-              <label htmlFor={`allow-obs-${item.id}`} className="text-xs font-bold text-slate-600">
+              <label htmlFor={`allow-obs-${item.id}`} className="text-xs font-bold text-slate-600 cursor-pointer">
                 Habilitar campo para observação (texto livre no checklist)
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={item.showPreviousValue || false}
+                onChange={(e) => updateItemInTemplate(item.id, { showPreviousValue: e.target.checked })}
+                id={`show-prev-${item.id}`}
+                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+              />
+              <label htmlFor={`show-prev-${item.id}`} className="text-xs font-bold text-slate-700 cursor-pointer flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                Exibir valor da última medição (Referência)
               </label>
             </div>
           </div>
@@ -2671,6 +2790,9 @@ const Quality: React.FC = () => {
         valStr = String(resp.value);
         if (resp.value === 'ok') valStr = 'CONFORME (OK)';
         if (resp.value === 'not_ok') valStr = 'NÃO CONFORME (NOK)';
+        if (item?.type === 'number' && item?.unit && resp.value !== undefined && resp.value !== null) {
+          valStr = `${resp.value} ${item.unit}`;
+        }
       }
       
       const obsStr = resp.observation ? `Obs: ${resp.observation}` : '';
@@ -3782,6 +3904,66 @@ const Quality: React.FC = () => {
                                 exit={{ opacity: 0, height: 0 }}
                                 className="border-t border-slate-100 bg-slate-50/50 p-4 space-y-4"
                               >
+                                {item.showPreviousValue && (() => {
+                                  if (!fillingTemplate) return null;
+                                  const prevMeas = getLastMeasurementValue(fillingTemplate.id, item.id, submissionLineId, submissions);
+                                  if (!prevMeas) {
+                                    return (
+                                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 bg-slate-100/90 border border-slate-200 px-3.5 py-2 rounded-xl">
+                                        <History className="w-4 h-4 text-slate-400 shrink-0" />
+                                        <span>Última Medição: <span className="italic text-slate-400">Sem histórico anterior para este modelo</span></span>
+                                      </div>
+                                    );
+                                  }
+
+                                  let displayVal = String(prevMeas.value);
+                                  if (prevMeas.value === 'ok') displayVal = 'CONFORME (OK)';
+                                  if (prevMeas.value === 'not_ok') displayVal = 'NÃO CONFORME (NOK)';
+                                  if (typeof prevMeas.value === 'object' && prevMeas.value !== null) {
+                                    displayVal = prevMeas.value.left_top !== undefined 
+                                      ? `LE: ${prevMeas.value.left_top || '-'} RE: ${prevMeas.value.right_top || '-'} LD: ${prevMeas.value.left_bottom || '-'} RD: ${prevMeas.value.right_bottom || '-'}` 
+                                      : `E: ${prevMeas.value.left || '-'} D: ${prevMeas.value.right || '-'}`;
+                                  }
+                                  
+                                  if (item.unit && typeof prevMeas.value !== 'object' && !displayVal.includes(item.unit)) {
+                                    displayVal = `${displayVal} ${item.unit}`;
+                                  }
+
+                                  const dateStr = prevMeas.createdAt 
+                                    ? safeToDate(prevMeas.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+                                    : '';
+
+                                  return (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-blue-900 bg-blue-50/90 border border-blue-200 px-3.5 py-2.5 rounded-xl shadow-xs">
+                                      <div className="flex items-center gap-2">
+                                        <History className="w-4 h-4 text-blue-600 shrink-0" />
+                                        <div>
+                                          <span className="block text-[10px] uppercase font-black tracking-wider text-blue-600">Última Medição Registrada (Referência)</span>
+                                          <div className="flex items-center gap-2 mt-0.5">
+                                            <span className="text-sm font-black text-blue-950">{displayVal}</span>
+                                            {dateStr && (
+                                              <span className="text-[10px] text-blue-700 font-semibold bg-blue-100/80 px-2 py-0.5 rounded-md">
+                                                {dateStr}{prevMeas.userName ? ` por ${prevMeas.userName}` : ''}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      {responses[item.id] === undefined && typeof prevMeas.value !== 'object' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setResponses(prev => ({ ...prev, [item.id]: prevMeas.value }));
+                                          }}
+                                          className="px-3 py-1.5 text-xs font-black bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all shadow-xs cursor-pointer flex items-center gap-1 shrink-0"
+                                          title="Preencher campo com o valor da última medição"
+                                        >
+                                          Usar Valor
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                                 {item.type === 'condition' && (
                                   <div className="flex flex-wrap gap-2.5 w-full">
                                     {(() => {
@@ -4149,7 +4331,7 @@ const Quality: React.FC = () => {
                                       <div className="flex items-center justify-between text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200/80 px-3.5 py-2 rounded-xl">
                                         <span className="flex items-center gap-1.5">
                                           <Target className="w-4 h-4 text-emerald-600 shrink-0" />
-                                          <span>Valor Norma Esperado: <strong>{item.defaultValue}</strong></span>
+                                          <span>Valor Norma Esperado: <strong>{item.defaultValue} {item.unit || ''}</strong></span>
                                         </span>
                                         {String(responses[item.id]) === String(item.defaultValue) ? (
                                           <span className="bg-emerald-200/80 text-emerald-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
@@ -4177,7 +4359,7 @@ const Quality: React.FC = () => {
                                         <option value="">Selecione o valor...</option>
                                         {generateRangeOptions(item.min, item.max, item.step).map(val => (
                                           <option key={val} value={val}>
-                                            {val % 1 === 0 ? val : val.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                                            {val % 1 === 0 ? val : val.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} {item.unit || ''}
                                           </option>
                                         ))}
                                       </select>
@@ -4195,8 +4377,16 @@ const Quality: React.FC = () => {
                                             }
                                           }}
                                           placeholder={item.isInteger ? "Digite um número inteiro..." : "Digite o valor numérico..."}
-                                          className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-bold text-xs"
+                                          className={cn(
+                                            "w-full pl-10 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-bold text-xs",
+                                            item.unit ? "pr-16" : "pr-4"
+                                          )}
                                         />
+                                        {item.unit && (
+                                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md pointer-events-none">
+                                            {item.unit}
+                                          </span>
+                                        )}
                                       </div>
                                     )}
                                   </div>
@@ -7073,7 +7263,7 @@ const Quality: React.FC = () => {
                        </div>
                        <div className="text-right">
                          <div className={getBadgeColorClasses(resp.value, compliant)}>
-                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (item?.type === 'product' ? `PRODUTO: ${resp.value}` : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : (typeof resp.value === 'object' && resp.value !== null ? (resp.value.left_top !== undefined ? `LE: ${resp.value.left_top || '-'} RE: ${resp.value.right_top || '-'} LD: ${resp.value.left_bottom || '-'} RD: ${resp.value.right_bottom || '-'}` : `E: ${resp.value.left || '-'} D: ${resp.value.right || '-'}`) : String(resp.value || '')))))}
+                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (item?.type === 'product' ? `PRODUTO: ${resp.value}` : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : (typeof resp.value === 'object' && resp.value !== null ? (resp.value.left_top !== undefined ? `LE: ${resp.value.left_top || '-'} RE: ${resp.value.right_top || '-'} LD: ${resp.value.left_bottom || '-'} RD: ${resp.value.right_bottom || '-'}` : `E: ${resp.value.left || '-'} D: ${resp.value.right || '-'}`) : `${resp.value || ''}${item?.unit ? ` ${item.unit}` : ''}`))))}
                           </div>
                        </div>
                       </div>

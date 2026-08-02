@@ -175,6 +175,7 @@ export interface ChecklistItemDefinition {
   min?: number;
   max?: number;
   step?: number;
+  unit?: string; // Unidade de medida/tipo de dado (ex: %, Hz, kN, bar, kPa, ms, mm, N/m, etc.)
   defaultValue?: number | string; // Valor padrão/alvo pré-definido (ex: 1.85, 2000, "normal")
   expectedValue?: string; // Resposta considerada CONFORME/ESPERADA (ex: "NÃO", "SIM", "ok", "not_ok", etc.)
   conditionOptionsId?: string; // ID for custom options (e.g., ["OK", "NOK"])
@@ -182,6 +183,7 @@ export interface ChecklistItemDefinition {
   isRangeDropdown?: boolean; // For 'range' type
   allowObservation?: boolean; // Se o usuário pode colocar uma observação com texto livre
   radiatorCount?: number; // Quantidade de radiadores para inspeção do secador
+  showPreviousValue?: boolean; // Habilitar exibição do valor da última medição como referência histórica
 }
 
 export interface QualityChecklistOptionSet {
