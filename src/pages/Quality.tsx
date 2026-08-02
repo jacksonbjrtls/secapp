@@ -4519,7 +4519,7 @@ const Quality: React.FC = () => {
                                 </span>
                                 {photoUrl && <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-md flex items-center gap-1"><Check className="w-3 h-3" /> OK</span>}
                               </div>
-                              <p className="text-[10px] text-slate-400">{sideReq.description || 'Registro em enquadramento guiado'}</p>
+                              <p className="text-[10px] text-slate-400">{sideReq.description || 'Registro por foto da unit'}</p>
                             </div>
 
                             {photoUrl ? (
@@ -4563,7 +4563,7 @@ const Quality: React.FC = () => {
                                     type="button"
                                     onClick={() => setActiveCameraCapture({ side: sideReq.id, label: sideReq.label })}
                                     className="p-2 bg-emerald-500/80 hover:bg-emerald-500 text-white rounded-lg backdrop-blur-sm transition-all cursor-pointer"
-                                    title="Substituir Câmera c/ Enquadramento"
+                                    title="Tirar Nova Foto"
                                   >
                                     <Camera className="w-4 h-4" />
                                   </button>
@@ -4589,10 +4589,10 @@ const Quality: React.FC = () => {
                                   className="w-full border-2 border-dashed border-emerald-500/60 hover:border-emerald-400 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition-all bg-emerald-950/30 hover:bg-emerald-900/40 group/btn shadow-md"
                                 >
                                   <div className="w-10 h-10 rounded-full bg-emerald-500/20 group-hover/btn:bg-emerald-500/30 text-emerald-400 flex items-center justify-center mb-1.5 transition-all border border-emerald-500/30">
-                                    <Scan className="w-5 h-5 animate-pulse" />
+                                    <Camera className="w-5 h-5 animate-pulse" />
                                   </div>
-                                  <span className="text-xs font-black text-emerald-300 group-hover/btn:text-white uppercase tracking-wider">Abrir Câmera Guiada</span>
-                                  <span className="text-[9px] font-bold text-emerald-400/80 mt-0.5">c/ Retângulo de Leitura</span>
+                                  <span className="text-xs font-black text-emerald-300 group-hover/btn:text-white uppercase tracking-wider">Abrir Câmera</span>
+                                  <span className="text-[9px] font-bold text-emerald-400/80 mt-0.5">Capturar Foto</span>
                                 </button>
                                 
                                 <label className="w-full bg-slate-900/70 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700 rounded-lg py-1.5 px-2 text-[10px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all">
@@ -7373,7 +7373,7 @@ const Quality: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* CÂMERA AO VIVO COM RETÂNGULO GUIA DE LEITURA DA UNIT */}
+      {/* CÂMERA AO VIVO PARA INSPEÇÃO POR FOTO */}
       <AnimatePresence>
         {activeCameraCapture && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/90 backdrop-blur-md">
@@ -7387,13 +7387,13 @@ const Quality: React.FC = () => {
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
-                    <Scan className="w-5 h-5" />
+                    <Camera className="w-5 h-5" />
                   </div>
                   <div>
                     <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
-                      Enquadramento da Unit: {activeCameraCapture.label}
+                      Captura de Foto: {activeCameraCapture.label}
                     </h3>
-                    <p className="text-[11px] text-slate-400">Posicione o fardo/unit dentro do retângulo verde de leitura</p>
+                    <p className="text-[11px] text-slate-400">Posicione a câmera para capturar a imagem da unit</p>
                   </div>
                 </div>
                 <button
@@ -7411,7 +7411,7 @@ const Quality: React.FC = () => {
                 </button>
               </div>
 
-              {/* Viewfinder with Retângulo Guia Overlay */}
+              {/* Viewfinder Direto sem Enquadramento */}
               <div className="relative w-full aspect-[4/3] sm:aspect-video rounded-2xl overflow-hidden bg-black flex items-center justify-center border-2 border-emerald-500/40 shadow-inner group">
                 <video
                   ref={cameraVideoRef}
@@ -7421,35 +7421,11 @@ const Quality: React.FC = () => {
                   className="w-full h-full object-cover"
                 />
 
-                {/* Overlaid Retângulo Guia de Leitura */}
+                {/* Badge Discreto de Identificação no Canto Superior */}
                 {!unitCamError && (
-                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                    {/* Shadowed vignette mask around box */}
-                    <div className="absolute inset-0 bg-slate-950/30 backdrop-blur-[0.5px]" />
-                    
-                    {/* Glowing Retângulo Guia Box */}
-                    <div className="relative w-[84%] h-[80%] border-2 border-emerald-400 rounded-2xl shadow-[0_0_30px_rgba(52,211,153,0.35)] z-10 flex flex-col justify-between p-3">
-                      {/* Corner brackets */}
-                      <div className="absolute -top-1.5 -left-1.5 w-7 h-7 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl shadow-[0_0_10px_#34d399]" />
-                      <div className="absolute -top-1.5 -right-1.5 w-7 h-7 border-t-4 border-r-4 border-emerald-400 rounded-tr-xl shadow-[0_0_10px_#34d399]" />
-                      <div className="absolute -bottom-1.5 -left-1.5 w-7 h-7 border-b-4 border-l-4 border-emerald-400 rounded-bl-xl shadow-[0_0_10px_#34d399]" />
-                      <div className="absolute -bottom-1.5 -right-1.5 w-7 h-7 border-b-4 border-r-4 border-emerald-400 rounded-br-xl shadow-[0_0_10px_#34d399]" />
-
-                      {/* Crosshairs */}
-                      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-dashed border-emerald-400/30" />
-                      <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 border-l border-dashed border-emerald-400/30" />
-
-                      {/* Top instruction badge */}
-                      <div className="self-center bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-full border border-emerald-500/50 text-[10px] font-black uppercase text-emerald-300 tracking-wider shadow-lg flex items-center gap-1.5">
-                        <Scan className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
-                        Retângulo de Leitura da Unit
-                      </div>
-
-                      {/* Bottom side indicator */}
-                      <div className="self-center bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-full border border-slate-700 text-[10px] font-black uppercase text-slate-200 tracking-wider shadow-lg">
-                        {activeCameraCapture.label}
-                      </div>
-                    </div>
+                  <div className="absolute top-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-full border border-emerald-500/40 text-[10px] font-black uppercase text-emerald-300 tracking-wider shadow-lg flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>{activeCameraCapture.label}</span>
                   </div>
                 )}
 
@@ -7494,7 +7470,7 @@ const Quality: React.FC = () => {
                   className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 font-black rounded-xl text-xs transition-all shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Camera className="w-5 h-5" />
-                  <span>Capturar Foto no Enquadramento</span>
+                  <span>Capturar Foto</span>
                 </button>
 
                 <label className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-slate-700 cursor-pointer" title="Galeria">
