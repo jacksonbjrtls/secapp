@@ -184,6 +184,10 @@ export interface ChecklistItemDefinition {
   allowObservation?: boolean; // Se o usuário pode colocar uma observação com texto livre
   radiatorCount?: number; // Quantidade de radiadores para inspeção do secador
   showPreviousValue?: boolean; // Habilitar exibição do valor da última medição como referência histórica
+  includeCoverFormatRef?: boolean; // Opcional: incluir parâmetro de referência para Formato Capa
+  coverFormatRefValue?: number | string; // Valor ou especificação de referência para Formato Capa
+  includeBaleFormatRef?: boolean; // Opcional: incluir parâmetro de referência para Formato Fardo
+  baleFormatRefValue?: number | string; // Valor ou especificação de referência para Formato Fardo
 }
 
 export interface QualityChecklistOptionSet {
@@ -335,6 +339,8 @@ export interface SecagemProduct {
   unitWireQty: number;
   sealType: string;
   specialSeal: string;
+  coverFormat?: string; // Formato da Capa (ex: 1400 x 1600 mm ou Padrão A)
+  baleFormat?: string; // Formato do Fardo (ex: 800 x 600 mm ou 250 kg)
   photoUrl?: string; // Foto Modelo do Produto
   active: boolean;
   createdAt: any;

@@ -1030,6 +1030,81 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
                 Este valor {item.unit ? `(${item.defaultValue ?? ''} ${item.unit})` : ''} virá pré-preenchido como a meta/norma ao abrir a inspeção para o operador.
               </p>
             </div>
+
+            {/* Parâmetros e Referências de Formato Capa e Formato Fardo */}
+            <div className="bg-slate-100/90 border border-slate-200/90 p-3.5 rounded-2xl space-y-3 mt-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] font-black text-slate-800 uppercase tracking-wider">
+                  <Package className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span>Referências de Formato (Capa & Fardo)</span>
+                </div>
+                <span className="text-[10px] text-slate-500 font-bold">Ative para exibir referências adicionais na inspeção</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                {/* Formato Capa */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor={`coverRef-${item.id}`} className="text-xs font-bold text-slate-700 cursor-pointer flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={`coverRef-${item.id}`}
+                        checked={item.includeCoverFormatRef || false}
+                        onChange={(e) => updateItemInTemplate(item.id, { 
+                          includeCoverFormatRef: e.target.checked,
+                          coverFormatRefValue: e.target.checked ? (item.coverFormatRefValue ?? '') : undefined
+                        })}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Incluir Ref. Formato Capa</span>
+                    </label>
+                  </div>
+                  {item.includeCoverFormatRef && (
+                    <div className="space-y-1 pt-1">
+                      <input
+                        type="text"
+                        placeholder="Ex: 1400 x 1600 mm"
+                        value={item.coverFormatRefValue !== undefined ? String(item.coverFormatRefValue) : ''}
+                        onChange={(e) => updateItemInTemplate(item.id, { coverFormatRefValue: e.target.value })}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                      <p className="text-[9px] text-slate-500 font-medium">Exibe o parâmetro de referência do Formato Capa ao operador durante a inspeção.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Formato Fardo */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor={`baleRef-${item.id}`} className="text-xs font-bold text-slate-700 cursor-pointer flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={`baleRef-${item.id}`}
+                        checked={item.includeBaleFormatRef || false}
+                        onChange={(e) => updateItemInTemplate(item.id, { 
+                          includeBaleFormatRef: e.target.checked,
+                          baleFormatRefValue: e.target.checked ? (item.baleFormatRefValue ?? '') : undefined
+                        })}
+                        className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Incluir Ref. Formato Fardo</span>
+                    </label>
+                  </div>
+                  {item.includeBaleFormatRef && (
+                    <div className="space-y-1 pt-1">
+                      <input
+                        type="text"
+                        placeholder="Ex: 800 x 600 mm"
+                        value={item.baleFormatRefValue !== undefined ? String(item.baleFormatRefValue) : ''}
+                        onChange={(e) => updateItemInTemplate(item.id, { baleFormatRefValue: e.target.value })}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-amber-500 outline-none"
+                      />
+                      <p className="text-[9px] text-slate-500 font-medium">Exibe o parâmetro de referência do Formato Fardo ao operador durante a inspeção.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -2180,6 +2255,23 @@ const Quality: React.FC = () => {
 
   const isItemValueComplete = (item: any, value: any, templateName: string = '') => {
     if (value === undefined || value === null || value === '') return false;
+
+    if (item?.includeCoverFormatRef || item?.includeBaleFormatRef) {
+      if (typeof value === 'object' && value !== null) {
+        if (item.includeCoverFormatRef && item.includeBaleFormatRef) {
+          return Boolean(value.cover !== undefined && value.cover !== '' && value.bale !== undefined && value.bale !== '');
+        }
+        if (item.includeCoverFormatRef) {
+          return Boolean(value.cover !== undefined && value.cover !== '');
+        }
+        if (item.includeBaleFormatRef) {
+          return Boolean(value.bale !== undefined && value.bale !== '');
+        }
+      } else {
+        return Boolean(value !== undefined && value !== '');
+      }
+    }
+
     if (typeof value === 'object' && value !== null) {
       const match = item.id ? item.id.match(/^door_(\d+)_level_([a-d])$/) : null;
       const doorNum = match ? parseInt(match[1], 10) : -1;
@@ -2898,7 +2990,11 @@ const Quality: React.FC = () => {
       let valStr = '';
       if (resp.value && typeof resp.value === 'object') {
         const valObj = resp.value as any;
-        if ('left' in valObj || 'right' in valObj) {
+        if ('cover' in valObj || 'bale' in valObj) {
+          const c = valObj.cover !== undefined && valObj.cover !== '' ? `Formato Capa: ${valObj.cover}` : '';
+          const b = valObj.bale !== undefined && valObj.bale !== '' ? `Formato Fardo: ${valObj.bale}` : '';
+          valStr = [c, b].filter(Boolean).join(' | ');
+        } else if ('left' in valObj || 'right' in valObj) {
           const l = valObj.left || 'Pouco Sujo';
           const r = valObj.right || 'Pouco Sujo';
           valStr = `Esq: ${l} | Dir: ${r}`;
@@ -4477,50 +4573,201 @@ const Quality: React.FC = () => {
                                         ) : null}
                                       </div>
                                     )}
-                                    {item.isRangeDropdown ? (
-                                      <select
-                                        value={responses[item.id] || ''}
-                                        onChange={(e) => {
-                                          setResponses(prev => ({ ...prev, [item.id]: e.target.value }));
-                                          // Simple change auto-advance if not empty
-                                          if (e.target.value) {
-                                            setTimeout(advanceToNext, 250);
-                                          }
-                                        }}
-                                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/50 outline-none font-black text-sm appearance-none"
-                                      >
-                                        <option value="">Selecione o valor...</option>
-                                        {generateRangeOptions(item.min, item.max, item.step).map(val => (
-                                          <option key={val} value={val}>
-                                            {val % 1 === 0 ? val : val.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} {item.unit || ''}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    ) : (
-                                      <div className="relative group">
-                                        <Hash className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-600 w-4 h-4" />
-                                        <input
-                                          type="number"
-                                          step={item.isInteger ? "1" : (item.step || "0.01")}
-                                          value={responses[item.id] || ''}
-                                          onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              advanceToNext();
-                                            }
-                                          }}
-                                          placeholder={item.isInteger ? "Digite um número inteiro..." : "Digite o valor numérico..."}
-                                          className={cn(
-                                            "w-full pl-10 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-bold text-xs",
-                                            item.unit ? "pr-16" : "pr-4"
-                                          )}
-                                        />
-                                        {item.unit && (
-                                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md pointer-events-none">
-                                            {item.unit}
-                                          </span>
+
+                                    {/* Entrada e registro de Parâmetros de Formato (Capa e/ou Fardo) */}
+                                    {(item.includeCoverFormatRef || item.includeBaleFormatRef) ? (
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                                        {/* Parâmetro: Formato Capa */}
+                                        {item.includeCoverFormatRef && (
+                                          <div className="bg-blue-50/80 border border-blue-200 p-3.5 rounded-2xl space-y-2.5">
+                                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <div className="flex items-center gap-1.5 text-xs font-black text-blue-900 uppercase tracking-wider">
+                                                <Package className="w-4 h-4 text-blue-600 shrink-0" />
+                                                <span>Formato Capa</span>
+                                              </div>
+                                              {(() => {
+                                                const coverRef = item.coverFormatRefValue || (products.find(p => p.id === selectedProductId)?.coverFormat) || 'Padrão';
+                                                return (
+                                                  <div className="flex items-center gap-1.5">
+                                                    <span className="text-[10px] font-bold text-blue-700 bg-blue-100/90 px-2 py-0.5 rounded-md">
+                                                      Ref: {coverRef}
+                                                    </span>
+                                                    {coverRef && coverRef !== 'Padrão' && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setResponses(prev => {
+                                                          const cur = (typeof prev[item.id] === 'object' && prev[item.id] !== null) ? prev[item.id] : {};
+                                                          return { ...prev, [item.id]: { ...cur, cover: coverRef } };
+                                                        })}
+                                                        className="text-[10px] font-black bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-2 py-0.5 rounded-md transition-all shadow-sm cursor-pointer"
+                                                        title="Usar valor de referência para Capa"
+                                                      >
+                                                        Usar Ref.
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })()}
+                                            </div>
+
+                                            {item.isRangeDropdown ? (
+                                              <select
+                                                value={typeof responses[item.id] === 'object' && responses[item.id] !== null ? (responses[item.id].cover || '') : (typeof responses[item.id] === 'string' ? responses[item.id] : '')}
+                                                onChange={(e) => {
+                                                  const val = e.target.value;
+                                                  setResponses(prev => {
+                                                    const cur = (typeof prev[item.id] === 'object' && prev[item.id] !== null) ? prev[item.id] : {};
+                                                    return { ...prev, [item.id]: { ...cur, cover: val } };
+                                                  });
+                                                }}
+                                                className="w-full px-3 py-2.5 bg-white border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500/50 outline-none font-bold text-xs text-slate-800"
+                                              >
+                                                <option value="">Selecione o valor do Formato Capa...</option>
+                                                {generateRangeOptions(item.min, item.max, item.step).map(val => (
+                                                  <option key={`cover-${val}`} value={val}>
+                                                    {val % 1 === 0 ? val : val.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} {item.unit || ''}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            ) : (
+                                              <div className="relative">
+                                                <input
+                                                  type="text"
+                                                  value={typeof responses[item.id] === 'object' && responses[item.id] !== null ? (responses[item.id].cover || '') : (typeof responses[item.id] === 'string' ? responses[item.id] : '')}
+                                                  onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    setResponses(prev => {
+                                                      const cur = (typeof prev[item.id] === 'object' && prev[item.id] !== null) ? prev[item.id] : {};
+                                                      return { ...prev, [item.id]: { ...cur, cover: val } };
+                                                    });
+                                                  }}
+                                                  placeholder="Ex: 1400 x 1600 mm ou valor..."
+                                                  className="w-full px-3.5 py-2.5 bg-white border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500/30 outline-none font-bold text-xs text-slate-800 placeholder:text-slate-400"
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+
+                                        {/* Parâmetro: Formato Fardo */}
+                                        {item.includeBaleFormatRef && (
+                                          <div className="bg-amber-50/80 border border-amber-200 p-3.5 rounded-2xl space-y-2.5">
+                                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <div className="flex items-center gap-1.5 text-xs font-black text-amber-900 uppercase tracking-wider">
+                                                <Package className="w-4 h-4 text-amber-600 shrink-0" />
+                                                <span>Formato Fardo</span>
+                                              </div>
+                                              {(() => {
+                                                const baleRef = item.baleFormatRefValue || (products.find(p => p.id === selectedProductId)?.baleFormat) || 'Padrão';
+                                                return (
+                                                  <div className="flex items-center gap-1.5">
+                                                    <span className="text-[10px] font-bold text-amber-700 bg-amber-100/90 px-2 py-0.5 rounded-md">
+                                                      Ref: {baleRef}
+                                                    </span>
+                                                    {baleRef && baleRef !== 'Padrão' && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setResponses(prev => {
+                                                          const cur = (typeof prev[item.id] === 'object' && prev[item.id] !== null) ? prev[item.id] : {};
+                                                          return { ...prev, [item.id]: { ...cur, bale: baleRef } };
+                                                        })}
+                                                        className="text-[10px] font-black bg-amber-600 hover:bg-amber-700 active:scale-95 text-white px-2 py-0.5 rounded-md transition-all shadow-sm cursor-pointer"
+                                                        title="Usar valor de referência para Fardo"
+                                                      >
+                                                        Usar Ref.
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })()}
+                                            </div>
+
+                                            {item.isRangeDropdown ? (
+                                              <select
+                                                value={typeof responses[item.id] === 'object' && responses[item.id] !== null ? (responses[item.id].bale || '') : ''}
+                                                onChange={(e) => {
+                                                  const val = e.target.value;
+                                                  setResponses(prev => {
+                                                    const cur = (typeof prev[item.id] === 'object' && prev[item.id] !== null) ? prev[item.id] : {};
+                                                    return { ...prev, [item.id]: { ...cur, bale: val } };
+                                                  });
+                                                }}
+                                                className="w-full px-3 py-2.5 bg-white border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-500/50 outline-none font-bold text-xs text-slate-800"
+                                              >
+                                                <option value="">Selecione o valor do Formato Fardo...</option>
+                                                {generateRangeOptions(item.min, item.max, item.step).map(val => (
+                                                  <option key={`bale-${val}`} value={val}>
+                                                    {val % 1 === 0 ? val : val.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} {item.unit || ''}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            ) : (
+                                              <div className="relative">
+                                                <input
+                                                  type="text"
+                                                  value={typeof responses[item.id] === 'object' && responses[item.id] !== null ? (responses[item.id].bale || '') : ''}
+                                                  onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    setResponses(prev => {
+                                                      const cur = (typeof prev[item.id] === 'object' && prev[item.id] !== null) ? prev[item.id] : {};
+                                                      return { ...prev, [item.id]: { ...cur, bale: val } };
+                                                    });
+                                                  }}
+                                                  placeholder="Ex: 800 x 600 mm ou valor..."
+                                                  className="w-full px-3.5 py-2.5 bg-white border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-500/30 outline-none font-bold text-xs text-slate-800 placeholder:text-slate-400"
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
                                         )}
                                       </div>
+                                    ) : (
+                                      /* Standard single input field when no specific format options are enabled */
+                                      item.isRangeDropdown ? (
+                                        <select
+                                          value={responses[item.id] || ''}
+                                          onChange={(e) => {
+                                            setResponses(prev => ({ ...prev, [item.id]: e.target.value }));
+                                            // Simple change auto-advance if not empty
+                                            if (e.target.value) {
+                                              setTimeout(advanceToNext, 250);
+                                            }
+                                          }}
+                                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/50 outline-none font-black text-sm appearance-none"
+                                        >
+                                          <option value="">Selecione o valor...</option>
+                                          {generateRangeOptions(item.min, item.max, item.step).map(val => (
+                                            <option key={val} value={val}>
+                                              {val % 1 === 0 ? val : val.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} {item.unit || ''}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      ) : (
+                                        <div className="relative group">
+                                          <Hash className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-600 w-4 h-4" />
+                                          <input
+                                            type="number"
+                                            step={item.isInteger ? "1" : (item.step || "0.01")}
+                                            value={responses[item.id] || ''}
+                                            onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                advanceToNext();
+                                              }
+                                            }}
+                                            placeholder={item.isInteger ? "Digite um número inteiro..." : "Digite o valor numérico..."}
+                                            className={cn(
+                                              "w-full pl-10 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-bold text-xs",
+                                              item.unit ? "pr-16" : "pr-4"
+                                            )}
+                                          />
+                                          {item.unit && (
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md pointer-events-none">
+                                              {item.unit}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )
                                     )}
                                   </div>
                                 )}
@@ -6638,6 +6885,14 @@ const Quality: React.FC = () => {
                         <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Selo Especial</span>
                         <span className="text-slate-900 truncate block font-bold">{prod.specialSeal || 'N/A'}</span>
                       </div>
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Formato Capa</span>
+                        <span className="text-slate-900 truncate block font-bold">{prod.coverFormat || 'N/A'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Formato Fardo</span>
+                        <span className="text-slate-900 truncate block font-bold">{prod.baleFormat || 'N/A'}</span>
+                      </div>
                     </div>
                   </div>
 
@@ -6866,6 +7121,30 @@ const Quality: React.FC = () => {
                       value={newProduct.specialSeal}
                       onChange={(e) => setNewProduct(prev => ({ ...prev, specialSeal: e.target.value }))}
                       placeholder="Ex: Sim / Não ou Tipo"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Formato Capa & Formato Fardo */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Formato Capa</label>
+                    <input
+                      type="text"
+                      value={newProduct.coverFormat || ''}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, coverFormat: e.target.value }))}
+                      placeholder="Ex: 1400 x 1600 mm"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Formato Fardo</label>
+                    <input
+                      type="text"
+                      value={newProduct.baleFormat || ''}
+                      onChange={(e) => setNewProduct(prev => ({ ...prev, baleFormat: e.target.value }))}
+                      placeholder="Ex: 800 x 600 mm"
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
                     />
                   </div>
@@ -7415,46 +7694,73 @@ const Quality: React.FC = () => {
                        </div>
                        <div className="text-right">
                          <div className={getBadgeColorClasses(resp.value, compliant)}>
-                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (item?.type === 'product' ? `PRODUTO: ${resp.value}` : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : (typeof resp.value === 'object' && resp.value !== null ? (resp.value.left_top !== undefined ? `LE: ${resp.value.left_top || '-'} RE: ${resp.value.right_top || '-'} LD: ${resp.value.left_bottom || '-'} RD: ${resp.value.right_bottom || '-'}` : `E: ${resp.value.left || '-'} D: ${resp.value.right || '-'}`) : `${resp.value || ''}${item?.unit ? ` ${item.unit}` : ''}`))))}
+                           {item?.type === 'text' ? 'TEXTO REGISTRADO' : (item?.type === 'product' ? `PRODUTO: ${resp.value}` : (resp.value === 'ok' ? 'CONFORME' : (resp.value === 'not_ok' ? 'NÃO CONFORME' : (typeof resp.value === 'object' && resp.value !== null ? (('cover' in resp.value || 'bale' in resp.value) ? [resp.value.cover !== undefined ? `CAPA: ${resp.value.cover}` : '', resp.value.bale !== undefined ? `FARDO: ${resp.value.bale}` : ''].filter(Boolean).join(' | ') : (resp.value.left_top !== undefined ? `LE: ${resp.value.left_top || '-'} RE: ${resp.value.right_top || '-'} LD: ${resp.value.left_bottom || '-'} RD: ${resp.value.right_bottom || '-'}` : `E: ${resp.value.left || '-'} D: ${resp.value.right || '-'}`)) : `${resp.value || ''}${item?.unit ? ` ${item.unit}` : ''}`))))}
                           </div>
                        </div>
                       </div>
 
-                      {/* Detailed Visual Radiator Cards */}
+                      {/* Detailed Visual Format / Radiator Cards */}
                       {typeof resp.value === 'object' && resp.value !== null && (
-                        <div className="ml-14 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          {resp.value.left_top !== undefined || resp.value.right_top !== undefined || resp.value.left_bottom !== undefined || resp.value.right_bottom !== undefined ? (
-                            <>
-                              <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_top || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left_top, template)))}>
-                                <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Esquerdo Sup.</span>
-                                <span className="text-xs font-black">{resp.value.left_top || 'Pouco Sujo'}</span>
+                        ('cover' in resp.value || 'bale' in resp.value) ? (
+                          <div className="ml-14 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {resp.value.cover !== undefined && (
+                              <div className="p-3 bg-blue-50/80 border border-blue-200/80 rounded-xl flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <Package className="w-4 h-4 text-blue-600 shrink-0" />
+                                  <span className="text-xs font-bold text-blue-900">Formato Capa</span>
+                                </div>
+                                <span className="text-xs font-extrabold text-blue-900 bg-white px-2.5 py-1 rounded-lg border border-blue-200">
+                                  {resp.value.cover || 'N/A'} {item?.unit || ''}
+                                </span>
                               </div>
-                              <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_top || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right_top, template)))}>
-                                <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Direito Sup.</span>
-                                <span className="text-xs font-black">{resp.value.right_top || 'Pouco Sujo'}</span>
+                            )}
+                            {resp.value.bale !== undefined && (
+                              <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <Package className="w-4 h-4 text-amber-600 shrink-0" />
+                                  <span className="text-xs font-bold text-amber-900">Formato Fardo</span>
+                                </div>
+                                <span className="text-xs font-extrabold text-amber-900 bg-white px-2.5 py-1 rounded-lg border border-amber-200">
+                                  {resp.value.bale || 'N/A'} {item?.unit || ''}
+                                </span>
                               </div>
-                              <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_bottom || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left_bottom, template)))}>
-                                <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Esquerdo Inf.</span>
-                                <span className="text-xs font-black">{resp.value.left_bottom || 'Pouco Sujo'}</span>
-                              </div>
-                              <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_bottom || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right_bottom, template)))}>
-                                <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Direito Inf.</span>
-                                <span className="text-xs font-black">{resp.value.right_bottom || 'Pouco Sujo'}</span>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.left || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left, template)))}>
-                                <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Superior</span>
-                                <span className="text-xs font-black">{resp.value.left || 'Pouco Sujo'}</span>
-                              </div>
-                              <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.right || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right, template)))}>
-                                <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Inferior</span>
-                                <span className="text-xs font-black">{resp.value.right || 'Pouco Sujo'}</span>
-                              </div>
-                            </>
-                          )}
-                        </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="ml-14 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {resp.value.left_top !== undefined || resp.value.right_top !== undefined || resp.value.left_bottom !== undefined || resp.value.right_bottom !== undefined ? (
+                              <>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_top || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left_top, template)))}>
+                                  <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Esquerdo Sup.</span>
+                                  <span className="text-xs font-black">{resp.value.left_top || 'Pouco Sujo'}</span>
+                                </div>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_top || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right_top, template)))}>
+                                  <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Direito Sup.</span>
+                                  <span className="text-xs font-black">{resp.value.right_top || 'Pouco Sujo'}</span>
+                                </div>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_bottom || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left_bottom, template)))}>
+                                  <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Esquerdo Inf.</span>
+                                  <span className="text-xs font-black">{resp.value.left_bottom || 'Pouco Sujo'}</span>
+                                </div>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_bottom || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right_bottom, template)))}>
+                                  <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Direito Inf.</span>
+                                  <span className="text-xs font-black">{resp.value.right_bottom || 'Pouco Sujo'}</span>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.left || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left, template)))}>
+                                  <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Superior</span>
+                                  <span className="text-xs font-black">{resp.value.left || 'Pouco Sujo'}</span>
+                                </div>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.right || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right, template)))}>
+                                  <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Inferior</span>
+                                  <span className="text-xs font-black">{resp.value.right || 'Pouco Sujo'}</span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )
                       )}
                       
                       {item?.type === 'product' && (
