@@ -993,42 +993,85 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
               </div>
             )}
 
-            {/* Valor Padrão Desejado (Alvo Norma / Pré-preenchido) */}
-            <div className="bg-emerald-50/80 border border-emerald-200/90 p-3.5 rounded-2xl space-y-1 mt-2">
-              <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-900 uppercase tracking-wider">
-                <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                Valor Padrão Desejado (Meta / Norma Técnica Pré-preenchida)
-              </div>
-              <div className="flex items-center gap-2 pt-1">
-                <div className="relative flex-1">
+            {/* Valor Padrão Desejado (Alvo Norma / Pré-preenchido Opcional) */}
+            <div className="bg-emerald-50/80 border border-emerald-200/90 p-3.5 rounded-2xl space-y-2.5 mt-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
-                    type="number"
-                    step={item.isInteger ? "1" : (item.step || "0.01")}
-                    placeholder="Informe o valor padrão esperado/norma"
-                    value={item.defaultValue !== undefined && item.defaultValue !== null ? item.defaultValue : ''}
-                    onChange={(e) => updateItemInTemplate(item.id, { defaultValue: e.target.value !== '' ? parseFloat(e.target.value) : undefined })}
-                    className="w-full pl-3 pr-16 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
+                    type="checkbox"
+                    checked={item.defaultValue !== undefined && item.defaultValue !== null}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        updateItemInTemplate(item.id, { defaultValue: 0, autoFillDefaultValue: false });
+                      } else {
+                        updateItemInTemplate(item.id, { defaultValue: undefined, autoFillDefaultValue: false });
+                      }
+                    }}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
                   />
-                  {item.unit && (
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md pointer-events-none">
-                      {item.unit}
-                    </span>
-                  )}
-                </div>
-                {item.defaultValue !== undefined && item.defaultValue !== null && (
-                  <button
-                    type="button"
-                    onClick={() => updateItemInTemplate(item.id, { defaultValue: undefined })}
-                    className="px-2.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 rounded-xl border border-rose-200 shrink-0 cursor-pointer"
-                    title="Remover valor padrão"
-                  >
-                    Limpar
-                  </button>
-                )}
+                  <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-900 uppercase tracking-wider">
+                    <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Ativar Valor Padrão / Norma Técnica</span>
+                  </div>
+                </label>
+
+                <span className={cn(
+                  "text-[10px] font-bold px-2 py-0.5 rounded-md",
+                  item.defaultValue !== undefined && item.defaultValue !== null
+                    ? "bg-emerald-200/80 text-emerald-950 font-black"
+                    : "bg-slate-200/80 text-slate-600"
+                )}>
+                  {item.defaultValue !== undefined && item.defaultValue !== null ? "Opção Ativada" : "Opção Desativada"}
+                </span>
               </div>
-              <p className="text-[10px] text-emerald-700 font-semibold">
-                Este valor {item.unit ? `(${item.defaultValue ?? ''} ${item.unit})` : ''} virá pré-preenchido como a meta/norma ao abrir a inspeção para o operador.
-              </p>
+
+              {item.defaultValue !== undefined && item.defaultValue !== null && (
+                <div className="space-y-2.5 pt-1 border-t border-emerald-200/60">
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="number"
+                        step={item.isInteger ? "1" : (item.step || "0.01")}
+                        placeholder="Informe o valor da norma técnica (ex: 100)"
+                        value={item.defaultValue !== undefined && item.defaultValue !== null ? item.defaultValue : ''}
+                        onChange={(e) => updateItemInTemplate(item.id, { defaultValue: e.target.value !== '' ? parseFloat(e.target.value) : undefined })}
+                        className="w-full pl-3 pr-16 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none placeholder:text-slate-400 placeholder:font-normal"
+                      />
+                      {item.unit && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md pointer-events-none">
+                          {item.unit}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => updateItemInTemplate(item.id, { defaultValue: undefined, autoFillDefaultValue: false })}
+                      className="px-2.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 rounded-xl border border-rose-200 shrink-0 cursor-pointer"
+                      title="Desativar/Remover valor padrão"
+                    >
+                      Desativar
+                    </button>
+                  </div>
+
+                  <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
+                    <input
+                      type="checkbox"
+                      checked={item.autoFillDefaultValue ?? false}
+                      onChange={(e) => updateItemInTemplate(item.id, { autoFillDefaultValue: e.target.checked })}
+                      className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-extrabold text-emerald-950">
+                      Pré-preencher automaticamente este valor ao abrir o checklist de inspeção
+                    </span>
+                  </label>
+
+                  <p className="text-[10px] text-emerald-700 font-semibold bg-emerald-100/60 p-2 rounded-lg">
+                    {item.autoFillDefaultValue
+                      ? '• O valor virá PRÉ-PREENCHIDO automaticamente no campo de resposta da inspeção.'
+                      : '• O valor será apenas uma REFERÊNCIA no topo, com botão "Usar Norma" para o operador clicar se desejar.'}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Parâmetros e Referências de Formato Capa e Formato Fardo */}
@@ -1109,26 +1152,78 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
         )}
 
         {item.type === 'range' && (
-          <div className="col-span-full bg-emerald-50/70 border border-emerald-200/80 p-3.5 rounded-2xl space-y-1">
-            <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-900 uppercase tracking-wider">
-              <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              Valor Padrão Esperado (Pré-selecionado)
+          <div className="col-span-full bg-emerald-50/70 border border-emerald-200/80 p-3.5 rounded-2xl space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={item.defaultValue !== undefined && item.defaultValue !== ''}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      updateItemInTemplate(item.id, { defaultValue: 'normal', autoFillDefaultValue: false });
+                    } else {
+                      updateItemInTemplate(item.id, { defaultValue: undefined, autoFillDefaultValue: false });
+                    }
+                  }}
+                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                />
+                <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-900 uppercase tracking-wider">
+                  <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Ativar Range Padrão / Norma Técnica</span>
+                </div>
+              </label>
+
+              <span className={cn(
+                "text-[10px] font-bold px-2 py-0.5 rounded-md",
+                item.defaultValue !== undefined && item.defaultValue !== ''
+                  ? "bg-emerald-200/80 text-emerald-950 font-black"
+                  : "bg-slate-200/80 text-slate-600"
+              )}>
+                {item.defaultValue !== undefined && item.defaultValue !== '' ? "Opção Ativada" : "Opção Desativada"}
+              </span>
             </div>
-            <div className="flex items-center gap-2 pt-1">
-              <select
-                value={item.defaultValue !== undefined ? String(item.defaultValue) : 'normal'}
-                onChange={(e) => updateItemInTemplate(item.id, { defaultValue: e.target.value || undefined })}
-                className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
-              >
-                <option value="normal">NORMAL / OK (Padrão)</option>
-                <option value="low">BAIXO</option>
-                <option value="high">ALTO</option>
-                <option value="">Nenhum (Vazio / Operador escolhe)</option>
-              </select>
-            </div>
-            <p className="text-[10px] text-emerald-700 font-semibold">
-              O range virá pré-selecionado nesta opção ao abrir o checklist.
-            </p>
+
+            {item.defaultValue !== undefined && item.defaultValue !== '' && (
+              <div className="space-y-2.5 pt-1 border-t border-emerald-200/60">
+                <div className="flex items-center gap-2">
+                  <select
+                    value={String(item.defaultValue)}
+                    onChange={(e) => updateItemInTemplate(item.id, { defaultValue: e.target.value || undefined, autoFillDefaultValue: e.target.value ? (item.autoFillDefaultValue ?? false) : false })}
+                    className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
+                  >
+                    <option value="normal">NORMAL / OK (Padrão)</option>
+                    <option value="low">BAIXO</option>
+                    <option value="high">ALTO</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => updateItemInTemplate(item.id, { defaultValue: undefined, autoFillDefaultValue: false })}
+                    className="px-2.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 rounded-xl border border-rose-200 shrink-0 cursor-pointer"
+                    title="Desativar valor padrão"
+                  >
+                    Desativar
+                  </button>
+                </div>
+
+                <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={item.autoFillDefaultValue ?? false}
+                    onChange={(e) => updateItemInTemplate(item.id, { autoFillDefaultValue: e.target.checked })}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-extrabold text-emerald-950">
+                    Pré-selecionar automaticamente este range ao abrir o checklist de inspeção
+                  </span>
+                </label>
+
+                <p className="text-[10px] text-emerald-700 font-semibold bg-emerald-100/60 p-2 rounded-lg">
+                  {item.autoFillDefaultValue
+                    ? '• O range virá PRÉ-SELECIONADO automaticamente na inspeção.'
+                    : '• O range será exibido como REFERÊNCIA com o botão "Usar Norma" para o operador.'}
+                </p>
+              </div>
+            )}
           </div>
         )}
         {item.type === 'product' && (
@@ -2335,7 +2430,7 @@ const Quality: React.FC = () => {
 
     const loadedResponses: Record<string, any> = {};
     (template.items || []).forEach(it => {
-      if (it.defaultValue !== undefined && it.defaultValue !== null && it.defaultValue !== '') {
+      if (it.defaultValue !== undefined && it.defaultValue !== null && it.defaultValue !== '' && Boolean(it.autoFillDefaultValue)) {
         loadedResponses[it.id] = it.defaultValue;
       }
     });
@@ -4557,20 +4652,32 @@ const Quality: React.FC = () => {
                                 {item.type === 'number' && (
                                   <div className="space-y-3">
                                     {item.defaultValue !== undefined && item.defaultValue !== null && item.defaultValue !== '' && (
-                                      <div className="flex items-center justify-between text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200/80 px-3.5 py-2 rounded-xl">
+                                      <div className="flex items-center justify-between text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200/80 px-3.5 py-2 rounded-xl flex-wrap gap-2">
                                         <span className="flex items-center gap-1.5">
                                           <Target className="w-4 h-4 text-emerald-600 shrink-0" />
                                           <span>Valor Norma Esperado: <strong>{item.defaultValue} {item.unit || ''}</strong></span>
                                         </span>
-                                        {String(responses[item.id]) === String(item.defaultValue) ? (
-                                          <span className="bg-emerald-200/80 text-emerald-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
-                                            Pré-definido
-                                          </span>
-                                        ) : responses[item.id] !== undefined && responses[item.id] !== '' ? (
-                                          <span className="bg-amber-100 text-amber-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
-                                            Alterado
-                                          </span>
-                                        ) : null}
+                                        <div className="flex items-center gap-1.5">
+                                          {String(responses[item.id]) !== String(item.defaultValue) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setResponses(prev => ({ ...prev, [item.id]: item.defaultValue }))}
+                                              className="text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-0.5 rounded-md transition-all shadow-sm cursor-pointer"
+                                              title="Usar valor da norma técnica"
+                                            >
+                                              Usar Norma
+                                            </button>
+                                          )}
+                                          {String(responses[item.id]) === String(item.defaultValue) ? (
+                                            <span className="bg-emerald-200/80 text-emerald-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
+                                              Pré-definido
+                                            </span>
+                                          ) : responses[item.id] !== undefined && responses[item.id] !== '' ? (
+                                            <span className="bg-amber-100 text-amber-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
+                                              Alterado
+                                            </span>
+                                          ) : null}
+                                        </div>
                                       </div>
                                     )}
 
@@ -4775,16 +4882,28 @@ const Quality: React.FC = () => {
                                 {item.type === 'range' && (
                                   <div className="space-y-3">
                                     {item.defaultValue !== undefined && item.defaultValue !== null && item.defaultValue !== '' && (
-                                      <div className="flex items-center justify-between text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200/80 px-3.5 py-2 rounded-xl">
+                                      <div className="flex items-center justify-between text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200/80 px-3.5 py-2 rounded-xl flex-wrap gap-2">
                                         <span className="flex items-center gap-1.5">
                                           <Target className="w-4 h-4 text-emerald-600 shrink-0" />
                                           <span>Range Norma Esperado: <strong className="uppercase">{item.defaultValue === 'normal' ? 'NORMAL / OK' : item.defaultValue === 'low' ? 'BAIXO' : item.defaultValue === 'high' ? 'ALTO' : item.defaultValue}</strong></span>
                                         </span>
-                                        {String(responses[item.id]) === String(item.defaultValue) && (
-                                          <span className="bg-emerald-200/80 text-emerald-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
-                                            Pré-definido
-                                          </span>
-                                        )}
+                                        <div className="flex items-center gap-1.5">
+                                          {String(responses[item.id]) !== String(item.defaultValue) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setResponses(prev => ({ ...prev, [item.id]: item.defaultValue }))}
+                                              className="text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-0.5 rounded-md transition-all shadow-sm cursor-pointer"
+                                              title="Usar range da norma técnica"
+                                            >
+                                              Usar Norma
+                                            </button>
+                                          )}
+                                          {String(responses[item.id]) === String(item.defaultValue) && (
+                                            <span className="bg-emerald-200/80 text-emerald-900 text-[10px] px-2 py-0.5 rounded-md font-black uppercase">
+                                              Pré-definido
+                                            </span>
+                                          )}
+                                        </div>
                                       </div>
                                     )}
                                     <div className="flex flex-wrap gap-2.5">
@@ -5406,7 +5525,7 @@ const Quality: React.FC = () => {
 
                         const initialDefaultResponses: Record<string, any> = {};
                         (template.items || []).forEach(it => {
-                          if (it.defaultValue !== undefined && it.defaultValue !== null && it.defaultValue !== '') {
+                          if (it.defaultValue !== undefined && it.defaultValue !== null && it.defaultValue !== '' && Boolean(it.autoFillDefaultValue)) {
                             initialDefaultResponses[it.id] = it.defaultValue;
                           }
                         });

@@ -3,7 +3,7 @@ import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { auth, db } from './lib/firebase';
 import { signOut, updatePassword } from 'firebase/auth';
-import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { cn } from './lib/utils';
 import Shell from './components/layout/Shell';
 import Login from './pages/Login';
@@ -329,11 +329,61 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
 
 const HomeRedirect = () => {
   const { loading, isAdmin, isManager, isMaster } = useAuth();
-  if (loading) return null;
-  if (isAdmin || isManager || isMaster) {
-    return <Navigate to="/overview" replace />;
+  const [activeModules, setActiveModules] = React.useState<Record<string, boolean>>({
+    shift_handover: true,
+    dds: true,
+  });
+  const [modulesLoaded, setModulesLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'system_config', 'modules'), (snap) => {
+      if (snap.exists()) {
+        setActiveModules(snap.data() as Record<string, boolean>);
+      }
+      setModulesLoaded(true);
+    }, (err) => {
+      console.warn('Error loading modules in HomeRedirect:', err);
+      setModulesLoaded(true);
+    });
+    return () => unsub();
+  }, []);
+
+  if (loading || !modulesLoaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+      </div>
+    );
   }
-  return <Navigate to="/shift-handover" replace />;
+
+  if (isAdmin || isManager || isMaster) {
+    if (activeModules.overview !== false) {
+      return <Navigate to="/overview" replace />;
+    }
+    if (activeModules.dashboard !== false) {
+      return <Navigate to="/dashboard" replace />;
+    }
+  }
+
+  // Common User or Admin/Manager if overview & dashboard are disabled
+  if (activeModules.shift_handover !== false) {
+    return <Navigate to="/shift-handover" replace />;
+  }
+
+  // If Shift Handover is disabled by admin, open DDS Online
+  if (activeModules.dds !== false) {
+    return <Navigate to="/dds" replace />;
+  }
+
+  if (activeModules.quality !== false) {
+    return <Navigate to="/quality" replace />;
+  }
+
+  if (activeModules.forklifts !== false) {
+    return <Navigate to="/forklifts" replace />;
+  }
+
+  return <Navigate to="/profile" replace />;
 };
 
 const App: React.FC = () => {

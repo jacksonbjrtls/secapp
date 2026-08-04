@@ -177,6 +177,7 @@ export interface ChecklistItemDefinition {
   step?: number;
   unit?: string; // Unidade de medida/tipo de dado (ex: %, Hz, kN, bar, kPa, ms, mm, N/m, etc.)
   defaultValue?: number | string; // Valor padrão/alvo pré-definido (ex: 1.85, 2000, "normal")
+  autoFillDefaultValue?: boolean; // Se deve preencher automaticamente na abertura ou apenas ficar disponível com botão Usar Norma
   expectedValue?: string; // Resposta considerada CONFORME/ESPERADA (ex: "NÃO", "SIM", "ok", "not_ok", etc.)
   conditionOptionsId?: string; // ID for custom options (e.g., ["OK", "NOK"])
   isInteger?: boolean; // For 'number' type

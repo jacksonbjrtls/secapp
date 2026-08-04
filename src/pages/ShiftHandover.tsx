@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { 
   collection, 
   addDoc, 
@@ -29,6 +30,7 @@ import {
   ClipboardCheck, 
   Truck, 
   ShieldAlert, 
+  ShieldCheck,
   Users, 
   Loader2, 
   FileText, 
@@ -679,8 +681,14 @@ export const ShiftHandover: React.FC = () => {
             O módulo de Passagem de Turno foi temporariamente desativado pelo administrador do sistema.
           </p>
           <p className="text-xs text-slate-400 mt-4 leading-relaxed font-medium">
-            Se você precisar realizar registros de passagem de turno, solicite a habilitação do módulo na aba "Módulos" da Administração para continuar.
+            Se você precisar realizar apontamentos de segurança ou inspeções, acesse o módulo de DDS Online.
           </p>
+          <Link
+            to="/dds"
+            className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer"
+          >
+            <ShieldCheck className="w-4 h-4" /> Ir para DDS Online
+          </Link>
         </div>
       </div>
     );
