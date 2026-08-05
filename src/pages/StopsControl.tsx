@@ -411,7 +411,7 @@ export default function StopsControl() {
   };
 
   // Image Compression Helper
-  const compressImageFile = (file: File, maxWidth = 1000, maxHeight = 1000, quality = 0.75): Promise<string> => {
+  const compressImageFile = (file: File, maxWidth = 700, maxHeight = 700, quality = 0.6): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -434,7 +434,23 @@ export default function StopsControl() {
           const ctx = canvas.getContext('2d');
           if (!ctx) return reject(new Error('Canvas ctx null'));
           ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
+          let result = canvas.toDataURL('image/jpeg', quality);
+
+          // Second compression pass if result is larger than 90KB (~120KB in base64)
+          if (result.length > 120000) {
+            const secondCanvas = document.createElement('canvas');
+            const targetWidth = Math.min(width, 500);
+            const targetHeight = Math.round((height * targetWidth) / width);
+            secondCanvas.width = targetWidth;
+            secondCanvas.height = targetHeight;
+            const ctx2 = secondCanvas.getContext('2d');
+            if (ctx2) {
+              ctx2.drawImage(img, 0, 0, targetWidth, targetHeight);
+              result = secondCanvas.toDataURL('image/jpeg', 0.5);
+            }
+          }
+
+          resolve(result);
         };
         img.onerror = (err) => reject(err);
         img.src = e.target?.result as string;
@@ -650,6 +666,32 @@ export default function StopsControl() {
     setFormWorkFronts(initial);
   };
 
+  const compressBase64 = (base64Str: string, maxWidth = 450, quality = 0.45): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(base64Str);
+        }
+      };
+      img.onerror = () => resolve(base64Str);
+      img.src = base64Str;
+    });
+  };
+
   // Submit report to Firestore
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -705,6 +747,34 @@ export default function StopsControl() {
         reportData.createdAt = serverTimestamp();
       }
 
+      // Safety check: calculate approximate size of JSON payload
+      let payloadString = JSON.stringify(reportData);
+      
+      // If payload is over 800KB (~800,000 chars), attempt aggressive re-compression of photos
+      if (payloadString.length > 800000) {
+        for (const wf of reportData.workFronts) {
+          if (wf.photos && wf.photos.length > 0) {
+            wf.photos = await Promise.all(
+              wf.photos.map(async (ph: StopWorkFrontPhoto) => {
+                if (ph.url && ph.url.startsWith('data:image')) {
+                  const compressed = await compressBase64(ph.url, 400, 0.4);
+                  return { ...ph, url: compressed };
+                }
+                return ph;
+              })
+            );
+          }
+        }
+        payloadString = JSON.stringify(reportData);
+      }
+
+      // If still over 980KB, notify user cleanly
+      if (payloadString.length > 980000) {
+        alert("O relatório excede o limite de tamanho (1MB) devido ao número excessivo de fotos. Por favor, remova 1 ou 2 fotos e tente novamente.");
+        setSubmitting(false);
+        return;
+      }
+
       let savedReport: StopReport;
 
       if (editingReport) {
@@ -726,9 +796,13 @@ export default function StopsControl() {
 
       setJustSavedReport(savedReport);
       resetForm();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error saving stop report:", err);
-      alert("Erro ao salvar relatório de parada. Verifique os logs.");
+      if (err?.message?.includes('exceeds') || err?.code === 'resource-exhausted' || err?.message?.includes('bytes')) {
+        alert("O relatório excede o limite de tamanho do banco de dados (1MB) devido às fotos. Por favor, remova algumas fotos antes de salvar.");
+      } else {
+        handleFirestoreError(err, editingReport ? OperationType.UPDATE : OperationType.CREATE, 'stops_reports');
+      }
     } finally {
       setSubmitting(false);
     }
