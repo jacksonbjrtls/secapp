@@ -365,7 +365,7 @@ export interface StopWorkFront {
 
 export interface StopReport {
   id: string;
-  type: 'programada' | 'geral';
+  type: 'programada' | 'geral' | 'emergencia' | 'inspecao';
   date: string; // YYYY-MM-DD
   lineId: string; // Line ID or name
   lineName?: string;

@@ -85,6 +85,46 @@ const DEFAULT_WORK_FRONTS = [
 
 const SPEED_OPTIONS = Array.from({ length: 251 }, (_, i) => i);
 
+const getStopTypeLabel = (type: string): string => {
+  switch (type) {
+    case 'programada': return 'Programada';
+    case 'geral': return 'Geral';
+    case 'emergencia': return 'Emergência';
+    case 'inspecao': return 'Inspeção';
+    default: return type || 'Programada';
+  }
+};
+
+const getStopTypeBadgeClass = (type: string): string => {
+  switch (type) {
+    case 'programada':
+      return 'bg-sky-50 border-sky-200 text-sky-800';
+    case 'geral':
+      return 'bg-amber-50 border-amber-200 text-amber-800';
+    case 'emergencia':
+      return 'bg-rose-50 border-rose-200 text-rose-800';
+    case 'inspecao':
+      return 'bg-purple-50 border-purple-200 text-purple-800';
+    default:
+      return 'bg-slate-50 border-slate-200 text-slate-700';
+  }
+};
+
+const getStopTypeModalBadgeClass = (type: string): string => {
+  switch (type) {
+    case 'programada':
+      return 'bg-sky-500/20 text-sky-300';
+    case 'geral':
+      return 'bg-amber-500/20 text-amber-300';
+    case 'emergencia':
+      return 'bg-rose-500/20 text-rose-300';
+    case 'inspecao':
+      return 'bg-purple-500/20 text-purple-300';
+    default:
+      return 'bg-slate-500/20 text-slate-300';
+  }
+};
+
 export default function StopsControl() {
   const { user, isManager, isAdmin, isMaster, logoUrl } = useAuth();
   
@@ -132,7 +172,7 @@ export default function StopsControl() {
   const [editingReport, setEditingReport] = useState<StopReport | null>(initialDraft?.editingReport || null);
 
   // Form State
-  const [formType, setFormType] = useState<'programada' | 'geral'>(initialDraft?.formType || 'programada');
+  const [formType, setFormType] = useState<'programada' | 'geral' | 'emergencia' | 'inspecao'>(initialDraft?.formType || 'programada');
   const [formDate, setFormDate] = useState<string>(() => {
     if (initialDraft?.formDate) return initialDraft.formDate;
     const today = new Date();
@@ -835,6 +875,8 @@ export default function StopsControl() {
     let totalDowntimeMin = 0;
     let scheduledCount = 0;
     let generalCount = 0;
+    let emergencyCount = 0;
+    let inspectionCount = 0;
     let totalMS1Speed = 0;
     let totalMS2Speed = 0;
     let speedMS1Count = 0;
@@ -849,7 +891,9 @@ export default function StopsControl() {
       totalDowntimeMin += dur;
 
       if (r.type === 'programada') scheduledCount++;
-      else generalCount++;
+      else if (r.type === 'geral') generalCount++;
+      else if (r.type === 'emergencia') emergencyCount++;
+      else if (r.type === 'inspecao') inspectionCount++;
 
       if (r.cutterSpeedMS1 > 0) {
         totalMS1Speed += r.cutterSpeedMS1;
@@ -878,7 +922,9 @@ export default function StopsControl() {
 
     const typeData = [
       { name: 'Programada', value: scheduledCount, color: '#0ea5e9' },
-      { name: 'Geral', value: generalCount, color: '#f59e0b' }
+      { name: 'Geral', value: generalCount, color: '#f59e0b' },
+      { name: 'Emergência', value: emergencyCount, color: '#f43f5e' },
+      { name: 'Inspeção', value: inspectionCount, color: '#a855f7' }
     ].filter(item => item.value > 0);
 
     const lineChartData = Object.entries(lineDowntime).map(([name, hours]) => ({
@@ -1025,7 +1071,7 @@ export default function StopsControl() {
     docPdf.text(sanitizePdfText('Informações Gerais da Parada'), 15, 53);
     
     const generalData = [
-      [sanitizePdfText('Data:'), formatDateToBR(report.date), sanitizePdfText('Tipo de Parada:'), report.type.toUpperCase()],
+      [sanitizePdfText('Data:'), formatDateToBR(report.date), sanitizePdfText('Tipo de Parada:'), sanitizePdfText(getStopTypeLabel(report.type).toUpperCase())],
       [sanitizePdfText('Local (Linha):'), sanitizePdfText(report.lineName || report.lineId), sanitizePdfText('Tempo de Rejeição:'), `${report.rejectionTime || 0} min`],
       [sanitizePdfText('Hora Início:'), report.startTime, sanitizePdfText('Hora Término:'), report.endTime],
       [sanitizePdfText('Duração:'), formatDurationString(duration), sanitizePdfText('Registrado por:'), sanitizePdfText(report.userName)]
@@ -1364,7 +1410,7 @@ export default function StopsControl() {
       const frontsStr = r.workFronts.map(wf => wf.front).join(', ');
       return [
         formatDateToBR(r.date),
-        r.type.toUpperCase(),
+        sanitizePdfText(getStopTypeLabel(r.type).toUpperCase()),
         sanitizePdfText(r.lineName || r.lineId),
         r.startTime,
         r.endTime,
@@ -1525,32 +1571,56 @@ export default function StopsControl() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
+                    <div className="md:col-span-2">
                       <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1">Tipo de Parada</label>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         <button
                           type="button"
                           onClick={() => setFormType('programada')}
                           className={cn(
-                            "py-3 rounded-xl text-xs font-bold uppercase transition-all border",
+                            "py-3 px-2 rounded-xl text-xs font-bold uppercase transition-all border flex items-center justify-center gap-1.5 cursor-pointer",
                             formType === 'programada'
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-300 shadow-sm"
+                              ? "bg-sky-50 text-sky-800 border-sky-300 shadow-2xs ring-2 ring-sky-400/20 font-extrabold"
                               : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
                           )}
                         >
-                          🕒 Programada
+                          <span>🕒</span> Programada
                         </button>
                         <button
                           type="button"
                           onClick={() => setFormType('geral')}
                           className={cn(
-                            "py-3 rounded-xl text-xs font-bold uppercase transition-all border",
+                            "py-3 px-2 rounded-xl text-xs font-bold uppercase transition-all border flex items-center justify-center gap-1.5 cursor-pointer",
                             formType === 'geral'
-                              ? "bg-amber-50 text-amber-700 border-amber-300 shadow-sm"
+                              ? "bg-amber-50 text-amber-800 border-amber-300 shadow-2xs ring-2 ring-amber-400/20 font-extrabold"
                               : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
                           )}
                         >
-                          ⚠️ Geral / Emergência
+                          <span>⚙️</span> Geral
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormType('emergencia')}
+                          className={cn(
+                            "py-3 px-2 rounded-xl text-xs font-bold uppercase transition-all border flex items-center justify-center gap-1.5 cursor-pointer",
+                            formType === 'emergencia'
+                              ? "bg-rose-50 text-rose-800 border-rose-300 shadow-2xs ring-2 ring-rose-400/20 font-extrabold"
+                              : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                          )}
+                        >
+                          <span>🚨</span> Emergência
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormType('inspecao')}
+                          className={cn(
+                            "py-3 px-2 rounded-xl text-xs font-bold uppercase transition-all border flex items-center justify-center gap-1.5 cursor-pointer",
+                            formType === 'inspecao'
+                              ? "bg-purple-50 text-purple-800 border-purple-300 shadow-2xs ring-2 ring-purple-400/20 font-extrabold"
+                              : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                          )}
+                        >
+                          <span>🔍</span> Inspeção
                         </button>
                       </div>
                     </div>
@@ -1993,11 +2063,13 @@ export default function StopsControl() {
                   <select
                     value={filterType}
                     onChange={(e) => setFilterType(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                   >
                     <option value="all">Todos os Tipos</option>
                     <option value="programada">Programadas</option>
-                    <option value="geral">Gerais/Emergências</option>
+                    <option value="geral">Gerais</option>
+                    <option value="emergencia">Emergências</option>
+                    <option value="inspecao">Inspeções</option>
                   </select>
                 </div>
 
@@ -2079,11 +2151,9 @@ export default function StopsControl() {
                             <td className="p-4 whitespace-nowrap">
                               <span className={cn(
                                 "px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border",
-                                report.type === 'programada'
-                                  ? "bg-emerald-50 border-emerald-100 text-emerald-800"
-                                  : "bg-amber-50 border-amber-100 text-amber-700"
+                                getStopTypeBadgeClass(report.type)
                               )}>
-                                {report.type === 'programada' ? 'Programada' : 'Geral'}
+                                {getStopTypeLabel(report.type)}
                               </span>
                             </td>
                             <td className="p-4 whitespace-nowrap text-slate-600">
@@ -2324,11 +2394,9 @@ export default function StopsControl() {
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       "px-2.5 py-0.5 rounded-full text-[10px] uppercase font-bold border border-transparent",
-                      viewingReport.type === 'programada'
-                        ? "bg-sky-500/20 text-sky-300"
-                        : "bg-amber-500/20 text-amber-300"
+                      getStopTypeModalBadgeClass(viewingReport.type)
                     )}>
-                      {viewingReport.type === 'programada' ? 'Programada' : 'Geral'}
+                      {getStopTypeLabel(viewingReport.type)}
                     </span>
                     <span className="text-xs text-slate-400 font-bold">{formatDateToBR(viewingReport.date)}</span>
                   </div>
