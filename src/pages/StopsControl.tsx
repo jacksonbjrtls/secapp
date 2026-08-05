@@ -44,6 +44,9 @@ import {
   Settings,
   Image as ImageIcon,
   Maximize2,
+  Minimize2,
+  ChevronDown,
+  ChevronUp,
   Eye,
   Check
 } from 'lucide-react';
@@ -209,6 +212,9 @@ export default function StopsControl() {
     });
     return initial;
   });
+
+  // Expanded work fronts accordion state (only expanded front(s) are open, auto-retracting others for clarity)
+  const [expandedFronts, setExpandedFronts] = useState<Record<string, boolean>>({});
 
   const [hasDraft, setHasDraft] = useState<boolean>(() => !!initialDraft);
 
@@ -636,6 +642,13 @@ export default function StopsControl() {
       }
     });
     setFormWorkFronts(initialFronts);
+    // Expand the first active work front for editing
+    const firstActiveFront = report.workFronts[0]?.front;
+    if (firstActiveFront) {
+      setExpandedFronts({ [firstActiveFront]: true });
+    } else {
+      setExpandedFronts({});
+    }
     setActiveTab('register');
   };
 
@@ -664,6 +677,7 @@ export default function StopsControl() {
     setFormSpeedMS1(0);
     setFormSpeedMS2(0);
     setFormObservation('');
+    setExpandedFronts({});
     
     const initial: Record<string, any> = {};
     workFrontOptions.forEach(front => {
@@ -847,9 +861,11 @@ export default function StopsControl() {
 
   // Toggle work front participation
   const toggleWorkFront = (front: string) => {
+    let willBeActive = false;
     setFormWorkFronts(prev => {
-      const active = !prev[front].active;
-      const currentDesc = prev[front].description;
+      const active = !prev[front]?.active;
+      willBeActive = active;
+      const currentDesc = prev[front]?.description || '';
       const newDesc = (active && !currentDesc) ? '- ' : currentDesc;
       return {
         ...prev,
@@ -858,11 +874,63 @@ export default function StopsControl() {
           active,
           description: newDesc,
           // Pre-fill start/end times with the main stop times if toggled on
-          startTime: active ? formStartTime : prev[front].startTime,
-          endTime: active ? formEndTime : prev[front].endTime
+          startTime: active ? formStartTime : prev[front]?.startTime || formStartTime,
+          endTime: active ? formEndTime : prev[front]?.endTime || formEndTime
         }
       };
     });
+
+    setExpandedFronts(prev => {
+      const isCurrentlyActive = formWorkFronts[front]?.active;
+      if (!isCurrentlyActive) {
+        // Turning ON -> expand this front and retract others to keep screen clean and organized
+        return { [front]: true };
+      } else {
+        // Turning OFF -> collapse it
+        const copy = { ...prev };
+        delete copy[front];
+        return copy;
+      }
+    });
+  };
+
+  // Toggle expand/collapse state without deactivating the work front
+  const toggleExpandWorkFront = (front: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setExpandedFronts(prev => {
+      const isCurrentlyExpanded = !!prev[front];
+      if (isCurrentlyExpanded) {
+        // Collapse
+        const copy = { ...prev };
+        delete copy[front];
+        return copy;
+      } else {
+        // Expand this front, auto-retract others so user focuses on one front at a time
+        return { [front]: true };
+      }
+    });
+  };
+
+  const expandAllWorkFronts = () => {
+    const allExpanded: Record<string, boolean> = {};
+    workFrontOptions.forEach(f => {
+      allExpanded[f] = true;
+    });
+    setExpandedFronts(allExpanded);
+  };
+
+  const collapseAllWorkFronts = () => {
+    setExpandedFronts({});
+  };
+
+  const handleFocusWorkFront = (front: string) => {
+    // When typing or focusing in a work front, auto-retract other fronts for a clean screen
+    if (!expandedFronts[front]) {
+      setExpandedFronts({ [front]: true });
+    }
+    if (!formWorkFronts[front]?.description) {
+      handleWorkFrontChange(front, 'description', '- ');
+    }
   };
 
   const handleWorkFrontChange = (front: string, field: 'description' | 'startTime' | 'endTime', value: string) => {
@@ -1842,9 +1910,31 @@ export default function StopsControl() {
 
                 {/* Work fronts (Frentes de trabalho) registration */}
                 <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
-                  <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
-                    <Wrench className="w-5 h-5 text-emerald-600" />
-                    <h2 className="text-lg font-bold text-slate-900">Envolvimento de Frentes de Trabalho</h2>
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100 flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <Wrench className="w-5 h-5 text-emerald-600" />
+                      <h2 className="text-lg font-bold text-slate-900">Envolvimento de Frentes de Trabalho</h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={expandAllWorkFronts}
+                        className="text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                        title="Expandir todas as frentes de trabalho"
+                      >
+                        <Maximize2 className="w-3 h-3 text-slate-500" />
+                        Expandir
+                      </button>
+                      <button
+                        type="button"
+                        onClick={collapseAllWorkFronts}
+                        className="text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                        title="Retrair frentes para organizar a tela"
+                      >
+                        <Minimize2 className="w-3 h-3 text-slate-500" />
+                        Recolher
+                      </button>
+                    </div>
                   </div>
                   
                   <p className="text-xs font-semibold text-slate-500">
@@ -1861,51 +1951,97 @@ export default function StopsControl() {
                         photos: []
                       };
                       const frontDuration = getMinutesDiff(item.startTime, item.endTime);
+                      const isExpanded = item.active && !!expandedFronts[front];
+
+                      // Extract clean preview string for collapsed state
+                      const descPreview = item.description 
+                        ? item.description.split('\n').filter(l => l.trim().length > 0)[0]?.replace(/^-?\s*/, '') 
+                        : '';
 
                       return (
                         <div 
                           key={front} 
                           className={cn(
-                            "border rounded-2xl transition-all overflow-hidden shadow-sm",
+                            "border rounded-2xl transition-all overflow-hidden shadow-xs",
                             item.active 
-                              ? "bg-slate-50/50 border-emerald-200" 
+                              ? "bg-slate-50/50 border-emerald-200/80" 
                               : "bg-white border-slate-100 hover:border-slate-200"
                           )}
                         >
-                          {/* Front Header Header */}
+                          {/* Front Header */}
                           <div 
-                            onClick={() => toggleWorkFront(front)}
-                            className="p-4 flex items-center justify-between cursor-pointer select-none"
+                            onClick={() => {
+                              if (!item.active) {
+                                toggleWorkFront(front);
+                              } else {
+                                toggleExpandWorkFront(front);
+                              }
+                            }}
+                            className={cn(
+                              "p-4 flex items-center justify-between cursor-pointer select-none transition-colors",
+                              item.active ? "hover:bg-slate-100/60" : "hover:bg-slate-50"
+                            )}
                           >
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 flex-wrap min-w-0">
                               <input
                                 type="checkbox"
                                 checked={item.active}
-                                onChange={() => {}} // Controlled by click on parent
-                                className="w-5 h-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  toggleWorkFront(front);
+                                }}
+                                className="w-5 h-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
                               />
                               <span className={cn("text-sm font-extrabold", item.active ? "text-slate-800" : "text-slate-400")}>
                                 {front}
                               </span>
-                              {item.active && item.photos && item.photos.length > 0 && (
-                                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
-                                  <Camera className="w-3 h-3 text-emerald-600" />
-                                  {item.photos.length} foto{item.photos.length > 1 ? 's' : ''}
-                                </span>
+
+                              {item.active && (
+                                <>
+                                  {item.photos && item.photos.length > 0 && (
+                                    <span className="bg-emerald-100/80 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0">
+                                      <Camera className="w-3 h-3 text-emerald-600" />
+                                      {item.photos.length} foto{item.photos.length > 1 ? 's' : ''}
+                                    </span>
+                                  )}
+
+                                  {!isExpanded && descPreview && (
+                                    <span className="hidden sm:inline-block text-[11px] font-medium text-slate-500 truncate max-w-[200px] md:max-w-[300px] bg-slate-100 px-2.5 py-0.5 rounded-md border border-slate-200/60">
+                                      {descPreview}
+                                    </span>
+                                  )}
+                                </>
                               )}
                             </div>
 
-                            {item.active && (
-                              <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-100/60 border border-emerald-100 rounded-full text-[10px] font-bold text-emerald-800">
-                                <Clock className="w-3 h-3" />
-                                {formatDurationString(frontDuration)}
-                              </div>
-                            )}
+                            <div className="flex items-center gap-2 shrink-0">
+                              {item.active && (
+                                <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-100/60 border border-emerald-100 rounded-full text-[10px] font-bold text-emerald-800">
+                                  <Clock className="w-3 h-3" />
+                                  {formatDurationString(frontDuration)}
+                                </div>
+                              )}
+
+                              {item.active && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => toggleExpandWorkFront(front, e)}
+                                  className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200/60 transition-all cursor-pointer"
+                                  title={isExpanded ? "Recolher frente" : "Expandir frente para editar"}
+                                >
+                                  {isExpanded ? (
+                                    <ChevronUp className="w-5 h-5 text-emerald-600" />
+                                  ) : (
+                                    <ChevronDown className="w-5 h-5 text-slate-400" />
+                                  )}
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           {/* Front Expandable Body */}
                           <AnimatePresence initial={false}>
-                            {item.active && (
+                            {isExpanded && (
                               <motion.div
                                 initial={{ height: 0, opacity: 0 }}
                                 animate={{ height: 'auto', opacity: 1 }}
@@ -1928,17 +2064,13 @@ export default function StopsControl() {
                                   </div>
                                   <textarea
                                     required
-                                    placeholder={`Descreva as atividades da equipe de ${front} separando por hífens (-):\n- Exemplo de atividade 1\n- Exemplo de atividade 2`}
+                                    placeholder={`Descreva detalhadamente as atividades da equipe de ${front} separando por hífens (-):\n- Exemplo de atividade 1\n- Exemplo de atividade 2`}
                                     value={item.description}
                                     onChange={(e) => handleWorkFrontChange(front, 'description', e.target.value)}
                                     onKeyDown={(e) => handleWorkFrontKeyDown(e, front)}
-                                    onFocus={() => {
-                                      if (!item.description) {
-                                        handleWorkFrontChange(front, 'description', '- ');
-                                      }
-                                    }}
-                                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-700 text-xs leading-relaxed"
-                                    rows={4}
+                                    onFocus={() => handleFocusWorkFront(front)}
+                                    className="w-full px-4 py-3.5 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-800 text-sm leading-relaxed min-h-[170px] shadow-2xs"
+                                    rows={7}
                                   />
                                   <p className="text-[10px] text-slate-400 font-medium">
                                     Dica: Pressione <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-600 font-mono">Enter</kbd> para criar automaticamente um novo item com <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-600 font-mono">-</kbd>.
@@ -2075,8 +2207,8 @@ export default function StopsControl() {
                       placeholder="Espaço para notas de encerramento, observações das frentes, pendências de término e horário final do término."
                       value={formObservation}
                       onChange={(e) => setFormObservation(e.target.value)}
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-700 text-xs leading-relaxed"
-                      rows={5}
+                      className="w-full p-4 md:p-5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-800 text-sm leading-relaxed min-h-[220px] shadow-2xs"
+                      rows={8}
                     />
                   </div>
 
