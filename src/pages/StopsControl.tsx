@@ -410,8 +410,15 @@ export default function StopsControl() {
     return `${m} min`;
   };
 
-  // Image Compression Helper
-  const compressImageFile = (file: File, maxWidth = 700, maxHeight = 700, quality = 0.6): Promise<string> => {
+  const getBase64SizeKB = (base64: string): number => {
+    if (!base64) return 0;
+    const stringLength = base64.length - (base64.indexOf(',') + 1);
+    const sizeInBytes = (stringLength * 3) / 4;
+    return Math.round(sizeInBytes / 1024);
+  };
+
+  // Image Compression Helper - High quality visual with ultra-lightweight size (~25-50KB)
+  const compressImageFile = (file: File, maxWidth = 600, maxHeight = 600, quality = 0.55): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -436,17 +443,17 @@ export default function StopsControl() {
           ctx.drawImage(img, 0, 0, width, height);
           let result = canvas.toDataURL('image/jpeg', quality);
 
-          // Second compression pass if result is larger than 90KB (~120KB in base64)
-          if (result.length > 120000) {
+          // Second compression pass if result is larger than 60KB (~80KB base64 length)
+          if (result.length > 80000) {
             const secondCanvas = document.createElement('canvas');
-            const targetWidth = Math.min(width, 500);
+            const targetWidth = Math.min(width, 450);
             const targetHeight = Math.round((height * targetWidth) / width);
             secondCanvas.width = targetWidth;
             secondCanvas.height = targetHeight;
             const ctx2 = secondCanvas.getContext('2d');
             if (ctx2) {
               ctx2.drawImage(img, 0, 0, targetWidth, targetHeight);
-              result = secondCanvas.toDataURL('image/jpeg', 0.5);
+              result = secondCanvas.toDataURL('image/jpeg', 0.45);
             }
           }
 
@@ -462,25 +469,30 @@ export default function StopsControl() {
 
   // Photo handlers per work front
   const handleAddPhotoToWorkFront = async (front: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length === 0) return;
 
     try {
-      const compressedBase64 = await compressImageFile(file);
+      const newPhotos: StopWorkFrontPhoto[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const compressedBase64 = await compressImageFile(file);
+        const photoNum = (formWorkFronts[front]?.photos?.length || 0) + i + 1;
+        newPhotos.push({
+          id: `ph_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 5)}`,
+          url: compressedBase64,
+          caption: `Foto ${photoNum} - Frente ${front}`,
+          createdAt: new Date().toISOString()
+        });
+      }
+
       setFormWorkFronts(prev => {
         const currentPhotos = prev[front]?.photos || [];
-        const newPhotoNum = currentPhotos.length + 1;
-        const newPhoto: StopWorkFrontPhoto = {
-          id: `ph_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          url: compressedBase64,
-          caption: `Foto ${newPhotoNum} - Frente trabalho ${front}`,
-          createdAt: new Date().toISOString()
-        };
         return {
           ...prev,
           [front]: {
             ...prev[front],
-            photos: [...currentPhotos, newPhoto]
+            photos: [...currentPhotos, ...newPhotos]
           }
         };
       });
@@ -1983,10 +1995,11 @@ export default function StopsControl() {
 
                                       <label className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer">
                                         <Upload className="w-3.5 h-3.5 text-slate-500" />
-                                        <span>Anexar Foto</span>
+                                        <span>Anexar Foto(s)</span>
                                         <input
                                           type="file"
                                           accept="image/*"
+                                          multiple
                                           onChange={(e) => handleAddPhotoToWorkFront(front, e)}
                                           className="hidden"
                                         />
@@ -1998,12 +2011,17 @@ export default function StopsControl() {
                                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-1">
                                       {item.photos.map((ph, idx) => (
                                         <div key={ph.id || idx} className="group relative bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-                                          <img
-                                            src={ph.url}
-                                            alt={ph.caption || `Foto ${idx + 1}`}
-                                            className="w-full h-24 object-cover cursor-pointer hover:opacity-90 transition-all"
-                                            onClick={() => setPreviewImage({ url: ph.url, title: ph.caption || `Foto ${idx + 1} - ${front}` })}
-                                          />
+                                          <div className="relative">
+                                            <img
+                                              src={ph.url}
+                                              alt={ph.caption || `Foto ${idx + 1}`}
+                                              className="w-full h-24 object-cover cursor-pointer hover:opacity-90 transition-all"
+                                              onClick={() => setPreviewImage({ url: ph.url, title: ph.caption || `Foto ${idx + 1} - ${front}` })}
+                                            />
+                                            <span className="absolute bottom-1.5 right-1.5 bg-slate-900/80 text-white text-[9px] font-mono font-bold px-1.5 py-0.5 rounded backdrop-blur-xs shadow-xs">
+                                              {getBase64SizeKB(ph.url)} KB
+                                            </span>
+                                          </div>
                                           <div className="p-1.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-1">
                                             <input
                                               type="text"
