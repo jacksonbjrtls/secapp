@@ -347,12 +347,20 @@ export interface SecagemProduct {
   createdAt: any;
 }
 
+export interface StopWorkFrontPhoto {
+  id: string;
+  url: string; // Base64 data URL
+  caption?: string;
+  createdAt?: string;
+}
+
 export interface StopWorkFront {
   id: string;
-  front: 'Mecânica' | 'Elétrica' | 'Instrumentação' | 'Hidráulica' | 'Civil' | 'Caldeiraria' | 'Operacional';
+  front: string;
   description: string;
   startTime: string; // HH:MM
   endTime: string; // HH:MM
+  photos?: StopWorkFrontPhoto[];
 }
 
 export interface StopReport {

@@ -5,6 +5,7 @@ import {
   addDoc, 
   updateDoc, 
   deleteDoc, 
+  setDoc,
   doc, 
   serverTimestamp,
   query,
@@ -37,7 +38,14 @@ import {
   X,
   FileDown,
   Activity,
-  Loader2
+  Loader2,
+  Camera,
+  Upload,
+  Settings,
+  Image as ImageIcon,
+  Maximize2,
+  Eye,
+  Check
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -54,7 +62,7 @@ import {
 } from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { StopReport, StopWorkFront, ProductionLine } from '../types';
+import { StopReport, StopWorkFront, StopWorkFrontPhoto, ProductionLine } from '../types';
 
 const formatDateToBR = (dateStr: string): string => {
   if (!dateStr) return '';
@@ -65,7 +73,7 @@ const formatDateToBR = (dateStr: string): string => {
   return dateStr;
 };
 
-const WORK_FRONT_OPTIONS = [
+const DEFAULT_WORK_FRONTS = [
   'Mecânica',
   'Elétrica',
   'Instrumentação',
@@ -73,7 +81,9 @@ const WORK_FRONT_OPTIONS = [
   'Civil',
   'Caldeiraria',
   'Operacional'
-] as const;
+];
+
+const SPEED_OPTIONS = Array.from({ length: 251 }, (_, i) => i);
 
 export default function StopsControl() {
   const { user, isManager, isAdmin, isMaster, logoUrl } = useAuth();
@@ -85,6 +95,16 @@ export default function StopsControl() {
   const [reports, setReports] = useState<StopReport[]>([]);
   const [lines, setLines] = useState<ProductionLine[]>([]);
 
+  // Admin & Dynamic Work Fronts state
+  const [workFrontOptions, setWorkFrontOptions] = useState<string[]>(DEFAULT_WORK_FRONTS);
+  const [showWorkFrontsModal, setShowWorkFrontsModal] = useState(false);
+  const [newWorkFrontName, setNewWorkFrontName] = useState('');
+  const [savingWorkFronts, setSavingWorkFronts] = useState(false);
+  const [frontToDeleteConfirm, setFrontToDeleteConfirm] = useState<string | null>(null);
+
+  // Lightbox Preview Modal State
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+
   // Search & Filter state for History
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
@@ -92,22 +112,39 @@ export default function StopsControl() {
   const [filterStartDate, setFilterStartDate] = useState<string>('');
   const [filterEndDate, setFilterEndDate] = useState<string>('');
 
+  // Key for localStorage auto-save draft
+  const DRAFT_STORAGE_KEY = 'stops_control_form_draft_v1';
+
+  // Read saved draft on initial render
+  const initialDraft = useMemo(() => {
+    try {
+      const saved = localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn("Could not load stops control draft from localStorage:", e);
+    }
+    return null;
+  }, []);
+
   // Editing state
-  const [editingReport, setEditingReport] = useState<StopReport | null>(null);
+  const [editingReport, setEditingReport] = useState<StopReport | null>(initialDraft?.editingReport || null);
 
   // Form State
-  const [formType, setFormType] = useState<'programada' | 'geral'>('programada');
+  const [formType, setFormType] = useState<'programada' | 'geral'>(initialDraft?.formType || 'programada');
   const [formDate, setFormDate] = useState<string>(() => {
+    if (initialDraft?.formDate) return initialDraft.formDate;
     const today = new Date();
     return today.toISOString().split('T')[0];
   });
-  const [formLineId, setFormLineId] = useState<string>('');
-  const [formStartTime, setFormStartTime] = useState<string>('08:00');
-  const [formEndTime, setFormEndTime] = useState<string>('12:00');
-  const [formRejectionTime, setFormRejectionTime] = useState<string>('0');
-  const [formSpeedMS1, setFormSpeedMS1] = useState<number>(0);
-  const [formSpeedMS2, setFormSpeedMS2] = useState<number>(0);
-  const [formObservation, setFormObservation] = useState<string>('');
+  const [formLineId, setFormLineId] = useState<string>(initialDraft?.formLineId || '');
+  const [formStartTime, setFormStartTime] = useState<string>(initialDraft?.formStartTime || '08:00');
+  const [formEndTime, setFormEndTime] = useState<string>(initialDraft?.formEndTime || '12:00');
+  const [formRejectionTime, setFormRejectionTime] = useState<string>(initialDraft?.formRejectionTime || '0');
+  const [formSpeedMS1, setFormSpeedMS1] = useState<number>(initialDraft?.formSpeedMS1 ?? 0);
+  const [formSpeedMS2, setFormSpeedMS2] = useState<number>(initialDraft?.formSpeedMS2 ?? 0);
+  const [formObservation, setFormObservation] = useState<string>(initialDraft?.formObservation || '');
   
   // Work fronts state inside the form
   const [formWorkFronts, setFormWorkFronts] = useState<Record<string, {
@@ -115,18 +152,25 @@ export default function StopsControl() {
     description: string;
     startTime: string;
     endTime: string;
+    photos: StopWorkFrontPhoto[];
   }>>(() => {
+    if (initialDraft?.formWorkFronts && typeof initialDraft.formWorkFronts === 'object') {
+      return initialDraft.formWorkFronts;
+    }
     const initial: Record<string, any> = {};
-    WORK_FRONT_OPTIONS.forEach(front => {
+    DEFAULT_WORK_FRONTS.forEach(front => {
       initial[front] = {
         active: false,
         description: '',
         startTime: '08:00',
-        endTime: '12:00'
+        endTime: '12:00',
+        photos: []
       };
     });
     return initial;
   });
+
+  const [hasDraft, setHasDraft] = useState<boolean>(() => !!initialDraft);
 
   // Selected report for viewing details modal
   const [viewingReport, setViewingReport] = useState<StopReport | null>(null);
@@ -137,13 +181,98 @@ export default function StopsControl() {
   // Report that was just saved (to display success modal and download PDF)
   const [justSavedReport, setJustSavedReport] = useState<StopReport | null>(null);
 
+  // Auto-save form draft to localStorage whenever form fields change
+  useEffect(() => {
+    const hasActiveFronts = Object.values(formWorkFronts).some((wf: any) => 
+      wf && (wf.active || (wf.description && wf.description.trim() !== '') || (wf.photos && wf.photos.length > 0))
+    );
+    const isDirty = editingReport !== null ||
+      formObservation.trim() !== '' ||
+      formRejectionTime !== '0' ||
+      formSpeedMS1 !== 0 ||
+      formSpeedMS2 !== 0 ||
+      hasActiveFronts;
+
+    if (isDirty) {
+      const draftData = {
+        editingReport,
+        formType,
+        formDate,
+        formLineId,
+        formStartTime,
+        formEndTime,
+        formRejectionTime,
+        formSpeedMS1,
+        formSpeedMS2,
+        formObservation,
+        formWorkFronts,
+        updatedAt: new Date().toISOString()
+      };
+      try {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftData));
+        setHasDraft(true);
+      } catch (err) {
+        console.warn("Could not save form draft:", err);
+      }
+    } else {
+      try {
+        localStorage.removeItem(DRAFT_STORAGE_KEY);
+      } catch (err) {}
+      setHasDraft(false);
+    }
+  }, [
+    editingReport,
+    formType,
+    formDate,
+    formLineId,
+    formStartTime,
+    formEndTime,
+    formRejectionTime,
+    formSpeedMS1,
+    formSpeedMS2,
+    formObservation,
+    formWorkFronts
+  ]);
+
+  // Subscribe to system_config/stop_work_fronts for dynamic admin work fronts
+  useEffect(() => {
+    const unsubWorkFronts = onSnapshot(doc(db, 'system_config', 'stop_work_fronts'), (snap) => {
+      if (snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length > 0) {
+        const loadedList: string[] = snap.data().list;
+        setWorkFrontOptions(loadedList);
+
+        // Keep formWorkFronts in sync with loaded options
+        setFormWorkFronts(prev => {
+          const updated = { ...prev };
+          loadedList.forEach(front => {
+            if (!updated[front]) {
+              updated[front] = {
+                active: false,
+                description: '',
+                startTime: formStartTime || '08:00',
+                endTime: formEndTime || '12:00',
+                photos: []
+              };
+            }
+          });
+          return updated;
+        });
+      } else {
+        setWorkFrontOptions(DEFAULT_WORK_FRONTS);
+      }
+    }, (err) => {
+      console.warn("Could not load system_config/stop_work_fronts:", err);
+      setWorkFrontOptions(DEFAULT_WORK_FRONTS);
+    });
+    return () => unsubWorkFronts();
+  }, [formStartTime, formEndTime]);
+
   // Sync stop start/end times with all active work fronts by default
   useEffect(() => {
     setFormWorkFronts(prev => {
       const updated = { ...prev };
-      WORK_FRONT_OPTIONS.forEach(front => {
-        if (!updated[front].active) {
-          // Update times if they haven't been manually adjusted when inactive, or always to match
+      workFrontOptions.forEach(front => {
+        if (updated[front] && !updated[front].active) {
           updated[front] = {
             ...updated[front],
             startTime: formStartTime,
@@ -153,7 +282,7 @@ export default function StopsControl() {
       });
       return updated;
     });
-  }, [formStartTime, formEndTime]);
+  }, [formStartTime, formEndTime, workFrontOptions]);
 
   // Load production lines
   useEffect(() => {
@@ -241,6 +370,155 @@ export default function StopsControl() {
     return `${m} min`;
   };
 
+  // Image Compression Helper
+  const compressImageFile = (file: File, maxWidth = 1000, maxHeight = 1000, quality = 0.75): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxWidth || height > maxHeight) {
+            if (width / height > maxWidth / maxHeight) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            } else {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return reject(new Error('Canvas ctx null'));
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = (err) => reject(err);
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Photo handlers per work front
+  const handleAddPhotoToWorkFront = async (front: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const compressedBase64 = await compressImageFile(file);
+      setFormWorkFronts(prev => {
+        const currentPhotos = prev[front]?.photos || [];
+        const newPhotoNum = currentPhotos.length + 1;
+        const newPhoto: StopWorkFrontPhoto = {
+          id: `ph_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          url: compressedBase64,
+          caption: `Foto ${newPhotoNum} - Frente trabalho ${front}`,
+          createdAt: new Date().toISOString()
+        };
+        return {
+          ...prev,
+          [front]: {
+            ...prev[front],
+            photos: [...currentPhotos, newPhoto]
+          }
+        };
+      });
+    } catch (err) {
+      console.error("Error attaching photo:", err);
+      alert("Não foi possível carregar a imagem. Tente novamente.");
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleUpdatePhotoCaption = (front: string, photoId: string, caption: string) => {
+    setFormWorkFronts(prev => {
+      const currentPhotos = prev[front]?.photos || [];
+      const updatedPhotos = currentPhotos.map(ph => ph.id === photoId ? { ...ph, caption } : ph);
+      return {
+        ...prev,
+        [front]: {
+          ...prev[front],
+          photos: updatedPhotos
+        }
+      };
+    });
+  };
+
+  const handleRemovePhotoFromWorkFront = (front: string, photoId: string) => {
+    setFormWorkFronts(prev => {
+      const currentPhotos = prev[front]?.photos || [];
+      const updatedPhotos = currentPhotos.filter(ph => ph.id !== photoId);
+      return {
+        ...prev,
+        [front]: {
+          ...prev[front],
+          photos: updatedPhotos
+        }
+      };
+    });
+  };
+
+  // Admin Management of Work Fronts
+  const handleAddCustomWorkFront = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newWorkFrontName.trim();
+    if (!trimmed) return;
+
+    if (workFrontOptions.some(f => f.toLowerCase() === trimmed.toLowerCase())) {
+      alert("Esta frente de trabalho já existe!");
+      return;
+    }
+
+    const updatedList = [...workFrontOptions, trimmed];
+    setSavingWorkFronts(true);
+    try {
+      await setDoc(doc(db, 'system_config', 'stop_work_fronts'), {
+        list: updatedList,
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.displayName || user?.email || 'Admin'
+      });
+      setWorkFrontOptions(updatedList);
+      setNewWorkFrontName('');
+    } catch (err) {
+      console.error("Error adding work front:", err);
+      alert("Erro ao salvar nova frente de trabalho.");
+    } finally {
+      setSavingWorkFronts(false);
+    }
+  };
+
+  const handleDeleteCustomWorkFront = async (frontToDelete: string) => {
+    const updatedList = workFrontOptions.filter(f => f !== frontToDelete);
+    setSavingWorkFronts(true);
+    try {
+      await setDoc(doc(db, 'system_config', 'stop_work_fronts'), {
+        list: updatedList,
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.displayName || user?.email || 'Admin'
+      });
+      setWorkFrontOptions(updatedList);
+      setFrontToDeleteConfirm(null);
+      
+      // Remove deleted work front from form state
+      setFormWorkFronts(prev => {
+        const copy = { ...prev };
+        delete copy[frontToDelete];
+        return copy;
+      });
+    } catch (err) {
+      console.error("Error deleting work front:", err);
+      alert("Erro ao excluir frente de trabalho.");
+    } finally {
+      setSavingWorkFronts(false);
+    }
+  };
+
   const canEditReport = (report: StopReport | null) => {
     if (!report) return false;
     if (isManager || isAdmin || isMaster) return true;
@@ -267,21 +545,25 @@ export default function StopsControl() {
     
     // Build initial form work fronts
     const initialFronts: Record<string, any> = {};
-    WORK_FRONT_OPTIONS.forEach(front => {
+    const allKnownFronts = Array.from(new Set([...workFrontOptions, ...report.workFronts.map(wf => wf.front)]));
+    
+    allKnownFronts.forEach(front => {
       const match = report.workFronts.find(wf => wf.front === front);
       if (match) {
         initialFronts[front] = {
           active: true,
           description: match.description,
           startTime: match.startTime,
-          endTime: match.endTime
+          endTime: match.endTime,
+          photos: match.photos || []
         };
       } else {
         initialFronts[front] = {
           active: false,
           description: '',
           startTime: report.startTime,
-          endTime: report.endTime
+          endTime: report.endTime,
+          photos: []
         };
       }
     });
@@ -297,6 +579,12 @@ export default function StopsControl() {
 
   // Reset Form fields
   const resetForm = () => {
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch (err) {}
+    setHasDraft(false);
+
+    setEditingReport(null);
     setFormType('programada');
     setFormDate(new Date().toISOString().split('T')[0]);
     if (availableLines.length > 0) {
@@ -310,12 +598,13 @@ export default function StopsControl() {
     setFormObservation('');
     
     const initial: Record<string, any> = {};
-    WORK_FRONT_OPTIONS.forEach(front => {
+    workFrontOptions.forEach(front => {
       initial[front] = {
         active: false,
         description: '',
         startTime: '08:00',
-        endTime: '12:00'
+        endTime: '12:00',
+        photos: []
       };
     });
     setFormWorkFronts(initial);
@@ -337,15 +626,18 @@ export default function StopsControl() {
 
       // Extract work fronts that are active
       const activeWorkFronts: StopWorkFront[] = [];
-      WORK_FRONT_OPTIONS.forEach(front => {
+      const keysToProcess = Array.from(new Set([...workFrontOptions, ...Object.keys(formWorkFronts)]));
+      
+      keysToProcess.forEach(front => {
         const item = formWorkFronts[front];
-        if (item.active) {
+        if (item && item.active) {
           activeWorkFronts.push({
             id: `wf_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
             front,
             description: item.description,
             startTime: item.startTime,
-            endTime: item.endTime
+            endTime: item.endTime,
+            photos: item.photos || []
           });
         }
       });
@@ -594,7 +886,7 @@ export default function StopsControl() {
       hours: Number(hours.toFixed(1))
     }));
 
-    const frontChartData = WORK_FRONT_OPTIONS.map(front => ({
+    const frontChartData = workFrontOptions.map(front => ({
       front,
       frequencia: frontFrequency[front] || 0
     }));
@@ -609,7 +901,7 @@ export default function StopsControl() {
       lineChartData,
       frontChartData
     };
-  }, [filteredReports]);
+  }, [filteredReports, workFrontOptions]);
 
   // Sanitize text for jsPDF output
   const sanitizePdfText = (text: string | null | undefined): string => {
@@ -947,6 +1239,88 @@ export default function StopsControl() {
     const splitObs = docPdf.splitTextToSize(obsText, 180);
     docPdf.text(splitObs, 15, currentY + 6);
 
+    // Section 5: Photographic Record per Work Front
+    const allPhotos: { photo: StopWorkFrontPhoto; frontName: string; index: number }[] = [];
+    let photoCounter = 1;
+    (report.workFronts || []).forEach(wf => {
+      if (wf.photos && wf.photos.length > 0) {
+        wf.photos.forEach(ph => {
+          allPhotos.push({
+            photo: ph,
+            frontName: wf.front,
+            index: photoCounter++
+          });
+        });
+      }
+    });
+
+    if (allPhotos.length > 0) {
+      currentY += (splitObs.length * 5) + 12;
+
+      if (currentY + 70 > 270) {
+        docPdf.addPage();
+        currentY = 20;
+      }
+
+      docPdf.setTextColor(5, 150, 105);
+      docPdf.setFontSize(13);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text(sanitizePdfText('Registro Fotográfico das Frentes de Trabalho'), 15, currentY);
+      currentY += 8;
+
+      const colWidth = 85;
+      const colHeight = 55;
+      const gapX = 10;
+      const gapY = 12;
+
+      for (let i = 0; i < allPhotos.length; i++) {
+        const item = allPhotos[i];
+        const colIndex = i % 2;
+
+        if (colIndex === 0 && i > 0) {
+          currentY += colHeight + gapY;
+        }
+
+        if (currentY + colHeight + 8 > 270) {
+          docPdf.addPage();
+          currentY = 20;
+        }
+
+        const posX = 15 + colIndex * (colWidth + gapX);
+        const posY = currentY;
+
+        // Container box border
+        docPdf.setDrawColor(226, 232, 240);
+        docPdf.setFillColor(248, 250, 252);
+        docPdf.rect(posX, posY, colWidth, colHeight + 6, 'FD');
+
+        // Image
+        try {
+          docPdf.addImage(item.photo.url, 'JPEG', posX + 1.5, posY + 1.5, colWidth - 3, colHeight - 3);
+        } catch (err) {
+          console.warn("Could not render photo image in PDF:", err);
+          docPdf.setFontSize(8);
+          docPdf.setTextColor(148, 163, 184);
+          docPdf.text('[Foto Indisponível]', posX + (colWidth / 2), posY + (colHeight / 2), { align: 'center' });
+        }
+
+        // Dark banner legend underneath photo
+        docPdf.setFillColor(15, 23, 42); // slate-900
+        docPdf.rect(posX, posY + colHeight - 2, colWidth, 8, 'F');
+
+        const defaultLegend = `Foto ${item.index} - Frente trabalho ${item.frontName}`;
+        const legendText = item.photo.caption && item.photo.caption.trim() ? item.photo.caption : defaultLegend;
+
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(7.5);
+        docPdf.setTextColor(255, 255, 255);
+
+        const safeLegend = sanitizePdfText(legendText);
+        const splitLegend = docPdf.splitTextToSize(safeLegend, colWidth - 4);
+        docPdf.text(splitLegend[0] || safeLegend, posX + 2, posY + colHeight + 3.5);
+      }
+    }
+
     // Add SecApp footer branding
     await addSecAppPdfFooter(docPdf);
 
@@ -1075,6 +1449,17 @@ export default function StopsControl() {
             >
               Indicadores
             </button>
+            {(isAdmin || isManager || isMaster) && (
+              <button
+                type="button"
+                onClick={() => setShowWorkFrontsModal(true)}
+                className="px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all bg-emerald-900/60 hover:bg-emerald-800 text-emerald-200 border border-emerald-700/60 flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                title="Gerenciar Frentes de Trabalho"
+              >
+                <Settings className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Gerenciar Frentes</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1099,9 +1484,30 @@ export default function StopsControl() {
                 <button 
                   type="button" 
                   onClick={handleCancelEdit} 
-                  className="px-3 py-1 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-xs font-bold"
+                  className="px-3 py-1 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-xs font-bold cursor-pointer transition-all"
                 >
                   Cancelar Edição
+                </button>
+              </div>
+            )}
+
+            {hasDraft && !editingReport && (
+              <div className="flex items-center justify-between p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-300 shadow-2xs backdrop-blur-xs">
+                <div className="flex items-center gap-2.5">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                  </span>
+                  <span className="font-bold text-xs text-emerald-200">
+                    Rascunho salvo automaticamente. Se você mudar de tela ou atualizar, os dados preenchidos serão mantidos.
+                  </span>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={resetForm} 
+                  className="px-3 py-1 bg-emerald-900/60 hover:bg-emerald-800 text-emerald-200 border border-emerald-700/60 rounded-xl text-[11px] font-bold transition-all cursor-pointer shadow-2xs"
+                >
+                  Limpar Rascunho
                 </button>
               </div>
             )}
@@ -1241,45 +1647,39 @@ export default function StopsControl() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                      <div className="flex justify-between items-center mb-1">
+                      <div className="flex justify-between items-center mb-1.5">
                         <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Linha MS1 (m/min)</label>
                         <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">{formSpeedMS1} m/min</span>
                       </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="250"
-                        step="1"
+                      <select
                         value={formSpeedMS1}
                         onChange={(e) => setFormSpeedMS1(Number(e.target.value))}
-                        className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-                      />
-                      <div className="flex justify-between text-[10px] font-bold text-slate-400 px-1 mt-1">
-                        <span>0 m/min</span>
-                        <span>125 m/min</span>
-                        <span>250 m/min</span>
-                      </div>
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                      >
+                        {SPEED_OPTIONS.map((speed) => (
+                          <option key={speed} value={speed}>
+                            {speed} m/min
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                     <div>
-                      <div className="flex justify-between items-center mb-1">
+                      <div className="flex justify-between items-center mb-1.5">
                         <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Linha MS2 (m/min)</label>
                         <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">{formSpeedMS2} m/min</span>
                       </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="250"
-                        step="1"
+                      <select
                         value={formSpeedMS2}
                         onChange={(e) => setFormSpeedMS2(Number(e.target.value))}
-                        className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-                      />
-                      <div className="flex justify-between text-[10px] font-bold text-slate-400 px-1 mt-1">
-                        <span>0 m/min</span>
-                        <span>125 m/min</span>
-                        <span>250 m/min</span>
-                      </div>
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                      >
+                        {SPEED_OPTIONS.map((speed) => (
+                          <option key={speed} value={speed}>
+                            {speed} m/min
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -1296,8 +1696,14 @@ export default function StopsControl() {
                   </p>
 
                   <div className="space-y-4">
-                    {WORK_FRONT_OPTIONS.map(front => {
-                      const item = formWorkFronts[front];
+                    {workFrontOptions.map(front => {
+                      const item = formWorkFronts[front] || {
+                        active: false,
+                        description: '',
+                        startTime: formStartTime,
+                        endTime: formEndTime,
+                        photos: []
+                      };
                       const frontDuration = getMinutesDiff(item.startTime, item.endTime);
 
                       return (
@@ -1325,6 +1731,12 @@ export default function StopsControl() {
                               <span className={cn("text-sm font-extrabold", item.active ? "text-slate-800" : "text-slate-400")}>
                                 {front}
                               </span>
+                              {item.active && item.photos && item.photos.length > 0 && (
+                                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Camera className="w-3 h-3 text-emerald-600" />
+                                  {item.photos.length} foto{item.photos.length > 1 ? 's' : ''}
+                                </span>
+                              )}
                             </div>
 
                             {item.active && (
@@ -1397,6 +1809,82 @@ export default function StopsControl() {
                                     onChange={(e) => handleWorkFrontChange(front, 'endTime', e.target.value)}
                                     className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-700 text-xs"
                                   />
+                                </div>
+
+                                {/* Photo Upload Component per Work Front */}
+                                <div className="md:col-span-2 pt-3 border-t border-slate-200/60 space-y-3">
+                                  <div className="flex items-center justify-between flex-wrap gap-2">
+                                    <div className="flex items-center gap-1.5 text-xs font-black text-slate-700 uppercase tracking-wider">
+                                      <Camera className="w-4 h-4 text-emerald-600" />
+                                      <span>Registro Fotográfico ({front})</span>
+                                      {item.photos && item.photos.length > 0 && (
+                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full">
+                                          {item.photos.length}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <label className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer">
+                                        <Camera className="w-3.5 h-3.5" />
+                                        <span>Tirar Foto</span>
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          capture="environment"
+                                          onChange={(e) => handleAddPhotoToWorkFront(front, e)}
+                                          className="hidden"
+                                        />
+                                      </label>
+
+                                      <label className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer">
+                                        <Upload className="w-3.5 h-3.5 text-slate-500" />
+                                        <span>Anexar Foto</span>
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          onChange={(e) => handleAddPhotoToWorkFront(front, e)}
+                                          className="hidden"
+                                        />
+                                      </label>
+                                    </div>
+                                  </div>
+
+                                  {item.photos && item.photos.length > 0 ? (
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-1">
+                                      {item.photos.map((ph, idx) => (
+                                        <div key={ph.id || idx} className="group relative bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                                          <img
+                                            src={ph.url}
+                                            alt={ph.caption || `Foto ${idx + 1}`}
+                                            className="w-full h-24 object-cover cursor-pointer hover:opacity-90 transition-all"
+                                            onClick={() => setPreviewImage({ url: ph.url, title: ph.caption || `Foto ${idx + 1} - ${front}` })}
+                                          />
+                                          <div className="p-1.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-1">
+                                            <input
+                                              type="text"
+                                              value={ph.caption || ''}
+                                              placeholder={`Foto ${idx + 1} - Frente trabalho ${front}`}
+                                              onChange={(e) => handleUpdatePhotoCaption(front, ph.id, e.target.value)}
+                                              className="w-full text-[10px] font-semibold text-slate-700 bg-transparent border-none outline-none focus:bg-white focus:px-1 rounded"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => handleRemovePhotoFromWorkFront(front, ph.id)}
+                                              className="p-1 text-slate-400 hover:text-rose-600 rounded-md transition-colors"
+                                              title="Remover foto"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[11px] text-slate-400 italic">
+                                      Nenhuma foto registrada nesta frente. Você pode tirar uma foto agora durante a atividade ou anexá-la da galeria.
+                                    </p>
+                                  )}
                                 </div>
                               </motion.div>
                             )}
@@ -1915,6 +2403,30 @@ export default function StopsControl() {
                             <p className="text-xs font-semibold text-slate-600 leading-relaxed whitespace-pre-wrap">
                               {wf.description}
                             </p>
+
+                            {/* Registered Photos for this work front */}
+                            {wf.photos && wf.photos.length > 0 && (
+                              <div className="pt-2 border-t border-slate-100 mt-2">
+                                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                                  <Camera className="w-3.5 h-3.5 text-emerald-600" />
+                                  Fotos da Atividade ({wf.photos.length})
+                                </span>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                                  {wf.photos.map((ph, photoIdx) => (
+                                    <div 
+                                      key={ph.id || photoIdx} 
+                                      onClick={() => setPreviewImage({ url: ph.url, title: ph.caption || `Foto ${photoIdx + 1} - Frente ${wf.front}` })}
+                                      className="group relative bg-white border border-slate-200 rounded-xl overflow-hidden cursor-pointer hover:ring-2 hover:ring-emerald-500 transition-all shadow-xs"
+                                    >
+                                      <img src={ph.url} alt={ph.caption || 'Foto'} className="w-full h-20 object-cover group-hover:scale-105 transition-transform" />
+                                      <div className="p-1 bg-slate-900/80 text-white text-[9px] font-bold truncate text-center">
+                                        {ph.caption || `Foto ${photoIdx + 1}`}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -2101,6 +2613,154 @@ export default function StopsControl() {
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Excluir'}
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ADMIN WORK FRONTS MANAGEMENT MODAL */}
+      <AnimatePresence>
+        {showWorkFrontsModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col"
+            >
+              {/* Header */}
+              <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-white/10 rounded-xl border border-white/10 text-emerald-400">
+                    <Settings className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base">Gerenciar Frentes de Trabalho</h3>
+                    <p className="text-xs text-slate-400">Crie ou remova frentes de trabalho do sistema</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowWorkFrontsModal(false)}
+                  className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
+                {/* Form to Add New Work Front */}
+                <form onSubmit={handleAddCustomWorkFront} className="space-y-2">
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-wider">
+                    Adicionar Nova Frente de Trabalho
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Automação, Pintura, Refrigeração..."
+                      value={newWorkFrontName}
+                      onChange={(e) => setNewWorkFrontName(e.target.value)}
+                      className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={savingWorkFronts || !newWorkFrontName.trim()}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                    >
+                      {savingWorkFronts ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                      Adicionar
+                    </button>
+                  </div>
+                </form>
+
+                {/* Current List */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-wider">
+                    Frentes de Trabalho Cadastradas ({workFrontOptions.length})
+                  </label>
+                  <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden bg-slate-50/50">
+                    {workFrontOptions.map((front, index) => (
+                      <div key={front || index} className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          <span className="text-xs font-extrabold text-slate-800">{front}</span>
+                        </div>
+                        {frontToDeleteConfirm === front ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-rose-600">Excluir?</span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCustomWorkFront(front)}
+                              disabled={savingWorkFronts}
+                              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-xs shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              {savingWorkFronts ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Sim'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFrontToDeleteConfirm(null)}
+                              disabled={savingWorkFronts}
+                              className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-lg text-xs transition-all cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setFrontToDeleteConfirm(front)}
+                            disabled={savingWorkFronts}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
+                            title="Excluir frente de trabalho"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+                <button
+                  onClick={() => setShowWorkFrontsModal(false)}
+                  className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs uppercase tracking-wider transition-all"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* LIGHTBOX / PHOTO PREVIEW MODAL */}
+      <AnimatePresence>
+        {previewImage && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="relative max-w-4xl max-h-[90vh] flex flex-col items-center justify-center space-y-3"
+            >
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="absolute -top-10 right-0 p-2 text-white hover:text-emerald-400 transition-all bg-slate-800/80 rounded-full cursor-pointer"
+              >
+                <X className="w-6 h-6" />
+              </button>
+              <img
+                src={previewImage.url}
+                alt={previewImage.title}
+                className="max-w-full max-h-[80vh] object-contain rounded-2xl shadow-2xl border border-white/10"
+              />
+              <p className="text-white font-bold text-xs bg-slate-900/80 px-4 py-2 rounded-full border border-white/10">
+                {previewImage.title}
+              </p>
             </motion.div>
           </div>
         )}

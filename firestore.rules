@@ -287,8 +287,8 @@ service cloud.firestore {
     // System Config Modules Settings
     match /system_config/{configId} {
       allow read: if isSignedIn() || (configId == 'branding');
-      allow create, update: if isAdmin() && isValidId(configId);
-      allow delete: if isMaster() || (isAdmin() && isValidId(configId));
+      allow create, update: if (isManager() || isAdmin()) && isValidId(configId);
+      allow delete: if isMaster() || (isManager() && isValidId(configId));
     }
 
     // Notifications
