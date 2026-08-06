@@ -1343,7 +1343,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
       } else {
         const docRef = await addDoc(collection(db, 'quality_checklist_options'), {
           name: "Nível de Limpeza de Secador",
-          options: ["Pouco Sujo", "Sujo", "Tamponado"],
+          options: ["Limpo", "Sujo", "Tamponado"],
           active: true,
           createdAt: serverTimestamp()
         });

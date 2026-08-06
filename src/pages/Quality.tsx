@@ -250,9 +250,9 @@ const getOptionColorClasses = (option: string, isSelected: boolean, expectedValu
 const getRadiatorColorClass = (status: string | undefined, fallbackClass: string = "bg-emerald-500") => {
   if (!status) return fallbackClass;
   const s = status.toLowerCase();
-  if (s.includes('pouco') || s === 'pouco sujo' || s === 'pouco suja') {
+  if (s.includes('limp') || s.includes('pouco')) {
     return "bg-emerald-500";
-  } else if (s === 'sujo' || s === 'suja' || s.includes('amarelo') || s.includes('suj')) {
+  } else if (s === 'sujo' || s === 'suja' || s.includes('amarelo') || (s.includes('suj') && !s.includes('limp'))) {
     return "bg-yellow-400";
   } else if (s.includes('tamponado') || s.includes('tamponada') || s === 'vermelho') {
     return "bg-rose-600";
@@ -267,7 +267,7 @@ const getOverallStatusInfo = (value: any) => {
       bgClass: "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black", 
       bgClassForSub: "bg-emerald-500", 
       textClassForLabel: "text-emerald-700", 
-      label: "Pouco Sujo (Código 3)" 
+      label: "Limpo (Código 3)" 
     };
   }
   
@@ -279,7 +279,7 @@ const getOverallStatusInfo = (value: any) => {
     });
     const hasSujo = statuses.some(s => {
       const ls = String(s || '').toLowerCase();
-      return ls === 'sujo' || ls === 'suja' || ls.includes('suj');
+      return (ls === 'sujo' || ls === 'suja' || ls.includes('suj')) && !ls.includes('limp');
     });
 
     if (hasTamponado) {
@@ -304,20 +304,20 @@ const getOverallStatusInfo = (value: any) => {
       bgClass: "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black", 
       bgClassForSub: "bg-emerald-500", 
       textClassForLabel: "text-emerald-700", 
-      label: "Pouco Sujo (Código 3)" 
+      label: "Limpo (Código 3)" 
     };
   }
 
   const valStr = String(value).toLowerCase();
-  if (valStr.includes('pouco') || valStr === 'pouco sujo' || valStr === 'pouco suja') {
+  if (valStr.includes('limp') || valStr.includes('pouco')) {
     return { 
       code: "3", 
       bgClass: "bg-emerald-500 text-white shadow-sm shadow-emerald-100 font-black", 
       bgClassForSub: "bg-emerald-500", 
       textClassForLabel: "text-emerald-700", 
-      label: "Pouco Sujo (Código 3)" 
+      label: "Limpo (Código 3)" 
     };
-  } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+  } else if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || (valStr.includes('suj') && !valStr.includes('limp'))) {
     return { 
       code: "2", 
       bgClass: "bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50 font-black", 
@@ -354,7 +354,7 @@ const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
     });
     const hasSujo = statuses.some(s => {
       const ls = String(s || '').toLowerCase();
-      return ls.includes('suj') && !ls.includes('pouco');
+      return ls.includes('suj') && !ls.includes('limp') && !ls.includes('pouco');
     });
     if (hasTamponado) {
       return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-rose-600 text-white shadow-md shadow-rose-100";
@@ -367,13 +367,13 @@ const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
 
   const valStr = String(value).toLowerCase();
   
-  // Pouco sujo / conforme
-  if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('pouco') || valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
+  // Limpo / Pouco sujo / conforme
+  if (valStr.includes('limp') || valStr.includes('pouco') || valStr === 'conforme' || valStr === 'ok') {
     return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-emerald-500 text-white shadow-sm shadow-emerald-100";
   }
   
   // Sujo / amarelo / amarelado
-  if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || valStr.includes('suj')) {
+  if (valStr === 'sujo' || valStr === 'suja' || valStr.includes('amarelo') || (valStr.includes('suj') && !valStr.includes('limp'))) {
     return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-yellow-400 text-yellow-950 border border-yellow-500 shadow-sm shadow-yellow-50";
   }
   
@@ -1828,7 +1828,7 @@ const Quality: React.FC = () => {
         try {
           await addDoc(collection(db, 'quality_checklist_options'), {
             name: "Nível de Limpeza de Secador",
-            options: ["Pouco Sujo", "Sujo", "Tamponado"],
+            options: ["Limpo", "Sujo", "Tamponado"],
             active: true,
             createdAt: serverTimestamp()
           });
@@ -1838,12 +1838,12 @@ const Quality: React.FC = () => {
         }
       } else {
         const dryerOs = fetchedOptionSets.find(os => os.name.toLowerCase().includes('limpeza'));
-        if (dryerOs && (!dryerOs.options.includes('Tamponado') || dryerOs.options.includes('Limpo') || dryerOs.options.includes('Muito Sujo') || dryerOs.options.length !== 3)) {
+        if (dryerOs && (!dryerOs.options.includes('Limpo') || !dryerOs.options.includes('Tamponado') || dryerOs.options.includes('Pouco Sujo') || dryerOs.options.length !== 3)) {
           try {
             await updateDoc(doc(db, 'quality_checklist_options', dryerOs.id), {
-              options: ["Pouco Sujo", "Sujo", "Tamponado"]
+              options: ["Limpo", "Sujo", "Tamponado"]
             });
-            console.log("Updated existing option set to Pouco Sujo, Sujo, Tamponado.");
+            console.log("Updated existing option set to Limpo, Sujo, Tamponado.");
           } catch (err) {
             console.error("Error updating existing options:", err);
           }
@@ -3090,14 +3090,14 @@ const Quality: React.FC = () => {
           const b = valObj.bale !== undefined && valObj.bale !== '' ? `Formato Fardo: ${valObj.bale}` : '';
           valStr = [c, b].filter(Boolean).join(' | ');
         } else if ('left' in valObj || 'right' in valObj) {
-          const l = valObj.left || 'Pouco Sujo';
-          const r = valObj.right || 'Pouco Sujo';
+          const l = valObj.left || 'Limpo';
+          const r = valObj.right || 'Limpo';
           valStr = `Esq: ${l} | Dir: ${r}`;
         } else {
-          const lt = valObj.left_top || 'Pouco Sujo';
-          const rt = valObj.right_top || 'Pouco Sujo';
-          const lb = valObj.left_bottom || 'Pouco Sujo';
-          const rb = valObj.right_bottom || 'Pouco Sujo';
+          const lt = valObj.left_top || 'Limpo';
+          const rt = valObj.right_top || 'Limpo';
+          const lb = valObj.left_bottom || 'Limpo';
+          const rb = valObj.right_bottom || 'Limpo';
           valStr = `Esq. Sup: ${lt} | Dir. Sup: ${rt}\nEsq. Inf: ${lb} | Dir. Inf: ${rb}`;
         }
       } else {
@@ -3186,10 +3186,10 @@ const Quality: React.FC = () => {
             const ls = String(statusStr).toLowerCase();
             if (ls.includes('tamponad') || ls.includes('vermelh') || ls === 'not_ok' || ls.includes('obstru')) {
               tamponadoCount++;
-            } else if (!ls.includes('pouco') && (ls.includes('suj') || ls.includes('amarel'))) {
+            } else if (!ls.includes('limp') && !ls.includes('pouco') && (ls.includes('suj') || ls.includes('amarel'))) {
               sujoCount++;
             } else {
-              // Default unclicked or 'pouco sujo' to green
+              // Default unclicked or 'limpo' to green
               pocoSujoCount++;
             }
           };
@@ -3214,7 +3214,7 @@ const Quality: React.FC = () => {
       const pctTamponado = ((tamponadoCount / totalDryerResponses) * 100).toFixed(1);
 
       const statsData = [
-        [sanitizePdfText('Pouco Sujo (Verde)'), `${pocoSujoCount} de ${totalDryerResponses}`, `${pctPocoSujo}%`, sanitizePdfText('Inspecao Conforme / Pouco Acumulo')],
+        [sanitizePdfText('Limpo (Verde)'), `${pocoSujoCount} de ${totalDryerResponses}`, `${pctPocoSujo}%`, sanitizePdfText('Inspecao Conforme / Limpo')],
         [sanitizePdfText('Sujo (Amarelo)'), `${sujoCount} de ${totalDryerResponses}`, `${pctSujo}%`, sanitizePdfText('Necessita Limpeza em Breve')],
         [sanitizePdfText('Tamponado (Vermelho)'), `${tamponadoCount} de ${totalDryerResponses}`, `${pctTamponado}%`, sanitizePdfText('Intervencao Imediata / Obstruido')]
       ];
@@ -3228,7 +3228,7 @@ const Quality: React.FC = () => {
         headStyles: { fillColor: [5, 150, 105], textColor: [255, 255, 255], fontStyle: 'bold' },
         didParseCell: (data) => {
           if (data.section === 'body' && data.column.index === 0) {
-            if (data.cell.raw.toString().includes('Pouco Sujo')) {
+            if (data.cell.raw.toString().includes('Limpo') || data.cell.raw.toString().includes('Pouco Sujo')) {
               data.cell.styles.textColor = [16, 185, 129]; // green
               data.cell.styles.fontStyle = 'bold';
             } else if (data.cell.raw.toString().includes('Sujo')) {
@@ -3445,7 +3445,7 @@ const Quality: React.FC = () => {
       doc.setFillColor(16, 185, 129); // Green
       doc.rect(14, currentY + 2, 6, 4, 'F');
       doc.setTextColor(30, 41, 59);
-      doc.text(sanitizePdfText('Pouco Sujo (Codigo 3) - Verde'), 22, currentY + 5);
+      doc.text(sanitizePdfText('Limpo (Codigo 3) - Verde'), 22, currentY + 5);
 
       doc.setFillColor(245, 158, 11); // Yellow
       doc.rect(80, currentY + 2, 6, 4, 'F');
@@ -4170,15 +4170,15 @@ const Quality: React.FC = () => {
                                       {(() => {
                                         if (typeof currentValue === 'object' && currentValue !== null) {
                                           if ('left_top' in currentValue || 'right_top' in currentValue || 'left_bottom' in currentValue || 'right_bottom' in currentValue) {
-                                            const lt = currentValue.left_top || 'Pouco Sujo';
-                                            const rt = currentValue.right_top || 'Pouco Sujo';
-                                            const lb = currentValue.left_bottom || 'Pouco Sujo';
-                                            const rb = currentValue.right_bottom || 'Pouco Sujo';
+                                            const lt = currentValue.left_top || 'Limpo';
+                                            const rt = currentValue.right_top || 'Limpo';
+                                            const lb = currentValue.left_bottom || 'Limpo';
+                                            const rb = currentValue.right_bottom || 'Limpo';
                                             return `ESQ.SUP: ${lt} • DIR.SUP: ${rt} • ESQ.INF: ${lb} • DIR.INF: ${rb}`.toUpperCase();
                                           }
                                           if ('left' in currentValue || 'right' in currentValue) {
-                                            const l = currentValue.left || 'Pouco Sujo';
-                                            const r = currentValue.right || 'Pouco Sujo';
+                                            const l = currentValue.left || 'Limpo';
+                                            const r = currentValue.right || 'Limpo';
                                             return `SUPERIOR: ${l} • INFERIOR: ${r}`.toUpperCase();
                                           }
                                           return Object.entries(currentValue).map(([k, v]) => `${k}: ${v}`).join(' • ').toUpperCase();
@@ -4323,14 +4323,14 @@ const Quality: React.FC = () => {
                                                   type="button"
                                                   onClick={() => {
                                                     const newState = isSpecialDoor 
-                                                      ? { left: 'Pouco Sujo', right: 'Pouco Sujo' }
-                                                      : { left_top: 'Pouco Sujo', right_top: 'Pouco Sujo', left_bottom: 'Pouco Sujo', right_bottom: 'Pouco Sujo' };
+                                                      ? { left: 'Limpo', right: 'Limpo' }
+                                                      : { left_top: 'Limpo', right_top: 'Limpo', left_bottom: 'Limpo', right_bottom: 'Limpo' };
                                                     setResponses(prev => ({ ...prev, [item.id]: newState }));
                                                     setTimeout(advanceToNext, 350);
                                                   }}
                                                   className="flex-1 sm:flex-initial px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-black rounded-lg uppercase tracking-wider transition-all"
                                                 >
-                                                  Tudo Pouco Sujo
+                                                  Limpo
                                                 </button>
                                                 <button
                                                   type="button"
@@ -4342,7 +4342,7 @@ const Quality: React.FC = () => {
                                                   }}
                                                   className="flex-1 sm:flex-initial px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-black rounded-lg uppercase tracking-wider transition-all"
                                                 >
-                                                  Tudo Sujo
+                                                  Sujo
                                                 </button>
                                                 <button
                                                   type="button"
@@ -4354,7 +4354,7 @@ const Quality: React.FC = () => {
                                                   }}
                                                   className="flex-1 sm:flex-initial px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 text-[10px] font-black rounded-lg uppercase tracking-wider transition-all"
                                                 >
-                                                  Tudo Tamponado
+                                                  Tamponado
                                                 </button>
                                               </div>
                                             </div>
@@ -4371,7 +4371,7 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Superior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
                                                         const isSel = getSubVal('left') === opt;
                                                         return (
                                                           <button
@@ -4384,7 +4384,7 @@ const Quality: React.FC = () => {
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
                                                               isSel 
-                                                                ? opt === 'Pouco Sujo'
+                                                                ? opt === 'Limpo'
                                                                   ? "bg-emerald-600 border-emerald-600 text-white shadow"
                                                                   : opt === 'Sujo'
                                                                     ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
@@ -4406,7 +4406,7 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Inferior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
                                                         const isSel = getSubVal('right') === opt;
                                                         return (
                                                           <button
@@ -4419,7 +4419,7 @@ const Quality: React.FC = () => {
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
                                                               isSel 
-                                                                ? opt === 'Pouco Sujo'
+                                                                ? opt === 'Limpo'
                                                                   ? "bg-emerald-600 border-emerald-600 text-white shadow"
                                                                   : opt === 'Sujo'
                                                                     ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
@@ -4444,7 +4444,7 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Esquerdo Superior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
                                                         const isSel = getSubVal('left_top') === opt;
                                                         return (
                                                           <button
@@ -4457,7 +4457,7 @@ const Quality: React.FC = () => {
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
                                                               isSel 
-                                                                ? opt === 'Pouco Sujo'
+                                                                ? opt === 'Limpo'
                                                                   ? "bg-emerald-600 border-emerald-600 text-white shadow"
                                                                   : opt === 'Sujo'
                                                                     ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
@@ -4479,7 +4479,7 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Direito Superior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
                                                         const isSel = getSubVal('right_top') === opt;
                                                         return (
                                                           <button
@@ -4492,7 +4492,7 @@ const Quality: React.FC = () => {
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
                                                               isSel 
-                                                                ? opt === 'Pouco Sujo'
+                                                                ? opt === 'Limpo'
                                                                   ? "bg-emerald-600 border-emerald-600 text-white shadow"
                                                                   : opt === 'Sujo'
                                                                     ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
@@ -4514,7 +4514,7 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Esquerdo Inferior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
                                                         const isSel = getSubVal('left_bottom') === opt;
                                                         return (
                                                           <button
@@ -4527,7 +4527,7 @@ const Quality: React.FC = () => {
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
                                                               isSel 
-                                                                ? opt === 'Pouco Sujo'
+                                                                ? opt === 'Limpo'
                                                                   ? "bg-emerald-600 border-emerald-600 text-white shadow"
                                                                   : opt === 'Sujo'
                                                                     ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
@@ -4549,7 +4549,7 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Direito Inferior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Pouco Sujo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
                                                         const isSel = getSubVal('right_bottom') === opt;
                                                         return (
                                                           <button
@@ -4562,7 +4562,7 @@ const Quality: React.FC = () => {
                                                             className={cn(
                                                               "py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider border-2 transition-all text-center",
                                                               isSel 
-                                                                ? opt === 'Pouco Sujo'
+                                                                ? opt === 'Limpo'
                                                                   ? "bg-emerald-600 border-emerald-600 text-white shadow"
                                                                   : opt === 'Sujo'
                                                                     ? "bg-yellow-400 border-yellow-400 text-yellow-950 shadow"
@@ -7767,7 +7767,7 @@ const Quality: React.FC = () => {
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-1.5">
                           <span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block" />
-                          <span>Pouco Sujo (Verde)</span>
+                          <span>Limpo (Verde)</span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="w-2.5 h-2.5 rounded bg-amber-400 inline-block" />
@@ -7849,32 +7849,32 @@ const Quality: React.FC = () => {
                           <div className="ml-14 grid grid-cols-2 sm:grid-cols-4 gap-2">
                             {resp.value.left_top !== undefined || resp.value.right_top !== undefined || resp.value.left_bottom !== undefined || resp.value.right_bottom !== undefined ? (
                               <>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_top || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left_top, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_top || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left_top, template)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Esquerdo Sup.</span>
-                                  <span className="text-xs font-black">{resp.value.left_top || 'Pouco Sujo'}</span>
+                                  <span className="text-xs font-black">{resp.value.left_top || 'Limpo'}</span>
                                 </div>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_top || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right_top, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_top || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right_top, template)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Direito Sup.</span>
-                                  <span className="text-xs font-black">{resp.value.right_top || 'Pouco Sujo'}</span>
+                                  <span className="text-xs font-black">{resp.value.right_top || 'Limpo'}</span>
                                 </div>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_bottom || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left_bottom, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_bottom || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left_bottom, template)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Esquerdo Inf.</span>
-                                  <span className="text-xs font-black">{resp.value.left_bottom || 'Pouco Sujo'}</span>
+                                  <span className="text-xs font-black">{resp.value.left_bottom || 'Limpo'}</span>
                                 </div>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_bottom || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right_bottom, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_bottom || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right_bottom, template)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Direito Inf.</span>
-                                  <span className="text-xs font-black">{resp.value.right_bottom || 'Pouco Sujo'}</span>
+                                  <span className="text-xs font-black">{resp.value.right_bottom || 'Limpo'}</span>
                                 </div>
                               </>
                             ) : (
                               <>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.left || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.left, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.left || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left, template)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Superior</span>
-                                  <span className="text-xs font-black">{resp.value.left || 'Pouco Sujo'}</span>
+                                  <span className="text-xs font-black">{resp.value.left || 'Limpo'}</span>
                                 </div>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.right || 'Pouco Sujo', isResponseCompliant(resp.itemId, resp.value.right, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.right || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right, template)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Inferior</span>
-                                  <span className="text-xs font-black">{resp.value.right || 'Pouco Sujo'}</span>
+                                  <span className="text-xs font-black">{resp.value.right || 'Limpo'}</span>
                                 </div>
                               </>
                             )}
