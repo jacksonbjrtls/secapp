@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   collection, 
   addDoc, 
+  updateDoc,
+  doc,
   serverTimestamp,
   getDocs,
   query,
@@ -23,7 +25,8 @@ import {
   Database,
   ArrowRight,
   Clipboard,
-  FileText
+  FileText,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../hooks/useAuth';
@@ -39,7 +42,12 @@ interface ParsedRow {
   raw: string[];
   id?: string;
   operator: string;
-  date: string; // YYYY-MM-DD format
+  date: string; // YYYY-MM-DD format (Data Entrada)
+  consumedDate?: string; // YYYY-MM-DD format (Data Consumo)
+  lineName?: string; // Linha de Produção
+  consumedByGroup?: string; // Turma / Letra
+  shift?: string; // Turno
+  equipment?: string; // Máquina / Equipamento
   supplierName: string;
   status: 'received' | 'consumed';
   coilNumber: string;
@@ -57,9 +65,9 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
   
   // Download CSV template separated by semicolon (Excellent for Excel in Portuguese)
   const downloadTemplateCSV = () => {
-    const headers = ['ID', 'Operador', 'Data', 'Fornecedor', 'Status', 'Código da Bobina', 'Bitola (mm)', 'Peso (kg)', 'Nota Fiscal', 'Local Baia'];
-    const row1 = ['2474', 'Alessandro Sousa Santos', '04/12/2025', 'Morlan', 'Disponível', '0002273002394374 M837804', '2,18', '1060', '773778-1', '1 C2'];
-    const row2 = ['2484', 'Alessandro Sousa Santos', '04/12/2025', 'Belgo Bekaert', 'Disponível', '0002280020245484', '2,30', '1004', '773776-1', '1 E1'];
+    const headers = ['ID', 'Operador', 'Data Entrada', 'Data Consumo', 'Linha', 'Turma / Letra', 'Turno', 'Máquina', 'Fornecedor', 'Status', 'Código da Bobina', 'Bitola (mm)', 'Peso (kg)', 'Nota Fiscal', 'Local Baia'];
+    const row1 = ['2474', 'Alessandro Sousa Santos', '04/12/2025', '', '', '', '', '', 'Morlan', 'Disponível', '0002273002394374 M837804', '2,18', '1060', '773778-1', '1 C2'];
+    const row2 = ['2484', 'Carlos Oliveira', '04/12/2025', '10/12/2025', 'Linha 01', 'Turma A', 'Turno 1', 'Desbobinador 02', 'Belgo Bekaert', 'Consumido', '0002280020245484', '2,30', '1004', '773776-1', '1 E1'];
     
     const csvContent = "\uFEFF" + [headers.join(';'), row1.join(';'), row2.join(';')].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -74,9 +82,9 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
 
   // Download TSV template separated by tabs (Excellent for Google Sheets copy-paste)
   const downloadTemplateTSV = () => {
-    const headers = ['ID', 'Operador', 'Data', 'Fornecedor', 'Status', 'Código da Bobina', 'Bitola (mm)', 'Peso (kg)', 'Nota Fiscal', 'Local Baia'];
-    const row1 = ['2474', 'Alessandro Sousa Santos', '04/12/2025', 'Morlan', 'Disponível', '0002273002394374 M837804', '2,18', '1060', '773778-1', '1 C2'];
-    const row2 = ['2484', 'Alessandro Sousa Santos', '04/12/2025', 'Belgo Bekaert', 'Disponível', '0002280020245484', '2,30', '1004', '773776-1', '1 E1'];
+    const headers = ['ID', 'Operador', 'Data Entrada', 'Data Consumo', 'Linha', 'Turma / Letra', 'Turno', 'Máquina', 'Fornecedor', 'Status', 'Código da Bobina', 'Bitola (mm)', 'Peso (kg)', 'Nota Fiscal', 'Local Baia'];
+    const row1 = ['2474', 'Alessandro Sousa Santos', '04/12/2025', '', '', '', '', '', 'Morlan', 'Disponível', '0002273002394374 M837804', '2,18', '1060', '773778-1', '1 C2'];
+    const row2 = ['2484', 'Carlos Oliveira', '04/12/2025', '10/12/2025', 'Linha 01', 'Turma A', 'Turno 1', 'Desbobinador 02', 'Belgo Bekaert', 'Consumido', '0002280020245484', '2,30', '1004', '773776-1', '1 E1'];
     
     const tsvContent = "\uFEFF" + [headers.join('\t'), row1.join('\t'), row2.join('\t')].join('\n');
     const blob = new Blob([tsvContent], { type: 'text/tab-separated-values;charset=utf-8;' });
@@ -98,6 +106,9 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
   const [importSummary, setImportSummary] = useState({
     batchesCreated: 0,
     coilsCreated: 0,
+    coilsUpdatedToConsumed: 0,
+    coilsSkippedDuplicates: 0,
+    duplicatesInSheetMerged: 0,
     suppliersCreated: 0,
     baysCreated: 0,
     totalWeight: 0
@@ -110,6 +121,11 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     id: -1,
     operator: -1,
     date: -1,
+    consumedDate: -1,
+    lineName: -1,
+    consumedByGroup: -1,
+    shift: -1,
+    equipment: -1,
     supplier: -1,
     status: -1,
     coilNumber: -1,
@@ -179,6 +195,11 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       id: -1,
       operator: -1,
       date: -1,
+      consumedDate: -1,
+      lineName: -1,
+      consumedByGroup: -1,
+      shift: -1,
+      equipment: -1,
       supplier: -1,
       status: -1,
       coilNumber: -1,
@@ -193,11 +214,16 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     if (hasHeaders) {
       headers.forEach((hdr, idx) => {
         if (hdr === 'id') mapping.id = idx;
-        else if (hdr.includes('operador') || hdr.includes('responsavel') || hdr.includes('usuario')) mapping.operator = idx;
-        else if (hdr === 'data' || hdr.includes('date') || hdr.includes('recebido')) mapping.date = idx;
+        else if (hdr.includes('operador') || hdr.includes('responsavel') || hdr.includes('usuario') || hdr === 'quem') mapping.operator = idx;
+        else if (hdr.includes('data consumo') || hdr.includes('data_consumo') || hdr.includes('data_uso') || hdr.includes('data uso')) mapping.consumedDate = idx;
+        else if (hdr.includes('data') || hdr.includes('date') || hdr.includes('recebido') || hdr.includes('entrada')) mapping.date = idx;
+        else if (hdr.includes('linha') || hdr.includes('line')) mapping.lineName = idx;
+        else if (hdr.includes('turma') || hdr.includes('letra') || hdr.includes('grupo')) mapping.consumedByGroup = idx;
+        else if (hdr.includes('turno') || hdr.includes('shift')) mapping.shift = idx;
+        else if (hdr.includes('maquina') || hdr.includes('equipamento') || hdr.includes('maqu')) mapping.equipment = idx;
         else if (hdr.includes('fornecedor') || hdr.includes('supplier')) mapping.supplier = idx;
         else if (hdr === 'status') mapping.status = idx;
-        else if (hdr.includes('codigo') || hdr.includes('code') || hdr.includes('bobina') || hdr.includes('coil')) mapping.coilNumber = idx;
+        else if (hdr.includes('codigo') || hdr.includes('code') || hdr.includes('bobina') || hdr.includes('coil') || hdr.includes('etiqueta')) mapping.coilNumber = idx;
         else if (hdr.includes('bitola') || hdr.includes('diametro') || hdr.includes('gauge')) mapping.diameter = idx;
         else if (hdr.includes('peso') || hdr.includes('weight') || hdr.includes('massa')) mapping.weight = idx;
         else if (hdr.includes('nota') || hdr.includes('nf') || hdr.includes('fiscal') || hdr.includes('invoice')) mapping.nfNumber = idx;
@@ -207,21 +233,46 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
 
     // Default mappings if headers are not found or disabled
     if (!hasHeaders || Object.values(mapping).every(v => v === -1)) {
-      // Fallback ordered mappings resembling the attached image columns:
-      // ID | Operador | Data | Fornecedor | Status | Código | Bitola (mm) | Peso | Nota Fiscal | Quantidade Baia
+      // Fallback ordered mappings:
+      // ID | Operador | Data Entrada | Data Consumo | Linha | Turma / Letra | Turno | Máquina | Fornecedor | Status | Código | Bitola (mm) | Peso | Nota Fiscal | Quantidade Baia
       mapping.id = 0;
       mapping.operator = 1 < firstLineRaw.length ? 1 : -1;
       mapping.date = 2 < firstLineRaw.length ? 2 : -1;
-      mapping.supplier = 3 < firstLineRaw.length ? 3 : -1;
-      mapping.status = 4 < firstLineRaw.length ? 4 : -1;
-      mapping.coilNumber = 5 < firstLineRaw.length ? 5 : -1;
-      mapping.diameter = 6 < firstLineRaw.length ? 6 : -1;
-      mapping.weight = 7 < firstLineRaw.length ? 7 : -1;
-      mapping.nfNumber = 8 < firstLineRaw.length ? 8 : -1;
-      mapping.storageBay = 9 < firstLineRaw.length ? 9 : -1;
+      mapping.consumedDate = 3 < firstLineRaw.length ? 3 : -1;
+      mapping.lineName = 4 < firstLineRaw.length ? 4 : -1;
+      mapping.consumedByGroup = 5 < firstLineRaw.length ? 5 : -1;
+      mapping.shift = 6 < firstLineRaw.length ? 6 : -1;
+      mapping.equipment = 7 < firstLineRaw.length ? 7 : -1;
+      mapping.supplier = 8 < firstLineRaw.length ? 8 : -1;
+      mapping.status = 9 < firstLineRaw.length ? 9 : -1;
+      mapping.coilNumber = 10 < firstLineRaw.length ? 10 : -1;
+      mapping.diameter = 11 < firstLineRaw.length ? 11 : -1;
+      mapping.weight = 12 < firstLineRaw.length ? 12 : -1;
+      mapping.nfNumber = 13 < firstLineRaw.length ? 13 : -1;
+      mapping.storageBay = 14 < firstLineRaw.length ? 14 : -1;
     }
 
     setColMapping(mapping);
+
+    // Date Normalization helper (DD/MM/YYYY to YYYY-MM-DD)
+    const normalizeDateStr = (rawDateStr: string): string => {
+      if (!rawDateStr) return '';
+      const dmyMatch = rawDateStr.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+      const ymdMatch = rawDateStr.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/);
+      
+      if (dmyMatch) {
+        const day = dmyMatch[1].padStart(2, '0');
+        const month = dmyMatch[2].padStart(2, '0');
+        const year = dmyMatch[3];
+        return `${year}-${month}-${day}`;
+      } else if (ymdMatch) {
+        const year = ymdMatch[1];
+        const month = ymdMatch[2].padStart(2, '0');
+        const day = ymdMatch[3].padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+      return '';
+    };
 
     // 3. Process data lines
     const startIdx = hasHeaders ? 1 : 0;
@@ -245,6 +296,11 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       const id = getField(mapping.id);
       const operator = getField(mapping.operator, 'Administrador');
       const rawDate = getField(mapping.date);
+      const rawConsumedDate = getField(mapping.consumedDate);
+      const lineName = getField(mapping.lineName);
+      const consumedByGroup = getField(mapping.consumedByGroup);
+      const shift = getField(mapping.shift);
+      const equipment = getField(mapping.equipment);
       const coilNumber = getField(mapping.coilNumber);
       let supplierName = getField(mapping.supplier, 'Geral');
 
@@ -261,29 +317,21 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
 
       // Conversions and Validations
       
-      // Date Normalization (DD/MM/YYYY to YYYY-MM-DD)
-      let normDate = '';
-      if (rawDate) {
-        const dmyMatch = rawDate.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
-        const ymdMatch = rawDate.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/);
-        
-        if (dmyMatch) {
-          const day = dmyMatch[1].padStart(2, '0');
-          const month = dmyMatch[2].padStart(2, '0');
-          const year = dmyMatch[3];
-          normDate = `${year}-${month}-${day}`;
-        } else if (ymdMatch) {
-          const year = ymdMatch[1];
-          const month = ymdMatch[2].padStart(2, '0');
-          const day = ymdMatch[3].padStart(2, '0');
-          normDate = `${year}-${month}-${day}`;
-        } else {
-          normDate = new Date().toISOString().split('T')[0];
-          warnings.push(`Formato de data '${rawDate}' inválido ou não reconhecido. Usando data de hoje.`);
-        }
-      } else {
+      // Entry Date Normalization
+      let normDate = normalizeDateStr(rawDate);
+      if (!normDate) {
         normDate = new Date().toISOString().split('T')[0];
-        warnings.push('Data ausente. Usando data de hoje.');
+        if (rawDate) {
+          warnings.push(`Formato de data de entrada '${rawDate}' inválido. Usando data de hoje.`);
+        } else {
+          warnings.push('Data de entrada ausente. Usando data de hoje.');
+        }
+      }
+
+      // Consumed Date Normalization
+      let normConsumedDate = normalizeDateStr(rawConsumedDate);
+      if (!normConsumedDate && rawConsumedDate) {
+        warnings.push(`Formato da data de consumo '${rawConsumedDate}' não reconhecido.`);
       }
 
       // Status translation
@@ -336,7 +384,6 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       // Storage Bay extraction (e.g. "1 C2" -> "C2")
       let storageBayName = 'GERAL';
       if (rawStorageBay) {
-        // Replace "1 " or any initial digits + space
         const cleanedBay = rawStorageBay.replace(/^\d+\s+/, '').trim().toUpperCase();
         if (cleanedBay) {
           storageBayName = cleanedBay;
@@ -363,6 +410,11 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         id,
         operator,
         date: normDate,
+        consumedDate: normConsumedDate || undefined,
+        lineName: lineName || undefined,
+        consumedByGroup: consumedByGroup || undefined,
+        shift: shift || undefined,
+        equipment: equipment || undefined,
         supplierName,
         status,
         coilNumber: coilNumber.trim().replace(/\s+/g, ' '),
@@ -375,8 +427,69 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       });
     }
 
+    // Detect duplicates within the spreadsheet and flag warnings
+    const coilCounts: { [coil: string]: { count: number; hasConsumed: boolean } } = {};
+    processed.forEach(r => {
+      if (r.coilNumber) {
+        const k = r.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
+        if (!coilCounts[k]) coilCounts[k] = { count: 0, hasConsumed: false };
+        coilCounts[k].count++;
+        if (r.status === 'consumed') coilCounts[k].hasConsumed = true;
+      }
+    });
+
+    processed.forEach(r => {
+      if (r.coilNumber) {
+        const k = r.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
+        if (coilCounts[k].count > 1) {
+          if (r.status === 'consumed') {
+            r.warnings.push('Bobina duplicada na planilha. Será mantida com status CONSUMIDO.');
+          } else if (coilCounts[k].hasConsumed) {
+            r.warnings.push('Bobina duplicada na planilha. Será desconsiderada a favor do registro CONSUMIDO.');
+          } else {
+            r.warnings.push('Bobina duplicada na planilha. Apenas 1 registro será importado.');
+          }
+        }
+      }
+    });
+
     setParsedRows(processed);
   }, [inputText, delimiter, hasHeaders, suppliers, storageBays]);
+
+  // Helper function to deduplicate import rows favoring 'consumed' status and richest data
+  const deduplicateImportRows = (rows: ParsedRow[]): { deduplicated: ParsedRow[]; duplicatesMergedCount: number } => {
+    const mapByCoil = new Map<string, ParsedRow>();
+    let duplicatesMergedCount = 0;
+
+    rows.forEach(row => {
+      const key = row.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
+      if (!key) {
+        mapByCoil.set(`no_code_${row.index}`, row);
+        return;
+      }
+
+      if (!mapByCoil.has(key)) {
+        mapByCoil.set(key, row);
+      } else {
+        duplicatesMergedCount++;
+        const existing = mapByCoil.get(key)!;
+        // Prioritize 'consumed' status
+        if (row.status === 'consumed' && existing.status !== 'consumed') {
+          mapByCoil.set(key, row);
+        } else if (row.status === existing.status) {
+          // If both have same status, pick the one with more consumption details or operator
+          if ((!existing.lineName && row.lineName) || (!existing.operator && row.operator)) {
+            mapByCoil.set(key, row);
+          }
+        }
+      }
+    });
+
+    return {
+      deduplicated: Array.from(mapByCoil.values()),
+      duplicatesMergedCount
+    };
+  };
 
   // Handle spreadsheet file upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -396,8 +509,10 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     const validRows = parsedRows.filter(r => r.errors.length === 0);
     const invalidRows = parsedRows.filter(r => r.errors.length > 0);
     
-    // Group unique NF batches to be created
-    const uniqueBatches = new Set(validRows.map(r => `${r.nfNumber}-${r.supplierName.toLowerCase()}-${r.date}`));
+    const { deduplicated: deduplicatedValidRows, duplicatesMergedCount } = deduplicateImportRows(validRows);
+
+    // Group unique NF batches to be created from deduplicated set
+    const uniqueBatches = new Set(deduplicatedValidRows.map(r => `${r.nfNumber}-${r.supplierName.toLowerCase()}-${r.date}`));
     const totalWeight = validRows.reduce((sum, r) => sum + r.weight, 0);
 
     // Dynamic unique suppliers and bays to be newly added
@@ -416,6 +531,8 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     return {
       validCount: validRows.length,
       invalidCount: invalidRows.length,
+      uniqueCoilsCount: deduplicatedValidRows.length,
+      sheetDuplicatesCount: duplicatesMergedCount,
       batchesCount: uniqueBatches.size,
       totalWeight,
       newSuppliersCount: uniqueNewSuppliers.size,
@@ -431,25 +548,67 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     if (validRows.length === 0) return;
 
     setIsProcessing(true);
-    setProgressPercent(10);
+    setProgressPercent(5);
     
     try {
+      // 0. Deduplicate rows within the spreadsheet prioritizing 'consumed'
+      const { deduplicated: sheetRowsToImport, duplicatesMergedCount } = deduplicateImportRows(validRows);
+
+      setStepStatus('Consultando banco de dados para checar duplicidades de bobinas...');
+      setProgressPercent(15);
+
+      // Fetch all existing coils from Firestore
+      const existingCoilsSnap = await getDocs(collection(db, 'wire_coils'));
+      const existingCoilsMap = new Map<string, { id: string; status: string }>();
+      existingCoilsSnap.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.coilNumber) {
+          existingCoilsMap.set(data.coilNumber.toLowerCase().trim().replace(/\s+/g, ' '), {
+            id: docSnap.id,
+            status: data.status || 'received'
+          });
+        }
+      });
+
+      // Classify incoming coils:
+      // 1. rowsToCreate: Coil code not found in DB
+      // 2. rowsToUpdateToConsumed: Coil code found in DB with status 'received'/'in_stock', but incoming import has 'consumed'
+      // 3. skippedDuplicatesCount: Coil already in DB as 'consumed' or both DB and incoming are 'received'
+      const rowsToCreate: ParsedRow[] = [];
+      const rowsToUpdateToConsumed: { existingId: string; coil: ParsedRow }[] = [];
+      let skippedDuplicatesCount = 0;
+
+      sheetRowsToImport.forEach(row => {
+        const key = row.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
+        const existing = existingCoilsMap.get(key);
+
+        if (!existing) {
+          rowsToCreate.push(row);
+        } else {
+          if (existing.status !== 'consumed' && row.status === 'consumed') {
+            rowsToUpdateToConsumed.push({ existingId: existing.id, coil: row });
+          } else {
+            skippedDuplicatesCount++;
+          }
+        }
+      });
+
+      setStepStatus('Verificando fornecedores e criando itens não cadastrados...');
+      setProgressPercent(25);
+
       const liveSuppliers = [...suppliers];
       const liveBays = [...storageBays];
 
       let suppliersAddedCount = 0;
       let baysAddedCount = 0;
 
-      // 1. Resolve or Create Suppliers
-      setStepStatus('Verificando fornecedores e criando itens não cadastrados...');
       const supplierNameToIdMap: { [name: string]: string } = {};
-      
-      // Initialize map with existing ones
       liveSuppliers.forEach(s => {
         supplierNameToIdMap[s.name.toLowerCase().trim()] = s.id;
       });
 
-      const uniqueSuppliersToCreate = Array.from(new Set(validRows.map(r => r.supplierName.trim()))) as string[];
+      const allActiveRows = [...rowsToCreate, ...rowsToUpdateToConsumed.map(r => r.coil)];
+      const uniqueSuppliersToCreate = Array.from(new Set(allActiveRows.map(r => r.supplierName.trim()))) as string[];
       for (const sName of uniqueSuppliersToCreate) {
         const key = sName.toLowerCase().trim();
         if (!supplierNameToIdMap[key]) {
@@ -462,17 +621,15 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         }
       }
 
-      setProgressPercent(30);
-
-      // 2. Resolve or Create Storage Bays
       setStepStatus('Verificando baias de estoque e cadastrando ausentes...');
-      const bayNameToIdMap: { [name: string]: string } = {};
+      setProgressPercent(35);
 
+      const bayNameToIdMap: { [name: string]: string } = {};
       liveBays.forEach(b => {
         bayNameToIdMap[b.name.toUpperCase().trim()] = b.id;
       });
 
-      const uniqueBaysToCreate = Array.from(new Set(validRows.map(r => r.storageBayName.trim()))) as string[];
+      const uniqueBaysToCreate = Array.from(new Set(allActiveRows.map(r => r.storageBayName.trim()))) as string[];
       for (const bName of uniqueBaysToCreate) {
         const key = bName.toUpperCase().trim();
         if (!bayNameToIdMap[key]) {
@@ -485,12 +642,34 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         }
       }
 
-      setProgressPercent(50);
+      // Update existing coils in DB to 'consumed' if needed
+      let updatedToConsumedCount = 0;
+      if (rowsToUpdateToConsumed.length > 0) {
+        setStepStatus(`Atualizando ${rowsToUpdateToConsumed.length} bobinas do banco para o status CONSUMIDO...`);
+        setProgressPercent(45);
 
-      // 3. Group valid rows into Batches to create
-      setStepStatus('Agrupando bobinas e gerando lotes de carga (NFs)...');
-      
-      // We group by unique combination of: nfNumber + supplierName + date
+        await Promise.all(
+          rowsToUpdateToConsumed.map(async ({ existingId, coil }) => {
+            const targetConsumedDate = coil.consumedDate || coil.date;
+            await updateDoc(doc(db, 'wire_coils', existingId), {
+              status: 'consumed',
+              consumedAt: `${targetConsumedDate}T16:00:00Z`,
+              consumedBy: coil.operator || 'Importação Histórica',
+              consumedByGroup: coil.consumedByGroup || null,
+              lineName: coil.lineName || null,
+              consumedShift: coil.shift || null,
+              consumedIn: coil.equipment || null,
+              updatedAt: serverTimestamp()
+            });
+            updatedToConsumedCount++;
+          })
+        );
+      }
+
+      // Group NEW rows into Batches to create
+      setStepStatus('Agrupando bobinas novas e gerando lotes de carga (NFs)...');
+      setProgressPercent(55);
+
       interface BatchGroup {
         nfNumber: string;
         supplierName: string;
@@ -501,7 +680,7 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       }
 
       const groups: { [key: string]: BatchGroup } = {};
-      validRows.forEach(row => {
+      rowsToCreate.forEach(row => {
         const groupKey = `${row.nfNumber}-${row.supplierName.toLowerCase()}-${row.date}`;
         if (!groups[groupKey]) {
           groups[groupKey] = {
@@ -516,8 +695,7 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         groups[groupKey].coils.push(row);
       });
 
-      // 4. Create batches & coils sequentially
-      const totalSteps = Object.keys(groups).length;
+      const totalGroups = Object.keys(groups).length;
       let currentStepNum = 0;
       let batchesAddedCount = 0;
       let coilsAddedCount = 0;
@@ -525,14 +703,12 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       for (const groupKey of Object.keys(groups)) {
         currentStepNum++;
         const group = groups[groupKey];
-        setStepStatus(`Importando lote ${currentStepNum} de ${totalSteps} (NF: ${group.nfNumber})...`);
-        
+        setStepStatus(`Importando lote ${currentStepNum} de ${totalGroups || 1} (NF: ${group.nfNumber})...`);
+
         const supplierId = supplierNameToIdMap[group.supplierName.toLowerCase().trim()];
         const storageBayId = bayNameToIdMap[group.storageBayName.toUpperCase().trim()];
-        
         const batchTotalWeight = group.coils.reduce((sum, c) => sum + c.weight, 0);
 
-        // Add doc to wire_batches
         const batchRef = await addDoc(collection(db, 'wire_batches'), {
           nfNumber: group.nfNumber,
           supplierId,
@@ -550,10 +726,12 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
 
         batchesAddedCount++;
 
-        // Add all nested coils in parallel for this batch
         await Promise.all(
           group.coils.map(async coil => {
             const coilStorageBayId = bayNameToIdMap[coil.storageBayName.toUpperCase().trim()];
+            const targetConsumedDate = coil.consumedDate || coil.date;
+            const isConsumed = coil.status === 'consumed';
+
             await addDoc(collection(db, 'wire_coils'), {
               coilNumber: coil.coilNumber,
               batchId: batchRef.id,
@@ -563,16 +741,19 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
               status: coil.status,
               storageBayId: coilStorageBayId || '',
               storageBayName: coil.storageBayName,
-              receivedAt: `${coil.date}T12:00:00Z`, // Received on the batch date
-              consumedAt: coil.status === 'consumed' ? `${coil.date}T16:00:00Z` : null,
-              consumedBy: coil.status === 'consumed' ? coil.operator : null
+              receivedAt: `${coil.date}T12:00:00Z`,
+              consumedAt: isConsumed ? `${targetConsumedDate}T16:00:00Z` : null,
+              consumedBy: isConsumed ? (coil.operator || 'Importação Histórica') : null,
+              consumedByGroup: isConsumed ? (coil.consumedByGroup || null) : null,
+              lineName: isConsumed ? (coil.lineName || null) : null,
+              consumedShift: isConsumed ? (coil.shift || null) : null,
+              consumedIn: isConsumed ? (coil.equipment || null) : null
             });
             coilsAddedCount++;
           })
         );
 
-        // Calculate progress dynamically between 50% and 95%
-        const deltaProgress = 50 + Math.floor((currentStepNum / totalSteps) * 45);
+        const deltaProgress = 55 + Math.floor((currentStepNum / (totalGroups || 1)) * 40);
         setProgressPercent(deltaProgress);
       }
 
@@ -581,9 +762,12 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       setImportSummary({
         batchesCreated: batchesAddedCount,
         coilsCreated: coilsAddedCount,
+        coilsUpdatedToConsumed: updatedToConsumedCount,
+        coilsSkippedDuplicates: skippedDuplicatesCount,
+        duplicatesInSheetMerged: duplicatesMergedCount,
         suppliersCreated: suppliersAddedCount,
         baysCreated: baysAddedCount,
-        totalWeight: stats.totalWeight
+        totalWeight: validRows.reduce((acc, r) => acc + r.weight, 0)
       });
       setIsSuccess(true);
       setInputText('');
@@ -651,20 +835,20 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-5 bg-slate-50 rounded-3xl border border-slate-100">
             <div className="text-center">
+              <span className="block text-2xl font-black text-slate-900">{importSummary.coilsCreated}</span>
+              <span className="text-[10px] uppercase font-black text-slate-400">Novas Bobinas</span>
+            </div>
+            <div className="text-center">
+              <span className="block text-2xl font-black text-emerald-600">{importSummary.coilsUpdatedToConsumed}</span>
+              <span className="text-[10px] uppercase font-black text-slate-400">Atu. Consumidas</span>
+            </div>
+            <div className="text-center">
+              <span className="block text-2xl font-black text-amber-600">{importSummary.coilsSkippedDuplicates + importSummary.duplicatesInSheetMerged}</span>
+              <span className="text-[10px] uppercase font-black text-slate-400">Duplicatas Tratadas</span>
+            </div>
+            <div className="text-center">
               <span className="block text-2xl font-black text-slate-900">{importSummary.batchesCreated}</span>
               <span className="text-[10px] uppercase font-black text-slate-400">Lotes (NFs)</span>
-            </div>
-            <div className="text-center">
-              <span className="block text-2xl font-black text-slate-900">{importSummary.coilsCreated}</span>
-              <span className="text-[10px] uppercase font-black text-slate-400">Bobinas</span>
-            </div>
-            <div className="text-center">
-              <span className="block text-2xl font-black text-emerald-600">+{importSummary.suppliersCreated}</span>
-              <span className="text-[10px] uppercase font-black text-slate-400">Novos Fornec.</span>
-            </div>
-            <div className="text-center">
-              <span className="block text-2xl font-black text-emerald-600">+{importSummary.baysCreated}</span>
-              <span className="text-[10px] uppercase font-black text-slate-400">Baias Cad.</span>
             </div>
           </div>
           
@@ -729,9 +913,9 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
                   onChange={(e) => setInputText(e.target.value)}
                   placeholder={`Cole as linhas de sua planilha Excel ou Google Sheets aqui...
 Exemplo:
-ID	Operador	Data	Fornecedor	Status	Código	Bitola (mm)	Peso	Nota Fiscal	Quantidade Baia
-2474	Alessandro Sousa Santos	04/12/2025	Morlan	Disponível	0002273002394374  M837804	2,18	1060	773778-1	1 C2
-2484	Alessandro Sousa Santos	04/12/2025	Morlan	Disponível	0002280020245484	2,30	1004	773776-1	1 E1`}
+ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornecedor	Status	Código da Bobina	Bitola (mm)	Peso (kg)	Nota Fiscal	Local Baia
+2474	Alessandro Sousa Santos	04/12/2025	10/12/2025	Linha 01	Turma A	Turno 1	Desbobinador 02	Morlan	Consumido	0002273002394374 M837804	2,18	1060	773778-1	1 C2
+2484	Carlos Oliveira	04/12/2025	12/12/2025	Linha 02	Turma B	Turno 2	Desbobinador 01	Belgo Bekaert	Consumido	0002280020245484	2,30	1004	773776-1	1 E1`}
                   rows={14}
                   className="w-full p-4 bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 rounded-3xl outline-none text-[11px] font-mono leading-relaxed focus:ring-2 focus:ring-emerald-500 shadow-inner transition-all resize-y"
                   disabled={isProcessing}
@@ -773,7 +957,7 @@ ID	Operador	Data	Fornecedor	Status	Código	Bitola (mm)	Peso	Nota Fiscal	Quantida
             {parsedRows.length > 0 && (
               <div className="bg-white border border-slate-200 p-6 rounded-[2.5rem] shadow-sm space-y-4">
                 <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">Mapeamento Inteligente de Colunas</span>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {[
                     { label: 'Nota Fiscal', key: 'nfNumber' },
                     { label: 'Fornecedor', key: 'supplier' },
@@ -781,6 +965,8 @@ ID	Operador	Data	Fornecedor	Status	Código	Bitola (mm)	Peso	Nota Fiscal	Quantida
                     { label: 'Peso', key: 'weight' },
                     { label: 'Código Bobina', key: 'coilNumber' },
                     { label: 'Baia / Local', key: 'storageBay' },
+                    { label: 'Data Consumo', key: 'consumedDate' },
+                    { label: 'Linha / Turma', key: 'lineName' },
                   ].map(m => {
                     const mappedIdx = colMapping[m.key];
                     const isMapped = mappedIdx !== -1;
@@ -807,8 +993,18 @@ ID	Operador	Data	Fornecedor	Status	Código	Bitola (mm)	Peso	Nota Fiscal	Quantida
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="text-xs font-bold text-slate-500">Bobinas Válidas</span>
-                  <span className="text-sm font-black text-emerald-600">{stats.validCount}</span>
+                  <span className="text-xs font-bold text-slate-500">Bobinas na Planilha</span>
+                  <span className="text-sm font-black text-slate-800">{stats.validCount}</span>
+                </div>
+                {stats.sheetDuplicatesCount > 0 && (
+                  <div className="flex items-center justify-between p-3.5 bg-amber-50 rounded-2xl border border-amber-100">
+                    <span className="text-xs font-bold text-amber-700">Duplicatas Internas Na Planilha</span>
+                    <span className="text-sm font-black text-amber-700">-{stats.sheetDuplicatesCount}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between p-3.5 bg-emerald-50/60 rounded-2xl border border-emerald-100">
+                  <span className="text-xs font-bold text-emerald-800">Bobinas Únicas a Processar</span>
+                  <span className="text-sm font-black text-emerald-600">{stats.uniqueCoilsCount}</span>
                 </div>
                 {stats.invalidCount > 0 && (
                   <div className="flex items-center justify-between p-3.5 bg-rose-50 rounded-2xl border border-rose-100">
@@ -824,6 +1020,17 @@ ID	Operador	Data	Fornecedor	Status	Código	Bitola (mm)	Peso	Nota Fiscal	Quantida
                   <span className="text-xs font-bold text-slate-500 font-semibold">Peso Total Estimado</span>
                   <span className="text-sm font-black text-slate-800">{stats.totalWeight.toLocaleString('pt-BR')} kg</span>
                 </div>
+              </div>
+
+              {/* Duplicate Rule Info Box */}
+              <div className="p-4 bg-blue-50/60 rounded-2xl border border-blue-100 space-y-2">
+                <div className="flex items-center gap-1.5 text-blue-700 font-black text-[10px] uppercase tracking-wider">
+                  <ShieldCheck className="w-4 h-4 shrink-0 text-blue-600" />
+                  <span>Proteção Inteligente Anti-Duplicidade</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-blue-900 font-medium">
+                  Se a mesma bobina constar no sistema e na importação com status diferentes, o sistema <strong>preservará e manterá o status CONSUMIDO</strong> de forma prioritária e automática.
+                </p>
               </div>
 
               {/* Dynamic Auto-Registration warnings */}
@@ -898,15 +1105,17 @@ ID	Operador	Data	Fornecedor	Status	Código	Bitola (mm)	Peso	Nota Fiscal	Quantida
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase bg-slate-50/50">
-                  <th className="px-6 py-3.5">Linha</th>
-                  <th className="px-6 py-3.5">Status Banco</th>
-                  <th className="px-6 py-3.5">Nota Fiscal</th>
-                  <th className="px-6 py-3.5">Código Bobina</th>
-                  <th className="px-6 py-3.5">Fornecedor</th>
-                  <th className="px-6 py-3.5">Bitola (mm)</th>
-                  <th className="px-6 py-3.5">Peso (kg)</th>
-                  <th className="px-6 py-3.5">Baia</th>
-                  <th className="px-6 py-3.5 text-right">Validação</th>
+                  <th className="px-4 py-3.5">#</th>
+                  <th className="px-4 py-3.5">Status Banco</th>
+                  <th className="px-4 py-3.5">Nota Fiscal</th>
+                  <th className="px-4 py-3.5">Código Bobina</th>
+                  <th className="px-4 py-3.5">Fornecedor</th>
+                  <th className="px-4 py-3.5">Bitola (mm)</th>
+                  <th className="px-4 py-3.5">Peso (kg)</th>
+                  <th className="px-4 py-3.5">Linha / Turma</th>
+                  <th className="px-4 py-3.5">Data Consumo</th>
+                  <th className="px-4 py-3.5">Baia</th>
+                  <th className="px-4 py-3.5 text-right">Validação</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 text-xs">
@@ -914,8 +1123,8 @@ ID	Operador	Data	Fornecedor	Status	Código	Bitola (mm)	Peso	Nota Fiscal	Quantida
                   const hasErr = row.errors.length > 0;
                   return (
                     <tr key={row.index} className={cn("transition-colors hover:bg-slate-50/45", hasErr && "bg-rose-50/20")}>
-                      <td className="px-6 py-3.5 font-semibold text-slate-400">{row.index}</td>
-                      <td className="px-6 py-3.5">
+                      <td className="px-4 py-3.5 font-semibold text-slate-400">{row.index}</td>
+                      <td className="px-4 py-3.5">
                         <span className={cn(
                           "px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider",
                           row.status === 'consumed' ? "bg-slate-100 text-slate-500" : "bg-emerald-50 text-emerald-600"
@@ -923,17 +1132,23 @@ ID	Operador	Data	Fornecedor	Status	Código	Bitola (mm)	Peso	Nota Fiscal	Quantida
                           {row.status === 'consumed' ? 'Consumido' : 'Disponível'}
                         </span>
                       </td>
-                      <td className="px-6 py-3.5 font-bold text-slate-800">{row.nfNumber || '—'}</td>
-                      <td className="px-6 py-3.5 font-mono text-slate-600">{row.coilNumber || '—'}</td>
-                      <td className="px-6 py-3.5 font-semibold text-slate-700">{row.supplierName || '—'}</td>
-                      <td className="px-6 py-3.5 font-mono text-slate-600">{row.diameter.toFixed(2)} mm</td>
-                      <td className="px-6 py-3.5 font-semibold text-slate-800">{row.weight.toLocaleString('pt-BR')} kg</td>
-                      <td className="px-6 py-3.5">
+                      <td className="px-4 py-3.5 font-bold text-slate-800">{row.nfNumber || '—'}</td>
+                      <td className="px-4 py-3.5 font-mono text-slate-600">{row.coilNumber || '—'}</td>
+                      <td className="px-4 py-3.5 font-semibold text-slate-700">{row.supplierName || '—'}</td>
+                      <td className="px-4 py-3.5 font-mono text-slate-600">{row.diameter.toFixed(2)} mm</td>
+                      <td className="px-4 py-3.5 font-semibold text-slate-800">{row.weight.toLocaleString('pt-BR')} kg</td>
+                      <td className="px-4 py-3.5 font-medium text-slate-600">
+                        {row.lineName ? `${row.lineName}${row.consumedByGroup ? ` (${row.consumedByGroup})` : ''}` : '—'}
+                      </td>
+                      <td className="px-4 py-3.5 font-mono text-slate-600">
+                        {row.consumedDate ? row.consumedDate.split('-').reverse().join('/') : '—'}
+                      </td>
+                      <td className="px-4 py-3.5">
                         <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md font-bold text-slate-600">
                           {row.storageBayName}
                         </span>
                       </td>
-                      <td className="px-6 py-3.5 text-right font-medium">
+                      <td className="px-4 py-3.5 text-right font-medium">
                         {hasErr ? (
                           <div className="flex items-center gap-1.5 justify-end text-rose-500 font-bold">
                             <AlertTriangle className="w-4 h-4 shrink-0" />
