@@ -51,8 +51,10 @@ import {
   Filter,
   BarChart3,
   TrendingUp,
-  Target
+  Target,
+  FileSpreadsheet
 } from 'lucide-react';
+import { DDSBulkImportModal } from '../components/dds/DDSBulkImportModal';
 import { 
   PieChart, 
   Pie, 
@@ -168,6 +170,7 @@ const DDS: React.FC = () => {
   // Mood selector state
   const [showMoodModal, setShowMoodModal] = useState(false);
   const [selectedMood, setSelectedMood] = useState<'happy' | 'neutral' | 'sad' | null>(null);
+  const [showBulkImportModal, setShowBulkImportModal] = useState(false);
 
   useEffect(() => {
     const currentShift = getCurrentShift();
@@ -996,9 +999,22 @@ const DDS: React.FC = () => {
 
       </AnimatePresence>
 
-      <div>
-        <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Diálogo Diário de Segurança</h1>
-        <p className="text-slate-500 mt-1">Participe do treinamento diário e valide sua presença.</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Diálogo Diário de Segurança</h1>
+          <p className="text-slate-500 mt-1">Participe do treinamento diário e valide sua presença.</p>
+        </div>
+
+        {(isManager || isAdmin || isMaster) && (
+          <button
+            type="button"
+            onClick={() => setShowBulkImportModal(true)}
+            className="flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-lg shadow-emerald-600/20 cursor-pointer self-start sm:self-auto border-b-2 border-emerald-800"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Importação em Massa
+          </button>
+        )}
       </div>
 
       {/* Sections rearranged: Management and Validation at the top */}
@@ -2072,6 +2088,11 @@ const DDS: React.FC = () => {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <DDSBulkImportModal
+          isOpen={showBulkImportModal}
+          onClose={() => setShowBulkImportModal(false)}
+        />
       </div>
     );
   };

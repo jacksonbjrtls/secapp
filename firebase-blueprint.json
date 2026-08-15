@@ -45,7 +45,7 @@
     },
     "DDSSession": {
       "title": "DDS Session",
-      "description": "Daily Safety Talk session created by admin.",
+      "description": "Daily Safety Talk session created by admin or imported.",
       "type": "object",
       "properties": {
         "title": { "type": "string" },
@@ -53,12 +53,16 @@
         "shift": { "type": "string", "enum": ["Turno 1", "Turno 2", "Turno 3"] },
         "group": { "type": "string", "enum": ["A", "B", "C", "D", "E"] },
         "executor": { "type": "string" },
+        "totalPrevisto": { "type": "number" },
         "passcode": { "type": "string" },
         "expiresAt": { "type": "string", "format": "date-time" },
         "createdBy": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "importedAt": { "type": "string", "format": "date-time" },
+        "legacyId": { "type": "string" }
       },
-      "required": ["title", "shift", "group", "executor", "passcode", "expiresAt", "createdAt"]
+      "required": ["title", "shift", "group", "executor", "createdAt"]
     },
     "DDSSignature": {
       "title": "DDS Signature",
@@ -68,11 +72,14 @@
         "sessionId": { "type": "string" },
         "userId": { "type": "string" },
         "userName": { "type": "string" },
+        "registration": { "type": "string" },
         "sessionTitle": { "type": "string" },
         "timestamp": { "type": "string", "format": "date-time" },
-        "mood": { "type": "string", "enum": ["happy", "neutral", "sad"] }
+        "mood": { "type": "string", "enum": ["happy", "neutral", "sad"] },
+        "passcode": { "type": "string" },
+        "importedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["sessionId", "userId", "timestamp", "mood"]
+      "required": ["sessionId", "userId", "timestamp"]
     },
     "Forklift": {
       "title": "Forklift",

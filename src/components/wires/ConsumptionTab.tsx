@@ -53,6 +53,33 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
   const [selectedShift, setSelectedShift] = useState<'1' | '2' | '3' | ''>('');
   const [selectedEquipment, setSelectedEquipment] = useState('');
 
+  // Filter only Enfardamento production lines for wire consumption (exclude MS1 and MS2)
+  const enfardamentoLines = useMemo(() => {
+    return lines.filter(l => {
+      if (!l.active) return false;
+      const name = (l.name || '').trim().toLowerCase();
+      // Exclude MS1 and MS2 (and variants like 'linha ms1', 'ms 1', 'ms2', 'cortadeira ms1')
+      if (
+        name === 'ms1' || 
+        name === 'ms2' || 
+        name === 'ms 1' || 
+        name === 'ms 2' || 
+        name === 'linha ms1' || 
+        name === 'linha ms2' || 
+        name === 'linha ms 1' || 
+        name === 'linha ms 2' ||
+        name.startsWith('ms1') ||
+        name.startsWith('ms2') ||
+        name.startsWith('ms 1') ||
+        name.startsWith('ms 2') ||
+        name.includes('cortadeira ms')
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [lines]);
+
   const getShiftByTime = () => {
     const hour = new Date().getHours();
     if (hour >= 0 && hour < 8) return '1';
@@ -735,7 +762,7 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                          Linha de Produção
                       </h4>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        {lines.filter(l => l.active).map(line => (
+                        {enfardamentoLines.map(line => (
                           <button
                             key={line.id}
                             onClick={() => {
@@ -1045,7 +1072,7 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                 <div>
                   <label className="block text-xs font-black text-slate-400 uppercase mb-4 ml-1 tracking-widest">Nova Linha de Produção</label>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {lines.filter(l => l.active).map(line => (
+                    {enfardamentoLines.map(line => (
                       <button
                         key={line.id}
                         onClick={() => setNewSelectedLine(line.id)}
