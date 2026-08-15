@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Truck, 
   Plus, 
@@ -30,7 +30,14 @@ import {
   Lock,
   MessageSquare,
   Info,
-  Settings
+  Settings,
+  Camera,
+  RotateCcw,
+  Upload,
+  Paperclip,
+  Maximize2,
+  RefreshCw,
+  Smartphone
 } from 'lucide-react';
 import { 
   collection, 
@@ -137,7 +144,7 @@ const Forklifts: React.FC = () => {
   const [testingEmail, setTestingEmail] = useState(false);
   const [draftDocId, setDraftDocId] = useState<string | null>(null);
   const [savingStatus, setSavingStatus] = useState<'saved' | 'saving' | 'offline'>('saved');
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'forklift' | 'item' | 'checklist', title: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'forklift' | 'item' | 'checklist', title: string; userId?: string } | null>(null);
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -153,7 +160,168 @@ const Forklifts: React.FC = () => {
     type: 'success'
   });
 
+  // Camera & Photo Capture States
+  const [activeCameraCapture, setActiveCameraCapture] = useState<{
+    itemId: string;
+    itemTitle: string;
+  } | null>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [viewingPhotoModal, setViewingPhotoModal] = useState<{ url: string; title: string } | null>(null);
+
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
+
+  // Helper: Compress and resize image file to maintain sharp quality while keeping payload under ~150KB
+  const compressImageFile = (file: File | Blob, maxWidth = 1280, quality = 0.8): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      if (!file.type.startsWith('image/')) {
+        if (file.size > 5 * 1024 * 1024) {
+          reject(new Error('Vídeos ou arquivos não-imagem devem ter no máximo 5MB.'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxWidth || height > maxWidth) {
+            if (width > height) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            } else {
+              width = Math.round((width * maxWidth) / height);
+              height = maxWidth;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(reader.result as string);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          resolve(dataUrl);
+        };
+        img.onerror = () => {
+          resolve(reader.result as string);
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Live Camera Lifecycle Hook
+  useEffect(() => {
+    if (!activeCameraCapture) {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        setCameraStream(null);
+      }
+      setCameraError(null);
+      return;
+    }
+
+    let isMounted = true;
+    async function startCam() {
+      try {
+        setCameraError(null);
+        if (cameraStream) {
+          cameraStream.getTracks().forEach(t => t.stop());
+        }
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: cameraFacing },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          });
+        } catch {
+          // Fallback to default camera
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        }
+
+        if (!isMounted) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        setCameraStream(stream);
+        if (cameraVideoRef.current) {
+          cameraVideoRef.current.srcObject = stream;
+        }
+      } catch (err: any) {
+        console.error("Camera access error:", err);
+        if (isMounted) {
+          const errStr = String(err?.message || err || '').toLowerCase();
+          if (errStr.includes('notallowed') || errStr.includes('permission')) {
+            setCameraError("Acesso à câmera foi negado nas permissões do seu navegador. Por favor, libere a permissão de câmera ou selecione uma foto do dispositivo.");
+          } else if (errStr.includes('notfound') || errStr.includes('device not found') || errStr.includes('requested device')) {
+            setCameraError("Nenhuma câmera foi encontrada neste dispositivo. Você pode selecionar a foto diretamente da galeria.");
+          } else {
+            setCameraError("Não foi possível carregar a transmissão de vídeo da câmera. Você pode usar a câmera nativa do celular ou a galeria.");
+          }
+        }
+      }
+    }
+
+    startCam();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeCameraCapture, cameraFacing]);
+
+  // Capture frame from Live Camera Viewfinder
+  const handleCaptureFromCamera = async () => {
+    if (!cameraVideoRef.current || !activeCameraCapture) return;
+    const video = cameraVideoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+
+    const itemId = activeCameraCapture.itemId;
+    setChecklistResults(prev => ({
+      ...prev,
+      [itemId]: {
+        ...prev[itemId],
+        mediaUrl: dataUrl,
+        fileName: `foto_inspecao_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '_')}.jpg`
+      }
+    }));
+
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      setCameraStream(null);
+    }
+    setActiveCameraCapture(null);
+  };
 
   // Load draft when opening check modal
   useEffect(() => {
@@ -243,28 +411,25 @@ const Forklifts: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 1024 * 500) {
-      setModalConfig({
-        isOpen: true,
-        title: 'Arquivo muito grande',
-        message: 'O arquivo excede o limite. Para este protótipo, use imagens menores que 500KB.',
-        type: 'warning'
-      });
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
+    try {
+      const compressedDataUrl = await compressImageFile(file);
       setChecklistResults(prev => ({
         ...prev,
         [itemId]: {
           ...prev[itemId],
-          mediaUrl: reader.result as string,
-          fileName: file.name
+          mediaUrl: compressedDataUrl,
+          fileName: file.name || 'evidencia_inspecao.jpg'
         }
       }));
-    };
-    reader.readAsDataURL(file);
+    } catch (err: any) {
+      console.error("Error processing file:", err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro no arquivo',
+        message: err.message || 'Não foi possível processar a imagem selecionada. Tente outra foto.',
+        type: 'warning'
+      });
+    }
   };
 
   useEffect(() => {
@@ -986,9 +1151,25 @@ const Forklifts: React.FC = () => {
                                             </div>
                                           )}
                                           {result.mediaUrl && (
-                                            <div className="mt-3 rounded-xl overflow-hidden border border-slate-100 h-24 bg-slate-50">
+                                            <div 
+                                              onClick={() => {
+                                                if (result.mediaUrl?.startsWith('data:image') || result.mediaUrl?.startsWith('http')) {
+                                                  setViewingPhotoModal({
+                                                    url: result.mediaUrl,
+                                                    title: `${item?.name || 'Item de Inspeção'} - Registro de Evidência`
+                                                  });
+                                                }
+                                              }}
+                                              className="mt-3 rounded-xl overflow-hidden border border-slate-200 h-28 bg-slate-50 relative group cursor-pointer hover:border-emerald-400 transition-all shadow-xs"
+                                            >
                                               {result.mediaUrl.startsWith('data:image') || result.mediaUrl.startsWith('http') ? (
-                                                <img src={result.mediaUrl} className="w-full h-full object-cover" alt="Evidência" />
+                                                <>
+                                                  <img src={result.mediaUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="Evidência" />
+                                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white">
+                                                    <Maximize2 className="w-4 h-4" />
+                                                    <span className="text-[10px] font-bold">Ver Foto</span>
+                                                  </div>
+                                                </>
                                               ) : (
                                                 <div className="w-full h-full flex flex-col items-center justify-center p-2 text-slate-400">
                                                   <Video className="w-6 h-6 mb-1" />
@@ -1816,7 +1997,7 @@ const Forklifts: React.FC = () => {
                                     onChange={e => setChecklistResults({...checklistResults, [item.id]: { ...checklistResults[item.id], observation: e.target.value }})}
                                    />
                                  </div>
-                                 <div className="md:w-64 flex flex-col gap-2">
+                                 <div className="md:w-80 flex flex-col gap-2">
                                     <input 
                                       type="file"
                                       accept="image/*,video/*"
@@ -1824,45 +2005,108 @@ const Forklifts: React.FC = () => {
                                       className="hidden"
                                       onChange={(e) => handleFileChange(e, item.id)}
                                     />
+                                    <input 
+                                      type="file"
+                                      accept="image/*"
+                                      capture="environment"
+                                      id={`camera-native-${item.id}`}
+                                      className="hidden"
+                                      onChange={(e) => handleFileChange(e, item.id)}
+                                    />
                                     
                                     {!checklistResults[item.id]?.mediaUrl ? (
-                                      <button 
-                                        type="button"
-                                        onClick={() => document.getElementById(`file-${item.id}`)?.click()}
-                                        className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-rose-50/50 border border-dashed border-rose-200 rounded-2xl text-rose-600 hover:bg-rose-100/50 transition-all group"
-                                      >
-                                        <div className="flex items-center gap-1 group-hover:scale-110 transition-transform">
-                                          <ImageIcon className="w-4 h-4" />
-                                          <Video className="w-4 h-4" />
-                                        </div>
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-center">Anexar Prova</span>
-                                      </button>
-                                    ) : (
-                                      <div className="relative group rounded-2xl overflow-hidden border border-rose-200 bg-rose-50/50 h-[80px]">
-                                        {checklistResults[item.id]?.mediaUrl?.startsWith('data:image') ? (
-                                          <img 
-                                            src={checklistResults[item.id].mediaUrl} 
-                                            alt="Preview" 
-                                            className="w-full h-full object-cover"
-                                          />
-                                        ) : (
-                                          <div className="w-full h-full flex flex-col items-center justify-center p-2 text-rose-500">
-                                            <Video className="w-6 h-6 mb-1" />
-                                            <span className="text-[8px] font-black uppercase text-center truncate w-full">
-                                              {checklistResults[item.id].fileName}
-                                            </span>
-                                          </div>
-                                        )}
+                                      <div className="flex flex-col sm:flex-row gap-2">
                                         <button 
                                           type="button"
-                                          onClick={() => setChecklistResults(prev => ({
-                                            ...prev,
-                                            [item.id]: { ...prev[item.id], mediaUrl: undefined, fileName: undefined }
-                                          }))}
-                                          className="absolute top-1 right-1 p-1 bg-white/80 hover:bg-white text-rose-500 rounded-lg shadow-sm border border-rose-100"
+                                          onClick={() => {
+                                            setActiveCameraCapture({
+                                              itemId: item.id,
+                                              itemTitle: item.name
+                                            });
+                                          }}
+                                          className="flex-1 flex items-center justify-center gap-2 px-3 py-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 rounded-2xl transition-all shadow-xs group cursor-pointer"
+                                          title="Tirar foto usando a câmera ao vivo"
                                         >
-                                          <X className="w-3 h-3" />
+                                          <Camera className="w-4 h-4 text-emerald-600 group-hover:scale-110 transition-transform" />
+                                          <span className="text-[10px] font-black uppercase tracking-wider">Tirar Foto</span>
                                         </button>
+
+                                        <button 
+                                          type="button"
+                                          onClick={() => document.getElementById(`file-${item.id}`)?.click()}
+                                          className="flex-1 flex items-center justify-center gap-2 px-3 py-3 bg-rose-50/70 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-2xl transition-all shadow-xs group cursor-pointer"
+                                          title="Selecionar foto ou vídeo da galeria/arquivos"
+                                        >
+                                          <Paperclip className="w-3.5 h-3.5 text-rose-500 group-hover:scale-110 transition-transform" />
+                                          <span className="text-[10px] font-black uppercase tracking-wider">Galeria / Arquivo</span>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="relative group rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 h-[96px] shadow-sm flex items-center justify-center">
+                                        {checklistResults[item.id]?.mediaUrl?.startsWith('data:image') || checklistResults[item.id]?.mediaUrl?.startsWith('http') ? (
+                                          <>
+                                            <img 
+                                              src={checklistResults[item.id].mediaUrl} 
+                                              alt="Preview" 
+                                              className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity"
+                                            />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex items-end justify-between p-2">
+                                              <button
+                                                type="button"
+                                                onClick={() => setViewingPhotoModal({
+                                                  url: checklistResults[item.id].mediaUrl!,
+                                                  title: `${item.name} - Evidência da Não Conformidade`
+                                                })}
+                                                className="flex items-center gap-1 text-[9px] font-bold text-white bg-white/20 hover:bg-white/30 backdrop-blur-md px-2 py-1 rounded-lg border border-white/20 transition-all cursor-pointer"
+                                              >
+                                                <Maximize2 className="w-3 h-3" />
+                                                Ver Foto
+                                              </button>
+
+                                              <div className="flex items-center gap-1">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setActiveCameraCapture({
+                                                    itemId: item.id,
+                                                    itemTitle: item.name
+                                                  })}
+                                                  className="p-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-all shadow-xs cursor-pointer"
+                                                  title="Tirar outra foto com a câmera"
+                                                >
+                                                  <Camera className="w-3.5 h-3.5" />
+                                                </button>
+                                                <button 
+                                                  type="button"
+                                                  onClick={() => setChecklistResults(prev => ({
+                                                    ...prev,
+                                                    [item.id]: { ...prev[item.id], mediaUrl: undefined, fileName: undefined }
+                                                  }))}
+                                                  className="p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all shadow-xs cursor-pointer"
+                                                  title="Remover foto"
+                                                >
+                                                  <X className="w-3.5 h-3.5" />
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <div className="w-full h-full flex flex-col items-center justify-center p-2 text-slate-300">
+                                            <Video className="w-6 h-6 mb-1 text-slate-400" />
+                                            <span className="text-[8px] font-black uppercase text-center truncate w-full text-slate-300">
+                                              {checklistResults[item.id].fileName}
+                                            </span>
+                                            <button 
+                                              type="button"
+                                              onClick={() => setChecklistResults(prev => ({
+                                                ...prev,
+                                                [item.id]: { ...prev[item.id], mediaUrl: undefined, fileName: undefined }
+                                              }))}
+                                              className="absolute top-1 right-1 p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm cursor-pointer"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        )}
                                       </div>
                                     )}
                                  </div>
@@ -1977,6 +2221,152 @@ const Forklifts: React.FC = () => {
                 >
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Excluir'}
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Live Camera Viewfinder Modal */}
+        {activeCameraCapture && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-6">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              onClick={() => setActiveCameraCapture(null)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="relative bg-slate-950 w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-slate-800 overflow-hidden flex flex-col z-10"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="p-4 sm:p-5 flex items-center justify-between border-b border-slate-800/80 bg-slate-900/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">Câmera ao Vivo</h3>
+                    <p className="text-[11px] font-medium text-slate-400 truncate max-w-[220px] sm:max-w-xs">
+                      {activeCameraCapture.itemTitle}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveCameraCapture(null)}
+                  className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Viewfinder Video Area */}
+              <div className="relative aspect-[4/3] bg-black flex items-center justify-center overflow-hidden">
+                <video
+                  ref={cameraVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+                
+                {/* Target overlay guide */}
+                <div className="absolute inset-6 border border-white/20 rounded-2xl pointer-events-none flex items-center justify-center">
+                  <div className="w-4 h-4 border-t-2 border-l-2 border-emerald-400 absolute top-0 left-0 rounded-tl" />
+                  <div className="w-4 h-4 border-t-2 border-r-2 border-emerald-400 absolute top-0 right-0 rounded-tr" />
+                  <div className="w-4 h-4 border-b-2 border-l-2 border-emerald-400 absolute bottom-0 left-0 rounded-bl" />
+                  <div className="w-4 h-4 border-b-2 border-r-2 border-emerald-400 absolute bottom-0 right-0 rounded-br" />
+                </div>
+              </div>
+
+              {/* Controls Footer */}
+              <div className="p-5 sm:p-6 bg-slate-900/90 border-t border-slate-800 flex items-center justify-between gap-3">
+                {/* Switch camera */}
+                <button
+                  type="button"
+                  onClick={() => setCameraFacing(prev => prev === 'environment' ? 'user' : 'environment')}
+                  className="flex items-center gap-2 px-3.5 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all cursor-pointer border border-slate-700/60"
+                  title="Alternar Câmera Frontal / Traseira"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span className="hidden sm:inline">Inverter</span>
+                </button>
+
+                {/* Capture Button */}
+                <button
+                  type="button"
+                  onClick={handleCaptureFromCamera}
+                  className="flex-1 flex items-center justify-center gap-2 py-4 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 rounded-full font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-500/25 cursor-pointer"
+                >
+                  <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-950 bg-white" />
+                  <span>Capturar Foto</span>
+                </button>
+
+                {/* Native camera app fallback */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById(`camera-native-${activeCameraCapture.itemId}`);
+                    setActiveCameraCapture(null);
+                    el?.click();
+                  }}
+                  className="flex items-center gap-2 px-3.5 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all cursor-pointer border border-slate-700/60"
+                  title="Abrir aplicativo de câmera nativo do celular"
+                >
+                  <Smartphone className="w-4 h-4 text-emerald-400" />
+                  <span className="hidden sm:inline">Nativa</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Fullscreen Photo Viewing Modal */}
+        {viewingPhotoModal && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-3 sm:p-6">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              onClick={() => setViewingPhotoModal(null)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative max-w-3xl w-full max-h-[90vh] bg-slate-950 rounded-[2.5rem] border border-slate-800 overflow-hidden flex flex-col z-10 shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-4 sm:p-5 flex items-center justify-between border-b border-slate-800/80 bg-slate-900/60">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                    <ImageIcon className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">{viewingPhotoModal.title}</h3>
+                    <p className="text-[11px] font-medium text-slate-400">Evidência registrada</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingPhotoModal(null)}
+                  className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex-1 bg-black p-4 flex items-center justify-center overflow-auto max-h-[70vh]">
+                <img 
+                  src={viewingPhotoModal.url} 
+                  alt="Evidência ampliada" 
+                  className="max-w-full max-h-full object-contain rounded-xl shadow-lg"
+                />
               </div>
             </motion.div>
           </div>
