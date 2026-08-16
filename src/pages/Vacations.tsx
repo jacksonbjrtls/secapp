@@ -1781,8 +1781,8 @@ export default function Vacations() {
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Limites por Letra de Escala</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
-                  {['A', 'B', 'C', 'D', 'E'].map(g => (
-                    <div key={g} className="p-4 border border-slate-250 rounded-2xl bg-slate-50 flex items-center justify-between">
+                  {['A', 'B', 'C', 'D', 'E'].map((g, gIdx) => (
+                    <div key={`vac-limit-group-${g}-${gIdx}`} className="p-4 border border-slate-250 rounded-2xl bg-slate-50 flex items-center justify-between">
                       <span className="text-xs font-black text-slate-700">Letra {g}</span>
                       <input
                         type="number"

@@ -2406,9 +2406,9 @@ const OperationalRoutes: React.FC = () => {
                       <div className="col-span-2 text-center p-4 bg-slate-50 border rounded-2xl text-xs text-slate-400">
                         Nenhuma linha cadastrada. Utilizando defaults...
                         <div className="flex gap-2 mt-2">
-                          {['MS1', 'MS2'].map(defName => (
+                          {['MS1', 'MS2'].map((defName, dIdx) => (
                             <button
-                              key={defName}
+                              key={`def-line-${defName}-${dIdx}`}
                               onClick={() => setSelectedLine({ id: defName, name: defName, active: true })}
                               className="flex-1 p-3 border rounded-xl font-bold text-xs"
                             >
@@ -2429,11 +2429,11 @@ const OperationalRoutes: React.FC = () => {
                       '00:00 - 08:00',
                       '08:00 - 16:00',
                       '16:00 - 24:00'
-                    ].map(sh => {
+                    ].map((sh, shIdx) => {
                       const isChosen = selectedShift === sh;
                       return (
                         <div
-                          key={sh}
+                          key={`route-shift-${sh}-${shIdx}`}
                           onClick={() => setSelectedShift(sh)}
                           className={cn(
                             "flex items-center gap-3 p-4 border rounded-2xl cursor-pointer transition-all hover:bg-slate-50/50",
@@ -2457,11 +2457,11 @@ const OperationalRoutes: React.FC = () => {
                 <div className="space-y-2.5">
                   <label className="text-[11px] font-black uppercase tracking-wider text-slate-400">Equipe / Grupo</label>
                   <div className="flex justify-between items-center gap-2">
-                    {['A', 'B', 'C', 'D', 'E'].map(tm => {
+                    {['A', 'B', 'C', 'D', 'E'].map((tm, tmIdx) => {
                       const isChosen = selectedTeam === tm;
                       return (
                         <button
-                          key={tm}
+                          key={`route-team-${tm}-${tmIdx}`}
                           type="button"
                           onClick={() => setSelectedTeam(tm)}
                           className={cn(
@@ -2888,11 +2888,11 @@ const OperationalRoutes: React.FC = () => {
                                             { label: 'BAIXO', val: 'low', col: 'bg-amber-600 text-white border-amber-600' },
                                             { label: 'NORMAL / OK', val: 'normal', col: 'bg-[#0d6e4f] text-white border-[#0d6e4f]' },
                                             { label: 'ALTO', val: 'high', col: 'bg-rose-600 text-white border-rose-600' }
-                                          ].map(rnVal => {
+                                          ].map((rnVal, rnIdx) => {
                                             const isActive = resp.value === rnVal.val;
                                             return (
                                               <button
-                                                key={rnVal.val}
+                                                key={`rnval-${rnVal.val}-${rnIdx}`}
                                                 type="button"
                                                 disabled={isReadOnlyRoute}
                                                 onClick={() => {
@@ -3278,8 +3278,8 @@ const OperationalRoutes: React.FC = () => {
                                             )}
                                           >
                                             <option value="">Selecione...</option>
-                                            {responsibleCenters.map(center => (
-                                              <option key={center} value={center}>{center}</option>
+                                            {responsibleCenters.map((center, cIdx) => (
+                                              <option key={`resp-ctr-${center}-${cIdx}`} value={center}>{center}</option>
                                             ))}
                                           </select>
                                         </div>
@@ -3315,8 +3315,8 @@ const OperationalRoutes: React.FC = () => {
                                             )}
                                           >
                                             <option value="">Selecione...</option>
-                                            {schedules.map(sch => (
-                                              <option key={sch} value={sch}>{sch}</option>
+                                            {schedules.map((sch, schIdx) => (
+                                              <option key={`sch-opt-${sch}-${schIdx}`} value={sch}>{sch}</option>
                                             ))}
                                           </select>
                                         </div>
@@ -3522,9 +3522,9 @@ const OperationalRoutes: React.FC = () => {
                 </div>
 
                 <div className="flex flex-wrap gap-2 max-h-[140px] overflow-y-auto pb-1">
-                  {responsibleCenters.map(center => (
+                  {responsibleCenters.map((center, cIdx) => (
                     <div
-                      key={center}
+                      key={`resp-center-tag-${center}-${cIdx}`}
                       className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-xl text-[11px]"
                     >
                       <span>{center}</span>
@@ -3578,9 +3578,9 @@ const OperationalRoutes: React.FC = () => {
                 </div>
 
                 <div className="flex flex-wrap gap-2 max-h-[140px] overflow-y-auto pb-1">
-                  {schedules.map(sch => (
+                  {schedules.map((sch, schIdx) => (
                     <div
-                      key={sch}
+                      key={`schedule-tag-${sch}-${schIdx}`}
                       className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-xl text-[11px]"
                     >
                       <span>{sch}</span>
@@ -3645,7 +3645,7 @@ const OperationalRoutes: React.FC = () => {
                 className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 font-bold text-xs outline-none focus:ring-2 focus:ring-emerald-500 text-slate-700"
               >
                 {months.map((m, idx) => (
-                  <option key={m} value={idx}>{m}</option>
+                  <option key={`routes-metrics-m-${m}-${idx}`} value={idx}>{m}</option>
                 ))}
               </select>
               <select
@@ -3653,8 +3653,8 @@ const OperationalRoutes: React.FC = () => {
                 onChange={(e) => setFilterYear(parseInt(e.target.value))}
                 className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 font-bold text-xs outline-none focus:ring-2 focus:ring-emerald-500 text-slate-700"
               >
-                {[2024, 2025, 2026, 2027].map(y => (
-                  <option key={y} value={y}>{y}</option>
+                {[2024, 2025, 2026, 2027].map((y, yIdx) => (
+                  <option key={`routes-metrics-y-${y}-${yIdx}`} value={y}>{y}</option>
                 ))}
               </select>
             </div>
@@ -4086,12 +4086,12 @@ const OperationalRoutes: React.FC = () => {
                     <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Determine em quais turnos esta rota de vistoria poderá ser realizada. Deixe desmarcado para livre visualização.</p>
                   </div>
                   <div className="flex flex-wrap gap-4 pt-1">
-                    {['Turno 1', 'Turno 2', 'Turno 3'].map((sht) => {
+                    {['Turno 1', 'Turno 2', 'Turno 3'].map((sht, shtIdx) => {
                       const hourRange = sht === 'Turno 1' ? '00:00 - 08:00' : sht === 'Turno 2' ? '08:00 - 16:00' : '16:00 - 24:00';
                       const isSelected = templateAllowedShifts.includes(sht);
                       return (
                         <button
-                          key={sht}
+                          key={`template-shift-${sht}-${shtIdx}`}
                           type="button"
                           onClick={() => {
                             if (isSelected) {

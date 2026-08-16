@@ -855,8 +855,8 @@ export default function Overtime() {
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800"
                     >
                       <option value="">Selecione...</option>
-                      {['A', 'B', 'C', 'D', 'E', 'Geral'].map(g => (
-                        <option key={g} value={g}>Letra {g}</option>
+                      {['A', 'B', 'C', 'D', 'E', 'Geral'].map((g, gIdx) => (
+                        <option key={`ot-form-group-${g}-${gIdx}`} value={g}>Letra {g}</option>
                       ))}
                     </select>
                   </div>
@@ -1148,8 +1148,8 @@ export default function Overtime() {
                     className="w-1/2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                   >
                     <option value="all">Ano: Todos</option>
-                    {['2024', '2025', '2026', '2027'].map(yr => (
-                      <option key={yr} value={yr}>{yr}</option>
+                    {['2024', '2025', '2026', '2027'].map((yr, yIdx) => (
+                      <option key={`ot-filter-yr-${yr}-${yIdx}`} value={yr}>{yr}</option>
                     ))}
                   </select>
 
@@ -1172,8 +1172,8 @@ export default function Overtime() {
                       { v: '10', l: 'Out' },
                       { v: '11', l: 'Nov' },
                       { v: '12', l: 'Dez' },
-                    ].map(m => (
-                      <option key={m.v} value={m.v}>{m.l}</option>
+                    ].map((m, mIdx) => (
+                      <option key={`ot-filter-m-${m.v}-${mIdx}`} value={m.v}>{m.l}</option>
                     ))}
                   </select>
                 </div>
@@ -1186,8 +1186,8 @@ export default function Overtime() {
                     className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                   >
                     <option value="all">Grupo: Todos</option>
-                    {['A', 'B', 'C', 'D', 'E', 'Geral'].map(g => (
-                      <option key={g} value={g}>Letra {g}</option>
+                    {['A', 'B', 'C', 'D', 'E', 'Geral'].map((g, gIdx) => (
+                      <option key={`ot-filter-group-${g}-${gIdx}`} value={g}>Letra {g}</option>
                     ))}
                   </select>
                 </div>

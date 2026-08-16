@@ -1310,8 +1310,8 @@ export default function Maintenance() {
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="all">Todos os Status</option>
-                  {availableStatuses.map(st => (
-                    <option key={st} value={st}>{st}</option>
+                  {availableStatuses.map((st, stIdx) => (
+                    <option key={`maint-filter-st-${st}-${stIdx}`} value={st}>{st}</option>
                   ))}
                 </select>
               </div>
@@ -1349,8 +1349,8 @@ export default function Maintenance() {
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="all">Todos os Centros</option>
-                  {availableResponsibleCenters.map(c => (
-                    <option key={c} value={c}>{c}</option>
+                  {availableResponsibleCenters.map((c, cIdx) => (
+                    <option key={`maint-filter-center-${c}-${cIdx}`} value={c}>{c}</option>
                   ))}
                 </select>
               </div>
@@ -2027,8 +2027,8 @@ export default function Maintenance() {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500"
                   >
                     <option value="">Selecione o Tipo de Inspeção...</option>
-                    {availableInspectionTypes.map(t => (
-                      <option key={t} value={t}>{t}</option>
+                    {availableInspectionTypes.map((t, tIdx) => (
+                      <option key={`insp-type-opt-${t}-${tIdx}`} value={t}>{t}</option>
                     ))}
                   </select>
 
@@ -2326,8 +2326,8 @@ export default function Maintenance() {
                       }}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {DEFAULT_SHIFTS.map(s => (
-                        <option key={s} value={s}>{s}</option>
+                      {DEFAULT_SHIFTS.map((s, sIdx) => (
+                        <option key={`maint-shift-opt-${s}-${sIdx}`} value={s}>{s}</option>
                       ))}
                     </select>
                   </div>
@@ -2343,8 +2343,8 @@ export default function Maintenance() {
                       onChange={(e) => setFormTeamLetter(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {DEFAULT_TEAMS.map(t => (
-                        <option key={t} value={t}>Turma {t}</option>
+                      {DEFAULT_TEAMS.map((t, tIdx) => (
+                        <option key={`maint-team-opt-${t}-${tIdx}`} value={t}>Turma {t}</option>
                       ))}
                     </select>
                   </div>
@@ -2478,8 +2478,8 @@ export default function Maintenance() {
                       onChange={(e) => setFormResponsibleCenter(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {availableResponsibleCenters.map(rc => (
-                        <option key={rc} value={rc}>{rc}</option>
+                      {availableResponsibleCenters.map((rc, rcIdx) => (
+                        <option key={`maint-resp-center-${rc}-${rcIdx}`} value={rc}>{rc}</option>
                       ))}
                     </select>
                   </div>
@@ -2491,8 +2491,8 @@ export default function Maintenance() {
                       onChange={(e) => setFormProgrammingType(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {availableProgrammingTypes.map(pt => (
-                        <option key={pt} value={pt}>{pt}</option>
+                      {availableProgrammingTypes.map((pt, ptIdx) => (
+                        <option key={`maint-prog-type-${pt}-${ptIdx}`} value={pt}>{pt}</option>
                       ))}
                     </select>
                   </div>
@@ -2504,8 +2504,8 @@ export default function Maintenance() {
                       onChange={(e) => setFormStatus(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {availableStatuses.map(st => (
-                        <option key={st} value={st}>{st}</option>
+                      {availableStatuses.map((st, stIdx) => (
+                        <option key={`maint-form-st-${st}-${stIdx}`} value={st}>{st}</option>
                       ))}
                     </select>
                   </div>

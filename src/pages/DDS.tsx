@@ -2026,9 +2026,9 @@ const DDS: React.FC = () => {
                  </div>
                  
                  <div className="flex bg-slate-100 p-1 rounded-xl gap-1 self-start sm:self-auto flex-wrap">
-                   {['all', 'A', 'B', 'C', 'D', 'E'].map((letter) => (
+                   {['all', 'A', 'B', 'C', 'D', 'E'].map((letter, lIdx) => (
                      <button
-                       key={letter}
+                       key={`dds-chart-group-${letter}-${lIdx}`}
                        onClick={() => setChartGroupFilter(letter)}
                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                          chartGroupFilter === letter

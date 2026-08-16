@@ -735,9 +735,9 @@ export const ShiftHandover: React.FC = () => {
           </div>
 
           <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-1 flex">
-            {(['Turno 1', 'Turno 2', 'Turno 3'] as Shift[]).map((sh) => (
+            {(['Turno 1', 'Turno 2', 'Turno 3'] as Shift[]).map((sh, shIdx) => (
               <button
-                key={sh}
+                key={`handover-shift-${sh}-${shIdx}`}
                 onClick={() => setSelectedShift(sh)}
                 className={cn(
                   "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer",
@@ -764,9 +764,9 @@ export const ShiftHandover: React.FC = () => {
         <div className="space-y-2">
           <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Setor Operacional</label>
           <div className="flex bg-slate-50 border border-slate-150 rounded-2xl p-1 gap-1">
-            {['Enfardamento', 'Parte Seca', 'Parte Úmida'].map((s) => (
+            {['Enfardamento', 'Parte Seca', 'Parte Úmida'].map((s, sIdx) => (
               <button
-                key={s}
+                key={`handover-sector-${s}-${sIdx}`}
                 onClick={() => handleSectorChange(s as any)}
                 className={cn(
                   "flex-1 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap",
@@ -783,9 +783,9 @@ export const ShiftHandover: React.FC = () => {
         <div className="space-y-2">
           <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Linha de Produção</label>
           <div className="flex bg-slate-50 border border-slate-150 rounded-2xl p-1 gap-1">
-            {availableLines.map((l) => (
+            {availableLines.map((l, lIdx) => (
               <button
-                key={l}
+                key={`handover-line-${l}-${lIdx}`}
                 onClick={() => setSelectedLine(l as any)}
                 className={cn(
                   "flex-1 py-1 px-1.5 rounded-lg text-[10px] font-black transition-all cursor-pointer whitespace-nowrap",

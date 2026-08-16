@@ -240,43 +240,40 @@ service cloud.firestore {
 
     // Forklifts
     match /forklifts/{forkliftId} {
-      allow get: if isApproved() && isValidId(forkliftId);
-      allow list: if isApproved();
-      allow create: if isManager() && isValidId(forkliftId);
-      allow delete: if isMaster() || (isManager() && isValidId(forkliftId));
-      allow update: if isApproved();
+      allow get, list: if isSignedIn();
+      allow create: if (isManager() || isAdmin() || isMaster()) && isValidId(forkliftId);
+      allow delete: if isMaster() || ((isManager() || isAdmin()) && isValidId(forkliftId));
+      allow update: if isSignedIn();
     }
 
     // Forklift Check Items
     match /forklift_check_items/{itemId} {
-      allow get: if isApproved() && isValidId(itemId);
-      allow list: if isApproved();
-      allow create, update: if isManager() && isValidId(itemId);
-      allow delete: if isMaster() || (isManager() && isValidId(itemId));
+      allow get, list: if isSignedIn();
+      allow create, update: if (isManager() || isAdmin() || isMaster()) && isValidId(itemId);
+      allow delete: if isMaster() || ((isManager() || isAdmin()) && isValidId(itemId));
     }
 
     // Forklift Checklists
     match /forklift_checklists/{checklistId} {
-      allow get: if isApproved() && isValidId(checklistId);
-      allow list: if isApproved();
-      allow create: if isApproved() && isNotDisabled() && isValidId(checklistId) &&
-                      request.resource.data.conductorId == request.auth.uid &&
-                      request.resource.data.timestamp == request.time &&
-                      request.resource.data.keys().hasAll(['forkliftId', 'forkliftNumber', 'conductorId', 'conductorName', 'status', 'itemResults', 'timestamp']) &&
-                      request.resource.data.status in ['normal', 'anormal'];
-      allow update: if isManager() && isValidId(checklistId);
-      allow delete: if isMaster() || (isManager() && isValidId(checklistId));
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isNotDisabled() && isValidId(checklistId) &&
+                      (
+                        isMaster() ||
+                        isAdmin() ||
+                        isManager() ||
+                        (
+                          request.resource.data.conductorId == request.auth.uid &&
+                          request.resource.data.status in ['normal', 'anormal']
+                        )
+                      );
+      allow update: if (isManager() || isAdmin() || isMaster()) && isValidId(checklistId);
+      allow delete: if isMaster() || ((isManager() || isAdmin()) && isValidId(checklistId)) || (resource.data.conductorId == request.auth.uid);
     }
 
     // Forklift Drafts
     match /forklift_drafts/{draftId} {
-      allow get: if isApproved() && isValidId(draftId) &&
-                    (resource == null || resource.data.conductorId == request.auth.uid);
-      allow list: if isApproved() && (resource == null || resource.data.conductorId == request.auth.uid);
-      allow create, update: if isApproved() && isNotDisabled() && isValidId(draftId) && 
-                          (resource == null || resource.data.conductorId == request.auth.uid);
-      allow delete: if isMaster() || (isApproved() && isNotDisabled() && isValidId(draftId) && 
-                          (resource != null && resource.data.conductorId == request.auth.uid));
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
     }
 
     // Settings

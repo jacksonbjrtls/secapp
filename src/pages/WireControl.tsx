@@ -554,7 +554,7 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
                     className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all"
                   >
                     {Array.from({ length: 12 }, (_, i) => (
-                      <option key={i + 1} value={i + 1}>
+                      <option key={`wire-ctrl-month-${i + 1}`} value={i + 1}>
                         {new Date(0, i).toLocaleString('pt-BR', { month: 'long' })}
                       </option>
                     ))}
@@ -567,8 +567,8 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
                     onChange={(e) => setProdYear(parseInt(e.target.value))}
                     className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all"
                   >
-                    {[2024, 2025, 2026].map(y => (
-                      <option key={y} value={y}>{y}</option>
+                    {[2024, 2025, 2026].map((y, yIdx) => (
+                      <option key={`wire-ctrl-year-${y}-${yIdx}`} value={y}>{y}</option>
                     ))}
                   </select>
                 </div>
@@ -727,8 +727,8 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
           </div>
 
           <div className="space-y-2 max-h-[380px] overflow-y-auto pr-2 custom-scrollbar">
-            {suppliers.map(s => (
-              <div key={s.id} className="flex items-center justify-between p-4 bg-slate-50/50 rounded-2xl group border border-transparent hover:border-emerald-100 hover:bg-white transition-all shadow-sm">
+            {suppliers.map((s, idx) => (
+              <div key={`wire-sup-${s.id}-${idx}`} className="flex items-center justify-between p-4 bg-slate-50/50 rounded-2xl group border border-transparent hover:border-emerald-100 hover:bg-white transition-all shadow-sm">
                 <span className={cn("font-black tracking-tight text-lg", !s.active && "text-slate-400 line-through decoration-2")}>{s.name}</span>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
                   <button

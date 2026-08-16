@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
+import { initializeFirestore, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
@@ -14,7 +14,9 @@ const firebaseConfig = {
 const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firestoreDatabaseId);
+export const db = initializeFirestore(app, {
+  ignoreUndefinedProperties: true,
+}, firestoreDatabaseId);
 
 if (typeof window !== 'undefined') {
   enableMultiTabIndexedDbPersistence(db).catch((err) => {

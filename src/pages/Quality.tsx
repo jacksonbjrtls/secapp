@@ -4371,11 +4371,11 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Superior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map((opt, optIdx) => {
                                                         const isSel = getSubVal('left') === opt;
                                                         return (
                                                           <button
-                                                            key={opt}
+                                                            key={`rad-s-${opt}-${optIdx}`}
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
@@ -4406,11 +4406,11 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Radiador Inferior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map((opt, optIdx) => {
                                                         const isSel = getSubVal('right') === opt;
                                                         return (
                                                           <button
-                                                            key={opt}
+                                                            key={`rad-i-${opt}-${optIdx}`}
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
@@ -4444,11 +4444,11 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Esquerdo Superior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map((opt, optIdx) => {
                                                         const isSel = getSubVal('left_top') === opt;
                                                         return (
                                                           <button
-                                                            key={opt}
+                                                            key={`rad-lt-${opt}-${optIdx}`}
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
@@ -4479,11 +4479,11 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Direito Superior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map((opt, optIdx) => {
                                                         const isSel = getSubVal('right_top') === opt;
                                                         return (
                                                           <button
-                                                            key={opt}
+                                                            key={`rad-rt-${opt}-${optIdx}`}
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
@@ -4514,11 +4514,11 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Esquerdo Inferior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map((opt, optIdx) => {
                                                         const isSel = getSubVal('left_bottom') === opt;
                                                         return (
                                                           <button
-                                                            key={opt}
+                                                            key={`rad-lb-${opt}-${optIdx}`}
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
@@ -4549,11 +4549,11 @@ const Quality: React.FC = () => {
                                                       <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wide">Direito Inferior</p>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5">
-                                                      {['Limpo', 'Sujo', 'Tamponado'].map(opt => {
+                                                      {['Limpo', 'Sujo', 'Tamponado'].map((opt, optIdx) => {
                                                         const isSel = getSubVal('right_bottom') === opt;
                                                         return (
                                                           <button
-                                                            key={opt}
+                                                            key={`rad-rb-${opt}-${optIdx}`}
                                                             type="button"
                                                             onClick={() => {
                                                               const prevVal = typeof responses[item.id] === 'object' && responses[item.id] !== null ? responses[item.id] : {};
@@ -6085,8 +6085,8 @@ const Quality: React.FC = () => {
                                           }}
                                           className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-emerald-500"
                                         >
-                                          {COMMON_PHOTO_ANGLE_OPTIONS.map((opt) => (
-                                            <option key={opt} value={opt}>{opt}</option>
+                                          {COMMON_PHOTO_ANGLE_OPTIONS.map((opt, optIdx) => (
+                                            <option key={`photo-angle-${opt}-${optIdx}`} value={opt}>{opt}</option>
                                           ))}
                                         </select>
 
@@ -7153,9 +7153,9 @@ const Quality: React.FC = () => {
                   <div className="space-y-2">
                     <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1 block">Bitola do Arame (Fardo)</label>
                     <div className="flex gap-2">
-                      {(['2.18', '2.30', 'sem arame'] as const).map(gauge => (
+                      {(['2.18', '2.30', 'sem arame'] as const).map((gauge, gIdx) => (
                         <button
-                          key={gauge}
+                          key={`wire-gauge-${gauge}-${gIdx}`}
                           type="button"
                           onClick={() => setNewProduct(prev => ({ ...prev, wireGauge: gauge }))}
                           className={cn(
@@ -7685,9 +7685,9 @@ const Quality: React.FC = () => {
 
                       {/* Level Selector Tabs */}
                       <div className="flex items-center gap-1.5 bg-slate-800 p-1.5 rounded-2xl border border-slate-700/50">
-                        {(['ALL', 'A', 'B', 'C', 'D'] as const).map(lvl => (
+                        {(['ALL', 'A', 'B', 'C', 'D'] as const).map((lvl, lvlIdx) => (
                           <button
-                            key={lvl}
+                            key={`dryer-vis-lvl-${lvl}-${lvlIdx}`}
                             type="button"
                             onClick={() => setSelectedVisualLevel(lvl)}
                             className={cn(
@@ -7738,7 +7738,7 @@ const Quality: React.FC = () => {
                                   if (!is2Rads) {
                                     // 4 Radiators (Esquerdo Sup, Direito Sup, Esquerdo Inf, Direito Inf)
                                     return (
-                                      <div key={lvl} className="grid grid-cols-2 gap-0.5 p-0.5 bg-slate-950/50 rounded-lg border border-slate-700/40" title={`Porta ${displayLabel} - Nível ${lvl.toUpperCase()}`}>
+                                      <div key={`door-rad4-${doorNum}-${lvl}`} className="grid grid-cols-2 gap-0.5 p-0.5 bg-slate-950/50 rounded-lg border border-slate-700/40" title={`Porta ${displayLabel} - Nível ${lvl.toUpperCase()}`}>
                                         <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.left_top))} title="Esquerdo Superior" />
                                         <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.right_top))} title="Direito Superior" />
                                         <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.left_bottom))} title="Esquerdo Inferior" />
@@ -7748,7 +7748,7 @@ const Quality: React.FC = () => {
                                   } else {
                                     // 2 Radiators (Superior, Inferior)
                                     return (
-                                      <div key={lvl} className="flex flex-col gap-0.5 p-0.5 bg-slate-950/50 rounded-lg border border-slate-700/40" title={`Porta ${displayLabel} - Nível ${lvl.toUpperCase()}`}>
+                                      <div key={`door-rad2-${doorNum}-${lvl}`} className="flex flex-col gap-0.5 p-0.5 bg-slate-950/50 rounded-lg border border-slate-700/40" title={`Porta ${displayLabel} - Nível ${lvl.toUpperCase()}`}>
                                         <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.left ?? valObj.left_top))} title="Superior" />
                                         <span className={cn("h-2.5 rounded-sm transition-all", getRadiatorColorClass(valObj.right ?? valObj.right_bottom ?? valObj.left_bottom))} title="Inferior" />
                                       </div>
@@ -7969,10 +7969,10 @@ const Quality: React.FC = () => {
                         "grid gap-3",
                         photoEntries.length === 1 ? "grid-cols-1 max-w-xs" : photoEntries.length === 2 ? "grid-cols-1 sm:grid-cols-2" : photoEntries.length === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-4"
                       )}>
-                        {photoEntries.map(([photoKey, photoUrl]) => {
+                        {photoEntries.map(([photoKey, photoUrl], pIdx) => {
                           const photoLabel = getLabelForPhotoKey(photoKey);
                           return (
-                            <div key={photoKey} className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/80 flex flex-col justify-between space-y-2">
+                            <div key={`photo-entry-${photoKey}-${pIdx}`} className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/80 flex flex-col justify-between space-y-2">
                               <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300">{photoLabel}</span>
                               {photoUrl ? (
                                 <div
@@ -8054,8 +8054,8 @@ const Quality: React.FC = () => {
                           "grid gap-2",
                           evalItems.length === 1 ? "grid-cols-1 max-w-xs" : evalItems.length === 2 ? "grid-cols-1 sm:grid-cols-2" : evalItems.length === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-4"
                         )}>
-                          {evalItems.map(item => (
-                            <div key={item.key} className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-700/60 flex flex-col justify-between">
+                          {evalItems.map((item, idx) => (
+                            <div key={`eval-item-${item.key}-${idx}`} className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-700/60 flex flex-col justify-between">
                               <span className="text-[9px] font-bold text-slate-400 block uppercase truncate" title={item.label}>
                                 {item.label}
                               </span>

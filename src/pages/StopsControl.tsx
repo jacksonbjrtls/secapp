@@ -1880,8 +1880,8 @@ export default function StopsControl() {
                         onChange={(e) => setFormSpeedMS1(Number(e.target.value))}
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                       >
-                        {SPEED_OPTIONS.map((speed) => (
-                          <option key={speed} value={speed}>
+                        {SPEED_OPTIONS.map((speed, spIdx) => (
+                          <option key={`speed-ms1-${speed}-${spIdx}`} value={speed}>
                             {speed} m/min
                           </option>
                         ))}
@@ -1898,8 +1898,8 @@ export default function StopsControl() {
                         onChange={(e) => setFormSpeedMS2(Number(e.target.value))}
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                       >
-                        {SPEED_OPTIONS.map((speed) => (
-                          <option key={speed} value={speed}>
+                        {SPEED_OPTIONS.map((speed, spIdx) => (
+                          <option key={`speed-ms2-${speed}-${spIdx}`} value={speed}>
                             {speed} m/min
                           </option>
                         ))}
@@ -1942,7 +1942,7 @@ export default function StopsControl() {
                   </p>
 
                   <div className="space-y-4">
-                    {workFrontOptions.map(front => {
+                    {workFrontOptions.map((front, fIdx) => {
                       const item = formWorkFronts[front] || {
                         active: false,
                         description: '',
@@ -1960,7 +1960,7 @@ export default function StopsControl() {
 
                       return (
                         <div 
-                          key={front} 
+                          key={`workfront-card-${front}-${fIdx}`} 
                           className={cn(
                             "border rounded-2xl transition-all overflow-hidden shadow-xs",
                             item.active 

@@ -767,37 +767,120 @@ const Forklifts: React.FC = () => {
     }
   };
 
+  const handleFillAllConforming = () => {
+    const activeItems = checkItems.filter(i => i.active);
+    const newResults = { ...checklistResults };
+    activeItems.forEach(item => {
+      if (item.type === 'boolean') {
+        newResults[item.id] = { ...newResults[item.id], value: true, status: 'normal' };
+      } else if (item.type === 'normal_anormal') {
+        newResults[item.id] = { ...newResults[item.id], value: 'normal', status: 'normal' };
+      } else if (item.type === 'open_closed') {
+        newResults[item.id] = { ...newResults[item.id], value: 'closed', status: 'normal' };
+      } else if (item.type === 'numeric') {
+        if (!newResults[item.id]?.value) {
+          newResults[item.id] = { ...newResults[item.id], value: '0', status: 'normal' };
+        } else {
+          newResults[item.id] = { ...newResults[item.id], status: 'normal' };
+        }
+      }
+    });
+    setChecklistResults(newResults);
+  };
+
   const handleSubmitChecklist = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (submitting || !showCheckModal || !auth.currentUser) return;
+    if (submitting || !showCheckModal) return;
+
+    if (!auth.currentUser) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Sessão Expirada',
+        message: 'Você precisa estar autenticado para salvar o check-list. Por favor, recarregue a página ou faça login novamente.',
+        type: 'error'
+      });
+      return;
+    }
+
+    const activeItems = checkItems.filter(i => i.active);
+    const unansweredItems = activeItems.filter(item => {
+      const res = checklistResults[item.id];
+      if (!res) return true;
+      if (item.type === 'boolean') return typeof res.value !== 'boolean';
+      if (item.type === 'normal_anormal') return !res.value;
+      if (item.type === 'open_closed') return !res.value;
+      if (item.type === 'numeric') return res.value === undefined || res.value === null || res.value === '';
+      return false;
+    });
+
+    if (unansweredItems.length > 0) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Itens Pendentes',
+        message: `Existem ${unansweredItems.length} item(ns) sem resposta no checklist:\n\n• ${unansweredItems.map(i => i.name).slice(0, 4).join('\n• ')}${unansweredItems.length > 4 ? `\n• ... e mais ${unansweredItems.length - 4} item(ns)` : ''}\n\nPor favor, preencha todos os itens antes de finalizar.`,
+        type: 'warning'
+      });
+
+      // Focus and scroll to first missing item
+      const firstId = unansweredItems[0].id;
+      setTimeout(() => {
+        const el = document.getElementById(`check-item-${firstId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+      return;
+    }
     
     const currentShift = getCurrentShift();
     const groupOnScale = getGroupForShift(new Date(), currentShift);
-    const userGroup = profile?.group;
-    
-    // Allow admins/managers to override, but strictly enforce for conductors
-    if (!isAdmin && !isManager && userGroup !== groupOnScale) {
-      return;
-    }
+    const conductorGroup = (profile?.group as Group) || groupOnScale;
 
     setSubmitting(true);
     const savedForkliftNumber = showCheckModal.number;
     try {
-      const hasAnormal = Object.values(checklistResults).some((r: any) => r.status === 'anormal');
+      const sanitizedItemResults: Record<string, any> = {};
+      activeItems.forEach(item => {
+        const res = checklistResults[item.id];
+        if (res) {
+          const itemPayload: Record<string, any> = {
+            value: res.value !== undefined ? res.value : 'normal',
+            status: res.status || 'normal'
+          };
+          if (res.observation && typeof res.observation === 'string' && res.observation.trim()) {
+            itemPayload.observation = res.observation.trim();
+          }
+          if (res.mediaUrl && typeof res.mediaUrl === 'string') {
+            itemPayload.mediaUrl = res.mediaUrl;
+          }
+          if (res.fileName && typeof res.fileName === 'string') {
+            itemPayload.fileName = res.fileName;
+          }
+          if (typeof res.fileSizeKb === 'number') {
+            itemPayload.fileSizeKb = res.fileSizeKb;
+          }
+          sanitizedItemResults[item.id] = itemPayload;
+        }
+      });
+
+      const hasAnormal = Object.values(sanitizedItemResults).some((r: any) => r.status === 'anormal');
       const overallStatus = hasAnormal ? 'anormal' : 'normal';
 
-      const checklistRef = await addDoc(collection(db, 'forklift_checklists'), {
+      const checklistPayload = {
         forkliftId: showCheckModal.id,
         forkliftNumber: showCheckModal.number,
         conductorId: auth.currentUser.uid,
-        conductorName: profile?.displayName || auth.currentUser.email,
+        conductorName: profile?.displayName || auth.currentUser.email || 'Condutor',
         shift: currentShift,
-        group: groupOnScale,
+        group: conductorGroup,
+        scaleGroup: groupOnScale,
         status: overallStatus,
-        itemResults: checklistResults,
-        notes: checklistNotes,
+        itemResults: sanitizedItemResults,
+        notes: checklistNotes ? checklistNotes.trim() : '',
         timestamp: serverTimestamp()
-      });
+      };
+
+      const checklistRef = await addDoc(collection(db, 'forklift_checklists'), checklistPayload);
 
       if (overallStatus === 'anormal') {
         if (settings.autoLockOnNonConformity) {
@@ -813,7 +896,7 @@ const Forklifts: React.FC = () => {
         
         if (settings.autoNotifyNonConformity) {
           // Identify specific failures
-          const failures = Object.entries(checklistResults)
+          const failures = Object.entries(sanitizedItemResults)
             .filter(([_, result]: [string, any]) => result.status === 'anormal')
             .map(([itemId, result]: [string, any]) => {
               const item = checkItems.find(i => i.id === itemId);
@@ -830,16 +913,20 @@ const Forklifts: React.FC = () => {
 
           const notificationMessage = `Não conformidade detectada no equipamento ${showCheckModal.number} por ${profile?.displayName || auth.currentUser.email}. Itens: ${failures.map(f => f.name).join(', ')}`;
 
-          await addDoc(collection(db, 'notifications'), {
-            type: 'non_conformity',
-            message: notificationMessage,
-            forkliftNumber: showCheckModal.number,
-            checklistId: checklistRef.id,
-            read: false,
-            createdAt: serverTimestamp(),
-            recipients: responsibleList,
-            failures
-          });
+          try {
+            await addDoc(collection(db, 'notifications'), {
+              type: 'non_conformity',
+              message: notificationMessage,
+              forkliftNumber: showCheckModal.number,
+              checklistId: checklistRef.id,
+              read: false,
+              createdAt: serverTimestamp(),
+              recipients: responsibleList,
+              failures
+            });
+          } catch (notifErr) {
+            console.warn("Notification doc creation note:", notifErr);
+          }
 
           // Send automatic server-side notification if configured, fallback to client-side mailto if it fails or returns success: false
           let automaticSent = false;
@@ -879,7 +966,7 @@ const Forklifts: React.FC = () => {
           
           const notificationSummary = automaticSent 
             ? `Notificação por e-mail enviada automaticamente pelo servidor para os responsáveis.`
-            : `O alerta de não conformidade foi registrado no sistema (Notificações). Para envio por e-mail sem abrir gerenciador local, configure as credenciais GMAIL_USER e GMAIL_APP_PASSWORD no servidor.`;
+            : `O alerta de não conformidade foi registrado no sistema (Notificações).`;
 
           setModalConfig({
             isOpen: true,
@@ -899,7 +986,7 @@ const Forklifts: React.FC = () => {
         setModalConfig({
           isOpen: true,
           title: 'Check-list Enviado',
-          message: `O check-list do equipamento ${savedForkliftNumber} foi enviado com sucesso. Equipamento LIBERADO!`,
+          message: `O check-list do equipamento ${savedForkliftNumber} foi salvo com sucesso. Equipamento LIBERADO!`,
           type: 'success'
         });
       }
@@ -910,11 +997,22 @@ const Forklifts: React.FC = () => {
       setActiveTab('history');
 
       if (draftDocId) {
-        await deleteDoc(doc(db, 'forklift_drafts', draftDocId));
-        setDraftDocId(null);
+        try {
+          await deleteDoc(doc(db, 'forklift_drafts', draftDocId));
+          setDraftDocId(null);
+        } catch (draftErr) {
+          console.warn("Draft cleanup note:", draftErr);
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
+      console.error("Erro ao salvar checklist:", err);
       handleFirestoreError(err, OperationType.CREATE, 'forklift_checklists');
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro ao Salvar Check-list',
+        message: err.message || 'Ocorreu um erro ao gravar as informações no banco de dados. Verifique a conexão e tente novamente.',
+        type: 'error'
+      });
     } finally {
       setSubmitting(false);
     }
@@ -1188,10 +1286,10 @@ const Forklifts: React.FC = () => {
                               >
                                 <div className="py-6 px-10 bg-slate-50/50 rounded-3xl mb-4 border border-slate-100">
                                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {Object.entries(log.itemResults).map(([itemId, result]: [string, any]) => {
+                                    {Object.entries(log.itemResults).map(([itemId, result]: [string, any], itemIdx) => {
                                       const item = checkItems.find(i => i.id === itemId);
                                       return (
-                                        <div key={itemId} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                                        <div key={`item-res-${log.id || 'log'}-${itemId}-${itemIdx}`} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
                                           <div className="flex items-start justify-between mb-2">
                                             <p className="text-xs font-black text-slate-900 uppercase tracking-tight">{item?.name || 'Item Removido'}</p>
                                             <div className={cn(
@@ -1407,7 +1505,7 @@ const Forklifts: React.FC = () => {
                         
                         <div className="space-y-3 mb-4">
                            {settings.responsiblePersons?.map((person, index) => (
-                             <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                             <div key={`resp-person-${person.email || person.name || 'p'}-${index}`} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
                                <div>
                                  <p className="text-xs font-bold text-slate-900">{person.name}</p>
                                  <p className="text-[10px] text-slate-500">{person.email}</p>
@@ -1798,38 +1896,42 @@ const Forklifts: React.FC = () => {
                  </div>
               </div>
 
-              {((!isAdmin && !isManager) && profile?.group !== getGroupForShift(new Date(), getCurrentShift())) ? (
-                <div className="flex-1 overflow-y-auto p-6 md:p-12 flex flex-col items-center justify-center text-center space-y-6 bg-slate-50">
-                  <div className="w-16 h-16 md:w-20 md:h-20 bg-rose-50 rounded-[2rem] flex items-center justify-center text-rose-500 shadow-inner shrink-0">
-                    <AlertTriangle className="w-8 h-8 md:w-10 md:h-10" />
-                  </div>
-                  <div className="space-y-2">
-                    <h4 className="text-lg md:text-xl font-black text-slate-900 tracking-tight uppercase">Letra de Trabalho Incorreta</h4>
-                    <p className="text-xs md:text-sm text-slate-500 font-medium max-w-sm mx-auto">
-                      Sua letra configurada no perfil (<span className="font-black text-slate-900">{profile?.group || 'Nenhuma'}</span>) não corresponde à letra da escala atual (<span className="font-black text-emerald-600">{getGroupForShift(new Date(), getCurrentShift())}</span>).
-                    </p>
-                  </div>
-                  <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 max-w-xs shrink-0">
-                    <p className="text-[10px] text-amber-700 font-bold uppercase tracking-widest flex items-center gap-2 justify-center">
-                      <Info className="w-3 h-3" /> Atenção Condutor
-                    </p>
-                    <p className="text-[11px] text-amber-600 mt-1 font-medium italic">
-                      Se você realizou uma troca de trabalho, você precisa atualizar sua letra no seu Perfil antes de prosseguir.
-                    </p>
-                  </div>
-                  <Link 
-                    to="/profile"
-                    className="flex items-center gap-2 px-8 py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 shrink-0 mb-4"
-                  >
-                    <Settings className="w-4 h-4" />
-                    IR PARA MEU PERFIL
-                  </Link>
-                </div>
-              ) : (
-                <form onSubmit={handleSubmitChecklist} className="flex-1 overflow-y-auto p-8 space-y-8 bg-slate-50/50">
-                     <div className="flex items-center justify-between mb-6">
-                       <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest">Critérios de Verificação</h4>
-                       <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase">Obrigatório</span>
+              <form onSubmit={handleSubmitChecklist} className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 bg-slate-50/50">
+                     {profile?.group && profile.group !== getGroupForShift(new Date(), getCurrentShift()) && (
+                       <div className="p-4 bg-blue-50 border border-blue-200/70 rounded-2xl flex items-center justify-between gap-3 text-left">
+                         <div className="flex items-center gap-2.5">
+                           <Info className="w-5 h-5 text-blue-600 shrink-0" />
+                           <div>
+                             <p className="text-xs font-black text-blue-900 uppercase tracking-wide">Cobertura / Troca de Turno</p>
+                             <p className="text-[11px] text-blue-700 font-medium">
+                               Seu cadastro é <strong>Letra {profile.group}</strong> e a escala do turno é <strong>Letra {getGroupForShift(new Date(), getCurrentShift())}</strong>. O check-list será gravado com sucesso.
+                             </p>
+                           </div>
+                         </div>
+                       </div>
+                     )}
+
+                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200/80">
+                       <div>
+                         <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
+                           Critérios de Verificação
+                           <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2.5 py-0.5 rounded-full uppercase">
+                             {Object.keys(checklistResults).filter(id => checkItems.some(i => i.id === id && i.active && checklistResults[id]?.value !== undefined && (checkItems.find(it => it.id === id)?.type !== 'numeric' || (checklistResults[id]?.value !== '' && checklistResults[id]?.value !== null)))).length} de {checkItems.filter(i => i.active).length} preenchidos
+                           </span>
+                         </h4>
+                       </div>
+                       
+                       {checkItems.filter(i => i.active).length > 0 && (
+                         <button
+                           type="button"
+                           onClick={handleFillAllConforming}
+                           className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs active:scale-95"
+                           title="Preenche todos os itens como Normal / Conforme de uma só vez"
+                         >
+                           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                           Preencher Todos Conformes
+                         </button>
+                       )}
                     </div>
 
                     {checkItems.filter(i => i.active).length === 0 ? (
@@ -2188,30 +2290,17 @@ const Forklifts: React.FC = () => {
                       <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest">Observações Adicionais</h4>
                     </div>
                     <textarea 
-                     rows={4}
+                     rows={3}
                      className="w-full px-6 py-4 bg-white border border-slate-200 rounded-[2rem] outline-none focus:ring-4 focus:ring-emerald-50 transition-all font-medium placeholder-slate-300"
-                     placeholder="Relate aqui qualquer irregularidade ou detalhe observado..."
+                     placeholder="Relate aqui qualquer observação adicional sobre o equipamento ou inspeção..."
                      value={checklistNotes}
                      onChange={e => setChecklistNotes(e.target.value)}
                     />
                   </div>
 
-                  <div className="pt-8 border-t border-slate-200 flex flex-col items-center gap-6">
-                     {!isAdmin && !isManager && profile?.group !== getGroupForShift(new Date(), getCurrentShift()) && (
-                       <div className="w-full p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-start gap-3">
-                         <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                         <div className="text-left">
-                           <p className="text-xs font-black text-rose-400 uppercase tracking-widest">Grupo em Escala Diferente</p>
-                           <p className="text-[10px] text-rose-200/70 font-medium leading-relaxed mt-1">
-                             No momento o sistema aguarda o checklist do grupo <strong>Letra {getGroupForShift(new Date(), getCurrentShift())}</strong>. 
-                             Seu registro é <strong>Letra {profile?.group || 'NÃO DEFINIDO'}</strong>.
-                           </p>
-                         </div>
-                       </div>
-                     )}
-
-                     <div className="w-full flex flex-col md:flex-row items-center gap-6">
-                       <div className="flex-1">
+                  <div className="pt-6 border-t border-slate-200 flex flex-col items-center gap-6">
+                     <div className="w-full flex flex-col md:flex-row items-center justify-between gap-6">
+                       <div>
                           <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mb-1">Responsável pela Inspeção</p>
                           <p className="text-slate-900 font-black flex items-center gap-2 uppercase tracking-tight">
                             <UserIcon className="w-5 h-5 text-emerald-600" />
@@ -2220,13 +2309,8 @@ const Forklifts: React.FC = () => {
                        </div>
                         <button 
                           type="submit"
-                          disabled={submitting || checkItems.filter(i => i.active).some(item => !checklistResults[item.id]) || (!isAdmin && !isManager && profile?.group !== getGroupForShift(new Date(), getCurrentShift()))}
-                          className={cn(
-                            "w-full md:w-auto px-12 py-5 font-black uppercase tracking-[0.2em] rounded-[1.5rem] shadow-2xl transition-all flex items-center justify-center gap-3 group",
-                            (!isAdmin && !isManager && profile?.group !== getGroupForShift(new Date(), getCurrentShift()))
-                             ? "bg-slate-300 text-slate-500 shadow-none cursor-not-allowed"
-                             : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200/50"
-                          )}
+                          disabled={submitting}
+                          className="w-full md:w-auto px-12 py-5 font-black uppercase tracking-[0.2em] rounded-[1.5rem] shadow-2xl transition-all flex items-center justify-center gap-3 group bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200/50 cursor-pointer active:scale-98"
                         >
                          {submitting ? <Loader2 className="w-6 h-6 animate-spin" /> : (
                            <>
@@ -2238,7 +2322,6 @@ const Forklifts: React.FC = () => {
                      </div>
                   </div>
               </form>
-              )}
             </motion.div>
           </div>
         )}

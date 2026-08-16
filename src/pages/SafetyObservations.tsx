@@ -1091,14 +1091,14 @@ const SafetyObservations: React.FC = () => {
                 <p className="text-slate-400 font-bold text-xs">Nenhum registro de segurança encontrado com esses filtros.</p>
               </div>
             ) : (
-              filteredObservations.map(obs => {
+              filteredObservations.map((obs, idx) => {
                 const dateObj = safeToDate(obs.createdAt);
                 const isCustomStyle = !!obs.observerMatricula;
                 
                 return (
                   <motion.div 
                     layout
-                    key={obs.id} 
+                    key={`${obs.id}-${idx}`} 
                     className="bg-white rounded-[2rem] border border-slate-200 p-6 flex flex-col justify-between hover:shadow-md transition-all relative"
                   >
                     <div className="space-y-4">
@@ -1387,8 +1387,8 @@ const SafetyObservations: React.FC = () => {
                           className="w-full text-xs font-semibold px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-sans"
                         />
                         <datalist id="observer-operators-datalist">
-                          {combinedOperators.map(op => (
-                            <option key={op} value={op} />
+                          {combinedOperators.map((op, idx) => (
+                            <option key={`observer-op-${op}-${idx}`} value={op} />
                           ))}
                         </datalist>
                       </div>
@@ -1561,11 +1561,11 @@ const SafetyObservations: React.FC = () => {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-white p-4 rounded-2xl border border-slate-100">
-                      {safetyCategories.map((cat) => {
+                      {safetyCategories.map((cat, idx) => {
                         const isChecked = !!checklistForm.whatToObserve[cat.id];
                         return (
                           <button
-                            key={cat.id}
+                            key={`cat-obs-${cat.id}-${idx}`}
                             type="button"
                             onClick={() => {
                               setChecklistForm(prev => ({
@@ -1764,7 +1764,7 @@ const SafetyObservations: React.FC = () => {
               {configSubTab === 'categories' && (
                 <>
                   {safetyCategories.map((cat, idx) => (
-                    <div key={cat.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-all font-semibold">
+                    <div key={`cfg-cat-${cat.id}-${idx}`} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-all font-semibold">
                       <div className="flex items-center gap-3">
                         <span className="bg-slate-100 text-slate-500 font-mono px-2 py-0.5 rounded text-[10px]">{idx + 1}</span>
                         <span className="text-slate-800 pr-4 font-bold">{cat.name}</span>
@@ -1799,7 +1799,7 @@ const SafetyObservations: React.FC = () => {
               {configSubTab === 'areas' && (
                 <>
                   {plantAreas.map((area, idx) => (
-                    <div key={area.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-all font-semibold">
+                    <div key={`cfg-area-${area.id}-${idx}`} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-all font-semibold">
                       <div className="flex items-center gap-3">
                         <span className="bg-slate-100 text-slate-500 font-mono px-2 py-0.5 rounded text-[10px]">{idx + 1}</span>
                         <span className="text-slate-800 pr-4 font-bold">{area.name}</span>
@@ -1834,7 +1834,7 @@ const SafetyObservations: React.FC = () => {
               {configSubTab === 'operators' && (
                 <>
                   {operatorsState.map((op, idx) => (
-                    <div key={op.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-all font-semibold">
+                    <div key={`cfg-op-${op.id}-${idx}`} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-all font-semibold">
                       <div className="flex items-center gap-3">
                         <span className="bg-slate-100 text-slate-500 font-mono px-2 py-0.5 rounded text-[10px]">{idx + 1}</span>
                         <span className="text-slate-800 pr-4 font-bold">{op.name}</span>

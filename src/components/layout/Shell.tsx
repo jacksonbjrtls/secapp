@@ -875,9 +875,9 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
                 {/* Celebrants List */}
                 <div className="py-2 space-y-3 max-h-60 overflow-y-auto">
-                  {birthdayUsers.map((u) => (
+                  {birthdayUsers.map((u, idx) => (
                     <div 
-                      key={u.id} 
+                      key={`bday-${u.id || u.uid || 'user'}-${idx}`} 
                       className="p-4 bg-white/85 border border-amber-200/40 rounded-2xl shadow-sm hover:scale-[1.02] transition-transform duration-300"
                     >
                       <h4 className="text-lg font-black text-slate-800">{u.displayName}</h4>

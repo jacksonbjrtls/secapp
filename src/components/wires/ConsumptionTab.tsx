@@ -739,9 +739,9 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                          Configuração de Turno
                       </h4>
                       <div className="grid grid-cols-3 gap-4">
-                        {['1', '2', '3'].map(shift => (
+                        {['1', '2', '3'].map((shift, sIdx) => (
                           <button
-                            key={shift}
+                            key={`cons-shift-${shift}-${sIdx}`}
                             onClick={() => setSelectedShift(shift as any)}
                             className={cn(
                               "py-6 rounded-2xl font-black font-mono text-3xl border-2 transition-all active:scale-95",
@@ -862,8 +862,8 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
         </div>
 
         <div className="space-y-12">
-          {dailySummary.map(([dateKey, group]) => (
-            <div key={dateKey} className="space-y-6">
+          {dailySummary.map(([dateKey, group], dIdx) => (
+            <div key={`cons-day-${dateKey}-${dIdx}`} className="space-y-6">
               {/* Day Header - Floating Style */}
               <div className="flex flex-col md:flex-row md:items-end justify-between p-8 bg-white rounded-3xl border border-slate-100 shadow-sm relative overflow-hidden group">
                  <div className="absolute left-0 top-0 w-2 h-full bg-emerald-500" />
@@ -1036,9 +1036,9 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                   <label className="block text-xs font-black text-slate-400 uppercase mb-4 ml-1 tracking-widest">Turno & Letra</label>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="grid grid-cols-3 gap-2">
-                      {['1', '2', '3'].map(shift => (
+                      {['1', '2', '3'].map((shift, sIdx) => (
                         <button
-                          key={shift}
+                          key={`modal-shift-${shift}-${sIdx}`}
                           onClick={() => setNewSelectedShift(shift as any)}
                           className={cn(
                             "py-3 rounded-xl font-black text-lg border-2 transition-all active:scale-95",

@@ -473,8 +473,8 @@ const MonthTable: React.FC<MonthTableProps> = ({ month, year, isMini = false }) 
           className="p-8 flex flex-wrap gap-6 items-center print:hidden"
         >
           <div style={{ color: colors.slate400 }} className="text-[10px] font-black uppercase tracking-[0.2em] mr-2">Legenda:</div>
-          {(['A', 'B', 'C', 'D', 'E'] as Group[]).map(group => (
-            <div key={group} className="flex items-center gap-2">
+          {(['A', 'B', 'C', 'D', 'E'] as Group[]).map((group, gIdx) => (
+            <div key={`legend-group-main-${group}-${gIdx}`} className="flex items-center gap-2">
               <div 
                 style={{ backgroundColor: groupColors[group].bg, color: groupColors[group].text }}
                 className="w-6 h-6 rounded-lg flex items-center justify-center font-black text-[10px]"
@@ -673,7 +673,7 @@ const Schedule: React.FC = () => {
                   className="bg-transparent border-none text-sm font-bold text-slate-900 leading-none focus:ring-0 cursor-pointer p-0 text-center w-full appearance-none outline-none"
                 >
                   {months.map((m, i) => (
-                    <option key={m} value={i}>{m}</option>
+                    <option key={`sched-month-${m}-${i}`} value={i}>{m}</option>
                   ))}
                 </select>
               )}
@@ -685,8 +685,8 @@ const Schedule: React.FC = () => {
                   viewMode === 'monthly' ? "text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1" : "text-sm font-bold text-slate-900 leading-none"
                 )}
               >
-                {Array.from({ length: 11 }, (_, i) => 2024 + i).map(y => (
-                  <option key={y} value={y}>{y}</option>
+                {Array.from({ length: 11 }, (_, i) => 2024 + i).map((y, yIdx) => (
+                  <option key={`sched-year-${y}-${yIdx}`} value={y}>{y}</option>
                 ))}
               </select>
             </div>
@@ -724,8 +724,8 @@ const Schedule: React.FC = () => {
               >
                 <div className="flex flex-wrap gap-8 items-center justify-center">
                   <div style={{ color: colors.slate400 }} className="text-[10px] font-black uppercase tracking-[0.2em]">Legenda da Escala:</div>
-                  {(['A', 'B', 'C', 'D', 'E'] as Group[]).map(group => (
-                    <div key={group} className="flex items-center gap-2">
+                  {(['A', 'B', 'C', 'D', 'E'] as Group[]).map((group, gIdx) => (
+                    <div key={`legend-group-annual-${group}-${gIdx}`} className="flex items-center gap-2">
                       <div 
                         style={{ backgroundColor: groupColors[group].bg, color: groupColors[group].text }}
                         className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs"
@@ -778,8 +778,8 @@ const Schedule: React.FC = () => {
 
               <div className="mt-6 p-5 bg-slate-50 border border-slate-200/60 rounded-[1.5rem] flex flex-wrap gap-6 items-center justify-center">
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-2">Legenda da Escala:</div>
-                {(['A', 'B', 'C', 'D', 'E'] as Group[]).map(group => (
-                  <div key={group} className="flex items-center gap-2">
+                {(['A', 'B', 'C', 'D', 'E'] as Group[]).map((group, gIdx) => (
+                  <div key={`legend-group-pdf-${group}-${gIdx}`} className="flex items-center gap-2">
                     <div
                       style={{ backgroundColor: groupColors[group].bg, color: groupColors[group].text }}
                       className="w-6 h-6 rounded-lg flex items-center justify-center font-black text-xs"

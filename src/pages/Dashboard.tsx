@@ -878,9 +878,9 @@ const Dashboard: React.FC = () => {
                 >
                   {tabsList
                     .filter(tab => activeModules[tab.moduleKey] !== false)
-                    .map((tab) => (
+                    .map((tab, idx) => (
                       <button
-                        key={tab.id}
+                        key={`dash-tab-${tab.id}-${idx}`}
                         onClick={() => { setActiveTab(tab.id as any); setShowTabMenu(false); }}
                         className={cn(
                           "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
@@ -922,7 +922,7 @@ const Dashboard: React.FC = () => {
                     onChange={(e) => setFilterMonth(parseInt(e.target.value))}
                     className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
                   >
-                    {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                    {months.map((m, i) => <option key={`m-dds-${m}-${i}`} value={i}>{m}</option>)}
                   </select>
                   <input 
                     type="number" 
@@ -1188,7 +1188,7 @@ const Dashboard: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {[1, 2, 3].map(shiftNum => {
+                  {[1, 2, 3].map((shiftNum, idx) => {
                     const shift = `Turno ${shiftNum}` as Shift;
                     const group = getGroupForShift(new Date(), shift);
                     const done = ddsStatus[`${shift}-${group}`];
@@ -1196,7 +1196,7 @@ const Dashboard: React.FC = () => {
                     
                     return (
                       <motion.div 
-                        key={shiftNum}
+                        key={`shift-card-${shiftNum}-${idx}`}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         className={cn(
@@ -1322,7 +1322,7 @@ const Dashboard: React.FC = () => {
                   onChange={(e) => setFilterMonth(parseInt(e.target.value))}
                   className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
                 >
-                  {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                  {months.map((m, i) => <option key={`m-fork-${m}-${i}`} value={i}>{m}</option>)}
                 </select>
                 <input 
                   type="number" 
@@ -1566,8 +1566,8 @@ const Dashboard: React.FC = () => {
                         return d && d.getMonth() === filterMonth && d.getFullYear() === filterYear && h.status === 'anormal';
                       })
                       .slice(0, 10)
-                      .map((h) => (
-                        <div key={h.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col gap-2">
+                      .map((h, idx) => (
+                        <div key={`h-fork-${h.id}-${idx}`} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col gap-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-black text-slate-900">EMP {h.forkliftNumber}</span>
                             <span className="text-[10px] font-bold text-slate-400">
@@ -1577,10 +1577,10 @@ const Dashboard: React.FC = () => {
                           <div className="flex flex-wrap gap-1">
                             {Object.entries(h.itemResults || {})
                               .filter(([_, r]: [string, any]) => r.status === 'anormal')
-                              .map(([itemId, _]) => {
+                              .map(([itemId, _], itemIdx) => {
                                 const item = checkItems.find(it => it.id === itemId);
                                 return (
-                                  <span key={itemId} className="px-2 py-0.5 bg-rose-50 text-rose-600 rounded-lg text-[9px] font-black uppercase">
+                                  <span key={`fail-${itemId}-${itemIdx}`} className="px-2 py-0.5 bg-rose-50 text-rose-600 rounded-lg text-[9px] font-black uppercase">
                                     {item?.name || 'Item NC'}
                                   </span>
                                 );
@@ -1624,7 +1624,7 @@ const Dashboard: React.FC = () => {
                   onChange={(e) => setFilterMonth(parseInt(e.target.value))}
                   className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
                 >
-                  {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                  {months.map((m, i) => <option key={`m-qual-${m}-${i}`} value={i}>{m}</option>)}
                 </select>
                 <input 
                   type="number" 
@@ -1767,7 +1767,7 @@ const Dashboard: React.FC = () => {
                   onChange={(e) => setFilterMonth(parseInt(e.target.value))}
                   className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
                 >
-                  {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                  {months.map((m, i) => <option key={`m-wire-${m}-${i}`} value={i}>{m}</option>)}
                 </select>
                 <input 
                   type="number" 
@@ -1897,7 +1897,7 @@ const Dashboard: React.FC = () => {
                   onChange={(e) => setFilterMonth(parseInt(e.target.value))}
                   className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
                 >
-                  {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                  {months.map((m, i) => <option key={`m-route-${m}-${i}`} value={i}>{m}</option>)}
                 </select>
                 <input 
                   type="number" 
@@ -2049,13 +2049,13 @@ const Dashboard: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50 text-sm">
-                      {routeMetrics.latestSubmissions.map((sub) => {
+                      {routeMetrics.latestSubmissions.map((sub, idx) => {
                         const date = safeToDate(sub.createdAt);
                         const totalResponses = sub.responses?.length || 0;
                         const notOkCount = sub.responses?.filter((r: any) => r.status === 'not_ok').length || 0;
                         const okCount = totalResponses - notOkCount;
                         return (
-                          <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors">
+                          <tr key={`sub-route-${sub.id}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-4 font-semibold text-slate-700">
                               {date ? date.toLocaleString('pt-BR') : '---'}
                             </td>
@@ -2106,7 +2106,7 @@ const Dashboard: React.FC = () => {
                   onChange={(e) => setFilterMonth(parseInt(e.target.value))}
                   className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
                 >
-                  {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                  {months.map((m, i) => <option key={`m-safe-${m}-${i}`} value={i}>{m}</option>)}
                 </select>
                 <input 
                   type="number" 
@@ -2340,10 +2340,10 @@ const Dashboard: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50 text-xs text-slate-600 font-semibold">
-                        {safetyMetrics.latestObservations.map((obs) => {
+                        {safetyMetrics.latestObservations.map((obs, idx) => {
                           const date = safeToDate(obs.createdAt);
                           return (
-                            <tr key={obs.id} className="hover:bg-slate-50/50 transition-colors">
+                            <tr key={`obs-row-${obs.id}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                               <td className="py-4 whitespace-nowrap text-slate-500">
                                 {date ? date.toLocaleString('pt-BR') : '---'}
                               </td>
@@ -2506,8 +2506,8 @@ const Dashboard: React.FC = () => {
                 <div>
                   <h3 className="font-black text-xl text-slate-900 tracking-tight mb-4">Críticos & Alertas</h3>
                   <div className="space-y-3">
-                    {consumableItems.filter(i => i.active && i.currentStock < i.minStock).slice(0, 5).map(item => (
-                      <div key={item.id} className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between text-xs font-semibold">
+                    {consumableItems.filter(i => i.active && i.currentStock < i.minStock).slice(0, 5).map((item, idx) => (
+                      <div key={`crit-item-${item.id}-${idx}`} className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between text-xs font-semibold">
                         <div>
                           <p className="font-extrabold text-slate-950">{item.name}</p>
                           <p className="text-[10px] text-amber-700">Mínimo: {item.minStock} {item.unit}</p>
