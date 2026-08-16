@@ -101,6 +101,8 @@ interface Checklist {
     status: 'normal' | 'anormal';
     observation?: string;
     mediaUrl?: string;
+    fileName?: string;
+    fileSizeKb?: number;
   }>;
   timestamp: any;
   notes?: string;
@@ -138,7 +140,14 @@ const Forklifts: React.FC = () => {
   const [editingForklift, setEditingForklift] = useState<Forklift | null>(null);
   const [newCheckItem, setNewCheckItem] = useState({ name: '', type: 'boolean' as const, unit: '', active: true, showStatusSelection: true, order: 0 });
   const [editingCheckItem, setEditingCheckItem] = useState<CheckItem | null>(null);
-  const [checklistResults, setChecklistResults] = useState<Record<string, { value: any; status: 'normal' | 'anormal'; observation?: string; mediaUrl?: string; fileName?: string }>>({});
+  const [checklistResults, setChecklistResults] = useState<Record<string, { 
+    value: any; 
+    status: 'normal' | 'anormal'; 
+    observation?: string; 
+    mediaUrl?: string; 
+    fileName?: string;
+    fileSizeKb?: number;
+  }>>({});
   const [checklistNotes, setChecklistNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [testingEmail, setTestingEmail] = useState(false);
@@ -173,8 +182,12 @@ const Forklifts: React.FC = () => {
 
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
-  // Helper: Compress and resize image file to maintain sharp quality while keeping payload under ~150KB
-  const compressImageFile = (file: File | Blob, maxWidth = 1280, quality = 0.8): Promise<string> => {
+  // Helper: Compress and resize image file to maintain high visual clarity while keeping payload under ~40-60KB
+  const compressImageFile = (
+    file: File | Blob, 
+    maxDimension = 800, 
+    initialQuality = 0.65
+  ): Promise<{ dataUrl: string; sizeKb: number }> => {
     return new Promise((resolve, reject) => {
       if (!file.type.startsWith('image/')) {
         if (file.size > 5 * 1024 * 1024) {
@@ -182,7 +195,11 @@ const Forklifts: React.FC = () => {
           return;
         }
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
+        reader.onload = () => {
+          const res = reader.result as string;
+          const kb = Math.round((res.length * 0.75) / 1024);
+          resolve({ dataUrl: res, sizeKb: kb });
+        };
         reader.onerror = reject;
         reader.readAsDataURL(file);
         return;
@@ -195,13 +212,14 @@ const Forklifts: React.FC = () => {
           let width = img.width;
           let height = img.height;
 
-          if (width > maxWidth || height > maxWidth) {
+          // Scale down to maxDimension (e.g. 800px)
+          if (width > maxDimension || height > maxDimension) {
             if (width > height) {
-              height = Math.round((height * maxWidth) / width);
-              width = maxWidth;
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
             } else {
-              width = Math.round((width * maxWidth) / height);
-              height = maxWidth;
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
             }
           }
 
@@ -210,16 +228,32 @@ const Forklifts: React.FC = () => {
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           if (!ctx) {
-            resolve(reader.result as string);
+            const raw = reader.result as string;
+            resolve({ dataUrl: raw, sizeKb: Math.round((raw.length * 0.75) / 1024) });
             return;
           }
 
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
-          const dataUrl = canvas.toDataURL('image/jpeg', quality);
-          resolve(dataUrl);
+
+          // Optimized compression for ultra-lightweight Firestore storage
+          let quality = initialQuality;
+          let dataUrl = canvas.toDataURL('image/jpeg', quality);
+          let estimatedKb = Math.round((dataUrl.length * 0.75) / 1024);
+
+          // If still over 65KB, adjust quality slightly to keep file ultra-light
+          if (estimatedKb > 65 && quality > 0.45) {
+            quality = 0.50;
+            dataUrl = canvas.toDataURL('image/jpeg', quality);
+            estimatedKb = Math.round((dataUrl.length * 0.75) / 1024);
+          }
+
+          resolve({ dataUrl, sizeKb: estimatedKb });
         };
         img.onerror = () => {
-          resolve(reader.result as string);
+          const raw = reader.result as string;
+          resolve({ dataUrl: raw, sizeKb: Math.round((raw.length * 0.75) / 1024) });
         };
         img.src = e.target?.result as string;
       };
@@ -298,13 +332,38 @@ const Forklifts: React.FC = () => {
   const handleCaptureFromCamera = async () => {
     if (!cameraVideoRef.current || !activeCameraCapture) return;
     const video = cameraVideoRef.current;
+    
+    let width = video.videoWidth || 1280;
+    let height = video.videoHeight || 720;
+    const maxDimension = 800;
+
+    if (width > maxDimension || height > maxDimension) {
+      if (width > height) {
+        height = Math.round((height * maxDimension) / width);
+        width = maxDimension;
+      } else {
+        width = Math.round((width * maxDimension) / height);
+        height = maxDimension;
+      }
+    }
+
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    
+    let quality = 0.65;
+    let dataUrl = canvas.toDataURL('image/jpeg', quality);
+    let sizeKb = Math.round((dataUrl.length * 0.75) / 1024);
+    if (sizeKb > 65) {
+      quality = 0.50;
+      dataUrl = canvas.toDataURL('image/jpeg', quality);
+      sizeKb = Math.round((dataUrl.length * 0.75) / 1024);
+    }
 
     const itemId = activeCameraCapture.itemId;
     setChecklistResults(prev => ({
@@ -312,6 +371,7 @@ const Forklifts: React.FC = () => {
       [itemId]: {
         ...prev[itemId],
         mediaUrl: dataUrl,
+        fileSizeKb: sizeKb,
         fileName: `foto_inspecao_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '_')}.jpg`
       }
     }));
@@ -412,12 +472,13 @@ const Forklifts: React.FC = () => {
     if (!file) return;
 
     try {
-      const compressedDataUrl = await compressImageFile(file);
+      const { dataUrl, sizeKb } = await compressImageFile(file, 800, 0.65);
       setChecklistResults(prev => ({
         ...prev,
         [itemId]: {
           ...prev[itemId],
-          mediaUrl: compressedDataUrl,
+          mediaUrl: dataUrl,
+          fileSizeKb: sizeKb,
           fileName: file.name || 'evidencia_inspecao.jpg'
         }
       }));
@@ -2050,18 +2111,23 @@ const Forklifts: React.FC = () => {
                                               alt="Preview" 
                                               className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity"
                                             />
-                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex items-end justify-between p-2">
-                                              <button
-                                                type="button"
-                                                onClick={() => setViewingPhotoModal({
-                                                  url: checklistResults[item.id].mediaUrl!,
-                                                  title: `${item.name} - Evidência da Não Conformidade`
-                                                })}
-                                                className="flex items-center gap-1 text-[9px] font-bold text-white bg-white/20 hover:bg-white/30 backdrop-blur-md px-2 py-1 rounded-lg border border-white/20 transition-all cursor-pointer"
-                                              >
-                                                <Maximize2 className="w-3 h-3" />
-                                                Ver Foto
-                                              </button>
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent flex items-end justify-between p-2">
+                                              <div className="flex items-center gap-1.5">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setViewingPhotoModal({
+                                                    url: checklistResults[item.id].mediaUrl!,
+                                                    title: `${item.name} - Evidência da Não Conformidade`
+                                                  })}
+                                                  className="flex items-center gap-1 text-[9px] font-bold text-white bg-white/20 hover:bg-white/30 backdrop-blur-md px-2 py-1 rounded-lg border border-white/20 transition-all cursor-pointer"
+                                                >
+                                                  <Maximize2 className="w-3 h-3" />
+                                                  Ver Foto
+                                                </button>
+                                                <span className="text-[9px] font-black text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.5 rounded-md backdrop-blur-sm">
+                                                  {checklistResults[item.id].fileSizeKb ? `~${checklistResults[item.id].fileSizeKb} KB` : 'Otimizada'}
+                                                </span>
+                                              </div>
 
                                               <div className="flex items-center gap-1">
                                                 <button
@@ -2079,7 +2145,7 @@ const Forklifts: React.FC = () => {
                                                   type="button"
                                                   onClick={() => setChecklistResults(prev => ({
                                                     ...prev,
-                                                    [item.id]: { ...prev[item.id], mediaUrl: undefined, fileName: undefined }
+                                                    [item.id]: { ...prev[item.id], mediaUrl: undefined, fileName: undefined, fileSizeKb: undefined }
                                                   }))}
                                                   className="p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all shadow-xs cursor-pointer"
                                                   title="Remover foto"
