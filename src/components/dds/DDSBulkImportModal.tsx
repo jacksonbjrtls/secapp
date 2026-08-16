@@ -13,7 +13,8 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../../lib/firebase';
 import { encryptValue } from '../../lib/crypto';
-import { safeToDate, cn } from '../../lib/utils';
+import { safeToDate, cn, formatDateBR, formatDateDDMMAAAA } from '../../lib/utils';
+import { fetchUsersSafely, getLocalCachedUsers } from '../../lib/usersCache';
 import * as XLSX from 'xlsx';
 import { 
   FileSpreadsheet, 
@@ -102,6 +103,16 @@ interface ParsedUnifiedRow {
   errors: string[];
   warnings: string[];
 }
+
+const getLocalDateStr = (dateVal: any): string => {
+  if (!dateVal) return '';
+  const d = safeToDate(dateVal);
+  if (!d || isNaN(d.getTime())) return '';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
   isOpen,
@@ -460,13 +471,14 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
           errors.push(`Data inválida ou não reconhecida: "${dateVal}"`);
         }
 
-        if (!titleVal) {
-          errors.push('Tema/Título do DDS é obrigatório');
-        }
-
         const normShift = normalizeShift(shiftVal);
         const normGroup = normalizeGroup(groupVal);
         const parsedTotal = parseInt(totalVal, 10) || 9;
+
+        if (!titleVal) {
+          const ddmmyyyy = dateObj ? formatDateDDMMAAAA(dateObj) : dateVal;
+          titleVal = `${normShift} - DDS ${ddmmyyyy}`;
+        }
 
         results.push({
           index: i + 1,
@@ -596,7 +608,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
 
         let sessionKey: string | undefined = undefined;
         if (dateObj && normShift && normGroup) {
-          const dStr = dateObj.toISOString().split('T')[0];
+          const dStr = getLocalDateStr(dateObj);
           sessionKey = `${dStr}_${normShift}_${normGroup}`;
         }
 
@@ -702,8 +714,12 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
         if (!dateObj) {
           errors.push(`Data do DDS inválida: "${dateVal}"`);
         }
+        const normShift = normalizeShift(shiftVal);
+        const normGroup = normalizeGroup(groupVal);
+
         if (!titleVal) {
-          errors.push('Tema do DDS é obrigatório');
+          const ddmmyyyy = dateObj ? formatDateDDMMAAAA(dateObj) : dateVal;
+          titleVal = `${normShift} - DDS ${ddmmyyyy}`;
         }
         if (!partVal) {
           errors.push('Nome do colaborador é obrigatório');
@@ -716,8 +732,8 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
           raw,
           dateStr: dateVal,
           dateObj,
-          shift: normalizeShift(shiftVal),
-          group: normalizeGroup(groupVal),
+          shift: normShift,
+          group: normGroup,
           title: titleVal,
           description: descVal ? descVal.trim() : '',
           executor: execVal ? execVal.trim() : 'Gestor Operacional',
@@ -826,14 +842,16 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
 
     try {
       // 1. Fetch all registered users to map userIds where possible
-      const usersSnap = await getDocs(collection(db, 'users'));
+      let userList = getLocalCachedUsers();
+      if (userList.length === 0) {
+        userList = await fetchUsersSafely();
+      }
       const userMapByName = new Map<string, string>(); // lowercase name -> uid
       const userMapByEmail = new Map<string, string>();
 
-      usersSnap.docs.forEach(d => {
-        const u = d.data();
-        if (u.displayName) userMapByName.set(u.displayName.trim().toLowerCase(), d.id);
-        if (u.email) userMapByEmail.set(u.email.trim().toLowerCase(), d.id);
+      userList.forEach(u => {
+        if (u.displayName) userMapByName.set(u.displayName.trim().toLowerCase(), u.uid);
+        if (u.email) userMapByEmail.set(u.email.trim().toLowerCase(), u.uid);
       });
 
       // 2. Fetch existing DDS sessions
@@ -846,7 +864,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
         const s = d.data();
         const dObj = safeToDate(s.createdAt);
         if (dObj && s.shift && s.group) {
-          const dStr = dObj.toISOString().split('T')[0];
+          const dStr = getLocalDateStr(dObj);
           const k = `${dStr}_${s.shift}_${s.group}`;
           sessionMapByKey.set(k, { id: d.id, title: s.title, createdAt: dObj });
         }
@@ -877,7 +895,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
         for (let i = 0; i < total; i++) {
           const row = validRows[i];
           const dateObj = row.dateObj || new Date();
-          const dStr = dateObj.toISOString().split('T')[0];
+          const dStr = getLocalDateStr(dateObj);
           const sessionKey = `${dStr}_${row.shift}_${row.group}`;
 
           const existing = sessionMapByKey.get(sessionKey);
@@ -949,7 +967,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
         for (let i = 0; i < total; i++) {
           const row = validRows[i];
           const dateObj = row.dateObj || new Date();
-          const dStr = dateObj.toISOString().split('T')[0];
+          const dStr = getLocalDateStr(dateObj);
 
           // 1. Locate session
           let matchedSession: { id: string; title: string } | undefined;
@@ -1057,7 +1075,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
         }>();
 
         validRows.forEach(r => {
-          const dStr = (r.dateObj || new Date()).toISOString().split('T')[0];
+          const dStr = getLocalDateStr(r.dateObj || new Date());
           const k = `${dStr}_${r.shift}_${r.group}`;
           if (!sessionGroups.has(k)) {
             sessionGroups.set(k, {
@@ -1555,7 +1573,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
                             <tr key={idx} className={row.errors.length > 0 ? "bg-rose-50/50" : "hover:bg-slate-50"}>
                               <td className="p-3 font-mono text-[10px] text-slate-400">{row.index}</td>
                               <td className="p-3 font-bold text-slate-900">
-                                {row.dateObj ? row.dateObj.toLocaleDateString('pt-BR') : <span className="text-rose-500">{row.dateStr}</span>}
+                                {row.dateObj ? formatDateBR(row.dateObj) : <span className="text-rose-500">{formatDateBR(row.dateStr) || row.dateStr}</span>}
                               </td>
                               <td className="p-3">
                                 <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-bold mr-1">
@@ -1596,7 +1614,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
                               <td className="p-3 font-bold text-slate-900">{row.participantName}</td>
                               <td className="p-3 font-mono text-slate-600">{row.registration || '-'}</td>
                               <td className="p-3 text-slate-600">
-                                {row.dateObj ? row.dateObj.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : row.dateStr}
+                                {row.dateObj ? formatDateBR(row.dateObj, true) : (formatDateBR(row.dateStr, true) || row.dateStr)}
                               </td>
                               <td className="p-3">
                                 {row.sessionId ? (
@@ -1631,7 +1649,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
                             <tr key={idx} className={row.errors.length > 0 ? "bg-rose-50/50" : "hover:bg-slate-50"}>
                               <td className="p-3 font-mono text-[10px] text-slate-400">{row.index}</td>
                               <td className="p-3 font-bold text-slate-900">
-                                {row.dateObj ? row.dateObj.toLocaleDateString('pt-BR') : row.dateStr}
+                                {row.dateObj ? formatDateBR(row.dateObj) : (formatDateBR(row.dateStr) || row.dateStr)}
                               </td>
                               <td className="p-3">
                                 <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-bold mr-1">

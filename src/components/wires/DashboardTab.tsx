@@ -32,7 +32,7 @@ import {
   ShieldAlert,
   Barcode
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, formatDateBR } from '../../lib/utils';
 
 interface DashboardTabProps {
   batches: WireBatch[];
@@ -1007,7 +1007,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
                                   {lines.find(l => l.id === item.currentLineId)?.name || item.consumedIn || 'Consumo'}
                                 </span>
                                 <span className="text-[10px] text-slate-400 font-bold">
-                                  {item.consumedAt ? new Date(item.consumedAt?.seconds ? item.consumedAt.seconds * 1000 : item.consumedAt).toLocaleDateString('pt-BR') : ''}
+                                  {formatDateBR(item.consumedAt)}
                                 </span>
                               </div>
                             )}

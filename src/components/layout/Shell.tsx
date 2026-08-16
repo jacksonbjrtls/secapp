@@ -38,6 +38,8 @@ import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from '../ui/Logo';
 import { PrivacyPolicyModal } from '../ui/PrivacyPolicyModal';
+import { QuotaBanner } from './QuotaBanner';
+import { fetchUsersSafely, getLocalCachedUsers } from '../../lib/usersCache';
 import {
   DndContext, 
   closestCenter,
@@ -258,11 +260,14 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           return;
         }
 
-        const usersSnap = await getDocs(collection(db, 'users'));
+        let allUsers = getLocalCachedUsers();
+        if (allUsers.length === 0) {
+          allUsers = await fetchUsersSafely();
+        }
+
         const todayBirthdays: any[] = [];
 
-        for (const d of usersSnap.docs) {
-          const uData = d.data();
+        for (const uData of allUsers) {
           if (uData.birthDate) {
             const parts = uData.birthDate.split('-');
             if (parts.length === 3) {
@@ -270,14 +275,12 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               const birthDay = parseInt(parts[2], 10);
 
               if (birthMonth === todayMonth && birthDay === todayDay) {
-                const decEmail = await decryptValue(uData.email);
-                if (decEmail?.toLowerCase().trim() === 'jacksonbjr@gmail.com') {
+                if (uData.email?.toLowerCase().trim() === 'jacksonbjr@gmail.com') {
                   continue;
                 }
-                const decName = await decryptValue(uData.displayName);
                 todayBirthdays.push({
-                  id: d.id,
-                  displayName: decName || 'Sem Nome',
+                  id: uData.uid,
+                  displayName: uData.displayName || 'Sem Nome',
                   sectorName: uData.sectorName || '',
                   cargoName: uData.cargoName || '',
                 });
@@ -293,7 +296,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
         sessionStorage.setItem(storageKey, 'true');
       } catch (err) {
-        console.error('Error checking birthdays:', err);
+        console.warn('Error checking birthdays:', err);
       }
     };
 
@@ -583,6 +586,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <QuotaBanner />
         {/* Top Header */}
         <header className="h-16 bg-white border-b border-slate-200 px-8 hidden md:flex items-center justify-between sticky top-0 z-30">
           <h1 className="text-lg font-bold text-slate-800">

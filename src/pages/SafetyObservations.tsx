@@ -15,7 +15,8 @@ import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
 import { decryptValue } from '../lib/crypto';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeToDate } from '../lib/utils';
+import { cn, safeToDate, formatDateBR } from '../lib/utils';
+import { getLocalCachedUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { 
   ShieldAlert, 
@@ -406,6 +407,21 @@ const SafetyObservations: React.FC = () => {
 
   // Subscribe to registered users list as operators for autocomplete
   useEffect(() => {
+    // Immediate cached render
+    const cachedUsers = getLocalCachedUsers();
+    if (cachedUsers.length > 0) {
+      const ops = cachedUsers
+        .filter(u => {
+          if (u.email === 'jacksonbjr@gmail.com') return false;
+          if (MASTER_EMAILS.includes(u.email) && !isMaster) return false;
+          return u.displayName && u.displayName !== 'Sem nome';
+        })
+        .map(u => ({ id: u.uid, name: u.displayName.trim() }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      setOperatorsState(ops);
+      setDbOperators(ops.map(o => o.name));
+    }
+
     const unsub = onSnapshot(collection(db, 'users'), async (snap) => {
       try {
         const decryptedUsers = await Promise.all(
@@ -439,10 +455,10 @@ const SafetyObservations: React.FC = () => {
         setOperatorsState(ops);
         setDbOperators(ops.map(o => o.name));
       } catch (err) {
-        console.error("Error decrypting users in SafetyObservations:", err);
+        console.warn("Could not decrypt users in SafetyObservations:", err);
       }
     }, (err) => {
-      console.error("Error loading registered users as operators:", err);
+      handleFirestoreError(err, OperationType.LIST, 'users');
     });
     return () => unsub();
   }, []);
@@ -1154,7 +1170,7 @@ const SafetyObservations: React.FC = () => {
                     <div className="border-t border-slate-100 pt-3 mt-4">
                       <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase mb-3">
                         <span className="flex items-center gap-1 max-w-[150px] truncate"><User className="w-3 h-3 text-slate-400" /> {obs.reportedBy}</span>
-                        <span>{obs.date || (dateObj ? dateObj.toLocaleDateString('pt-BR') : 'Hoje')}</span>
+                        <span>{formatDateBR(obs.date || obs.createdAt || dateObj) || 'Hoje'}</span>
                       </div>
 
                       <div className="flex gap-1.5">
@@ -2089,7 +2105,7 @@ const SafetyObservations: React.FC = () => {
                     <p className="text-slate-700 font-bold text-[11px] leading-relaxed">{viewingObs.resolutionNotes}</p>
                     <div className="flex justify-between items-center text-[9px] text-emerald-600 font-black tracking-wide border-t border-emerald-100/60 pt-2 mt-2">
                       <span>Mitigado por: {viewingObs.resolvedBy}</span>
-                      <span>{safeToDate(viewingObs.resolvedAt)?.toLocaleDateString('pt-BR')}</span>
+                      <span>{formatDateBR(viewingObs.resolvedAt)}</span>
                     </div>
                   </div>
                 )}

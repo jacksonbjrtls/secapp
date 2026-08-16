@@ -213,21 +213,19 @@ service cloud.firestore {
     match /dds_signatures/{signatureId} {
       function isValidSignature(data) {
         return data.userId == request.auth.uid &&
-               data.timestamp == request.time &&
-               data.passcode == get(/databases/$(database)/documents/dds_sessions/$(data.sessionId)).data.passcode &&
+               (data.timestamp == request.time || data.timestamp is timestamp) &&
                data.mood in ['happy', 'neutral', 'sad'] &&
                data.sessionTitle is string &&
-               data.sessionTitle.size() <= 200 &&
-               request.time < get(/databases/$(database)/documents/dds_sessions/$(data.sessionId)).data.expiresAt &&
-               data.keys().hasAll(['sessionId', 'sessionTitle', 'userId', 'userName', 'timestamp', 'passcode', 'mood']) &&
-               data.keys().size() == 7;
+               data.keys().hasAll(['sessionId', 'sessionTitle', 'userId', 'userName', 'timestamp', 'passcode', 'mood']);
       }
 
-      allow get: if isSignedIn() && isValidId(signatureId) && (resource == null || resource.data.userId == request.auth.uid || isManager());
-      allow list: if isSignedIn() && (isManager() || resource.data.userId == request.auth.uid);
+      allow get: if isApproved() && isValidId(signatureId);
+      allow list: if isApproved();
       allow create: if isSignedIn() && isNotDisabled() && isValidId(signatureId) && (
                       isValidSignature(request.resource.data) || 
-                      (isManager() && (request.resource.data.timestamp == request.time || request.resource.data.timestamp is timestamp))
+                      isManager() ||
+                      isAdmin() ||
+                      isMaster()
                     );
       allow update: if isManager() && isValidId(signatureId);
       allow delete: if isMaster() || (isManager() && isValidId(signatureId));

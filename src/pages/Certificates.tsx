@@ -6,6 +6,7 @@ import autoTable from 'jspdf-autotable';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../hooks/useAuth';
+import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
 import { db } from '../lib/firebase';
 import { 
   collection, 
@@ -176,29 +177,27 @@ const Certificates: React.FC = () => {
       setCourses(coursesList);
 
       if (canManage) {
-        const usersSnap = await getDocs(collection(db, 'users'));
-        const usersList = await Promise.all(
-          usersSnap.docs.map(async (doc) => {
-            const data = doc.data();
-            const decName = await decryptValue(data.displayName);
-            const decEmail = await decryptValue(data.email);
-            return {
-              id: doc.id,
-              displayName: decName || 'Sem nome',
-              email: (decEmail || '').toLowerCase().trim()
-            };
-          })
-        );
+        let rawUsers = getLocalCachedUsers();
+        if (rawUsers.length === 0) {
+          rawUsers = await fetchUsersSafely();
+        }
 
-        // Filter out duplicate users by email
-        const uniqueUsersMap = new Map<string, typeof usersList[0]>();
-        usersList.forEach((u) => {
+        const uniqueUsersMap = new Map<string, any>();
+        rawUsers.forEach((u) => {
           if (u.email) {
             if (!uniqueUsersMap.has(u.email)) {
-              uniqueUsersMap.set(u.email, u);
+              uniqueUsersMap.set(u.email, {
+                id: u.uid,
+                displayName: u.displayName || 'Sem nome',
+                email: u.email
+              });
             }
           } else {
-            uniqueUsersMap.set(u.id, u);
+            uniqueUsersMap.set(u.uid, {
+              id: u.uid,
+              displayName: u.displayName || 'Sem nome',
+              email: ''
+            });
           }
         });
         const uniqueUsersList = Array.from(uniqueUsersMap.values());
@@ -209,7 +208,7 @@ const Certificates: React.FC = () => {
         setRegisteredUsers(filteredAndSortedList);
       }
     } catch (err) {
-      console.error('Error fetching certificates data:', err);
+      console.warn('Could not refresh certificates data:', err);
     } finally {
       if (!silent) setLoading(false);
     }

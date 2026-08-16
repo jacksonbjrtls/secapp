@@ -34,7 +34,7 @@ import {
   MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeToDate } from '../../lib/utils';
+import { cn, safeToDate, formatDateBR } from '../../lib/utils';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 
 interface HistoryTabProps {
@@ -447,7 +447,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                         <Calendar className="w-3 h-3" /> Data Carga
                       </p>
-                      <p className="text-lg font-black text-slate-800">{new Date(batch.date).toLocaleDateString('pt-BR')}</p>
+                      <p className="text-lg font-black text-slate-800">{formatDateBR(batch.date)}</p>
                     </div>
 
                     <div className="space-y-1.5 p-4 bg-slate-50/50 rounded-2xl border border-slate-100">

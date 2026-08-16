@@ -4,6 +4,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
 import { safeToDate, cn } from '../lib/utils';
+import { getLocalCachedUsers, setLocalCachedUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { decryptValue } from '../lib/crypto';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
@@ -123,6 +124,16 @@ export const Overview: React.FC = () => {
     // Current day boundaries 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
+
+    // Immediate cached render
+    const cachedUsers = getLocalCachedUsers().filter(user => {
+      const userEmail = user.email?.toLowerCase().trim() || '';
+      if (userEmail === 'jacksonbjr@gmail.com') return false;
+      return !MASTER_EMAILS.includes(userEmail) || isMaster;
+    });
+    if (cachedUsers.length > 0) {
+      setUsers(cachedUsers.map(u => ({ id: u.uid, ...u })));
+    }
 
     const unsubUsers = onSnapshot(collection(db, 'users'), async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {

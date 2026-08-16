@@ -52,9 +52,13 @@ import {
   BarChart3,
   TrendingUp,
   Target,
-  FileSpreadsheet
+  FileSpreadsheet,
+  RotateCcw,
+  UserPlus,
+  ArrowRightLeft
 } from 'lucide-react';
 import { DDSBulkImportModal } from '../components/dds/DDSBulkImportModal';
+import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
 import { 
   PieChart, 
   Pie, 
@@ -71,7 +75,7 @@ import {
   CartesianGrid 
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeToDate } from '../lib/utils';
+import { cn, safeToDate, formatDateBR, formatDateDDMMAAAA } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { getCurrentShift, getGroupForShift, getTodayGroups, type Shift } from '../lib/scaleUtils';
 
@@ -108,6 +112,47 @@ const CountdownTimer: React.FC<{ expiresAt: Date }> = ({ expiresAt }) => {
       {String(timeLeft.h).padStart(2, '0')}:{String(timeLeft.m).padStart(2, '0')}:{String(timeLeft.s).padStart(2, '0')}
     </span>
   );
+};
+
+// Helper for timezone-safe local date string comparison (YYYY-MM-DD)
+const getLocalDateStr = (d: Date | any): string => {
+  const dateObj = safeToDate(d);
+  if (!dateObj) return '';
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+/**
+ * Standardizes DDS title display to: "Turno X - DDS DD-MM-AAAA"
+ * E.g., "Turno 1 - DDS 15-08-2026"
+ */
+export const formatSessionDisplayTitle = (session: any): string => {
+  if (!session) return '';
+  const dateStr = formatDateDDMMAAAA(session.createdAt || session.date);
+  const shiftStr = session.shift || 'Turno 1';
+  const defaultPattern = `${shiftStr} - DDS ${dateStr}`;
+  
+  const rawTitle = (session.title || '').trim();
+  if (!rawTitle) {
+    return defaultPattern;
+  }
+  
+  // If title was formatted as "DDS 2026-08-15 - Turno 1" or similar
+  if (/^DDS\s+\d{4}-\d{2}-\d{2}\s*-\s*Turno\s*\d/i.test(rawTitle) ||
+      /^DDS\s+\d{2}-\d{2}-\d{4}\s*-\s*Turno\s*\d/i.test(rawTitle) ||
+      /^DDS\s+\d{2}\/\d{2}\/\d{4}\s*-\s*Turno\s*\d/i.test(rawTitle)) {
+    return defaultPattern;
+  }
+  
+  // If title already starts with standard "Turno X - DDS", return clean
+  if (/^Turno\s*\d\s*-\s*DDS/i.test(rawTitle)) {
+    return rawTitle;
+  }
+  
+  // If user entered a custom theme like "Prevenção de Quedas", display "Turno 1 - DDS 15-08-2026 • Prevenção de Quedas"
+  return `${defaultPattern} • ${rawTitle}`;
 };
 
 const DDS: React.FC = () => {
@@ -147,7 +192,27 @@ const DDS: React.FC = () => {
   const [editingSession, setEditingSession] = useState<any>(null);
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   
-  // Stats and Filters
+  // Manual signature management (Admin/Master only)
+  const [showAddSignatureModal, setShowAddSignatureModal] = useState(false);
+  const [targetSessionForSignature, setTargetSessionForSignature] = useState<any | null>(null);
+  const [manualParticipantName, setManualParticipantName] = useState('');
+  const [manualRegistration, setManualRegistration] = useState('');
+  const [manualSelectedUid, setManualSelectedUid] = useState('');
+  const [manualUserSearch, setManualUserSearch] = useState('');
+  const [isRefreshingUsers, setIsRefreshingUsers] = useState(false);
+  const [manualMood, setManualMood] = useState<'happy' | 'neutral' | 'sad'>('happy');
+  const [signatureToDelete, setSignatureToDelete] = useState<{ id: string; userName: string; sessionId: string } | null>(null);
+
+  // Reassign / Unify signature state (Admin/Master only)
+  const [signatureToReassign, setSignatureToReassign] = useState<{
+    id: string;
+    userName: string;
+    currentSessionId: string;
+    currentSessionTitle: string;
+  } | null>(null);
+  const [targetReassignSessionId, setTargetReassignSessionId] = useState<string>('');
+
+  // Stats and Filters for all users
   const [allSessionsList, setAllSessionsList] = useState<any[]>([]);
   const [allSignaturesList, setAllSignaturesList] = useState<any[]>([]);
   const [chartMode, setChartMode] = useState<'presence' | 'idds'>('presence');
@@ -155,22 +220,97 @@ const DDS: React.FC = () => {
   const [globalCompliance, setGlobalCompliance] = useState(0);
   const [totalSignaturesMonth, setTotalSignaturesMonth] = useState(0);
   const [participationRate, setParticipationRate] = useState(0);
+
+  // Filter states
+  const [filterDate, setFilterDate] = useState<string>(() => getLocalDateStr(new Date()));
+  const [filterShift, setFilterShift] = useState<string>('all');
   const [selectedLetter, setSelectedLetter] = useState<string>('all');
   const [participantSearch, setParticipantSearch] = useState<string>('');
   
   // Admin form state
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
-  const [newShift, setNewShift] = useState('Turno 1');
-  const [newGroup, setNewGroup] = useState('A');
+  const [newShift, setNewShift] = useState<string>(() => getCurrentShift());
+  const [newGroup, setNewGroup] = useState<string>(() => getGroupForShift(new Date(), getCurrentShift()));
   const [newExecutor, setNewExecutor] = useState('');
   const [newTotalPrevisto, setNewTotalPrevisto] = useState<number>(9);
+  const [newDate, setNewDate] = useState<string>(() => getLocalDateStr(new Date()));
   const [isCreateFormExpanded, setIsCreateFormExpanded] = useState(false);
+
+  const handleDateChange = (dateVal: string) => {
+    setNewDate(dateVal);
+    if (dateVal) {
+      const [year, month, day] = dateVal.split('-').map(Number);
+      const d = new Date(year, month - 1, day, 12, 0, 0);
+      const group = getGroupForShift(d, newShift as Shift);
+      if (group) setNewGroup(group);
+    }
+  };
+
+  const handleShiftChange = (shiftVal: string) => {
+    setNewShift(shiftVal);
+    if (newDate) {
+      const [year, month, day] = newDate.split('-').map(Number);
+      const d = new Date(year, month - 1, day, 12, 0, 0);
+      const group = getGroupForShift(d, shiftVal as Shift);
+      if (group) setNewGroup(group);
+    }
+  };
 
   // Mood selector state
   const [showMoodModal, setShowMoodModal] = useState(false);
   const [selectedMood, setSelectedMood] = useState<'happy' | 'neutral' | 'sad' | null>(null);
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
+
+  // Today date string in local timezone
+  const todayDateStr = useMemo(() => getLocalDateStr(new Date()), []);
+
+  // Today's active and created sessions
+  const todaySessions = useMemo(() => {
+    return sessions.filter((s: any) => {
+      const dStr = getLocalDateStr(s.createdAt);
+      return dStr === todayDateStr;
+    });
+  }, [sessions, todayDateStr]);
+
+  // Signatures mapped by session ID (sorted chronologically)
+  const signaturesBySession = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    allSignaturesList.forEach((sig: any) => {
+      if (sig.sessionId) {
+        if (!map[sig.sessionId]) map[sig.sessionId] = [];
+        map[sig.sessionId].push(sig);
+      }
+    });
+    // Sort signatures within each session ascending by timestamp
+    Object.keys(map).forEach((sId) => {
+      map[sId].sort((a, b) => {
+        const tA = a.timestamp?.seconds || (a.timestamp ? new Date(a.timestamp).getTime() / 1000 : 0);
+        const tB = b.timestamp?.seconds || (b.timestamp ? new Date(b.timestamp).getTime() / 1000 : 0);
+        return tA - tB;
+      });
+    });
+    return map;
+  }, [allSignaturesList]);
+
+  // Signatures count mapped by session ID
+  const signatureCountBySession = useMemo(() => {
+    const map: Record<string, number> = {};
+    allSignaturesList.forEach((sig: any) => {
+      if (sig.sessionId) {
+        map[sig.sessionId] = (map[sig.sessionId] || 0) + 1;
+      }
+    });
+    return map;
+  }, [allSignaturesList]);
+
+  // Standard DDS title suggestion: "Turno X - DDS DD-MM-AAAA"
+  const defaultTitleSuggestion = useMemo(() => {
+    if (!newDate) return `${newShift} - DDS ${formatDateDDMMAAAA(new Date())}`;
+    const [year, month, day] = newDate.split('-').map(Number);
+    const d = new Date(year, month - 1, day, 12, 0, 0);
+    return `${newShift} - DDS ${formatDateDDMMAAAA(d)}`;
+  }, [newDate, newShift]);
 
   useEffect(() => {
     const currentShift = getCurrentShift();
@@ -179,34 +319,35 @@ const DDS: React.FC = () => {
     setNewGroup(expectedGroup);
     setNewExecutor(profile?.displayName || '');
 
-    // Fetch all registered users for the dropdown
+    // Initialize from cache immediately for fast render and offline/quota resilience
+    const cached = getLocalCachedUsers()
+      .filter(user => {
+        const userEmail = user.email || '';
+        if (userEmail === 'jacksonbjr@gmail.com') return false;
+        return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
+      })
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    if (cached.length > 0) {
+      setRegisteredUsers(cached);
+    }
+
+    // Fetch registered users safely with cache fallback
     const fetchUsers = async () => {
       if (!profile) return;
       try {
-        const q = collection(db, 'users');
-        const snapshot = await getDocs(q);
-        const decryptedUsersList = await Promise.all(
-          snapshot.docs.map(async (doc) => {
-            const data = doc.data();
-            const decName = await decryptValue(data.displayName);
-            const decEmail = await decryptValue(data.email);
-            return {
-              uid: doc.id,
-              displayName: decName || 'Sem nome',
-              email: (decEmail || '').toLowerCase().trim()
-            };
-          })
-        );
-        const filteredAndSortedList = decryptedUsersList
+        const userList = await fetchUsersSafely();
+        const filteredAndSortedList = userList
           .filter(user => {
             const userEmail = user.email || '';
             if (userEmail === 'jacksonbjr@gmail.com') return false;
             return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
           })
           .sort((a, b) => a.displayName.localeCompare(b.displayName));
-        setRegisteredUsers(filteredAndSortedList);
+        if (filteredAndSortedList.length > 0) {
+          setRegisteredUsers(filteredAndSortedList);
+        }
       } catch (err) {
-        console.error("Error fetching users:", err);
+        console.warn("Could not refresh users list:", err);
       }
     };
     fetchUsers();
@@ -222,36 +363,72 @@ const DDS: React.FC = () => {
   }, [searchParams]);
 
   useEffect(() => {
-    // Listen to current active sessions for today
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
+    // Listen to recent sessions across dates
     const q = query(
       collection(db, 'dds_sessions'),
-      where('createdAt', '>=', Timestamp.fromDate(startOfDay)),
-      orderBy('createdAt', 'desc')
+      orderBy('createdAt', 'desc'),
+      limit(400)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setSessions(docs);
       
-      // Find the most recent session for the current shift and expected group
-      const currentShift = getCurrentShift();
-      const expectedGroup = getGroupForShift(new Date(), currentShift);
-      const active = docs.find((s: any) => s.shift === currentShift && s.group === expectedGroup);
-      setActiveSession(active || null);
+      // Auto-pick active session smoothly
+      setActiveSession((currentActive: any) => {
+        // If current active session still exists, keep it updated
+        if (currentActive) {
+          const fresh = docs.find((s: any) => s.id === currentActive.id);
+          if (fresh) return fresh;
+        }
+
+        const todayStr = getLocalDateStr(new Date());
+        const currentShift = getCurrentShift();
+        const expectedGroup = getGroupForShift(new Date(), currentShift);
+
+        // 1. Try finding exact shift + group match for today
+        const exactMatch = docs.find((s: any) => {
+          const dStr = getLocalDateStr(s.createdAt);
+          return dStr === todayStr && s.shift === currentShift && s.group === expectedGroup;
+        });
+        if (exactMatch) return exactMatch;
+
+        // 2. Try finding any session for current shift today
+        const shiftMatch = docs.find((s: any) => {
+          const dStr = getLocalDateStr(s.createdAt);
+          return dStr === todayStr && s.shift === currentShift;
+        });
+        if (shiftMatch) return shiftMatch;
+
+        // 3. Try finding any session for today
+        const todayMatch = docs.find((s: any) => {
+          const dStr = getLocalDateStr(s.createdAt);
+          return dStr === todayStr;
+        });
+        if (todayMatch) return todayMatch;
+
+        return docs[0] || null;
+      });
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
-      // Fallback if index is missing or other error
-      setError("Erro ao carregar sessões. Verifique se o índice do Firestore foi criado.");
+      setError("Erro ao carregar sessões.");
     });
 
     return () => unsubscribe();
   }, []);
 
+  // When a 6-digit passcode is typed or scanned, automatically match and switch to that specific DDS session
   useEffect(() => {
-    if (!isManager) return;
+    if (!passcode || passcode.trim().length !== 6) return;
+    const cleanPass = passcode.trim();
+    const matchingSession = sessions.find((s: any) => s.passcode === cleanPass);
+    if (matchingSession && activeSession?.id !== matchingSession.id) {
+      setActiveSession(matchingSession);
+    }
+  }, [passcode, sessions, activeSession]);
+
+  useEffect(() => {
+    if (!auth.currentUser) return;
 
     // Fetch sessions for the whole month for charts and global compliance
     const now = new Date();
@@ -315,7 +492,7 @@ const DDS: React.FC = () => {
       unsubSessions();
       unsubSignatures();
     };
-  }, []);
+  }, [auth.currentUser]);
 
   const monthlyData = useMemo(() => {
     const now = new Date();
@@ -459,6 +636,39 @@ const DDS: React.FC = () => {
     return Object.values(dayMap).sort((a, b) => a.name.localeCompare(b.name));
   }, [allSessionsList, allSignaturesList, chartGroupFilter]);
 
+  const filteredSessions = useMemo(() => {
+    return sessions.filter((s: any) => {
+      // Date filter
+      if (filterDate && filterDate !== 'all') {
+        const dateStr = getLocalDateStr(s.createdAt);
+        if (dateStr !== filterDate) return false;
+      }
+
+      // Shift filter
+      if (filterShift && filterShift !== 'all') {
+        if (s.shift !== filterShift) return false;
+      }
+
+      // Group/Letter filter
+      if (selectedLetter && selectedLetter !== 'all') {
+        if (s.group !== selectedLetter) return false;
+      }
+
+      // Search query (title, executor, description, id, passcode)
+      if (participantSearch && participantSearch.trim() !== '') {
+        const q = participantSearch.toLowerCase().trim();
+        const titleMatch = (s.title || '').toLowerCase().includes(q);
+        const executorMatch = (s.executor || '').toLowerCase().includes(q);
+        const descMatch = (s.description || '').toLowerCase().includes(q);
+        const idMatch = (s.id || '').toLowerCase().includes(q);
+        const passMatch = (s.passcode || '').toLowerCase().includes(q);
+        if (!titleMatch && !executorMatch && !descMatch && !idMatch && !passMatch) return false;
+      }
+
+      return true;
+    });
+  }, [sessions, filterDate, filterShift, selectedLetter, participantSearch]);
+
   useEffect(() => {
     if (!activeSession || !auth.currentUser) {
       setHasSigned(false);
@@ -533,7 +743,7 @@ const DDS: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!expandedSessionId || !isManager) {
+    if (!expandedSessionId) {
       setSessionSignatures([]);
       return;
     }
@@ -568,53 +778,50 @@ const DDS: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [expandedSessionId, isAdmin]);
+  }, [expandedSessionId]);
 
   const handleCreateSession = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle) return;
+    const titleToSave = (newTitle || '').trim() || defaultTitleSuggestion;
     
     setLoading(true);
     setError('');
 
     try {
       if (editingSession) {
-        await updateDoc(doc(db, 'dds_sessions', editingSession.id), {
-          title: newTitle,
+        const updatePayload: any = {
+          title: titleToSave,
           description: newDescription,
           shift: newShift,
           group: newGroup,
           executor: newExecutor,
           totalPrevisto: newTotalPrevisto,
           updatedAt: serverTimestamp()
-        });
-        setEditingSession(null);
-      } else {
-        // Duplicate check: Check if a session already exists for this shift and group today
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-        
-        const q = query(
-          collection(db, 'dds_sessions'),
-          where('createdAt', '>=', Timestamp.fromDate(startOfDay)),
-          where('shift', '==', newShift),
-          where('group', '==', newGroup)
-        );
-        
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          setError(`Já existe um DDS ativo para o ${newShift} - Letra ${newGroup} hoje.`);
-          setLoading(false);
-          return;
+        };
+
+        if (newDate) {
+          const [year, month, day] = newDate.split('-').map(Number);
+          const sessionDate = new Date(year, month - 1, day, 12, 0, 0);
+          updatePayload.createdAt = Timestamp.fromDate(sessionDate);
         }
 
+        await updateDoc(doc(db, 'dds_sessions', editingSession.id), updatePayload);
+        setEditingSession(null);
+      } else {
         // Generate 6 digit passcode ONLY for managers
         const generatedPasscode = isManager ? Math.floor(100000 + Math.random() * 900000).toString() : '';
-        const expiresAt = new Date();
-        expiresAt.setHours(expiresAt.getHours() + 4);
+        
+        let sessionDate = new Date();
+        if (newDate) {
+          const [year, month, day] = newDate.split('-').map(Number);
+          sessionDate = new Date(year, month - 1, day, 12, 0, 0);
+        }
+
+        // Validity covers full shift rotation and transition period (48 hours)
+        const expiresAt = new Date(Math.max(Date.now() + 48 * 60 * 60 * 1000, sessionDate.getTime() + 48 * 60 * 60 * 1000));
 
         await addDoc(collection(db, 'dds_sessions'), {
-          title: newTitle,
+          title: titleToSave,
           description: newDescription,
           shift: newShift,
           group: newGroup,
@@ -622,7 +829,7 @@ const DDS: React.FC = () => {
           totalPrevisto: newTotalPrevisto,
           passcode: generatedPasscode,
           expiresAt: Timestamp.fromDate(expiresAt),
-          createdAt: serverTimestamp(),
+          createdAt: Timestamp.fromDate(sessionDate),
           createdBy: auth.currentUser?.uid
         });
       }
@@ -631,6 +838,7 @@ const DDS: React.FC = () => {
       setNewDescription('');
       setNewExecutor(profile?.displayName || '');
       setNewTotalPrevisto(9);
+      setNewDate(new Date().toISOString().split('T')[0]);
       setIsCreateFormExpanded(false);
       setSuccessMessage(editingSession ? 'Sessão atualizada com sucesso!' : 'Novo DDS criado com sucesso!');
       setSuccess(true);
@@ -638,7 +846,7 @@ const DDS: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       if (err.message?.includes('Insufficient permissions') || err.message?.includes('permission-denied')) {
-        setError('Você não tem permissão para criar um DDS. Verifique se seu perfil foi aprovado pelo administrador.');
+        setError('Você não tem permissão para criar ou alterar um DDS. Verifique se seu perfil foi aprovado pelo administrador.');
       } else if (err.message?.includes('index')) {
         setError('O sistema ainda está configurando os índices do banco de dados. Por favor, tente novamente em alguns minutos.');
       } else {
@@ -651,13 +859,24 @@ const DDS: React.FC = () => {
   };
 
   const handleEditSession = (session: any) => {
+    if (!isAdmin && !isMaster) {
+      setError('Apenas administradores e master podem editar sessões de DDS.');
+      return;
+    }
     setEditingSession(session);
-    setNewTitle(session.title);
+    setNewTitle(session.title || '');
     setNewDescription(session.description || '');
-    setNewShift(session.shift);
-    setNewGroup(session.group);
-    setNewExecutor(session.executor);
+    setNewShift(session.shift || 'Turno 1');
+    setNewGroup(session.group || 'A');
+    setNewExecutor(session.executor || '');
     setNewTotalPrevisto(session.totalPrevisto || 9);
+    
+    const dObj = safeToDate(session.createdAt);
+    if (dObj) {
+      setNewDate(dObj.toISOString().split('T')[0]);
+    } else {
+      setNewDate(new Date().toISOString().split('T')[0]);
+    }
     setIsCreateFormExpanded(true);
     
     // Scroll to form
@@ -704,15 +923,133 @@ const DDS: React.FC = () => {
     }
   };
 
+  const handleDeleteSignature = (sigId: string, userName: string, sessionId: string) => {
+    if (!isAdmin && !isMaster) {
+      setError('Apenas administradores ou master podem excluir assinaturas.');
+      return;
+    }
+    setSignatureToDelete({ id: sigId, userName, sessionId });
+  };
+
+  const confirmDeleteSignature = async () => {
+    if (!signatureToDelete) return;
+    setLoading(true);
+    try {
+      await deleteDoc(doc(db, 'dds_signatures', signatureToDelete.id));
+      setSessionSignatures(prev => prev.filter(s => s.id !== signatureToDelete.id));
+      setSuccessMessage(`Assinatura de ${signatureToDelete.userName} excluída com sucesso!`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `dds_signatures/${signatureToDelete.id}`);
+    } finally {
+      setLoading(false);
+      setSignatureToDelete(null);
+    }
+  };
+
+  const handleRefreshRegisteredUsers = async () => {
+    setIsRefreshingUsers(true);
+    try {
+      const userList = await fetchUsersSafely();
+      const filtered = userList
+        .filter(user => user.displayName && user.displayName !== 'Sem nome' && user.displayName.trim() !== '')
+        .sort((a, b) => a.displayName.localeCompare(b.displayName));
+      if (filtered.length > 0) {
+        setRegisteredUsers(filtered);
+      }
+    } catch (err) {
+      console.warn("Could not refresh registered users:", err);
+    } finally {
+      setIsRefreshingUsers(false);
+    }
+  };
+
+  const handleOpenAddSignature = async (session: any) => {
+    if (!isAdmin && !isMaster) return;
+    setTargetSessionForSignature(session);
+    setManualParticipantName('');
+    setManualRegistration('');
+    setManualSelectedUid('');
+    setManualUserSearch('');
+    setManualMood('happy');
+    setShowAddSignatureModal(true);
+
+    // Ensure registered users are available in the dropdown
+    if (registeredUsers.length === 0) {
+      const cached = getLocalCachedUsers()
+        .filter(user => user.displayName && user.displayName !== 'Sem nome' && user.displayName.trim() !== '')
+        .sort((a, b) => a.displayName.localeCompare(b.displayName));
+      if (cached.length > 0) {
+        setRegisteredUsers(cached);
+      }
+      try {
+        const userList = await fetchUsersSafely();
+        const filtered = userList
+          .filter(user => user.displayName && user.displayName !== 'Sem nome' && user.displayName.trim() !== '')
+          .sort((a, b) => a.displayName.localeCompare(b.displayName));
+        if (filtered.length > 0) {
+          setRegisteredUsers(filtered);
+        }
+      } catch (err) {
+        console.warn("Could not fetch users for manual signature modal:", err);
+      }
+    }
+  };
+
+  const handleSaveManualSignature = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin && !isMaster) return;
+    if (!targetSessionForSignature || !manualParticipantName.trim()) {
+      setError('Por favor, informe o nome do colaborador.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const cleanName = manualParticipantName.trim();
+      const encName = await encryptValue(cleanName);
+      const mappedUid = manualSelectedUid || `manual_${Date.now()}`;
+      const docId = `${mappedUid}_${targetSessionForSignature.id}`.replace(/[^a-zA-Z0-9_@.-]/g, '_').slice(0, 120);
+
+      const sessionDate = safeToDate(targetSessionForSignature.createdAt) || new Date();
+
+      await setDoc(doc(db, 'dds_signatures', docId), {
+        sessionId: targetSessionForSignature.id,
+        sessionTitle: targetSessionForSignature.title,
+        userId: mappedUid,
+        userName: encName,
+        registration: manualRegistration.trim() || null,
+        timestamp: Timestamp.fromDate(sessionDate),
+        mood: manualMood,
+        passcode: 'manual_admin',
+        createdAt: serverTimestamp(),
+        addedBy: auth.currentUser?.uid
+      });
+
+      setShowAddSignatureModal(false);
+      setManualParticipantName('');
+      setManualRegistration('');
+      setManualSelectedUid('');
+      setSuccessMessage(`Presença de ${cleanName} adicionada com sucesso!`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'dds_signatures');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRenewSession = async (sessionId: string) => {
     try {
       const newExpiresAt = new Date();
-      newExpiresAt.setHours(newExpiresAt.getHours() + 4);
+      newExpiresAt.setHours(newExpiresAt.getHours() + 48);
       await updateDoc(doc(db, 'dds_sessions', sessionId), {
         expiresAt: Timestamp.fromDate(newExpiresAt),
         updatedAt: serverTimestamp()
       });
-      setSuccessMessage('Sessão reativada por mais 4 horas!');
+      setSuccessMessage('Sessão reativada para todo o período do turno!');
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
@@ -722,17 +1059,11 @@ const DDS: React.FC = () => {
 
   const canEditSession = (session: any) => {
     if (!session) return false;
+    // Admins and Masters have full authority to edit any session at any time
+    if (isAdmin || isMaster) return true;
     
-    const now = new Date();
-    const createdAt = safeToDate(session.createdAt) || new Date();
-    
-    // Same day check
-    const isSameDay = now.toDateString() === createdAt.toDateString();
-    if (!isSameDay) return false;
-
-    // Shift check
-    const currentShift = getCurrentShift();
-    return session.shift === currentShift;
+    // Regular users cannot edit
+    return false;
   };
 
   const handleSign = async (e: React.FormEvent) => {
@@ -749,29 +1080,97 @@ const DDS: React.FC = () => {
     try {
       if (!auth.currentUser) throw new Error('Usuário não autenticado');
       
-      const docId = `${auth.currentUser.uid}_${activeSession.id}`;
+      const cleanPass = passcode.trim();
+      // Determine target session (either matching passcode session or activeSession)
+      let targetSession = activeSession;
+      if (cleanPass) {
+        const found = sessions.find((s: any) => s.passcode?.trim() === cleanPass);
+        if (found) {
+          targetSession = found;
+        }
+      }
+
+      if (!targetSession) {
+        throw new Error('Nenhuma sessão de DDS selecionada ou encontrada para esta senha.');
+      }
       
+      const rawDocId = `${auth.currentUser.uid}_${targetSession.id}`;
+      const docId = rawDocId.replace(/[^a-zA-Z0-9_@.-]/g, '_').slice(0, 120);
       const encName = await encryptValue(profile?.displayName || 'Usuário');
+
       // Use setDoc with a predictable ID to prevent duplicates
       await setDoc(doc(db, 'dds_signatures', docId), {
-        sessionId: activeSession.id,
-        sessionTitle: activeSession.title, // Denormalize for history view
+        sessionId: targetSession.id,
+        sessionTitle: targetSession.title, // Denormalize for history view
         userId: auth.currentUser.uid,
         userName: encName,
         timestamp: serverTimestamp(),
-        passcode: passcode, // Rules will check this
+        passcode: targetSession.passcode ? targetSession.passcode.trim() : cleanPass, // Rules will check this against session passcode
         mood: mood
       });
 
       setPasscode('');
-      setSuccessMessage('Presença confirmada com sucesso!');
+      setActiveSession(targetSession);
+      setSuccessMessage(`Presença confirmada no DDS: ${targetSession.title} (${targetSession.shift} - Letra ${targetSession.group})!`);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
+      setTimeout(() => setSuccess(false), 3500);
     } catch (err: any) {
-      console.error(err);
-      setError('Senha incorreta ou DDS expirado.');
+      console.error("Erro ao assinar DDS:", err);
+      if (err.message?.includes('permission-denied') || err.message?.includes('insufficient permissions')) {
+        setError('Senha incorreta ou perfil sem permissão para assinar.');
+      } else if (err.message?.includes('resource-exhausted') || err.message?.includes('Quota limit')) {
+        setError('Limite temporário de requisições atingido. Tente novamente em instantes.');
+      } else if (err.message) {
+        setError(`Erro ao assinar: ${err.message}`);
+      } else {
+        setError('Senha incorreta ou DDS expirado.');
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenReassignModal = (sig: any, session: any) => {
+    if (!isAdmin && !isMaster) return;
+    setSignatureToReassign({
+      id: sig.id,
+      userName: sig.userName,
+      currentSessionId: session.id,
+      currentSessionTitle: session.title
+    });
+    // Pick another session from the same date or list
+    const sessionDateStr = getLocalDateStr(session.createdAt || session.date);
+    const sameDayOther = sessions.find(s => s.id !== session.id && getLocalDateStr(s.createdAt || s.date) === sessionDateStr);
+    const anyOther = sessions.find(s => s.id !== session.id);
+    setTargetReassignSessionId(sameDayOther ? sameDayOther.id : (anyOther ? anyOther.id : ''));
+  };
+
+  const handleConfirmReassign = async () => {
+    if (!signatureToReassign || !targetReassignSessionId) return;
+    setLoading(true);
+    try {
+      const destSession = sessions.find((s: any) => s.id === targetReassignSessionId);
+      if (!destSession) throw new Error('Sessão de destino não encontrada.');
+
+      await updateDoc(doc(db, 'dds_signatures', signatureToReassign.id), {
+        sessionId: destSession.id,
+        sessionTitle: destSession.title,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state for expanded participants list
+      setSessionSignatures(prev => prev.filter(s => s.id !== signatureToReassign.id));
+      
+      setSuccessMessage(`Assinatura de ${signatureToReassign.userName} unificada e transferida para "${destSession.title} (${destSession.shift} - Letra ${destSession.group})"!`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 4000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `dds_signatures/${signatureToReassign.id}`);
+      setError('Erro ao reatribuir assinatura.');
+    } finally {
+      setLoading(false);
+      setSignatureToReassign(null);
+      setTargetReassignSessionId('');
     }
   };
 
@@ -924,7 +1323,7 @@ const DDS: React.FC = () => {
                   className="mt-4 bg-emerald-500 hover:bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl shadow-emerald-500/20 flex items-center gap-3 border-b-4 border-emerald-700"
                 >
                   <Timer className="w-6 h-6" />
-                  REATIVAR POR 4H
+                  REATIVAR POR 24H
                 </button>
               )}
             </div>
@@ -1085,13 +1484,28 @@ const DDS: React.FC = () => {
                   )}
 
                   <form onSubmit={handleCreateSession} className="space-y-6 pt-2 pb-2">
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Data do DDS (dd/mm/aaaa)</label>
+                        <input
+                          type="date"
+                          value={newDate}
+                          onChange={(e) => handleDateChange(e.target.value)}
+                          className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500 text-sm"
+                          required
+                        />
+                        {newDate && (
+                          <span className="text-[11px] text-emerald-300/80 font-medium mt-1.5 block">
+                            Data selecionada: {formatDateBR(newDate)}
+                          </span>
+                        )}
+                      </div>
                       <div>
                         <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Turno</label>
                         <select
                           value={newShift}
-                          onChange={(e) => setNewShift(e.target.value)}
-                          className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500"
+                          onChange={(e) => handleShiftChange(e.target.value)}
+                          className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500 text-sm"
                         >
                           <option value="Turno 1">Turno 1 (00h-08h)</option>
                           <option value="Turno 2">Turno 2 (08h-16h)</option>
@@ -1099,11 +1513,11 @@ const DDS: React.FC = () => {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Letra</label>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Letra (Escala Automática)</label>
                         <select
                           value={newGroup}
                           onChange={(e) => setNewGroup(e.target.value)}
-                          className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500"
+                          className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-emerald-500 text-sm"
                         >
                           <option value="A">Letra A</option>
                           <option value="B">Letra B</option>
@@ -1192,14 +1606,25 @@ const DDS: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300 mb-2">Título do DDS (Tema)</label>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-[10px] font-bold uppercase tracking-widest text-emerald-300">
+                          Título do DDS (Tema)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setNewTitle(defaultTitleSuggestion)}
+                          className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 underline cursor-pointer transition-colors"
+                          title="Inserir título padronizado: Turno X - DDS DD-MM-AAAA"
+                        >
+                          Usar formato padrão: {defaultTitleSuggestion}
+                        </button>
+                      </div>
                       <input
                         type="text"
-                        className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
-                        placeholder="ex: Prevenção de Quedas"
+                        className="w-full bg-slate-800 border-none rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500 text-sm"
+                        placeholder={`ex: ${defaultTitleSuggestion}`}
                         value={newTitle || ''}
                         onChange={(e) => setNewTitle(e.target.value)}
-                        required
                       />
                     </div>
                     <div>
@@ -1232,7 +1657,7 @@ const DDS: React.FC = () => {
                        <Key className="w-5 h-5 text-emerald-300 flex-shrink-0" />
                        <p className="text-xs text-emerald-100 leading-relaxed font-medium">
                          {isManager 
-                          ? "Ao criar, uma senha aleatória será gerada com validade de 4 horas."
+                          ? "Ao criar, uma senha aleatória será gerada com validade para todo o período do turno."
                           : "Após criar o DDS, solicite a validação (senha) ao seu gestor para que os colaboradores possam assinar."}
                        </p>
                     </div>
@@ -1291,7 +1716,7 @@ const DDS: React.FC = () => {
                           className="z-10 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-lg shadow-emerald-100"
                         >
                           <Timer className="w-3.5 h-3.5" />
-                          Reativar por 4h
+                          Reativar por 24h
                         </button>
                       )}
 
@@ -1308,7 +1733,7 @@ const DDS: React.FC = () => {
                         onClick={async () => {
                           const code = Math.floor(100000 + Math.random() * 900000).toString();
                           const expiresAt = new Date();
-                          expiresAt.setHours(expiresAt.getHours() + 4);
+                          expiresAt.setHours(expiresAt.getHours() + 24);
                           await updateDoc(doc(db, 'dds_sessions', activeSession.id), {
                             passcode: code,
                             expiresAt: Timestamp.fromDate(expiresAt),
@@ -1361,7 +1786,7 @@ const DDS: React.FC = () => {
                          Letra {activeSession.group}
                        </span>
                      </div>
-                     <h4 className="font-bold text-slate-900 mb-1">{activeSession.title}</h4>
+                     <h4 className="font-bold text-slate-900 mb-1">{formatSessionDisplayTitle(activeSession)}</h4>
                      <p className="text-sm text-slate-500 mb-2">{activeSession.description || 'Nenhuma descrição fornecida.'}</p>
                      <p className="text-xs text-slate-400">Executante: <span className="font-bold text-slate-600">{activeSession.executor}</span></p>
                    </div>
@@ -1801,254 +2226,449 @@ const DDS: React.FC = () => {
             </div>
           )}
 
-          {/* User's recent signatures or Admin Session History with Search/Filters */}
-          <div className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 tracking-tight">
-                 {isManager ? <History className="w-5 h-5 text-emerald-600" /> : <History className="w-5 h-5 text-emerald-600" />}
-                 {isManager ? 'Histórico de Sessões' : 'Meu Histórico de DDS'}
-              </h3>
-              
-              {isManager && (
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input 
-                      type="text" 
-                      placeholder="Participante..."
-                      className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none w-40"
-                      value={participantSearch}
-                      onChange={(e) => setParticipantSearch(e.target.value)}
-                    />
+          {/* Unified DDS History & Filtering for All Roles */}
+          <div className="bg-white rounded-[2rem] border border-slate-200 p-6 md:p-8 shadow-sm">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6 pb-6 border-b border-slate-100">
+              <div>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <History className="w-5 h-5" />
                   </div>
-                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
-                    <Filter className="w-3.5 h-3.5 text-slate-400" />
-                    <select 
-                      className="bg-transparent text-xs font-bold text-slate-600 outline-none"
-                      value={selectedLetter}
-                      onChange={(e) => setSelectedLetter(e.target.value)}
-                    >
-                      <option value="all">Todas Letras</option>
-                      <option value="A">Letra A</option>
-                      <option value="B">Letra B</option>
-                      <option value="C">Letra C</option>
-                      <option value="D">Letra D</option>
-                      <option value="E">Letra E</option>
-                    </select>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                      Histórico e Filtros de DDS
+                      <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold">
+                        {filteredSessions.length} {filteredSessions.length === 1 ? 'sessão' : 'sessões'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      {isAdmin || isMaster 
+                        ? 'Consulte, edite ou exclua sessões de DDS e gerencie colaboradores assinantes.' 
+                        : 'Consulte as sessões e presenças por data, turno e letra.'}
+                    </p>
                   </div>
                 </div>
+              </div>
+
+              {(filterDate !== 'all' || filterShift !== 'all' || selectedLetter !== 'all' || participantSearch !== '') && (
+                <button
+                  onClick={() => {
+                    setFilterDate('all');
+                    setFilterShift('all');
+                    setSelectedLetter('all');
+                    setParticipantSearch('');
+                  }}
+                  className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-emerald-600 px-3 py-1.5 rounded-xl border border-slate-200 hover:border-emerald-300 transition-all self-start lg:self-auto"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Limpar Filtros
+                </button>
               )}
             </div>
-            
-            <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
-              {isManager ? (
-                // Admin/Manager View: Sessions with Participants
-                sessions
-                  .filter(s => selectedLetter === 'all' || s.group === selectedLetter)
-                  .length > 0 ? (
-                  sessions
-                    .filter(s => selectedLetter === 'all' || s.group === selectedLetter)
-                    .map((session, idx) => (
-                    <div key={`${session.id}-${idx}`} className="flex flex-col gap-4 border border-slate-100 rounded-3xl p-4 hover:border-emerald-200 transition-all opacity-60 hover:opacity-100">
-                      <div className="flex items-start justify-between gap-4">
-                        <button 
-                          onClick={() => setExpandedSessionId(expandedSessionId === session.id ? null : session.id)}
-                          className="flex-1 text-left"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded uppercase">
+
+            {/* Filter Bar */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 mb-6 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Data:</span>
+                <button
+                  type="button"
+                  onClick={() => setFilterDate(new Date().toISOString().split('T')[0])}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
+                    filterDate === new Date().toISOString().split('T')[0]
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                  )}
+                >
+                  Hoje
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const yesterday = new Date();
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    setFilterDate(yesterday.toISOString().split('T')[0]);
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
+                    filterDate !== 'all' && filterDate === (() => {
+                      const y = new Date();
+                      y.setDate(y.getDate() - 1);
+                      return y.toISOString().split('T')[0];
+                    })()
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                  )}
+                >
+                  Ontem
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterDate('all')}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
+                    filterDate === 'all'
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                  )}
+                >
+                  Todas as Datas
+                </button>
+
+                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-1.5 ml-auto">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="date"
+                    value={filterDate === 'all' ? '' : filterDate}
+                    onChange={(e) => setFilterDate(e.target.value || 'all')}
+                    className="bg-transparent text-xs font-medium text-slate-700 outline-none cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/60">
+                {/* Shift Selector */}
+                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                  <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                  <select
+                    className="bg-transparent text-xs font-semibold text-slate-700 outline-none w-full cursor-pointer"
+                    value={filterShift}
+                    onChange={(e) => setFilterShift(e.target.value)}
+                  >
+                    <option value="all">Todos os Turnos</option>
+                    <option value="Turno 1">Turno 1 (00h-08h)</option>
+                    <option value="Turno 2">Turno 2 (08h-16h)</option>
+                    <option value="Turno 3">Turno 3 (16h-00h)</option>
+                  </select>
+                </div>
+
+                {/* Letter Selector */}
+                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                  <Filter className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                  <select
+                    className="bg-transparent text-xs font-semibold text-slate-700 outline-none w-full cursor-pointer"
+                    value={selectedLetter}
+                    onChange={(e) => setSelectedLetter(e.target.value)}
+                  >
+                    <option value="all">Todas as Letras</option>
+                    <option value="A">Letra A</option>
+                    <option value="B">Letra B</option>
+                    <option value="C">Letra C</option>
+                    <option value="D">Letra D</option>
+                    <option value="E">Letra E</option>
+                  </select>
+                </div>
+
+                {/* Search Input */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar tema, executante ou ID..."
+                    className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 placeholder-slate-400 outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={participantSearch}
+                    onChange={(e) => setParticipantSearch(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Session Cards List */}
+            <div className="space-y-4 max-h-[700px] overflow-y-auto pr-1 custom-scrollbar">
+              {filteredSessions.length > 0 ? (
+                filteredSessions.map((session, idx) => {
+                  const isExpanded = expandedSessionId === session.id;
+                  const sessionSigs = signaturesBySession[session.id] || (expandedSessionId === session.id ? sessionSignatures : []);
+                  const totalCount = sessionSigs.length || signatureCountBySession[session.id] || 0;
+                  const totalPrevisto = session.totalPrevisto || 9;
+
+                  return (
+                    <div 
+                      key={`${session.id}-${idx}`} 
+                      className={cn(
+                        "flex flex-col border rounded-3xl p-5 transition-all bg-white",
+                        isExpanded ? "border-emerald-300 shadow-md ring-1 ring-emerald-100" : "border-slate-200 hover:border-emerald-200 shadow-sm"
+                      )}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                        <div className="flex-1 text-left group">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <span className="px-2.5 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold rounded-lg uppercase tracking-wider">
                               {session.shift}
                             </span>
-                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                                {safeToDate(session.createdAt)?.toLocaleDateString('pt-BR')}
-                             </span>
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded-lg uppercase">
+                              Letra {session.group}
+                            </span>
+                            <span className="text-xs text-slate-500 font-semibold flex items-center gap-1">
+                              <Calendar className="w-3 h-3 text-slate-400" />
+                              DDS {formatDateDDMMAAAA(session.createdAt || session.date)}
+                            </span>
+                            {session.id && (
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                #{session.id.slice(0, 8)}
+                              </span>
+                            )}
                           </div>
-                          <h4 className="font-bold text-slate-900 text-sm group-hover:text-emerald-600 transition-colors">
-                            {session.title}
+                          
+                          <h4 className="font-bold text-slate-900 text-base sm:text-lg group-hover:text-emerald-600 transition-colors">
+                            {formatSessionDisplayTitle(session)}
                           </h4>
-                          <p className="text-xs text-slate-400">Executante: {session.executor}</p>
-                        </button>
+                          {session.description && (
+                            <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                              {session.description}
+                            </p>
+                          )}
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <span className="text-xs text-slate-500 font-medium">
+                              Executante: <strong className="text-slate-700 font-semibold">{session.executor || 'Não informado'}</strong>
+                            </span>
+                            <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md font-bold flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              {totalCount} / {totalPrevisto} assinaturas
+                            </span>
+                            {activeSession?.id === session.id && (
+                              <span className="text-[10px] bg-slate-900 text-white font-bold px-2 py-0.5 rounded-md">
+                                Sessão Selecionada
+                              </span>
+                            )}
+                          </div>
+                        </div>
 
-                        <div className="flex items-center gap-1">
-                          {canEditSession(session) ? (
+                        <div className="flex items-center gap-1.5 self-end sm:self-start flex-shrink-0">
+                          {/* Quick Select / Sign this DDS */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveSession(session);
+                              if (session.passcode) {
+                                setPasscode(session.passcode);
+                              }
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                            className={cn(
+                              "px-3 py-1.5 rounded-xl text-xs font-bold transition-all border flex items-center gap-1 cursor-pointer",
+                              activeSession?.id === session.id
+                                ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                                : "bg-white text-slate-700 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50"
+                            )}
+                            title="Selecionar e Assinar este DDS"
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                            {activeSession?.id === session.id ? 'Selecionado' : 'Assinar'}
+                          </button>
+
+                          {/* Admin / Master Edit Action */}
+                          {(isAdmin || isMaster) && (
                             <button
+                              type="button"
                               onClick={() => handleEditSession(session)}
-                              className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                              title="Editar Sessão"
+                              className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all border border-transparent hover:border-emerald-200 cursor-pointer"
+                              title="Editar Sessão de DDS (Administrador/Master)"
                             >
                               <Edit2 className="w-4 h-4" />
                             </button>
-                          ) : (
-                            <div className="p-2 text-slate-200 cursor-not-allowed" title="Edição permitida apenas no turno e dia da criação">
-                              <Lock className="w-4 h-4" />
-                            </div>
                           )}
-                          
+
+                          {/* Admin / Master Add Participant Action */}
                           {(isAdmin || isMaster) && (
                             <button
+                              type="button"
+                              onClick={() => handleOpenAddSignature(session)}
+                              className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all border border-transparent hover:border-emerald-200 cursor-pointer"
+                              title="Adicionar Colaborador Manualmente (Administrador/Master)"
+                            >
+                              <UserPlus className="w-4 h-4" />
+                            </button>
+                          )}
+
+                          {/* Admin / Master Delete Action */}
+                          {(isAdmin || isMaster) && (
+                            <button
+                              type="button"
                               onClick={() => handleDeleteSession(session.id)}
-                              className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                              title="Excluir Sessão e Assinaturas"
+                              className="p-2 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-200 cursor-pointer"
+                              title="Excluir Sessão e todas as assinaturas (Administrador/Master)"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
                           )}
-                          
+
+                          {/* Expand/Collapse Toggle */}
                           <button
-                            onClick={() => setExpandedSessionId(expandedSessionId === session.id ? null : session.id)}
-                            className="p-2 text-slate-400 hover:text-slate-900 transition-all"
+                            type="button"
+                            onClick={() => setExpandedSessionId(isExpanded ? null : session.id)}
+                            className={cn(
+                              "p-2 rounded-xl transition-all border cursor-pointer",
+                              isExpanded 
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
+                                : "text-slate-400 hover:text-slate-900 border-slate-200 hover:border-slate-300 bg-white"
+                            )}
+                            title={isExpanded ? "Ocultar lista de assinantes" : "Expandir detalhes da lista de assinantes"}
                           >
-                            {expandedSessionId === session.id ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                           </button>
                         </div>
                       </div>
 
-                      <AnimatePresence>
-                        {expandedSessionId === session.id && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            className="overflow-hidden border-t border-slate-50 pt-4"
-                          >
-                            <div className="flex items-center justify-between mb-4">
-                               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Collaboradores ({sessionSignatures.length})</span>
-                               <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Senha: {session.passcode}</span>
-                            </div>
-                            
-                            <div className="space-y-2">
-                              {signaturesLoading ? (
-                                <div className="flex justify-center py-4">
-                                  <Loader2 className="w-5 h-5 animate-spin text-slate-300" />
-                                </div>
-                              ) : sessionSignatures.filter(sig => !participantSearch || sig.userName.toLowerCase().includes(participantSearch.toLowerCase())).length > 0 ? (
-                                sessionSignatures
-                                  .filter(sig => !participantSearch || sig.userName.toLowerCase().includes(participantSearch.toLowerCase()))
-                                  .map((sig, idx) => (
-                                  <div key={`${sig.id}-${idx}`} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-8 h-8 bg-white border border-slate-100 rounded-lg flex items-center justify-center text-slate-400">
-                                        <Users className="w-4 h-4" />
-                                      </div>
-                                      <div>
-                                        <p className="text-sm font-bold text-slate-700">{sig.userName}</p>
-                                        <p className="text-[9px] text-slate-400 font-bold uppercase">{safeToDate(sig.timestamp)?.toLocaleTimeString('pt-BR')}</p>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      {sig.mood === 'happy' && <Smile className="w-4 h-4 text-emerald-500" />}
-                                      {sig.mood === 'neutral' && <Meh className="w-4 h-4 text-amber-500" />}
-                                      {sig.mood === 'sad' && <Frown className="w-4 h-4 text-rose-500" />}
-                                    </div>
-                                  </div>
-                                ))
-                              ) : (
-                                <div className="text-center py-4 text-xs text-slate-400 font-medium italic">Nenhuma assinatura realizada ainda.</div>
-                              )}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8 text-sm text-slate-400">Nenhum histórico encontrado.</div>
-                )
-              ) : (
-                // User View: My Signatures & Created Sessions
-                <div className="space-y-6">
-                  {sessions.filter(s => s.createdBy === auth.currentUser?.uid).length > 0 && (
-                    <div className="space-y-3 pb-6 border-b border-slate-100">
-                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                        Sessões de Hoje Criadas por Você
-                      </h4>
-                      <p className="text-[10px] text-slate-400 font-medium">Você pode editar seus lançamentos durante o turno atual.</p>
-                      <div className="space-y-2">
-                        {sessions
-                          .filter(s => s.createdBy === auth.currentUser?.uid)
-                          .map((session, idx) => (
-                            <div key={`${session.id}-${idx}`} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-bold rounded uppercase">
-                                    {session.shift}
-                                  </span>
-                                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                                    Letra {session.group}
-                                  </span>
-                                </div>
-                                <span className="text-sm font-bold text-slate-900">{session.title}</span>
-                                <p className="text-xs text-slate-400">Responsável: {session.executor}</p>
-                              </div>
-                              {canEditSession(session) ? (
-                                <button
-                                  onClick={() => handleEditSession(session)}
-                                  className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                                  title="Editar Sessão"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                </button>
-                              ) : (
-                                <div className="p-2 text-slate-200 cursor-not-allowed" title="Edição fechada após o turno ou data de criação">
-                                  <Lock className="w-4 h-4" />
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <History className="w-3.5 h-3.5 text-emerald-500" />
-                    Sua Participação Recente
-                  </h4>
-
-                  {historyLoading ? (
-                    <div className="flex justify-center py-8">
-                      <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-                    </div>
-                  ) : history.length > 0 ? (
-                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                      {history.map((item, idx) => (
-                        <div key={`${item.id}-${idx}`} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-emerald-200 transition-colors">
-                          <div className="flex flex-col gap-1">
-                            <p className="font-bold text-slate-900 text-sm">{item.sessionTitle}</p>
-                            <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                              <Calendar className="w-3 h-3" />
-                              {safeToDate(item.timestamp) ? safeToDate(item.timestamp)?.toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR')} 
-                              <span className="mx-1">•</span>
-                              <Clock className="w-3 h-3" />
-                              {safeToDate(item.timestamp) ? safeToDate(item.timestamp)?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '-'}
-                            </div>
+                      {/* Vertical Subscribers List inside corresponding DDS */}
+                      <div className="border-t border-slate-100 mt-4 pt-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                              <Users className="w-3.5 h-3.5 text-emerald-600" />
+                              Assinantes deste DDS ({sessionSigs.length})
+                            </span>
+                            <span className={cn(
+                              "px-2 py-0.5 rounded-full text-[10px] font-bold",
+                              sessionSigs.length >= totalPrevisto
+                                ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                : sessionSigs.length > 0
+                                  ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                  : "bg-slate-100 text-slate-600"
+                            )}>
+                              {sessionSigs.length >= totalPrevisto ? 'Completo' : sessionSigs.length > 0 ? 'Em andamento' : 'Sem assinaturas'}
+                            </span>
                           </div>
-                          <div className="flex items-center gap-3">
-                            {item.mood === 'happy' && <Smile className="w-5 h-5 text-emerald-500" />}
-                            {item.mood === 'neutral' && <Meh className="w-5 h-5 text-amber-500" />}
-                            {item.mood === 'sad' && <Frown className="w-5 h-5 text-rose-500" />}
-                            <div className="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shadow-sm border border-emerald-200">
-                              <CheckCircle2 className="w-4 h-4" />
-                            </div>
+                          
+                          <div className="flex items-center gap-2">
+                            {session.passcode && (
+                              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 flex items-center gap-1 font-mono">
+                                <Key className="w-3 h-3 text-emerald-600" />
+                                Senha: {session.passcode}
+                              </span>
+                            )}
                           </div>
                         </div>
-                      ))}
+                        
+                        {/* List of subscribers stacked vertically one below the other */}
+                        <div className="space-y-2">
+                          {sessionSigs.length > 0 ? (
+                            sessionSigs.map((sig: any, sIdx: number) => (
+                              <div 
+                                key={`${sig.id || sIdx}-${sIdx}`} 
+                                className="flex items-center justify-between p-3 bg-slate-50 hover:bg-emerald-50/30 rounded-2xl border border-slate-200/70 hover:border-emerald-200 transition-all"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="w-7 h-7 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-700 font-black text-xs flex-shrink-0 shadow-2xs">
+                                    {sIdx + 1}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-bold text-slate-800 flex items-center gap-2 truncate">
+                                      <span className="truncate">{sig.userName}</span>
+                                      {sig.registration && (
+                                        <span className="text-[10px] font-mono text-slate-500 font-semibold bg-slate-200/70 px-1.5 py-0.5 rounded flex-shrink-0">
+                                          {sig.registration}
+                                        </span>
+                                      )}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400 font-medium">
+                                      Assinado às {safeToDate(sig.timestamp)?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) || 'Horário registrado'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <div className="flex items-center gap-1 mr-1">
+                                    {sig.mood === 'happy' && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        <Smile className="w-3.5 h-3.5 text-emerald-500" /> Disposto
+                                      </span>
+                                    )}
+                                    {sig.mood === 'neutral' && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                        <Meh className="w-3.5 h-3.5 text-amber-500" /> Neutro
+                                      </span>
+                                    )}
+                                    {sig.mood === 'sad' && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                        <Frown className="w-3.5 h-3.5 text-rose-500" /> Atenção
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Admin/Master can reassign / move this signature to another DDS */}
+                                  {(isAdmin || isMaster) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenReassignModal(sig, session)}
+                                      className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
+                                      title="Mover assinatura para outro DDS"
+                                    >
+                                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+
+                                  {/* Admin/Master can delete this individual signature */}
+                                  {(isAdmin || isMaster) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteSignature(sig.id, sig.userName, session.id)}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
+                                      title="Excluir assinatura"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="py-4 px-4 bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 text-center">
+                              <p className="text-xs text-slate-500 font-medium">
+                                Nenhum colaborador assinou este DDS ainda.
+                              </p>
+                              {session.passcode && (
+                                <p className="text-[10px] text-slate-400 mt-0.5">
+                                  Forneça a senha <strong>{session.passcode}</strong> aos colaboradores para registrar a presença.
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="text-sm text-slate-400 text-center py-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                      <AlertCircle className="w-10 h-10 text-slate-200 mx-auto mb-2" />
-                      <p>Você ainda não assinou nenhum DDS.</p>
-                    </div>
-                  )}
+                  );
+                })
+              ) : (
+                <div className="text-center py-12 px-4 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+                  <AlertCircle className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                  <p className="text-sm font-bold text-slate-700 mb-1">Nenhum DDS encontrado com os filtros selecionados.</p>
+                  <p className="text-xs text-slate-400">
+                    Tente selecionar outra data ou limpe os filtros para visualizar os registros anteriores.
+                  </p>
                 </div>
               )}
             </div>
-        </div>
-        </div>
 
-        {/* Admin/Creation Tools Side */}
+            {/* Non-admin user recent personal history */}
+            {!isManager && history.length > 0 && (
+              <div className="mt-8 pt-6 border-t border-slate-100">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  Minhas Assinaturas Recentes
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-48 overflow-y-auto pr-1">
+                  {history.slice(0, 6).map((item, idx) => (
+                    <div key={`${item.id}-${idx}`} className="p-3 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
+                      <div>
+                        <p className="font-bold text-slate-800 text-xs truncate max-w-[200px]">{item.sessionTitle}</p>
+                        <p className="text-[10px] text-slate-400">
+                          {formatDateBR(item.timestamp, true)}
+                        </p>
+                      </div>
+                      <div className="w-6 h-6 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center flex-shrink-0">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
+        {/* Delete Session Confirmation Modal (Admin/Master) */}
         <AnimatePresence>
           {sessionToDelete && (
             <motion.div
@@ -2083,6 +2703,375 @@ const DDS: React.FC = () => {
                   >
                     Excluir
                   </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Delete Signature Confirmation Modal (Admin/Master) */}
+        <AnimatePresence>
+          {signatureToDelete && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl border border-slate-100"
+              >
+                <div className="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                  <AlertTriangle className="w-8 h-8 text-rose-500" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 text-center mb-2">Excluir Assinatura?</h3>
+                <p className="text-slate-500 text-center text-sm mb-8">
+                  Deseja realmente remover a presença de <strong>{signatureToDelete.userName}</strong> desta sessão de DDS?
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setSignatureToDelete(null)}
+                    className="py-3 px-4 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmDeleteSignature}
+                    className="py-3 px-4 rounded-xl bg-rose-500 text-white font-bold hover:bg-rose-600 transition-colors shadow-lg shadow-rose-100"
+                  >
+                    Remover
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Manual Add Signature Modal (Admin/Master) */}
+        <AnimatePresence>
+          {showAddSignatureModal && targetSessionForSignature && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl border border-slate-100"
+              >
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+                      <UserPlus className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900">Adicionar Colaborador</h3>
+                      <p className="text-xs text-slate-400">Ao DDS: {targetSessionForSignature.title}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowAddSignatureModal(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 rounded-xl"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveManualSignature} className="space-y-4">
+                  {/* Select from system registered users */}
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-emerald-600" />
+                        Colaborador Cadastrado no Sistema
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          {registeredUsers.length} cadastrados
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleRefreshRegisteredUsers}
+                          disabled={isRefreshingUsers}
+                          className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors"
+                          title="Atualizar lista de colaboradores"
+                        >
+                          <RotateCcw className={cn("w-3 h-3", isRefreshingUsers && "animate-spin text-emerald-600")} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Quick filter input if there are multiple users */}
+                    {registeredUsers.length > 5 && (
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Filtrar por nome, matrícula ou cargo..."
+                          value={manualUserSearch}
+                          onChange={(e) => setManualUserSearch(e.target.value)}
+                          className="w-full pl-8 pr-7 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                        {manualUserSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setManualUserSearch('')}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <select
+                      value={manualSelectedUid}
+                      onChange={(e) => {
+                        const uid = e.target.value;
+                        setManualSelectedUid(uid);
+                        if (uid && uid !== 'custom_manual') {
+                          const found = registeredUsers.find(u => u.uid === uid);
+                          if (found) {
+                            setManualParticipantName(found.displayName);
+                            setManualRegistration(found.registration || '');
+                          }
+                        } else if (uid === 'custom_manual') {
+                          setManualSelectedUid('');
+                          setManualParticipantName('');
+                          setManualRegistration('');
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm"
+                    >
+                      <option value="">-- Selecione na lista de cadastrados --</option>
+                      {registeredUsers
+                        .filter(u => {
+                          if (!manualUserSearch.trim()) return true;
+                          const term = manualUserSearch.toLowerCase();
+                          return (
+                            u.displayName?.toLowerCase().includes(term) ||
+                            u.registration?.toLowerCase().includes(term) ||
+                            u.cargoName?.toLowerCase().includes(term) ||
+                            u.sectorName?.toLowerCase().includes(term)
+                          );
+                        })
+                        .map((u) => (
+                          <option key={u.uid} value={u.uid}>
+                            {u.displayName} {u.registration ? `• Matrícula: ${u.registration}` : ''} {u.cargoName ? `(${u.cargoName})` : ''}
+                          </option>
+                        ))}
+                      <option value="custom_manual">✏️ Digitar outro nome / Não cadastrado...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Nome do Colaborador
+                      </label>
+                      {manualSelectedUid && (
+                        <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Vinculado ao cadastro
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      list="user-suggestions"
+                      placeholder="Digite ou selecione o nome..."
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                      value={manualParticipantName}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setManualParticipantName(val);
+                        const matched = registeredUsers.find(u => u.displayName.toLowerCase() === val.toLowerCase());
+                        if (matched) {
+                          setManualSelectedUid(matched.uid);
+                          if (matched.registration && !manualRegistration) {
+                            setManualRegistration(matched.registration);
+                          }
+                        } else {
+                          setManualSelectedUid('');
+                        }
+                      }}
+                      required
+                    />
+                    <datalist id="user-suggestions">
+                      {registeredUsers.map((u) => (
+                        <option key={u.uid} value={u.displayName} />
+                      ))}
+                    </datalist>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Matrícula / Registro (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: 12345"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                      value={manualRegistration}
+                      onChange={(e) => setManualRegistration(e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Estado de Humor / Disposição
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setManualMood('happy')}
+                        className={cn(
+                          "p-3 rounded-xl border flex flex-col items-center gap-1 transition-all",
+                          manualMood === 'happy'
+                            ? "bg-emerald-50 border-emerald-500 text-emerald-700 ring-2 ring-emerald-200"
+                            : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
+                        )}
+                      >
+                        <Smile className="w-5 h-5 text-emerald-500" />
+                        <span className="text-[10px] font-bold">Disposto</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setManualMood('neutral')}
+                        className={cn(
+                          "p-3 rounded-xl border flex flex-col items-center gap-1 transition-all",
+                          manualMood === 'neutral'
+                            ? "bg-amber-50 border-amber-500 text-amber-700 ring-2 ring-amber-200"
+                            : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
+                        )}
+                      >
+                        <Meh className="w-5 h-5 text-amber-500" />
+                        <span className="text-[10px] font-bold">Neutro</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setManualMood('sad')}
+                        className={cn(
+                          "p-3 rounded-xl border flex flex-col items-center gap-1 transition-all",
+                          manualMood === 'sad'
+                            ? "bg-rose-50 border-rose-500 text-rose-700 ring-2 ring-rose-200"
+                            : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
+                        )}
+                      >
+                        <Frown className="w-5 h-5 text-rose-500" />
+                        <span className="text-[10px] font-bold">Atenção</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddSignatureModal(false)}
+                      className="py-2.5 px-4 rounded-xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="py-2.5 px-4 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-100 flex items-center justify-center gap-2"
+                    >
+                      {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirmar Presença'}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Reassign / Unify Signature Modal (Admin/Master) */}
+        <AnimatePresence>
+          {signatureToReassign && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl border border-slate-100"
+              >
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+                      <ArrowRightLeft className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900">Mover / Unificar Assinatura</h3>
+                      <p className="text-xs text-slate-400">Reatribuir presença ao DDS correto</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSignatureToReassign(null)}
+                    className="p-2 text-slate-400 hover:text-slate-600 rounded-xl"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-1.5">
+                    <p className="text-xs text-slate-500 font-medium">
+                      Colaborador: <strong className="text-slate-800 text-sm">{signatureToReassign.userName}</strong>
+                    </p>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Sessão atual: <span className="text-rose-600 font-bold">{signatureToReassign.currentSessionTitle}</span>
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                      Selecione a Sessão de DDS de Destino
+                    </label>
+                    <select
+                      value={targetReassignSessionId}
+                      onChange={(e) => setTargetReassignSessionId(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="">-- Selecione o DDS de destino --</option>
+                      {sessions
+                        .filter(s => s.id !== signatureToReassign.currentSessionId)
+                        .map(s => (
+                          <option key={s.id} value={s.id}>
+                            {formatSessionDisplayTitle(s)} (Letra {s.group})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setSignatureToReassign(null)}
+                      className="py-2.5 px-4 rounded-xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading || !targetReassignSessionId}
+                      onClick={handleConfirmReassign}
+                      className="py-2.5 px-4 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-100 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirmar Transferência'}
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             </motion.div>

@@ -4,6 +4,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { decryptValue } from '../lib/crypto';
 import { MASTER_EMAILS } from '../constants';
+import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { Metric } from '../types';
 import { 
@@ -194,41 +195,44 @@ const Dashboard: React.FC = () => {
         const currentGroup = getGroupForShift(new Date(), currentShift);
         setExpectedDuty({ shift: currentShift, group: currentGroup });
         
-        const [usersSnap, signaturesSnap, domainsSnap, sessionsSnap] = await Promise.all([
-          getDocs(collection(db, 'users')).catch(err => handleFirestoreError(err, OperationType.LIST, 'users')),
-          getDocs(collection(db, 'dds_signatures')).catch(err => handleFirestoreError(err, OperationType.LIST, 'dds_signatures')),
-          getDocs(collection(db, 'allowed_domains')).catch(err => handleFirestoreError(err, OperationType.LIST, 'allowed_domains')),
-          getDocs(collection(db, 'dds_sessions')).catch(err => handleFirestoreError(err, OperationType.LIST, 'dds_sessions'))
+        // Fast path: load cached users count
+        let userList = getLocalCachedUsers();
+        if (userList.length === 0) {
+          userList = await fetchUsersSafely();
+        }
+
+        const [signaturesSnap, domainsSnap, sessionsSnap] = await Promise.all([
+          getDocs(collection(db, 'dds_signatures')).catch(err => {
+            handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
+            return null;
+          }),
+          getDocs(collection(db, 'allowed_domains')).catch(err => {
+            handleFirestoreError(err, OperationType.LIST, 'allowed_domains');
+            return null;
+          }),
+          getDocs(collection(db, 'dds_sessions')).catch(err => {
+            handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
+            return null;
+          })
         ]);
 
-        if (!usersSnap || !signaturesSnap || !domainsSnap || !sessionsSnap) return;
+        const validSessionIds = new Set(sessionsSnap ? sessionsSnap.docs.map(d => d.id) : []);
+        const validSignatures = signaturesSnap ? signaturesSnap.docs.filter(d => validSessionIds.has(d.data().sessionId)) : [];
 
-        const validSessionIds = new Set(sessionsSnap.docs.map(d => d.id));
-        const validSignatures = signaturesSnap.docs.filter(d => validSessionIds.has(d.data().sessionId));
-
-        const decryptedUsers = await Promise.all(
-          usersSnap.docs.map(async (doc) => {
-            const data = doc.data();
-            const decEmail = await decryptValue(data.email);
-            return {
-              email: (decEmail || '').toLowerCase().trim()
-            };
-          })
-        );
-
-        const nonMasterUsersCount = decryptedUsers.filter(user => {
+        const nonMasterUsersCount = userList.filter(user => {
           if (user.email === 'jacksonbjr@gmail.com') return false;
           return !MASTER_EMAILS.includes(user.email) || isMaster;
         }).length;
 
-        setStats({
-          totalUsers: nonMasterUsersCount,
+        setStats(prev => ({
+          ...prev,
+          totalUsers: nonMasterUsersCount || prev.totalUsers,
           activeDDS: 0, 
-          totalSignatures: validSignatures.length,
-          allowedDomains: domainsSnap.size
-        });
+          totalSignatures: validSignatures.length || prev.totalSignatures,
+          allowedDomains: domainsSnap ? domainsSnap.size : prev.allowedDomains
+        }));
       } catch (err) {
-        console.error("Error fetching generic stats:", err);
+        console.warn("Could not refresh generic stats:", err);
       }
     };
 

@@ -41,8 +41,9 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { cn } from '../lib/utils';
+import { cn, formatDateBR } from '../lib/utils';
 import { decryptValue } from '../lib/crypto';
+import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
 import { VacationRequest, VacationQueueItem, WorkSector, WorkFunction, UserProfile } from '../types';
 
 export default function Vacations() {
@@ -435,28 +436,13 @@ export default function Vacations() {
       const activeFunctions = combinedFunctions.filter(f => f.active !== false);
       setFunctions(activeFunctions);
 
-      // 3. Fetch Users
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const usersList: any[] = [];
-      for (const d of usersSnap.docs) {
-        const data = d.data();
-        const decryptedDisplayName = await decryptValue(data.displayName);
-        const decryptedEmail = await decryptValue(data.email);
-        const displayName = decryptedDisplayName || 'Sem Nome';
-        const email = decryptedEmail || '';
-        
-        if (email.toLowerCase().trim() === 'jacksonbjr@gmail.com') {
-          continue;
-        }
-        
-        usersList.push({
-          uid: d.id,
-          ...data,
-          displayName,
-          email
-        } as any);
+      // 3. Fetch Users safely
+      let rawUsers = getLocalCachedUsers();
+      if (rawUsers.length === 0) {
+        rawUsers = await fetchUsersSafely();
       }
-      setAllUsers(usersList);
+      const usersList = rawUsers.filter(u => u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com');
+      setAllUsers(usersList as any[]);
 
       // 4. Fetch Vacation Requests
       const reqSnap = await getDocs(query(collection(db, 'vacation_requests'), orderBy('createdAt', 'desc')));
@@ -1380,7 +1366,7 @@ export default function Vacations() {
                   <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 space-y-1">
                     <p className="text-xs font-bold text-slate-500">Período de Férias Calculado:</p>
                     <p className="text-sm font-black text-slate-800">
-                      {new Date(startDate + 'T00:00:00').toLocaleDateString('pt-BR')} até {new Date(calculateEndDate(startDate, daysToTake) + 'T00:00:00').toLocaleDateString('pt-BR')}
+                      {formatDateBR(startDate)} até {formatDateBR(calculateEndDate(startDate, daysToTake))}
                     </p>
                     <p className="text-xs font-semibold text-emerald-700">Total de {daysToTake} dias</p>
                   </div>
@@ -1441,7 +1427,7 @@ export default function Vacations() {
                         </div>
 
                         <div className="text-sm font-bold text-slate-800">
-                          Período: {new Date(req.startDate).toLocaleDateString('pt-BR')} até {new Date(req.endDate).toLocaleDateString('pt-BR')}
+                          Período: {formatDateBR(req.startDate)} até {formatDateBR(req.endDate)}
                         </div>
 
                         <p className="text-xs text-slate-500 font-medium">
@@ -1901,7 +1887,7 @@ export default function Vacations() {
 
                           <div className="p-3 bg-slate-50 rounded-xl text-xs font-bold text-slate-600 flex items-center gap-2">
                             <Clock className="w-3.5 h-3.5 text-slate-400" />
-                            {new Date(req.startDate).toLocaleDateString('pt-BR')} até {new Date(req.endDate).toLocaleDateString('pt-BR')}
+                            {formatDateBR(req.startDate)} até {formatDateBR(req.endDate)}
                           </div>
 
                           {/* Simultaneous counter warnings */}
@@ -2090,7 +2076,7 @@ export default function Vacations() {
                           </div>
 
                           <div className="text-xs font-bold text-slate-700">
-                            Período: {new Date(req.startDate).toLocaleDateString('pt-BR')} até {new Date(req.endDate).toLocaleDateString('pt-BR')}
+                            Período: {formatDateBR(req.startDate)} até {formatDateBR(req.endDate)}
                           </div>
 
                           <p className="text-xs text-slate-500 font-medium">
@@ -2194,7 +2180,7 @@ export default function Vacations() {
                             )}
                           </div>
                           <div className="font-semibold text-slate-700">
-                            Período: {new Date(req.startDate + 'T00:00:00').toLocaleDateString('pt-BR')} até {new Date(req.endDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                            Período: {formatDateBR(req.startDate)} até {formatDateBR(req.endDate)}
                           </div>
                           <div className="text-slate-400 text-[10px] font-medium">
                             Setor: {req.sectorName} • Cargo: {req.cargoName}
@@ -2558,7 +2544,7 @@ export default function Vacations() {
               </h3>
               
               <p className="text-xs text-slate-500 leading-relaxed font-semibold">
-                Você está recusando a solicitação de férias de <strong>{rejectingReq.userName}</strong> de {new Date(rejectingReq.startDate).toLocaleDateString('pt-BR')} até {new Date(rejectingReq.endDate).toLocaleDateString('pt-BR')}. Informe o motivo:
+                Você está recusando a solicitação de férias de <strong>{rejectingReq.userName}</strong> de {formatDateBR(rejectingReq.startDate)} até {formatDateBR(rejectingReq.endDate)}. Informe o motivo:
               </p>
 
               <textarea
@@ -2667,7 +2653,7 @@ export default function Vacations() {
                   <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 space-y-1 text-xs">
                     <p className="font-bold text-slate-500">Período de Férias Calculado:</p>
                     <p className="font-black text-slate-800">
-                      {new Date(editStartDate + 'T00:00:00').toLocaleDateString('pt-BR')} até {new Date(calculateEndDate(editStartDate, editDays) + 'T00:00:00').toLocaleDateString('pt-BR')}
+                      {formatDateBR(editStartDate)} até {formatDateBR(calculateEndDate(editStartDate, editDays))}
                     </p>
                     <p className="font-semibold text-emerald-700">Total de {editDays} dias</p>
                   </div>

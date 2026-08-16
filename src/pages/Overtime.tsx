@@ -17,6 +17,7 @@ import { useAuth } from '../hooks/useAuth';
 import { decryptValue } from '../lib/crypto';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { getLocalCachedUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { 
   Clock, 
@@ -167,6 +168,15 @@ export default function Overtime() {
     // 3. Listen for users if admin/master/manager
     let unsubUsers = () => {};
     if (isAdmin || isMaster || isManager) {
+      // Immediate cached render
+      const cached = getLocalCachedUsers();
+      if (cached.length > 0) {
+        const approvedList = cached
+          .filter(u => u.status === 'approved' && u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
+          .sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+        setUsersList(approvedList as any[]);
+      }
+
       unsubUsers = onSnapshot(collection(db, 'users'), async (snap) => {
         const listPromises = snap.docs.map(async (docSnap) => {
           const data = docSnap.data();
@@ -186,7 +196,7 @@ export default function Overtime() {
         approvedList.sort((a, b) => a.displayName.localeCompare(b.displayName));
         setUsersList(approvedList);
       }, (err) => {
-        console.error('Error loading users list:', err);
+        handleFirestoreError(err, OperationType.LIST, 'users');
       });
     }
 

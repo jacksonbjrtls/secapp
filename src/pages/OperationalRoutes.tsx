@@ -18,7 +18,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { getCurrentShift, getGroupForShift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeToDate } from '../lib/utils';
+import { cn, safeToDate, formatDateBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { Html5Qrcode } from 'html5-qrcode';
 import { 
@@ -2023,7 +2023,7 @@ const OperationalRoutes: React.FC = () => {
               <div>
                 <h2 className="text-xl font-black text-slate-900 tracking-tight ml-1">Histórico Recente de Rondas</h2>
                 <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider ml-1 mt-0.5">
-                  {histSelectedDate ? `Exibindo rondas de: ${new Date(histSelectedDate + 'T12:00:00').toLocaleDateString('pt-BR')}` : "Carregado de forma automática: Ontem e Hoje"}
+                  {histSelectedDate ? `Exibindo rondas de: ${formatDateBR(histSelectedDate)}` : "Carregado de forma automática: Ontem e Hoje"}
                 </p>
               </div>
               <div className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider self-start sm:self-auto flex items-center gap-1.5">
@@ -2049,7 +2049,7 @@ const OperationalRoutes: React.FC = () => {
                   <Calendar className="w-4 h-4 text-emerald-600 mr-2 group-hover:scale-110 transition-transform" />
                   <span className="text-xs font-bold text-slate-700 tracking-tight select-none">
                     {histSelectedDate 
-                      ? new Date(histSelectedDate + 'T12:00:00').toLocaleDateString('pt-BR') 
+                      ? formatDateBR(histSelectedDate) 
                       : "Selecionar Data..."}
                   </span>
                   
@@ -2578,7 +2578,7 @@ const OperationalRoutes: React.FC = () => {
                       <div className="text-left leading-tight">
                         <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wide">Rascunho Recuperado</h4>
                         <p className="text-[10px] text-emerald-700 font-bold mt-0.5 max-w-sm">
-                          Progresso salvo automaticamente às {draftSavedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} do dia {draftSavedAt.toLocaleDateString('pt-BR')}.
+                          Progresso salvo automaticamente às {draftSavedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} do dia {formatDateBR(draftSavedAt)}.
                         </p>
                       </div>
                     </div>
@@ -3039,11 +3039,7 @@ const OperationalRoutes: React.FC = () => {
                                         <div className="bg-slate-50 border border-slate-150 rounded-2xl p-2.5 divide-y divide-slate-150/40">
                                           {eqHistory.map((hist, histIdx) => {
                                             const rawDate = hist.createdAt;
-                                            let dateText = 'Data indisponível';
-                                            if (rawDate) {
-                                              const d = rawDate.toDate ? rawDate.toDate() : new Date(rawDate);
-                                              dateText = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                                            }
+                                            const dateText = rawDate ? formatDateBR(rawDate, true) : 'Data indisponível';
                                             
                                             let valDisplay = hist.value ?? '';
                                             if (valDisplay === 'low') valDisplay = 'BAIXO';

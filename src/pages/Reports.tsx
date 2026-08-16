@@ -3,6 +3,7 @@ import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
+import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { decryptValue } from '../lib/crypto';
 import { 
@@ -36,7 +37,7 @@ import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeToDate } from '../lib/utils';
+import { cn, safeToDate, formatDateBR } from '../lib/utils';
 
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 
@@ -283,29 +284,18 @@ const Reports: React.FC = () => {
           const safetyList = safetySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           setSafetyObservationsData(safetyList);
 
-          const usersSnap = await getDocs(collection(db, 'users'));
-          const decryptedUsersList = await Promise.all(
-            usersSnap.docs.map(async (doc) => {
-              const data = doc.data();
-              const decName = await decryptValue(data.displayName);
-              const decEmail = await decryptValue(data.email);
-              return {
-                uid: doc.id,
-                id: doc.id,
-                ...data,
-                displayName: decName || 'Sem nome',
-                email: (decEmail || '').toLowerCase().trim()
-              };
-            })
-          );
-          const usersList = decryptedUsersList
+          let rawUsers = getLocalCachedUsers();
+          if (rawUsers.length === 0) {
+            rawUsers = await fetchUsersSafely();
+          }
+          const usersList = rawUsers
             .filter(user => {
               const userEmail = user.email || '';
               if (userEmail === 'jacksonbjr@gmail.com') return false;
               return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
             })
             .sort((a, b) => a.displayName.localeCompare(b.displayName));
-          setAllUsers(usersList);
+          setAllUsers(usersList.map(u => ({ id: u.uid, ...u })));
         }
 
       } catch (err) {
@@ -623,7 +613,7 @@ const Reports: React.FC = () => {
         item.coilsCount,
         item.totalWeight.toLocaleString('pt-BR'),
         item.responsibleName,
-        item.timestamp.toLocaleDateString('pt-BR')
+        formatDateBR(item.timestamp)
       ]);
     } else if (reportType === 'quality') {
       head = [['Colaborador', 'Checklist', 'Setor/Linha', 'Escala', 'Itens', 'Data/Hora']];
@@ -1544,7 +1534,7 @@ const Reports: React.FC = () => {
                       <span className="text-slate-400 uppercase font-black tracking-widest text-[8px]">Cadastro</span>
                       <p className="font-bold text-slate-700 text-xs">
                         {selectedUserData.profile.createdAt 
-                          ? safeToDate(selectedUserData.profile.createdAt)?.toLocaleDateString('pt-BR') 
+                          ? formatDateBR(selectedUserData.profile.createdAt) 
                           : 'Início'}
                       </p>
                     </div>
@@ -1640,7 +1630,7 @@ const Reports: React.FC = () => {
                             )}>
                               {o.severity || 'médio'}
                             </span>
-                            <span className="text-[9px] text-slate-400">{o.createdAt ? safeToDate(o.createdAt)?.toLocaleDateString('pt-BR') : '-'}</span>
+                            <span className="text-[9px] text-slate-400">{o.createdAt ? formatDateBR(o.createdAt) : '-'}</span>
                           </div>
                           <p className="text-slate-600 font-medium line-clamp-1">{o.description}</p>
                         </div>
@@ -1665,7 +1655,7 @@ const Reports: React.FC = () => {
                       {selectedUserData.routesList.slice(0, 3).map((r: any, idx: number) => (
                         <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-100 flex items-center justify-between text-[11px]">
                           <span className="font-bold text-slate-800 truncate max-w-[180px]">{r.templateName}</span>
-                          <span className="text-[9px] text-slate-400 shrink-0">{r.createdAt ? safeToDate(r.createdAt)?.toLocaleDateString('pt-BR') : '-'}</span>
+                          <span className="text-[9px] text-slate-400 shrink-0">{r.createdAt ? formatDateBR(r.createdAt) : '-'}</span>
                         </div>
                       ))}
                     </div>
@@ -2117,7 +2107,7 @@ const Reports: React.FC = () => {
                       </>
                     )}
                     <td className="px-6 py-4 text-right tabular-nums">
-                      <p className="text-sm font-bold text-slate-900">{item.timestamp.toLocaleDateString('pt-BR')}</p>
+                      <p className="text-sm font-bold text-slate-900">{formatDateBR(item.timestamp)}</p>
                       <p className="text-[10px] text-slate-400 font-medium">{item.timestamp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
                     </td>
                     {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments') && (

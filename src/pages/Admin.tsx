@@ -18,6 +18,7 @@ import {
 import { db, auth } from '../lib/firebase';
 import { UserProfile, AllowedDomain, UserRole, UserStatus } from '../types';
 import { MASTER_EMAILS } from '../constants';
+import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { encryptValue, decryptValue, hashEmailForSearch } from '../lib/crypto';
 import { useAuth } from '../hooks/useAuth';
@@ -646,23 +647,26 @@ const Admin: React.FC = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const domainsSnap = await getDocs(query(collection(db, 'allowed_domains'), orderBy('createdAt', 'desc')));
+      let rawUsers = getLocalCachedUsers();
+      if (rawUsers.length === 0) {
+        rawUsers = await fetchUsersSafely();
+      }
+
+      let domainsSnap: any = null;
+      try {
+        domainsSnap = await getDocs(query(collection(db, 'allowed_domains'), orderBy('createdAt', 'desc')));
+      } catch (dErr) {
+        handleFirestoreError(dErr, OperationType.LIST, 'allowed_domains');
+      }
       
-      const usersList = (await Promise.all(usersSnap.docs
-        .map(async (doc) => {
-          const data = doc.data() as any;
-          const decryptedEmail = await decryptValue(data.email);
-          const decryptedDisplayName = await decryptValue(data.displayName);
-          const isUserMaster = MASTER_EMAILS.includes(decryptedEmail?.toLowerCase() || '');
-          return { 
-            uid: doc.id, 
-            ...data, 
-            email: decryptedEmail,
-            displayName: decryptedDisplayName,
-            isMaster: isUserMaster 
+      const usersList = rawUsers
+        .map(u => {
+          const isUserMaster = MASTER_EMAILS.includes(u.email?.toLowerCase() || '');
+          return {
+            ...u,
+            isMaster: isUserMaster
           } as UserProfile;
-        })))
+        })
         .filter(user => user.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
         .filter(user => !user.isMaster || isMaster);
 
@@ -735,7 +739,9 @@ const Admin: React.FC = () => {
       }
 
       setUsers(uniqueUsers);
-      setDomains(domainsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AllowedDomain)));
+      if (domainsSnap) {
+        setDomains(domainsSnap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as AllowedDomain)));
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.GET, 'admin_data');
     } finally {
@@ -1292,8 +1298,13 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
       setModuleToReset(null);
       await fetchData();
     } catch (err: any) {
-      console.error('[Admin Module Reset] Error:', err);
-      setError('Ocorreu um erro ao tentar limpar o módulo.');
+      console.warn('[Admin Module Reset] Handled Reset Error:', err);
+      const errMsg = err?.message || String(err);
+      if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('resource-exhausted')) {
+        setError('O limite de cota diária de leitura do Firestore (Plano Gratuito) foi alcançado. O banco de dados renovará a cota automaticamente à meia-noite (UTC).');
+      } else {
+        setError('Ocorreu um erro ao tentar limpar o módulo: ' + errMsg);
+      }
     } finally {
       setResetLoading(false);
       setResetProgress('');
@@ -1650,7 +1661,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
       for (const d of docsToDelete) {
         batch.delete(doc(db, collectionName, d.id));
         count++;
-        if (count >= 400) {
+        if (count >= 300) {
           await batch.commit();
           batch = writeBatch(db);
           count = 0;
@@ -1659,8 +1670,10 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
       if (count > 0) {
         await batch.commit();
       }
-    } catch (err) {
-      console.error(`Error resetting collection ${collectionName}:`, err);
+    } catch (err: any) {
+      console.warn(`[Reset Warning] Could not clear collection ${collectionName}:`, err?.message || err);
+      handleFirestoreError(err, OperationType.DELETE, collectionName);
+      throw err;
     }
   };
 
@@ -1733,8 +1746,13 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
       setActiveTab('users');
       await fetchData();
     } catch (err: any) {
-      console.error('[Admin Reset] Error:', err);
-      setError('Ocorreu um erro ao tentar resetar o sistema.');
+      console.warn('[Admin Reset] Handled Reset Error:', err);
+      const errMsg = err?.message || String(err);
+      if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('resource-exhausted')) {
+        setError('O limite de cota diária de leitura do Firestore (Plano Gratuito) foi alcançado. O banco de dados renovará a cota automaticamente à meia-noite (UTC).');
+      } else {
+        setError('Ocorreu um erro ao tentar resetar o sistema: ' + errMsg);
+      }
     } finally {
       setResetLoading(false);
       setResetProgress('');
@@ -2964,10 +2982,22 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
                     description: 'Apaga os modelos de rotas operacionais e equipamentos cadastrados.'
                   },
                   {
+                    id: 'dds_sessions',
+                    title: 'DDS - Criação (Pautas / Reuniões)',
+                    collections: ['dds_sessions'],
+                    description: 'Remove apenas as reuniões e temas de DDS criados, preservando as assinaturas dos colaboradores.'
+                  },
+                  {
+                    id: 'dds_signatures',
+                    title: 'DDS - Assinaturas Digitais (Presenças)',
+                    collections: ['dds_signatures'],
+                    description: 'Remove apenas as assinaturas de presença dos colaboradores, preservando as reuniões e pautas criadas.'
+                  },
+                  {
                     id: 'dds',
-                    title: 'Diálogos de Segurança (DDS)',
+                    title: 'DDS Completo (Criação + Assinaturas)',
                     collections: ['dds_sessions', 'dds_signatures'],
-                    description: 'Remove todas as reuniões de DDS registradas e as assinaturas de presença dos operadores.'
+                    description: 'Remove todas as reuniões de DDS registradas e todas as assinaturas de presença dos operadores simultaneamente.'
                   },
                   {
                     id: 'forklift_checklists',
