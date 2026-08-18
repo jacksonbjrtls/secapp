@@ -592,7 +592,7 @@ const Reports: React.FC = () => {
         item.shift,
         item.group,
         item.executor,
-        item.mood === 'happy' ? 'Bem' : item.mood === 'neutral' ? 'Normal' : item.mood === 'sad' ? 'Cansado' : '-',
+        item.mood === 'happy' ? 'FELIZ' : item.mood === 'neutral' ? 'NEUTRO' : item.mood === 'sad' ? 'TRISTE' : '-',
         item.timestamp.toLocaleString('pt-BR')
       ]);
     } else if (reportType === 'forklift') {
@@ -711,7 +711,7 @@ const Reports: React.FC = () => {
           `"${item.shift}"`,
           `"${item.group}"`,
           `"${item.executor}"`,
-          `"${item.mood}"`,
+          `"${item.mood === 'happy' ? 'FELIZ' : item.mood === 'neutral' ? 'NEUTRO' : item.mood === 'sad' ? 'TRISTE' : item.mood || '-'}"`,
           `"${item.timestamp.toISOString()}"`
         ]);
       } else if (reportType === 'forklift') {
@@ -1415,9 +1415,9 @@ const Reports: React.FC = () => {
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
                     >
                       <option value="all">Todos Humores</option>
-                      <option value="happy">Bem (Feliz)</option>
-                      <option value="neutral">Normal</option>
-                      <option value="sad">Cansado (Triste)</option>
+                      <option value="happy">Feliz</option>
+                      <option value="neutral">Neutro</option>
+                      <option value="sad">Triste</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                   </div>
@@ -1599,7 +1599,7 @@ const Reports: React.FC = () => {
                               "px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-white tracking-widest",
                               d.mood === 'happy' ? "bg-emerald-500" : d.mood === 'neutral' ? "bg-blue-500" : "bg-amber-500"
                             )}>
-                              {d.mood === 'happy' ? 'BEM' : d.mood === 'neutral' ? 'NORMAL' : 'CANSADO'}
+                              {d.mood === 'happy' ? 'FELIZ' : d.mood === 'neutral' ? 'NEUTRO' : 'TRISTE'}
                             </span>
                           </div>
                         </div>
@@ -1882,9 +1882,21 @@ const Reports: React.FC = () => {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            {item.mood === 'happy' && <Smile className="w-6 h-6 text-emerald-500" />}
-                            {item.mood === 'neutral' && <Meh className="w-6 h-6 text-amber-500" />}
-                            {item.mood === 'sad' && <Frown className="w-6 h-6 text-rose-500" />}
+                            {item.mood === 'happy' && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <Smile className="w-3.5 h-3.5 text-emerald-500" /> FELIZ
+                              </span>
+                            )}
+                            {item.mood === 'neutral' && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                                <Meh className="w-3.5 h-3.5 text-blue-500" /> NEUTRO
+                              </span>
+                            )}
+                            {item.mood === 'sad' && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                                <Frown className="w-3.5 h-3.5 text-amber-500" /> TRISTE
+                              </span>
+                            )}
                             {(!item.mood || item.mood === '-') && <span className="text-slate-300 font-bold">-</span>}
                           </td>
                         </>
