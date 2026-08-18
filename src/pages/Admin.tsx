@@ -868,7 +868,7 @@ const Admin: React.FC = () => {
         }));
       }
     }, (error) => {
-      console.error('Error listening to modules configuration:', error);
+      handleFirestoreError(error, OperationType.GET, 'system_config/modules');
     });
     return () => unsub();
   }, [isAdmin]);

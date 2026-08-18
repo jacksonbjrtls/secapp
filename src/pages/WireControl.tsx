@@ -23,6 +23,7 @@ import {
   WireCoil,
   WireStorageBay
 } from '../types';
+import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { 
   LayoutDashboard, 
   PackagePlus, 
@@ -126,27 +127,27 @@ const WireControl: React.FC = () => {
 
     const unsubLines = onSnapshot(query(collection(db, 'production_lines'), orderBy('name')), (snap) => {
       setLines(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductionLine)));
-    }, (error) => console.error("Error in production_lines listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'production_lines'));
 
     const unsubSuppliers = onSnapshot(query(collection(db, 'wire_suppliers'), orderBy('name')), (snap) => {
       setSuppliers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireSupplier)));
-    }, (error) => console.error("Error in wire_suppliers listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_suppliers'));
 
     const unsubStorageBays = onSnapshot(query(collection(db, 'wire_storage_bays'), orderBy('name')), (snap) => {
       setStorageBays(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireStorageBay)));
-    }, (error) => console.error("Error in wire_storage_bays listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_storage_bays'));
 
     const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc')), (snap) => {
       setBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireBatch)));
-    }, (error) => console.error("Error in wire_batches listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_batches'));
 
     const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), orderBy('receivedAt', 'desc')), (snap) => {
       setCoils(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireCoil)));
-    }, (error) => console.error("Error in wire_coils listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_coils'));
     
     const unsubProd = onSnapshot(collection(db, 'monthly_production'), (snap) => {
       setProductionData(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => console.error("Error in monthly_production listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'monthly_production'));
 
     setLoading(false);
     return () => {
@@ -432,7 +433,7 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
     const q = query(collection(db, 'monthly_production'), orderBy('year', 'desc'), orderBy('month', 'desc'), limit(12));
     const unsub = onSnapshot(q, (snap) => {
       setProductionHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => console.error("Error in production history listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'monthly_production'));
     return unsub;
   }, []);
 

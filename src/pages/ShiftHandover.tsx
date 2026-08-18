@@ -136,7 +136,7 @@ export const ShiftHandover: React.FC = () => {
         }));
       }
     }, (error) => {
-      console.error('Error listening to modules configuration in ShiftHandover:', error);
+      handleFirestoreError(error, OperationType.GET, 'system_config/modules');
     });
     return () => unsubModules();
   }, []);

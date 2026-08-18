@@ -1330,7 +1330,7 @@ const Quality: React.FC = () => {
       }
       setSeedingLoading(false);
     }, (err) => {
-      console.error("Error loading quality seeding config:", err);
+      handleFirestoreError(err, OperationType.GET, 'settings/quality_seeding');
       setSeedingLoading(false);
     });
     return () => unsubSeeding();
@@ -1789,7 +1789,7 @@ const Quality: React.FC = () => {
           }
         }
       }
-    }, (error) => console.error("Error in quality_checklist_templates listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_templates'));
 
     const unsubLines = onSnapshot(collection(db, 'production_lines'), (snapshot) => {
       const activeLines = snapshot.docs
@@ -1797,7 +1797,7 @@ const Quality: React.FC = () => {
         .filter(l => l.active);
       activeLines.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       setLines(activeLines);
-    }, (error) => console.error("Error in production_lines listener (quality):", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'production_lines'));
 
     const unsubSectors = onSnapshot(collection(db, 'quality_sectors'), async (snapshot) => {
       const activeSectors = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualitySector));
@@ -1814,10 +1814,10 @@ const Quality: React.FC = () => {
             createdAt: serverTimestamp()
           });
         } catch (err) {
-          console.error("Error auto-seeding sector:", err);
+          handleFirestoreError(err, OperationType.CREATE, 'quality_sectors');
         }
       }
-    }, (error) => console.error("Error in quality_sectors listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_sectors'));
 
     const unsubOptionSets = onSnapshot(collection(db, 'quality_checklist_options'), async (snapshot) => {
       const fetchedOptionSets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualityChecklistOptionSet));
@@ -1834,7 +1834,7 @@ const Quality: React.FC = () => {
           });
           console.log("Seeded Nível de Limpeza de Secador option set.");
         } catch (err) {
-          console.error("Error auto-seeding option set:", err);
+          handleFirestoreError(err, OperationType.CREATE, 'quality_checklist_options');
         }
       } else {
         const dryerOs = fetchedOptionSets.find(os => os.name.toLowerCase().includes('limpeza'));
@@ -1845,11 +1845,11 @@ const Quality: React.FC = () => {
             });
             console.log("Updated existing option set to Limpo, Sujo, Tamponado.");
           } catch (err) {
-            console.error("Error updating existing options:", err);
+            handleFirestoreError(err, OperationType.UPDATE, 'quality_checklist_options');
           }
         }
       }
-    }, (error) => console.error("Error in quality_checklist_options listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_options'));
 
     const baseSubQuery = collection(db, 'quality_checklist_submissions');
     const subQuery = query(baseSubQuery, orderBy('createdAt', 'desc'));
@@ -1865,7 +1865,7 @@ const Quality: React.FC = () => {
         } as QualityChecklistSubmission;
       }));
       setSubmissions(mapped);
-    }, (error) => console.error("Error in quality_checklist_submissions listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_submissions'));
 
     const baseOmQuery = collection(db, 'quality_checklist_omissions');
     const omQuery = query(baseOmQuery, orderBy('createdAt', 'desc'));
@@ -1881,14 +1881,14 @@ const Quality: React.FC = () => {
         } as QualityChecklistOmission;
       }));
       setOmissions(mapped);
-    }, (error) => console.error("Error in quality_checklist_omissions listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_omissions'));
 
     const unsubProducts = onSnapshot(collection(db, 'quality_products'), (snapshot) => {
       const fetchedProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SecagemProduct));
       // Sort products by product code in ascending order (using numeric and case-insensitive natural sorting)
       fetchedProducts.sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' }));
       setProducts(fetchedProducts);
-    }, (error) => console.error("Error in quality_products listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_products'));
 
     const unsubSettings = onSnapshot(doc(db, 'quality_settings', 'modules'), (snapshot) => {
       if (snapshot.exists()) {
@@ -1897,7 +1897,7 @@ const Quality: React.FC = () => {
       } else {
         setUnitPhotoModuleEnabled(false);
       }
-    }, (error) => console.warn("Note in quality_settings listener:", error));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'quality_settings/modules'));
 
     const unsubUnits = onSnapshot(collection(db, 'quality_measurement_units'), (snapshot) => {
       if (snapshot.empty) {

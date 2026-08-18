@@ -105,7 +105,7 @@ export const Overview: React.FC = () => {
         }));
       }
     }, (error) => {
-      console.error('Error listening to modules configuration in Overview:', error);
+      handleFirestoreError(error, OperationType.GET, 'system_config/modules');
     });
     return () => unsubModules();
   }, [authLoading, user]);

@@ -14,6 +14,7 @@ import {
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { ProductionLine, WireCoil } from '../../types';
+import { handleFirestoreError, OperationType } from '../../lib/errorHandler';
 import { 
   Barcode, 
   Factory, 
@@ -122,7 +123,7 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
       const coils = snap.docs.map(d => ({ id: d.id, ...d.data() } as WireCoil));
       setAvailableCoils(coils);
     }, (err) => {
-      console.error("Error listening to available coils:", err);
+      handleFirestoreError(err, OperationType.LIST, 'wire_coils');
     });
 
     return () => unsubscribe();
@@ -209,7 +210,7 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
         .filter(d => d.status === 'consumed');
       setRecentConsumptions(coils);
     }, (err) => {
-      console.error("Error listening to consumptions:", err);
+      handleFirestoreError(err, OperationType.LIST, 'wire_coils');
     });
 
     return () => unsubscribe();
@@ -888,10 +889,10 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
 
               {/* Grid of Consumption Cards for the day */}
               <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-6">
-                {group.items.map((coil) => (
+                {group.items.map((coil, cIdx) => (
                   <motion.div
                     layout
-                    key={coil.id}
+                    key={`consumed-item-${coil.id || cIdx}-${cIdx}`}
                     className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between gap-6 group hover:border-emerald-300 hover:shadow-lg transition-all relative"
                   >
                     <div className="flex items-start justify-between">

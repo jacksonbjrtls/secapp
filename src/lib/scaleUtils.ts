@@ -41,11 +41,46 @@ export function getGroupForShift(date: Date, shift: Shift): Group {
 /**
  * Determines the current shift based on the time of day.
  */
-export function getCurrentShift(): Shift {
-  const hour = new Date().getHours();
+export function getCurrentShift(date: Date = new Date()): Shift {
+  const hour = date.getHours();
   if (hour >= 0 && hour < 8) return 'Turno 1';
   if (hour >= 8 && hour < 16) return 'Turno 2';
   return 'Turno 3';
+}
+
+/**
+ * Returns the operational shift time range (start/end) for a given date and shift.
+ */
+export function getShiftTimeRange(date: Date, shift: Shift): { start: Date; end: Date } {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+
+  if (shift === 'Turno 1') {
+    // 00:00:00 to 08:00:00
+    const start = new Date(year, month, day, 0, 0, 0, 0);
+    const end = new Date(year, month, day, 8, 0, 0, 0);
+    return { start, end };
+  } else if (shift === 'Turno 2') {
+    // 08:00:00 to 16:00:00
+    const start = new Date(year, month, day, 8, 0, 0, 0);
+    const end = new Date(year, month, day, 16, 0, 0, 0);
+    return { start, end };
+  } else {
+    // Turno 3: 16:00:00 to 23:59:59 (or next day 00:00:00)
+    const start = new Date(year, month, day, 16, 0, 0, 0);
+    const end = new Date(year, month, day, 23, 59, 59, 999);
+    return { start, end };
+  }
+}
+
+/**
+ * Checks if the current time is strictly within the designated shift and date of the session.
+ */
+export function isWithinShiftWindow(sessionDate: Date, shift: Shift, currentDate: Date = new Date()): boolean {
+  const { start, end } = getShiftTimeRange(sessionDate, shift);
+  const curTime = currentDate.getTime();
+  return curTime >= start.getTime() && curTime <= end.getTime();
 }
 
 /**

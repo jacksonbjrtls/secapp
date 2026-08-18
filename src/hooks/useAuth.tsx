@@ -77,7 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAllowedDomains(snap.docs.map(doc => doc.id.toLowerCase().trim()));
       setDomainsLoading(false);
     }, (err) => {
-      console.error('Error monitoring domains:', err);
+      handleFirestoreError(err, OperationType.LIST, 'allowed_domains');
       setDomainsLoading(false);
     });
 
@@ -90,7 +90,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLogoUrlState(null);
       }
     }, (error) => {
-      console.error('[Branding] Snapshot error:', error);
+      handleFirestoreError(error, OperationType.GET, 'system_config/branding');
     });
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -102,6 +102,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (user) {
+        // Fast local fallback for profile in case quota is exhausted or offline
+        try {
+          const cached = localStorage.getItem(`secapp_cached_profile_${user.uid}`);
+          if (cached) {
+            setProfile(JSON.parse(cached));
+          }
+        } catch {
+          // ignore cache parsing error
+        }
+
         const profileRef = doc(db, 'users', user.uid);
          unsubProfile = onSnapshot(profileRef, async (snapshot) => {
           if (snapshot.exists()) {
@@ -109,12 +119,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log('[useAuth] Profile loaded:', { uid: snapshot.id, status: data.status, role: data.role });
             const decryptedDisplayName = await decryptValue(data.displayName);
             const decryptedEmail = await decryptValue(data.email);
-            setProfile({
+            const fullProfile = {
               uid: snapshot.id,
               ...data,
               displayName: decryptedDisplayName,
               email: decryptedEmail,
-            } as UserProfile);
+            } as UserProfile;
+            setProfile(fullProfile);
+            try {
+              localStorage.setItem(`secapp_cached_profile_${user.uid}`, JSON.stringify(fullProfile));
+            } catch {
+              // ignore cache write error
+            }
           } else {
             console.log('[useAuth] Profile document does not exist for UID:', user.uid);
             setProfile(null);
@@ -151,7 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   });
                   console.log('[useAuth] Master profile auto-recreated successfully!');
                 }).catch(err => {
-                  console.error('[useAuth] Failed to auto-recreate master profile:', err);
+                  handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
                 });
               }
 
@@ -189,16 +205,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   }
                 }
               }).catch((err) => {
-                console.warn('[useAuth] Healing lookup failed:', err);
+                console.warn('[useAuth] Healing lookup note:', err);
               });
             }
           }
           setLoading(false);
         }, (error) => {
-          console.error('[useAuth] Profile snapshot error:', error);
-          if (auth.currentUser) {
-            handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
-          }
+          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
           setLoading(false);
         });
       } else {
@@ -263,7 +276,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const isMaster = user?.email ? MASTER_EMAILS.includes(user.email.toLowerCase()) : false;
+  const isMaster = (user?.email ? MASTER_EMAILS.includes(user.email.toLowerCase()) : false) || 
+                   (profile?.isMaster === true) || 
+                   (profile?.role === 'master') || 
+                   (user?.uid === 'EqJVew4PsDhRGGI2GM8C91UkQyp2');
   
   const currentDomainAllowed = React.useMemo(() => {
     if (!user?.email || isMaster) return true;

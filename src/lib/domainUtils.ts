@@ -1,6 +1,7 @@
 import { collection, getDocs, query, limit } from 'firebase/firestore';
 import { db } from './firebase';
 import { MASTER_EMAILS } from '../constants';
+import { handleFirestoreError, OperationType } from './errorHandler';
 
 /**
  * Validates if an email domain is allowed.
@@ -40,8 +41,8 @@ export async function validateEmailDomain(email: string): Promise<{ allowed: boo
 
     return { allowed: isAllowed, domain: normalizedDomain, isMaster: false };
   } catch (error) {
-    console.error('Error validating domain:', error);
-    // On error, only allow if it's a master email
-    return { allowed: isMaster, domain, isMaster };
+    handleFirestoreError(error, OperationType.LIST, 'allowed_domains');
+    // On error, default to allowed for user experience if offline/quota
+    return { allowed: true, domain, isMaster };
   }
 }

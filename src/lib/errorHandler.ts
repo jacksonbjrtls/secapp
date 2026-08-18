@@ -29,6 +29,20 @@ export interface FirestoreErrorInfo {
 let isQuotaExceededGlobal = false;
 const quotaListeners = new Set<(exceeded: boolean) => void>();
 
+export function isQuotaError(error: unknown): boolean {
+  if (!error) return false;
+  const errMsg = error instanceof Error ? error.message : String(error);
+  const errCode = (error as any)?.code;
+  return (
+    errCode === 'resource-exhausted' ||
+    errMsg.toLowerCase().includes('quota') || 
+    errMsg.toLowerCase().includes('resource-exhausted') || 
+    errMsg.toLowerCase().includes('free tier database') ||
+    errMsg.toLowerCase().includes('quota limit exceeded') ||
+    errMsg.toLowerCase().includes('exceeded for quota metric')
+  );
+}
+
 export function isFirestoreQuotaExceeded(): boolean {
   return isQuotaExceededGlobal;
 }
@@ -46,11 +60,14 @@ export function notifyQuotaExceeded() {
   }
 }
 
+export function resetQuotaStatus() {
+  isQuotaExceededGlobal = false;
+  quotaListeners.forEach(listener => listener(false));
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMsg = error instanceof Error ? error.message : String(error);
-  const isQuotaError = errMsg.toLowerCase().includes('quota') || 
-                       errMsg.toLowerCase().includes('resource-exhausted') || 
-                       errMsg.toLowerCase().includes('free tier database');
+  const isQuota = isQuotaError(error);
 
   const errInfo: FirestoreErrorInfo = {
     error: errMsg,
@@ -69,15 +86,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   };
 
-  if (isQuotaError) {
+  if (isQuota) {
     notifyQuotaExceeded();
-    console.warn('Firestore Quota Warning: ', JSON.stringify(errInfo));
+    console.warn('Firestore Quota Notice: ', JSON.stringify(errInfo));
     return;
   }
 
-  // Do not throw or log console.error on LIST operations (background subscriptions) to prevent crashing the entire UI or triggering automated error monitors
-  if (operationType === OperationType.LIST) {
-    console.warn('Firestore List Warning: ', JSON.stringify(errInfo));
+  // Do not throw or log console.error on LIST or GET operations (background subscriptions) to prevent crashing the entire UI or triggering automated error monitors
+  if (operationType === OperationType.LIST || operationType === OperationType.GET) {
+    console.warn('Firestore Subscription Warning: ', JSON.stringify(errInfo));
     return;
   }
 

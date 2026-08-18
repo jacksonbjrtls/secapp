@@ -2052,12 +2052,12 @@ export default function Vacations() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {requests.filter(r => r.status === 'pending').map((req) => {
+                  {requests.filter(r => r.status === 'pending').map((req, rIdx) => {
                     const reqMonth = new Date(req.startDate).getMonth() + 1;
                     const limits = checkVacationLimits(reqMonth, req.sectorId || '', req.cargoId || '', req.group || '');
                     
                     return (
-                      <div key={req.id} className="p-5 border border-slate-200 rounded-2xl bg-white hover:border-emerald-150 transition-all flex flex-col lg:flex-row justify-between gap-5 shadow-sm">
+                      <div key={`pending-vac-req-${req.id || rIdx}-${rIdx}`} className="p-5 border border-slate-200 rounded-2xl bg-white hover:border-emerald-150 transition-all flex flex-col lg:flex-row justify-between gap-5 shadow-sm">
                         <div className="space-y-2 flex-1">
                           <div className="flex items-center gap-3 flex-wrap">
                             <span className="font-extrabold text-slate-800 text-sm">{req.userName}</span>
@@ -2155,9 +2155,9 @@ export default function Vacations() {
                 </div>
               ) : (
                 <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
-                  {requests.map((req) => {
+                  {requests.map((req, rIdx) => {
                     return (
-                      <div key={req.id} className="p-4 border border-slate-150 rounded-2xl bg-slate-50/50 hover:border-slate-300 transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-xs">
+                      <div key={`all-vac-req-${req.id || rIdx}-${rIdx}`} className="p-4 border border-slate-150 rounded-2xl bg-slate-50/50 hover:border-slate-300 transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-xs">
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-extrabold text-slate-800">{req.userName}</span>

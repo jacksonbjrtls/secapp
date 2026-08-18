@@ -26,6 +26,7 @@ import StopsControl from './pages/StopsControl';
 import Overtime from './pages/Overtime';
 import Vacations from './pages/Vacations';
 import Maintenance from './pages/Maintenance';
+import { handleFirestoreError, OperationType } from './lib/errorHandler';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean; requireManager?: boolean }> = ({ 
@@ -342,7 +343,7 @@ const HomeRedirect = () => {
       }
       setModulesLoaded(true);
     }, (err) => {
-      console.warn('Error loading modules in HomeRedirect:', err);
+      handleFirestoreError(err, OperationType.GET, 'system_config/modules');
       setModulesLoaded(true);
     });
     return () => unsub();

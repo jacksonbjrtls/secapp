@@ -136,7 +136,7 @@ const Dashboard: React.FC = () => {
         }));
       }
     }, (error) => {
-      console.error('Error listening to modules configuration in Dashboard:', error);
+      handleFirestoreError(error, OperationType.GET, 'system_config/modules');
     });
     return () => unsubModules();
   }, []);

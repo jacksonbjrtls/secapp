@@ -761,10 +761,10 @@ const OperationalRoutes: React.FC = () => {
         setDoc(doc(db, 'settings', 'operational_route_options'), {
           responsibleCenters: ['Mecânica', 'Elétrica', 'Instrumentação', 'Caldeiraria', 'Civil'],
           schedules: ['Rotina', 'PP', 'PG']
-        }).catch(err => console.error("Error creating default options document:", err));
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/operational_route_options'));
       }
     }, (err) => {
-      console.error("Error subscribing to operational_route_options settings:", err);
+      handleFirestoreError(err, OperationType.GET, 'settings/operational_route_options');
     });
     return () => unsub();
   }, [user]);

@@ -24,6 +24,7 @@ service cloud.firestore {
         )) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isMaster', false) == true ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'master' ||
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('emailHash', '') == 'hash_912e98fd' ||
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('emailHash', '') == 'hash_cc6a0449'
         ))
@@ -65,7 +66,9 @@ service cloud.firestore {
       return isSignedIn() && (
         isMaster() || (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin'
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin' ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'master' ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isMaster', false) == true)
         )
       );
     }
@@ -75,7 +78,9 @@ service cloud.firestore {
         isMaster() || (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'manager' ||
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin' ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'master' ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isMaster', false) == true)
         )
       );
     }
@@ -202,11 +207,10 @@ service cloud.firestore {
                (data.createdAt == request.time || data.createdAt is timestamp);
       }
 
-      allow get: if isApproved() && isValidId(sessionId);
-      allow list: if isApproved();
-      allow create: if isApproved() && isValidId(sessionId) && (isValidSession(request.resource.data) || isManager());
-      allow update: if isApproved() && isValidId(sessionId) && (isManager() || resource.data.createdBy == request.auth.uid);
-      allow delete: if isMaster() || (isApproved() && isValidId(sessionId) && (isManager() || resource.data.createdBy == request.auth.uid));
+      allow get, list: if isSignedIn();
+      allow create: if isApproved() && (isValidSession(request.resource.data) || isManager() || isAdmin() || isMaster());
+      allow update: if isApproved() && (isManager() || isAdmin() || isMaster() || resource.data.createdBy == request.auth.uid);
+      allow delete: if isMaster() || isAdmin() || isManager() || (isApproved() && resource.data.createdBy == request.auth.uid);
     }
 
     // DDS Signatures
@@ -219,16 +223,15 @@ service cloud.firestore {
                data.keys().hasAll(['sessionId', 'sessionTitle', 'userId', 'userName', 'timestamp', 'passcode', 'mood']);
       }
 
-      allow get: if isApproved() && isValidId(signatureId);
-      allow list: if isApproved();
-      allow create: if isSignedIn() && isNotDisabled() && isValidId(signatureId) && (
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isNotDisabled() && (
                       isValidSignature(request.resource.data) || 
                       isManager() ||
                       isAdmin() ||
                       isMaster()
                     );
-      allow update: if isManager() && isValidId(signatureId);
-      allow delete: if isMaster() || (isManager() && isValidId(signatureId));
+      allow update: if isManager() || isAdmin() || isMaster();
+      allow delete: if isMaster() || isAdmin() || isManager() || (isApproved() && resource.data.userId == request.auth.uid);
     }
 
     // Metrics

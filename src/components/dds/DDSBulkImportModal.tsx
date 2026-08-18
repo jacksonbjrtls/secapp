@@ -1570,7 +1570,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
                       <tbody className="divide-y divide-slate-100 font-medium text-slate-700 bg-white">
                         {activeMode === 'sessions' &&
                           parsedSessions.slice(0, 15).map((row, idx) => (
-                            <tr key={idx} className={row.errors.length > 0 ? "bg-rose-50/50" : "hover:bg-slate-50"}>
+                            <tr key={`bulk-sess-row-${row.index || idx}-${idx}`} className={row.errors.length > 0 ? "bg-rose-50/50" : "hover:bg-slate-50"}>
                               <td className="p-3 font-mono text-[10px] text-slate-400">{row.index}</td>
                               <td className="p-3 font-bold text-slate-900">
                                 {row.dateObj ? formatDateBR(row.dateObj) : <span className="text-rose-500">{formatDateBR(row.dateStr) || row.dateStr}</span>}
@@ -1609,7 +1609,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
 
                         {activeMode === 'signatures' &&
                           parsedSignatures.slice(0, 15).map((row, idx) => (
-                            <tr key={idx} className={row.errors.length > 0 ? "bg-rose-50/50" : "hover:bg-slate-50"}>
+                            <tr key={`bulk-sig-row-${row.index || idx}-${idx}`} className={row.errors.length > 0 ? "bg-rose-50/50" : "hover:bg-slate-50"}>
                               <td className="p-3 font-mono text-[10px] text-slate-400">{row.index}</td>
                               <td className="p-3 font-bold text-slate-900">{row.participantName}</td>
                               <td className="p-3 font-mono text-slate-600">{row.registration || '-'}</td>
@@ -1646,7 +1646,7 @@ export const DDSBulkImportModal: React.FC<DDSBulkImportModalProps> = ({
 
                         {activeMode === 'unified' &&
                           parsedUnified.slice(0, 15).map((row, idx) => (
-                            <tr key={idx} className={row.errors.length > 0 ? "bg-rose-50/50" : "hover:bg-slate-50"}>
+                            <tr key={`bulk-unif-row-${row.index || idx}-${idx}`} className={row.errors.length > 0 ? "bg-rose-50/50" : "hover:bg-slate-50"}>
                               <td className="p-3 font-mono text-[10px] text-slate-400">{row.index}</td>
                               <td className="p-3 font-bold text-slate-900">
                                 {row.dateObj ? formatDateBR(row.dateObj) : (formatDateBR(row.dateStr) || row.dateStr)}
