@@ -174,6 +174,8 @@ export interface ChecklistItemDefinition {
   required: boolean;
   min?: number;
   max?: number;
+  minRange?: number;
+  maxRange?: number;
   step?: number;
   unit?: string; // Unidade de medida/tipo de dado (ex: %, Hz, kN, bar, kPa, ms, mm, N/m, etc.)
   defaultValue?: number | string; // Valor padrão/alvo pré-definido (ex: 1.85, 2000, "normal")

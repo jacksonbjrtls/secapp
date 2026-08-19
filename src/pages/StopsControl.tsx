@@ -384,6 +384,63 @@ export default function StopsControl() {
     }
   }, [availableLines, formLineId]);
 
+  // Helper functions for duration
+  const getMinutesDiff = (start: string, end: string) => {
+    if (!start || !end) return 0;
+    const [startH, startM] = start.split(':').map(Number);
+    const [endH, endM] = end.split(':').map(Number);
+    let diff = (endH * 60 + endM) - (startH * 60 + startM);
+    if (diff < 0) diff += 24 * 60;
+    return diff;
+  };
+
+  // Helper to get time in minutes from 00:00 (supporting overnight relative to base start time)
+  const getTimeInMinutesRelative = (timeStr: string, baseStartStr?: string) => {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(':').map(Number);
+    let mins = (h || 0) * 60 + (m || 0);
+    if (baseStartStr) {
+      const [startH, startM] = baseStartStr.split(':').map(Number);
+      const startMins = (startH || 0) * 60 + (startM || 0);
+      if (mins < startMins) {
+        mins += 24 * 60; // Next day
+      }
+    }
+    return mins;
+  };
+
+  // Helper to calculate the latest (maximum) end time among active work fronts
+  const calculateLatestWorkFrontEndTime = (
+    currentFronts: Record<string, any>,
+    fallbackEndTime: string,
+    startTime: string
+  ): string => {
+    const activeFrontEndTimes: string[] = [];
+    Object.values(currentFronts).forEach(item => {
+      if (item && item.active && item.endTime) {
+        activeFrontEndTimes.push(item.endTime);
+      }
+    });
+
+    if (activeFrontEndTimes.length === 0) {
+      return fallbackEndTime;
+    }
+
+    let latestTime = activeFrontEndTimes[0];
+    let maxMinutes = getTimeInMinutesRelative(latestTime, startTime);
+
+    for (let i = 1; i < activeFrontEndTimes.length; i++) {
+      const current = activeFrontEndTimes[i];
+      const mins = getTimeInMinutesRelative(current, startTime);
+      if (mins > maxMinutes) {
+        maxMinutes = mins;
+        latestTime = current;
+      }
+    }
+
+    return latestTime;
+  };
+
   // Form helper to calculate duration of stop in minutes
   const calculatedStopDuration = useMemo(() => {
     if (!formStartTime || !formEndTime) return 0;
@@ -395,16 +452,6 @@ export default function StopsControl() {
     }
     return diff;
   }, [formStartTime, formEndTime]);
-
-  // Helper functions for duration
-  const getMinutesDiff = (start: string, end: string) => {
-    if (!start || !end) return 0;
-    const [startH, startM] = start.split(':').map(Number);
-    const [endH, endM] = end.split(':').map(Number);
-    let diff = (endH * 60 + endM) - (startH * 60 + startM);
-    if (diff < 0) diff += 24 * 60;
-    return diff;
-  };
 
   const formatDurationString = (minutes: number) => {
     if (minutes <= 0) return '0 min';
@@ -862,12 +909,14 @@ export default function StopsControl() {
   // Toggle work front participation
   const toggleWorkFront = (front: string) => {
     let willBeActive = false;
+    let nextFrontsState: Record<string, any> = {};
+
     setFormWorkFronts(prev => {
       const active = !prev[front]?.active;
       willBeActive = active;
       const currentDesc = prev[front]?.description || '';
       const newDesc = (active && !currentDesc) ? '- ' : currentDesc;
-      return {
+      nextFrontsState = {
         ...prev,
         [front]: {
           ...prev[front],
@@ -878,7 +927,13 @@ export default function StopsControl() {
           endTime: active ? formEndTime : prev[front]?.endTime || formEndTime
         }
       };
+      return nextFrontsState;
     });
+
+    // Auto-update formEndTime to the latest (max) end time among active work fronts
+    setTimeout(() => {
+      setFormEndTime(prevEnd => calculateLatestWorkFrontEndTime(nextFrontsState, prevEnd, formStartTime));
+    }, 0);
 
     setExpandedFronts(prev => {
       const isCurrentlyActive = formWorkFronts[front]?.active;
@@ -934,13 +989,25 @@ export default function StopsControl() {
   };
 
   const handleWorkFrontChange = (front: string, field: 'description' | 'startTime' | 'endTime', value: string) => {
-    setFormWorkFronts(prev => ({
-      ...prev,
-      [front]: {
-        ...prev[front],
-        [field]: value
-      }
-    }));
+    let updatedFronts: Record<string, any> = {};
+
+    setFormWorkFronts(prev => {
+      updatedFronts = {
+        ...prev,
+        [front]: {
+          ...prev[front],
+          [field]: value
+        }
+      };
+      return updatedFronts;
+    });
+
+    // When a work front's end time is changed, recalculate the maximum end time across all active fronts
+    if (field === 'endTime') {
+      setTimeout(() => {
+        setFormEndTime(prevEnd => calculateLatestWorkFrontEndTime(updatedFronts, prevEnd, formStartTime));
+      }, 0);
+    }
   };
 
   const handleAddWorkFrontBullet = (front: string) => {
@@ -1839,7 +1906,14 @@ export default function StopsControl() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1">Horário de Término</label>
+                      <div className="flex items-center justify-between mb-2 ml-1">
+                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Horário de Término</label>
+                        {Object.values(formWorkFronts).some((f: any) => f?.active) && (
+                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100/80">
+                            Maior término das frentes
+                          </span>
+                        )}
+                      </div>
                       <div className="relative">
                         <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                         <input
