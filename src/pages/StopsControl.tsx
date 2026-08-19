@@ -463,6 +463,17 @@ export default function StopsControl() {
     return `${m} min`;
   };
 
+  // Total photos count across all active work fronts in the form
+  const totalFormPhotosCount = useMemo(() => {
+    let count = 0;
+    Object.values(formWorkFronts).forEach((wf: any) => {
+      if (wf && wf.photos && wf.photos.length > 0) {
+        count += wf.photos.length;
+      }
+    });
+    return count;
+  }, [formWorkFronts]);
+
   const getBase64SizeKB = (base64: string): number => {
     if (!base64) return 0;
     const stringLength = base64.length - (base64.indexOf(',') + 1);
@@ -470,8 +481,9 @@ export default function StopsControl() {
     return Math.round(sizeInBytes / 1024);
   };
 
-  // Image Compression Helper - High quality visual with ultra-lightweight size (~25-50KB)
-  const compressImageFile = (file: File, maxWidth = 600, maxHeight = 600, quality = 0.55): Promise<string> => {
+  // Image Compression Helper - High quality visual with ultra-lightweight size (~15-28KB)
+  // Allows attaching 25-35+ photos across multiple work fronts within Firestore's 1MB document limit
+  const compressImageFile = (file: File, maxWidth = 520, maxHeight = 520, quality = 0.45): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -491,22 +503,29 @@ export default function StopsControl() {
           const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
-          const ctx = canvas.getContext('2d');
+          const ctx = canvas.getContext('2d', { alpha: false });
           if (!ctx) return reject(new Error('Canvas ctx null'));
+          
+          // Fill white background in case of transparent png
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
+          
           let result = canvas.toDataURL('image/jpeg', quality);
 
-          // Second compression pass if result is larger than 60KB (~80KB base64 length)
-          if (result.length > 80000) {
+          // Second compression pass if result is larger than 32KB (~43KB base64 length)
+          if (result.length > 43000) {
             const secondCanvas = document.createElement('canvas');
-            const targetWidth = Math.min(width, 450);
+            const targetWidth = Math.min(width, 420);
             const targetHeight = Math.round((height * targetWidth) / width);
             secondCanvas.width = targetWidth;
             secondCanvas.height = targetHeight;
-            const ctx2 = secondCanvas.getContext('2d');
+            const ctx2 = secondCanvas.getContext('2d', { alpha: false });
             if (ctx2) {
+              ctx2.fillStyle = '#FFFFFF';
+              ctx2.fillRect(0, 0, targetWidth, targetHeight);
               ctx2.drawImage(img, 0, 0, targetWidth, targetHeight);
-              result = secondCanvas.toDataURL('image/jpeg', 0.45);
+              result = secondCanvas.toDataURL('image/jpeg', 0.38);
             }
           }
 
@@ -739,7 +758,7 @@ export default function StopsControl() {
     setFormWorkFronts(initial);
   };
 
-  const compressBase64 = (base64Str: string, maxWidth = 450, quality = 0.45): Promise<string> => {
+  const compressBase64 = (base64Str: string, maxWidth = 380, quality = 0.38): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -752,8 +771,10 @@ export default function StopsControl() {
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { alpha: false });
         if (ctx) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
           resolve(canvas.toDataURL('image/jpeg', quality));
         } else {
@@ -823,14 +844,14 @@ export default function StopsControl() {
       // Safety check: calculate approximate size of JSON payload
       let payloadString = JSON.stringify(reportData);
       
-      // If payload is over 800KB (~800,000 chars), attempt aggressive re-compression of photos
-      if (payloadString.length > 800000) {
+      // If payload is over 650KB (~650,000 chars), attempt aggressive re-compression of photos
+      if (payloadString.length > 650000) {
         for (const wf of reportData.workFronts) {
           if (wf.photos && wf.photos.length > 0) {
             wf.photos = await Promise.all(
               wf.photos.map(async (ph: StopWorkFrontPhoto) => {
                 if (ph.url && ph.url.startsWith('data:image')) {
-                  const compressed = await compressBase64(ph.url, 400, 0.4);
+                  const compressed = await compressBase64(ph.url, 360, 0.35);
                   return { ...ph, url: compressed };
                 }
                 return ph;
@@ -841,9 +862,27 @@ export default function StopsControl() {
         payloadString = JSON.stringify(reportData);
       }
 
-      // If still over 980KB, notify user cleanly
-      if (payloadString.length > 980000) {
-        alert("O relatório excede o limite de tamanho (1MB) devido ao número excessivo de fotos. Por favor, remova 1 ou 2 fotos e tente novamente.");
+      // Second ultra-pass if still over 850KB
+      if (payloadString.length > 850000) {
+        for (const wf of reportData.workFronts) {
+          if (wf.photos && wf.photos.length > 0) {
+            wf.photos = await Promise.all(
+              wf.photos.map(async (ph: StopWorkFrontPhoto) => {
+                if (ph.url && ph.url.startsWith('data:image')) {
+                  const compressed = await compressBase64(ph.url, 300, 0.30);
+                  return { ...ph, url: compressed };
+                }
+                return ph;
+              })
+            );
+          }
+        }
+        payloadString = JSON.stringify(reportData);
+      }
+
+      // If still over 990KB, notify user cleanly
+      if (payloadString.length > 990000) {
+        alert("O relatório ainda excede o limite máximo permitido pelo banco de dados (1MB). Por favor, remova 1 ou 2 fotos para prosseguir.");
         setSubmitting(false);
         return;
       }
@@ -2187,6 +2226,10 @@ export default function StopsControl() {
                                     </div>
 
                                     <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
+                                        Max ~20KB/foto (Alta Capacidade)
+                                      </span>
+
                                       <label className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer">
                                         <Camera className="w-3.5 h-3.5" />
                                         <span>Tirar Foto</span>
@@ -2293,6 +2336,18 @@ export default function StopsControl() {
 
                 {/* Submitting Card */}
                 <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm space-y-4">
+                  {totalFormPhotosCount > 0 && (
+                    <div className="flex items-center justify-between p-3 bg-emerald-50/80 border border-emerald-100 rounded-xl text-xs">
+                      <div className="flex items-center gap-2 text-emerald-800 font-bold">
+                        <Camera className="w-4 h-4 text-emerald-600" />
+                        <span>{totalFormPhotosCount} foto(s) anexada(s)</span>
+                      </div>
+                      <span className="text-[10px] font-extrabold text-emerald-700 bg-white px-2 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                        Compactação Alta (~20KB)
+                      </span>
+                    </div>
+                  )}
+
                   <button
                     type="submit"
                     disabled={submitting}
