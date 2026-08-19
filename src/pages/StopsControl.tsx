@@ -394,6 +394,15 @@ export default function StopsControl() {
     return diff;
   };
 
+  const addMinutesToTime = (timeStr: string, mins: number): string => {
+    if (!timeStr) return '';
+    const [h, m] = timeStr.split(':').map(Number);
+    const totalMins = (h || 0) * 60 + (m || 0) + mins;
+    const newH = Math.floor(totalMins / 60) % 24;
+    const newM = Math.floor(totalMins % 60);
+    return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+  };
+
   // Helper to get time in minutes from 00:00 (supporting overnight relative to base start time)
   const getTimeInMinutesRelative = (timeStr: string, baseStartStr?: string) => {
     if (!timeStr) return 0;
@@ -1300,15 +1309,6 @@ export default function StopsControl() {
     const docPdf = new jsPDF();
     const duration = getMinutesDiff(report.startTime, report.endTime);
 
-    const addMinutesToTime = (timeStr: string, mins: number): string => {
-      if (!timeStr) return '';
-      const [h, m] = timeStr.split(':').map(Number);
-      const totalMins = h * 60 + m + mins;
-      const newH = Math.floor(totalMins / 60) % 24;
-      const newM = Math.floor(totalMins % 60);
-      return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
-    };
-
     // Header styling - Standardized Emerald Theme
     docPdf.setFillColor(5, 150, 105); // emerald-600
     docPdf.rect(0, 0, 210, 40, 'F');
@@ -1476,20 +1476,22 @@ export default function StopsControl() {
         docPdf.setTextColor(51, 65, 85); // slate-700
         docPdf.text(sanitizePdfText(wf.front), 15, rowY + 5);
 
-        // Calculate offsets and clamp to total duration
-        let startMins = getMinutesDiff(report.startTime, wf.startTime);
-        let wfMins = getMinutesDiff(wf.startTime, wf.endTime);
+        // Precise time calculations relative to report.startTime (handling multi-hour and overnight correctly)
+        const stopStartMins = getTimeInMinutesRelative(report.startTime);
+        const wfStartMins = getTimeInMinutesRelative(wf.startTime, report.startTime);
+        const wfEndMins = getTimeInMinutesRelative(wf.endTime, wf.startTime);
         
-        if (startMins < 0) {
-          wfMins = Math.max(0, wfMins + startMins);
-          startMins = 0;
+        let startOffsetMins = Math.max(0, wfStartMins - stopStartMins);
+        let wfDurationMins = Math.max(1, wfEndMins - wfStartMins);
+        
+        // Clamp to total stop bounds
+        if (startOffsetMins > totalMins) startOffsetMins = totalMins;
+        if (startOffsetMins + wfDurationMins > totalMins) {
+          wfDurationMins = Math.max(1, totalMins - startOffsetMins);
         }
-        if (startMins > totalMins) startMins = totalMins;
-        if (startMins + wfMins > totalMins) wfMins = totalMins - startMins;
-        if (wfMins < 0) wfMins = 0;
 
-        const leftX = chartX + (startMins / totalMins) * chartWidth;
-        const barW = (wfMins / totalMins) * chartWidth;
+        const leftX = chartX + (startOffsetMins / totalMins) * chartWidth;
+        const barW = Math.max(2, (wfDurationMins / totalMins) * chartWidth);
 
         // Draw track background
         docPdf.setFillColor(248, 250, 252); // slate-50
@@ -1508,13 +1510,14 @@ export default function StopsControl() {
 
         // Draw the colored bar
         docPdf.setFillColor(color[0], color[1], color[2]);
-        docPdf.rect(leftX, rowY + 1.2, Math.max(1.5, barW), 5.6, 'F');
+        docPdf.rect(leftX, rowY + 1.2, barW, 5.6, 'F');
 
         // Add duration text inside or next to the bar
         docPdf.setFontSize(7);
         docPdf.setFont('helvetica', 'bold');
         docPdf.setTextColor(255, 255, 255);
-        const durLabel = `${wfMins} min`;
+        const actualWfDur = getMinutesDiff(wf.startTime, wf.endTime);
+        const durLabel = `${actualWfDur} min`;
         if (barW > 18) {
           docPdf.text(durLabel, leftX + (barW / 2), rowY + 5.2, { align: 'center' });
         } else {
@@ -2805,7 +2808,96 @@ export default function StopsControl() {
 
                 {/* Work fronts */}
                 <div className="space-y-3">
-                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">Frentes de Trabalho e Atividades</h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">Cronograma & Frentes de Trabalho</h4>
+                    <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                      {viewingReport.workFronts.length} frente(s)
+                    </span>
+                  </div>
+
+                  {/* Interactive Visual Gantt Chart in Modal */}
+                  {viewingReport.workFronts.length > 0 && (() => {
+                    const totalStopMins = getMinutesDiff(viewingReport.startTime, viewingReport.endTime) || 1;
+                    const stopStartMins = getTimeInMinutesRelative(viewingReport.startTime);
+
+                    return (
+                      <div className="p-4 bg-slate-900 text-white rounded-2xl space-y-3 shadow-sm">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
+                            <Activity className="w-3.5 h-3.5" />
+                            Linha do Tempo Visual (Gantt)
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-400 font-bold">
+                            {viewingReport.startTime} até {viewingReport.endTime} ({formatDurationString(totalStopMins)})
+                          </span>
+                        </div>
+
+                        {/* Timeline ruler */}
+                        <div className="relative flex justify-between text-[9px] font-mono text-slate-400 pt-1 border-b border-slate-800 pb-1">
+                          <span>{viewingReport.startTime}</span>
+                          <span>{addMinutesToTime(viewingReport.startTime, Math.round(totalStopMins * 0.25))}</span>
+                          <span>{addMinutesToTime(viewingReport.startTime, Math.round(totalStopMins * 0.50))}</span>
+                          <span>{addMinutesToTime(viewingReport.startTime, Math.round(totalStopMins * 0.75))}</span>
+                          <span>{viewingReport.endTime}</span>
+                        </div>
+
+                        {/* Work fronts timeline bars */}
+                        <div className="space-y-2.5 pt-1">
+                          {viewingReport.workFronts.map((wf, idx) => {
+                            const wfStartMins = getTimeInMinutesRelative(wf.startTime, viewingReport.startTime);
+                            const wfEndMins = getTimeInMinutesRelative(wf.endTime, wf.startTime);
+                            
+                            let startOffsetMins = Math.max(0, wfStartMins - stopStartMins);
+                            let wfDurationMins = Math.max(1, wfEndMins - wfStartMins);
+
+                            if (startOffsetMins > totalStopMins) startOffsetMins = totalStopMins;
+                            if (startOffsetMins + wfDurationMins > totalStopMins) {
+                              wfDurationMins = Math.max(1, totalStopMins - startOffsetMins);
+                            }
+
+                            const leftPct = (startOffsetMins / totalStopMins) * 100;
+                            const widthPct = Math.max(2, (wfDurationMins / totalStopMins) * 100);
+
+                            // Front color styling
+                            let barColorClass = "bg-slate-500";
+                            const frontStr = wf.front;
+                            if (frontStr.includes('Mecân') || frontStr.includes('Mecan')) barColorClass = "bg-orange-500";
+                            else if (frontStr.includes('Elétr') || frontStr.includes('Eletr')) barColorClass = "bg-amber-500";
+                            else if (frontStr.includes('Instrumenta')) barColorClass = "bg-emerald-500";
+                            else if (frontStr.includes('Hidrául') || frontStr.includes('Hidraul')) barColorClass = "bg-cyan-500";
+                            else if (frontStr.includes('Civil')) barColorClass = "bg-teal-500";
+                            else if (frontStr.includes('Caldeiraria')) barColorClass = "bg-rose-500";
+                            else if (frontStr.includes('Operacional')) barColorClass = "bg-violet-500";
+
+                            const actualDur = getMinutesDiff(wf.startTime, wf.endTime);
+
+                            return (
+                              <div key={wf.id || idx} className="space-y-1">
+                                <div className="flex items-center justify-between text-[11px] font-bold">
+                                  <span className="text-slate-200">{wf.front}</span>
+                                  <span className="text-slate-400 font-mono text-[10px]">
+                                    {wf.startTime} - {wf.endTime} ({formatDurationString(actualDur)})
+                                  </span>
+                                </div>
+                                <div className="h-4 bg-slate-800 rounded-lg overflow-hidden relative border border-slate-700/60 flex items-center">
+                                  <div 
+                                    className={cn("h-full rounded-md flex items-center justify-center text-[9px] font-black text-white px-1 shadow-xs transition-all", barColorClass)}
+                                    style={{
+                                      marginLeft: `${leftPct}%`,
+                                      width: `${widthPct}%`
+                                    }}
+                                  >
+                                    {widthPct > 15 && `${actualDur}m`}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {viewingReport.workFronts.length === 0 ? (
                     <p className="text-xs text-slate-400 italic">Nenhuma equipe ou atividade foi registrada nesta parada.</p>
                   ) : (
