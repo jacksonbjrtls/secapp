@@ -15,7 +15,7 @@ import {
   deleteDoc,
   setDoc
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { encryptValue, decryptValue } from '../lib/crypto';
 import { 
@@ -75,7 +75,9 @@ import {
   AlertTriangle,
   Target,
   History,
-  Settings2
+  Settings2,
+  Mail,
+  Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate } from '../lib/utils';
@@ -191,6 +193,78 @@ const isTemplateDueOnDate = (template: QualityChecklistTemplate, dateObj: Date):
 
 // Tabs
 type QualityTab = 'perform' | 'templates' | 'sectors' | 'options' | 'omissions' | 'dashboard' | 'products';
+
+// Helper to identify whether an item response or value is non-conforming
+const isQualityResponseNonConforming = (item: ChecklistItemDefinition | undefined, value: any): { isFailure: boolean; statusLabel?: string } => {
+  if (value === undefined || value === null || value === '') return { isFailure: false };
+
+  // Object values (radiators, multi-part items, etc.)
+  if (typeof value === 'object' && value !== null) {
+    const vals = Object.values(value);
+    const hasTamponado = vals.some(v => {
+      const s = String(v || '').toLowerCase();
+      return s.includes('tamponado') || s.includes('tamponada') || s === 'vermelho' || s === 'nok' || s === 'não conforme' || s === 'nao conforme';
+    });
+    if (hasTamponado) return { isFailure: true, statusLabel: 'Tamponado / Não Conforme' };
+    
+    const hasSujo = vals.some(v => {
+      const s = String(v || '').toLowerCase();
+      return s === 'sujo' || s === 'suja' || (s.includes('suj') && !s.includes('limp') && !s.includes('pouco'));
+    });
+    if (hasSujo) return { isFailure: true, statusLabel: 'Sujo (Código 2)' };
+
+    return { isFailure: false };
+  }
+
+  const valStr = String(value).trim();
+  const valLower = valStr.toLowerCase();
+
+  // If item has an expected compliance rule
+  if (item?.expectedValue !== undefined && item.expectedValue !== null && item.expectedValue !== '') {
+    const expLower = String(item.expectedValue).trim().toLowerCase();
+    const isCompliant = valLower === expLower ||
+      (expLower === 'ok' && (valLower === 'conforme' || valLower === 'ok' || valLower === 'sim' || valLower === 'limpo' || valLower === 'limpa')) ||
+      (expLower === 'not_ok' && (valLower === 'não conforme' || valLower === 'nao conforme' || valLower === 'nok' || valLower === 'not_ok' || valLower === 'não' || valLower === 'nao'));
+    
+    if (!isCompliant) {
+      return { isFailure: true, statusLabel: `Não Conforme (Esperado: ${item.expectedValue})` };
+    }
+    return { isFailure: false };
+  }
+
+  // Range checks
+  if (item?.type === 'number' || item?.type === 'range') {
+    const num = parseFloat(valStr);
+    if (!isNaN(num)) {
+      if (item.minRange !== undefined && num < item.minRange) {
+        return { isFailure: true, statusLabel: `Abaixo do Mínimo (${num} < ${item.minRange} ${item.unit || ''})` };
+      }
+      if (item.maxRange !== undefined && num > item.maxRange) {
+        return { isFailure: true, statusLabel: `Acima do Máximo (${num} > ${item.maxRange} ${item.unit || ''})` };
+      }
+    }
+  }
+
+  // Condition string matchers
+  if (
+    valLower === 'não conforme' || 
+    valLower === 'nao conforme' || 
+    valLower === 'nok' || 
+    valLower === 'not_ok' || 
+    valLower.includes('tamponado') || 
+    valLower.includes('tamponada') || 
+    valLower.includes('muito sujo') || 
+    valLower.includes('muito suja') || 
+    valLower === 'vermelho' ||
+    valLower === 'reprovado' ||
+    valLower === 'sujo' ||
+    valLower === 'suja'
+  ) {
+    return { isFailure: true, statusLabel: valStr };
+  }
+
+  return { isFailure: false };
+};
 
 const getOptionColorClasses = (option: string, isSelected: boolean, expectedValue?: string) => {
   if (expectedValue !== undefined && expectedValue !== null && expectedValue !== '') {
@@ -1302,6 +1376,16 @@ const Quality: React.FC = () => {
   const [seedingLoading, setSeedingLoading] = useState(true);
 
   const [products, setProducts] = useState<SecagemProduct[]>([]);
+  const [globalSettings, setGlobalSettings] = useState<{
+    autoNotifyNonConformity?: boolean;
+    autoLockOnNonConformity?: boolean;
+    responsiblePersons?: Array<{ name: string; email: string }>;
+  }>({
+    autoNotifyNonConformity: true,
+    responsiblePersons: []
+  });
+  const [newResponsible, setNewResponsible] = useState({ name: '', email: '' });
+  const [testingEmail, setTestingEmail] = useState(false);
   const [isAddingProduct, setIsAddingProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<SecagemProduct | null>(null);
   const [newProduct, setNewProduct] = useState<Partial<SecagemProduct>>({
@@ -1913,6 +1997,19 @@ const Quality: React.FC = () => {
       setMeasurementUnits(DEFAULT_MEASUREMENT_UNITS);
     });
 
+    const unsubGlobalSettings = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setGlobalSettings({
+          autoNotifyNonConformity: data.autoNotifyNonConformity !== false,
+          autoLockOnNonConformity: Boolean(data.autoLockOnNonConformity),
+          responsiblePersons: Array.isArray(data.responsiblePersons) ? data.responsiblePersons : []
+        });
+      }
+    }, (error) => {
+      console.warn("Global settings listener note:", error);
+    });
+
     setLoading(false);
 
     return () => {
@@ -1925,8 +2022,146 @@ const Quality: React.FC = () => {
       unsubOmissions();
       unsubProducts();
       unsubSettings();
+      unsubGlobalSettings();
     };
   }, [user, seedingLoading, seedingConfig]);
+
+  const handleUpdateGlobalSettings = async (updates: Partial<{
+    autoNotifyNonConformity: boolean;
+    autoLockOnNonConformity: boolean;
+    responsiblePersons: Array<{ name: string; email: string }>;
+  }>) => {
+    try {
+      await setDoc(doc(db, 'settings', 'global'), updates, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'settings/global');
+    }
+  };
+
+  const handleAddResponsiblePerson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newResponsible.name.trim() || !newResponsible.email.trim()) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Dados Incompletos',
+        message: 'Por favor, informe o nome e o e-mail do responsável.',
+        type: 'warning'
+      });
+      return;
+    }
+
+    const currentList = globalSettings.responsiblePersons || [];
+    const normalizedEmail = newResponsible.email.trim().toLowerCase();
+
+    if (currentList.some(p => p.email.trim().toLowerCase() === normalizedEmail)) {
+      setModalConfig({
+        isOpen: true,
+        title: 'E-mail Já Cadastrado',
+        message: 'Este endereço de e-mail já está presente na lista de responsáveis.',
+        type: 'warning'
+      });
+      return;
+    }
+
+    const updatedList = [
+      ...currentList,
+      { name: newResponsible.name.trim(), email: normalizedEmail }
+    ];
+
+    try {
+      await handleUpdateGlobalSettings({ responsiblePersons: updatedList });
+      setNewResponsible({ name: '', email: '' });
+      setModalConfig({
+        isOpen: true,
+        title: 'Responsável Adicionado',
+        message: `${newResponsible.name.trim()} receberá cópia das notificações de não conformidade.`,
+        type: 'success'
+      });
+    } catch (err) {
+      console.error("Erro ao adicionar responsável:", err);
+    }
+  };
+
+  const sendTestQualityEmail = async () => {
+    const list = globalSettings.responsiblePersons || [];
+    const userEmail = (user?.email || '').trim().toLowerCase();
+    const userName = profile?.displayName || user?.displayName || user?.email || 'Usuário Atual';
+
+    // Current user is always included first
+    const recipientsToSend: Array<{ name: string; email: string }> = [];
+    if (userEmail) {
+      recipientsToSend.push({ name: userName, email: userEmail });
+    }
+    list.forEach(p => {
+      const pEmail = (p.email || '').trim().toLowerCase();
+      if (pEmail && !recipientsToSend.some(r => r.email.toLowerCase() === pEmail)) {
+        recipientsToSend.push({ name: p.name || p.email, email: pEmail });
+      }
+    });
+
+    if (recipientsToSend.length === 0) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Nenhum Destinatário',
+        message: 'Nenhum e-mail de destinatário disponível para teste.',
+        type: 'warning'
+      });
+      return;
+    }
+
+    setTestingEmail(true);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch('/api/send-notification', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          type: 'quality_inspection',
+          inspectionTitle: 'Inspeção de Teste de Não Conformidade',
+          inspectorName: userName,
+          recipients: recipientsToSend,
+          failures: [
+            { name: 'Item Demonstrativo 01', observation: 'Teste de disparo automático de e-mail de não conformidade.' },
+            { name: 'Item Demonstrativo 02', observation: 'Validando ordem de envio: usuário logado + lista de responsáveis.' }
+          ],
+          localTime: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+          extraInfo: {
+            lineOrSector: 'Linha de Demonstração / Secagem',
+            shift: 'Turno 1'
+          }
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setModalConfig({
+          isOpen: true,
+          title: 'E-mail de Teste Enviado!',
+          message: `O e-mail de notificação de teste foi enviado com sucesso para ${recipientsToSend.length} destinatário(s):\n\n${recipientsToSend.map((r, i) => `${i + 1}. ${r.name} (${r.email})${i === 0 ? ' [Automático - Usuário Logado]' : ''}`).join('\n')}`,
+          type: 'success'
+        });
+      } else {
+        setModalConfig({
+          isOpen: true,
+          title: 'Falha no Envio',
+          message: data.message || data.error || 'Não foi possível enviar o e-mail de teste. Verifique as credenciais.',
+          type: 'error'
+        });
+      }
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro de Conexão',
+        message: err.message || 'Erro ao comunicar com o servidor de e-mail.',
+        type: 'error'
+      });
+    } finally {
+      setTestingEmail(false);
+    }
+  };
 
   const handleSaveLine = async () => {
     if (!newLine.name) {
@@ -2641,6 +2876,59 @@ const Quality: React.FC = () => {
             }
           } : undefined;
 
+          // Collect all non-conforming items for this checklist
+          const itemFailures: Array<{ name: string; value?: string; observation?: string }> = [];
+
+          (fillingTemplate.items || []).forEach(item => {
+            const val = responses[item.id];
+            const check = isQualityResponseNonConforming(item, val);
+            if (check.isFailure) {
+              const obs = observations[item.id] || '';
+              let formattedVal = '';
+              if (typeof val === 'object' && val !== null) {
+                formattedVal = Object.entries(val).map(([k, v]) => `${k}: ${v}`).join(', ');
+              } else {
+                formattedVal = String(val || check.statusLabel || 'Não Conforme');
+              }
+              itemFailures.push({
+                name: item.label || 'Item de Inspeção',
+                value: formattedVal,
+                observation: obs || undefined
+              });
+            }
+          });
+
+          // Add unit inspection failures if any
+          if (unitInspectionPayload?.evaluation) {
+            const evalData = unitInspectionPayload.evaluation;
+            templatePhotoReqs.forEach(req => {
+              if (evalData.sideEvaluations?.[req.id] === 'Não Conforme') {
+                itemFailures.push({
+                  name: `Foto / Face: ${req.label}`,
+                  value: 'Não Conforme',
+                  observation: evalData.notes || undefined
+                });
+              }
+            });
+            if (evalData.wireTyingStatus === 'Não Conforme') {
+              itemFailures.push({ name: 'Amarração dos Arames', value: 'Não Conforme', observation: evalData.notes || undefined });
+            }
+            if (evalData.coverQualityStatus === 'Não Conforme') {
+              itemFailures.push({ name: 'Qualidade da Capa', value: 'Não Conforme', observation: evalData.notes || undefined });
+            }
+            if (evalData.labelPrintingStatus === 'Não Conforme') {
+              itemFailures.push({ name: 'Impressão de Etiqueta', value: 'Não Conforme', observation: evalData.notes || undefined });
+            }
+            if (evalData.unitHeightStatus === 'Não Conforme') {
+              itemFailures.push({ name: 'Altura do Unit', value: 'Não Conforme', observation: evalData.notes || undefined });
+            }
+          }
+
+          const hasNonConformities = itemFailures.length > 0;
+          let emailSentSummary = '';
+
+          let submissionDocId = editingSubmissionId;
+
           if (editingSubmissionId) {
             await updateDoc(doc(db, 'quality_checklist_submissions', editingSubmissionId), {
               lineId: targetLineId,
@@ -2652,7 +2940,7 @@ const Quality: React.FC = () => {
               ...(unitInspectionPayload ? { unitInspection: unitInspectionPayload } : {})
             });
           } else {
-            await addDoc(collection(db, 'quality_checklist_submissions'), {
+            const docRef = await addDoc(collection(db, 'quality_checklist_submissions'), {
               templateId: fillingTemplate.id,
               sectorId: fillingTemplate.sectorId,
               lineId: targetLineId,
@@ -2665,12 +2953,90 @@ const Quality: React.FC = () => {
               createdAt: serverTimestamp(),
               ...(unitInspectionPayload ? { unitInspection: unitInspectionPayload } : {})
             });
+            submissionDocId = docRef.id;
 
             try {
               const draftId = `${user.uid}_${fillingTemplate.id}`;
               await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
             } catch (e) {
               console.warn("Erro ao deletar rascunho de checklist:", e);
+            }
+          }
+
+          // If there are non-conformities, trigger in-app notification and email dispatch
+          if (hasNonConformities) {
+            try {
+              // 1. Fetch responsible recipients from settings and prepend the logged-in user automatically
+              const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+              let rawResponsibleList: Array<{ name: string; email: string }> = [];
+              if (settingsSnap.exists()) {
+                const sData = settingsSnap.data();
+                if (Array.isArray(sData.responsiblePersons) && sData.responsiblePersons.length > 0) {
+                  rawResponsibleList = sData.responsiblePersons;
+                }
+              }
+
+              // Build recipients list: current logged in user FIRST, followed by other configured responsible persons (no duplicates)
+              const responsibleList: Array<{ name: string; email: string }> = [];
+              const userEmail = (user?.email || '').trim().toLowerCase();
+              const userName = profile?.displayName || user?.displayName || user?.email || 'Inspetor';
+
+              if (userEmail) {
+                responsibleList.push({ name: userName, email: userEmail });
+              }
+
+              rawResponsibleList.forEach(p => {
+                const pEmail = (p.email || '').trim().toLowerCase();
+                if (pEmail && !responsibleList.some(r => r.email.toLowerCase() === pEmail)) {
+                  responsibleList.push({ name: p.name || p.email, email: pEmail });
+                }
+              });
+
+              // 2. Save in-app notification document
+              const notifMsg = `Não conformidade na inspeção "${fillingTemplate.name}" (${lineObj?.name || 'Geral'}) realizada por ${profile.displayName || user.email}. Itens reprovados: ${itemFailures.map(f => f.name).join(', ')}`;
+              await addDoc(collection(db, 'notifications'), {
+                type: 'quality_non_conformity',
+                message: notifMsg,
+                templateName: fillingTemplate.name,
+                lineName: lineObj?.name || '',
+                submissionId: submissionDocId,
+                read: false,
+                createdAt: serverTimestamp(),
+                recipients: responsibleList,
+                failures: itemFailures
+              });
+
+              // 3. Send email notification via server API
+              if (responsibleList.length > 0) {
+                const idToken = await auth.currentUser?.getIdToken();
+                const emailRes = await fetch('/api/send-notification', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                  },
+                  body: JSON.stringify({
+                    type: 'quality_inspection',
+                    inspectionTitle: fillingTemplate.name,
+                    inspectorName: profile.displayName || user.email || 'Inspetor',
+                    recipients: responsibleList,
+                    failures: itemFailures,
+                    localTime: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+                    extraInfo: {
+                      lineOrSector: lineObj?.name || fillingTemplate.sectorId || '',
+                      shift: shiftIdentifier,
+                      productName: matchedProd ? matchedProd.name : undefined
+                    }
+                  })
+                });
+
+                const emailData = await emailRes.json();
+                if (emailData.success) {
+                  emailSentSummary = `\n\n✉️ Notificação de não conformidade enviada por e-mail para ${responsibleList.length} responsável(eis).`;
+                }
+              }
+            } catch (errNotif) {
+              console.warn("Erro ao processar notificações de não conformidade de qualidade:", errNotif);
             }
           }
           
@@ -2693,11 +3059,13 @@ const Quality: React.FC = () => {
           
           setModalConfig({
             isOpen: true,
-            title: isEditing ? 'Inspeção Atualizada' : 'Check-list Enviado',
+            title: isEditing ? 'Inspeção Atualizada' : (hasNonConformities ? '⚠️ Check-list com Não Conformidade' : 'Check-list Enviado'),
             message: isEditing
-              ? `A inspeção de qualidade${lineSuffix} foi atualizada com sucesso!`
-              : `O check-list de qualidade${lineSuffix} foi enviado com sucesso!`,
-            type: 'success'
+              ? `A inspeção de qualidade${lineSuffix} foi atualizada com sucesso!${emailSentSummary}`
+              : (hasNonConformities 
+                  ? `O check-list de qualidade${lineSuffix} foi registrado com ${itemFailures.length} item(ns) NÃO CONFORME(S).${emailSentSummary}`
+                  : `O check-list de qualidade${lineSuffix} foi enviado com sucesso! Todos os itens em conformidade.`),
+            type: hasNonConformities ? 'warning' : 'success'
           });
         } catch (err) {
           handleFirestoreError(err, isEditing ? OperationType.UPDATE : OperationType.CREATE, 'quality_checklist_submissions');
@@ -6515,6 +6883,156 @@ const Quality: React.FC = () => {
             exit={{ opacity: 0, y: -10 }}
             className="space-y-6"
           >
+            {/* CONFIGURAÇÃO DE NOTIFICAÇÕES POR E-MAIL E DESTINATÁRIOS */}
+            <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                    <Mail className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                      Notificações por E-mail (Não Conformidade)
+                      <span className="text-[10px] font-black uppercase bg-emerald-100 text-emerald-700 px-2.5 py-0.5 rounded-full">
+                        Ativo
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      Configuração da lista de e-mails para envio de alertas automáticos quando uma inspeção tiver item Não Conforme.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={sendTestQualityEmail}
+                  disabled={testingEmail}
+                  className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-slate-800 transition-all flex items-center gap-2 shadow-sm disabled:opacity-50 shrink-0 self-start sm:self-center"
+                >
+                  {testingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />}
+                  {testingEmail ? 'Enviando Teste...' : 'Enviar E-mail de Teste'}
+                </button>
+              </div>
+
+              {/* Informação sobre o 1º destinatário automático */}
+              <div className="p-4 bg-emerald-50/70 border border-emerald-200/80 rounded-2xl flex items-start gap-3.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 mt-0.5">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+                <div className="space-y-1 text-xs">
+                  <p className="font-extrabold text-emerald-950">
+                    1º Destinatário (Automático): Usuário que gerou a ocorrência
+                  </p>
+                  <p className="text-emerald-800 leading-relaxed font-medium">
+                    O e-mail do colaborador logado que finalizou o check-list com não conformidade é incluído <strong>automaticamente em primeiro lugar</strong> no disparo. A lista abaixo receberá cópia simultânea do alerta técnico.
+                  </p>
+                </div>
+              </div>
+
+              {/* Lista de Responsáveis Cadastrados */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                    Demais Responsáveis Cadastrados ({globalSettings.responsiblePersons?.length || 0})
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Card do Usuário Logado Atual (Sempre Primeiro) */}
+                  <div className="flex items-center justify-between p-4 bg-slate-50 border-2 border-dashed border-emerald-300 rounded-2xl">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white font-black text-xs flex items-center justify-center shrink-0">
+                        1º
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs font-bold text-slate-900 truncate">
+                            {profile?.displayName || user?.displayName || user?.email || 'Usuário Atual'}
+                          </p>
+                          <span className="text-[9px] font-extrabold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">
+                            Logado
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-mono truncate">{user?.email || 'Sem e-mail'}</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 shrink-0">
+                      Auto
+                    </span>
+                  </div>
+
+                  {/* Demais Responsáveis da Lista */}
+                  {globalSettings.responsiblePersons?.map((person, index) => (
+                    <div 
+                      key={`qual-resp-person-${person.email || index}`} 
+                      className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-slate-200 transition-all"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-slate-200 text-slate-700 font-black text-xs flex items-center justify-center shrink-0">
+                          {index + 2}º
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">{person.name}</p>
+                          <p className="text-[11px] text-slate-500 font-mono truncate">{person.email}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const newList = [...(globalSettings.responsiblePersons || [])];
+                          newList.splice(index, 1);
+                          await handleUpdateGlobalSettings({ responsiblePersons: newList });
+                        }}
+                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all shrink-0"
+                        title="Remover destinatário"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {(!globalSettings.responsiblePersons || globalSettings.responsiblePersons.length === 0) && (
+                  <p className="text-center py-4 text-xs font-medium text-slate-400 italic">
+                    Nenhum responsável adicional cadastrado. Cadastre outros e-mails abaixo para acompanharem os alertas.
+                  </p>
+                )}
+              </div>
+
+              {/* Formulário para Adicionar Novo Responsável */}
+              <form onSubmit={handleAddResponsiblePerson} className="grid grid-cols-1 md:grid-cols-3 gap-3 p-5 bg-slate-50 rounded-2xl border border-slate-200">
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Nome do Responsável</label>
+                  <input
+                    type="text"
+                    value={newResponsible.name}
+                    onChange={(e) => setNewResponsible(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="Ex: Gestor de Qualidade"
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">E-mail do Responsável</label>
+                  <input
+                    type="email"
+                    value={newResponsible.email}
+                    onChange={(e) => setNewResponsible(prev => ({ ...prev, email: e.target.value }))}
+                    placeholder="gestor@eldorado.com.br"
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Adicionar à Lista
+                  </button>
+                </div>
+              </form>
+            </div>
+
             {/* MÓDULOS OPCIONAIS DO SISTEMA */}
             <div className="bg-slate-900 text-white p-8 rounded-[2.5rem] border border-slate-800 shadow-xl space-y-4">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">

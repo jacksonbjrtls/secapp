@@ -60,38 +60,101 @@ if (!projectId) {
 }
 
 
-const getEmailTemplate = (personName: string, forkliftNumber: string, conductorName: string, failures: any[], localTime?: string) => `
-  <div style="font-family: sans-serif; padding: 20px; color: #334155; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 12px;">
-    <div style="text-align: center; border-bottom: 2px solid #e11d48; padding-bottom: 15px; margin-bottom: 20px;">
-      <h1 style="color: #e11d48; margin: 0; font-size: 24px;">SecApp - Alerta de Não Conformidade</h1>
+interface FailureItem {
+  name: string;
+  observation?: string;
+  value?: string;
+  status?: string;
+}
+
+const getEmailTemplate = (
+  personName: string, 
+  equipmentOrInspectionTitle: string, 
+  conductorOrInspectorName: string, 
+  failures: FailureItem[], 
+  localTime?: string,
+  extraInfo?: {
+    type?: 'forklift' | 'quality_inspection';
+    lineOrSector?: string;
+    shift?: string;
+    productName?: string;
+  }
+) => {
+  const isQuality = extraInfo?.type === 'quality_inspection';
+  const headerTitle = isQuality 
+    ? "SecApp - Alerta de Inspeção Não Conforme" 
+    : "SecApp - Alerta de Não Conformidade";
+  
+  const introText = isQuality
+    ? `Foi registrada uma não conformidade durante a realização do checklist <strong>${equipmentOrInspectionTitle}</strong>:`
+    : `Uma não conformidade crítica foi detectada durante a inspeção do equipamento:`;
+
+  return `
+  <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #1e293b; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);">
+    <div style="text-align: center; border-bottom: 2px solid #e11d48; padding-bottom: 16px; margin-bottom: 20px;">
+      <span style="font-size: 20px; font-weight: 800; color: #e11d48; letter-spacing: 0.5px;">🛡️ Sec<span style="color: #0f172a;">App</span></span>
+      <h2 style="color: #e11d48; margin: 8px 0 0 0; font-size: 18px; font-weight: 700;">${headerTitle}</h2>
     </div>
     
-    <p>Olá <strong>${personName}</strong>,</p>
-    <p>Uma não conformidade crítica foi detectada durante a inspeção do equipamento:</p>
+    <p style="font-size: 15px; margin-bottom: 12px;">Olá <strong>${personName}</strong>,</p>
+    <p style="font-size: 14px; color: #475569; margin-bottom: 20px;">${introText}</p>
     
-    <div style="background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #e2e8f0; margin: 20px 0;">
-      <p style="margin: 5px 0;"><strong>Equipamento:</strong> ${forkliftNumber}</p>
-      <p style="margin: 5px 0;"><strong>Condutor:</strong> ${conductorName}</p>
-      <p style="margin: 5px 0;"><strong>Data/Hora:</strong> ${localTime || new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
+    <div style="background: #f8fafc; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 24px;">
+      <table style="width: 100%; font-size: 13px; line-height: 22px; color: #334155;">
+        <tr>
+          <td style="font-weight: 600; color: #64748b; width: 120px;">${isQuality ? 'Inspeção:' : 'Equipamento:'}</td>
+          <td style="font-weight: 700; color: #0f172a;">${equipmentOrInspectionTitle}</td>
+        </tr>
+        ${extraInfo?.lineOrSector ? `
+        <tr>
+          <td style="font-weight: 600; color: #64748b;">Linha / Setor:</td>
+          <td style="font-weight: 700; color: #0f172a;">${extraInfo.lineOrSector}</td>
+        </tr>` : ''}
+        ${extraInfo?.shift ? `
+        <tr>
+          <td style="font-weight: 600; color: #64748b;">Turno / Letra:</td>
+          <td style="font-weight: 600; color: #0f172a;">${extraInfo.shift}</td>
+        </tr>` : ''}
+        ${extraInfo?.productName ? `
+        <tr>
+          <td style="font-weight: 600; color: #64748b;">Produto:</td>
+          <td style="font-weight: 600; color: #0f172a;">${extraInfo.productName}</td>
+        </tr>` : ''}
+        <tr>
+          <td style="font-weight: 600; color: #64748b;">${isQuality ? 'Inspetor:' : 'Condutor:'}</td>
+          <td style="font-weight: 700; color: #0f172a;">${conductorOrInspectorName}</td>
+        </tr>
+        <tr>
+          <td style="font-weight: 600; color: #64748b;">Data/Hora:</td>
+          <td style="color: #0f172a;">${localTime || new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</td>
+        </tr>
+      </table>
     </div>
 
-    <h3 style="color: #e11d48; border-bottom: 1px solid #fee2e2; padding-bottom: 5px;">Itens Não Conformes:</h3>
-    <ul style="padding-left: 20px; color: #b91c1c;">
+    <h3 style="color: #b91c1c; font-size: 14px; font-weight: 700; border-bottom: 1px solid #fee2e2; padding-bottom: 8px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+      ⚠️ Itens Não Conformes Detectados (${failures.length}):
+    </h3>
+    
+    <div style="space-y: 10px;">
       ${failures.map(f => `
-        <li style="margin-bottom: 10px;">
-          <strong>${f.name}:</strong> 
-          <span style="display: block; font-style: italic; color: #64748b; margin-top: 2px;">
-            ${f.observation || 'Sem observação detalhada.'}
-          </span>
-        </li>
+        <div style="background-color: #fff1f2; border: 1px solid #fecdd3; border-left: 4px solid #e11d48; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+          <div style="font-weight: 700; color: #9f1239; font-size: 13px;">${f.name}</div>
+          ${f.value ? `<div style="font-size: 12px; color: #be123c; margin-top: 2px;"><strong>Valor Registrado:</strong> ${f.value}</div>` : ''}
+          ${f.observation ? `
+            <div style="font-size: 12px; font-style: italic; color: #64748b; margin-top: 4px; background: #ffffff; padding: 6px 10px; border-radius: 6px; border: 1px solid #f1f5f9;">
+              "${f.observation}"
+            </div>
+          ` : ''}
+        </div>
       `).join('')}
-    </ul>
+    </div>
 
-    <p style="margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 15px; font-size: 12px; color: #94a3b8; text-align: center;">
-      Este é um e-mail automático enviado pelo <strong>SecApp - Sistema de Gestão de Segurança</strong>.
+    <p style="margin-top: 32px; border-top: 1px solid #f1f5f9; padding-top: 16px; font-size: 11px; color: #94a3b8; text-align: center;">
+      Este é um e-mail automático gerado pelo <strong>SecApp - Sistema Integrado de Gestão</strong>.
     </p>
   </div>
 `;
+};
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -378,7 +441,23 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
   // API Route to send email
   app.post("/api/send-notification", requireAuth, async (req, res) => {
     try {
-      const { recipients, forkliftNumber, conductorName, failures = [], localTime } = req.body;
+      const { 
+        recipients, 
+        forkliftNumber, 
+        conductorName, 
+        inspectionTitle,
+        inspectorName,
+        failures = [], 
+        localTime,
+        type = 'forklift',
+        extraInfo
+      } = req.body;
+
+      const title = inspectionTitle || forkliftNumber || 'Equipamento / Inspeção';
+      const personInCharge = inspectorName || conductorName || 'Operador';
+      const subjectPrefix = type === 'quality_inspection' 
+        ? `SecApp - Não Conformidade em Inspeção: ${title}` 
+        : `SecApp - Alerta Não Conformidade: ${title}`;
       
       const gmailUser = process.env.GMAIL_USER || process.env.GMAIL_EMAIL || process.env.GMAIL_ACCOUNT;
       const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASS || process.env.GMAIL_PASSWORD;
@@ -399,10 +478,17 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
           try {
             console.log(`[API] Sending Gmail to ${person.email}...`);
             await transporter.sendMail({
-              from: `"SecApp - Segurança" <${gmailUser}>`,
+              from: `"SecApp - Gestão de Qualidade e Segurança" <${gmailUser}>`,
               to: person.email,
-              subject: `SecApp - Alerta Não Conformidade: ${forkliftNumber}`,
-              html: getEmailTemplate(person.name, forkliftNumber, conductorName, failures, localTime)
+              subject: subjectPrefix,
+              html: getEmailTemplate(
+                person.name || person.email, 
+                title, 
+                personInCharge, 
+                failures, 
+                localTime, 
+                { ...extraInfo, type }
+              )
             });
             console.log(`[API] Gmail sent successfully to ${person.email}`);
             return { email: person.email, success: true };
@@ -430,8 +516,15 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
             const response = await resend.emails.send({
               from: "SecApp <onboarding@resend.dev>",
               to: person.email,
-              subject: `SecApp - Alerta Não Conformidade: ${forkliftNumber}`,
-              html: getEmailTemplate(person.name, forkliftNumber, conductorName, failures, localTime)
+              subject: subjectPrefix,
+              html: getEmailTemplate(
+                person.name || person.email, 
+                title, 
+                personInCharge, 
+                failures, 
+                localTime, 
+                { ...extraInfo, type }
+              )
             });
             
             if (response.error) {

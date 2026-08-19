@@ -906,7 +906,22 @@ const Forklifts: React.FC = () => {
               };
             });
 
-          const responsibleList = settings.responsiblePersons || [];
+          // Build recipients list: current logged-in conductor FIRST, followed by other configured responsible persons (no duplicates)
+          const responsibleList: Array<{ name: string; email: string }> = [];
+          const currentEmail = (auth.currentUser?.email || profile?.email || '').trim().toLowerCase();
+          const currentName = profile?.displayName || auth.currentUser?.displayName || auth.currentUser?.email || 'Condutor';
+
+          if (currentEmail) {
+            responsibleList.push({ name: currentName, email: currentEmail });
+          }
+
+          (settings.responsiblePersons || []).forEach(p => {
+            const pEmail = (p.email || '').trim().toLowerCase();
+            if (pEmail && !responsibleList.some(r => r.email.toLowerCase() === pEmail)) {
+              responsibleList.push({ name: p.name || p.email, email: pEmail });
+            }
+          });
+
           const responsibleSummary = responsibleList.length > 0 
             ? `Cliente de e-mail do aparelho pronto para os responsáveis: ${responsibleList.map(p => p.email).join(', ')}.`
             : 'Nenhum responsável cadastrado para receber e-mail.';
