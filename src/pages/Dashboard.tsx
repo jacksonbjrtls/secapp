@@ -46,6 +46,8 @@ import {
   Box,
   Scale,
   Clock,
+  Clock3,
+  Award,
   ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -66,6 +68,7 @@ const Dashboard: React.FC = () => {
     consumables: true,
     shift_handover: true,
     certificates: true,
+    overtime: true,
   });
 
   const tabsList = useMemo(() => [
@@ -73,17 +76,23 @@ const Dashboard: React.FC = () => {
     { id: 'forklifts', moduleKey: 'forklifts', label: 'Empilhadeiras', icon: Truck },
     { id: 'quality', moduleKey: 'quality', label: 'Inspeções', icon: ClipboardCheck },
     { id: 'wire', moduleKey: 'wires', label: 'Arames', icon: LayersIcon },
+    { id: 'overtime', moduleKey: 'overtime', label: 'Horas Extras', icon: Clock },
     { id: 'operational_routes', moduleKey: 'operational_routes', label: 'Rota Operacional', icon: Activity },
     { id: 'safety_observations', moduleKey: 'safety_observations', label: 'Observações de Segurança', icon: ShieldAlert },
     { id: 'consumables', moduleKey: 'consumables', label: 'Controle de Insumos', icon: Box }
   ] as const, []);
 
-  const [activeTab, setActiveTab ] = useState<'dds' | 'forklifts' | 'quality' | 'wire' | 'operational_routes' | 'safety_observations' | 'consumables'>('dds');
+  const [activeTab, setActiveTab ] = useState<'dds' | 'forklifts' | 'quality' | 'wire' | 'overtime' | 'operational_routes' | 'safety_observations' | 'consumables'>('dds');
   const [routesSubmissions, setRoutesSubmissions ] = useState<any[]>([]);
   const [routesTemplates, setRoutesTemplates ] = useState<any[]>([]);
   const [safetyObservations, setSafetyObservations] = useState<any[]>([]);
   const [consumableItems, setConsumableItems] = useState<any[]>([]);
   const [consumableLogs, setConsumableLogs] = useState<any[]>([]);
+  const [overtimeJustifications, setOvertimeJustifications] = useState<any[]>([]);
+  const [overtimeRankingLimit, setOvertimeRankingLimit] = useState<number>(10);
+  const [overtimeFilterGroup, setOvertimeFilterGroup] = useState<string>('all');
+  const [overtimeFilterArea, setOvertimeFilterArea] = useState<string>('all');
+  const [overtimeFilterShift, setOvertimeFilterShift] = useState<string>('all');
   const [showTabMenu, setShowTabMenu] = useState(false);
   const [stats, setStats] = useState({
     totalUsers: 0,
@@ -334,6 +343,16 @@ const Dashboard: React.FC = () => {
       setConsumableLogs(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_logs'));
 
+    const unsubOvertime = onSnapshot(collection(db, 'overtime_justifications'), async (snapshot) => {
+      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decName = await decryptValue(data.userName);
+        const decCreatedByName = await decryptValue(data.createdByName);
+        return { id: doc.id, ...data, userName: decName, createdByName: decCreatedByName };
+      }));
+      setOvertimeJustifications(docs);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'overtime_justifications'));
+
     return () => {
       unsubscribe();
       unsubForklifts();
@@ -350,6 +369,7 @@ const Dashboard: React.FC = () => {
       unsubSafetyObs();
       unsubConsumableItems();
       unsubConsumableLogs();
+      unsubOvertime();
     };
   }, [isManager, filterYear, filterMonth]);
 
@@ -798,6 +818,144 @@ const Dashboard: React.FC = () => {
       supplierData: Object.entries(supplierDist).map(([name, value]) => ({ name, value }))
     };
   }, [wireCoils, wireBatches, filterMonth, filterYear]);
+
+  // Overtime Metrics for Dashboard Analytics
+  const overtimeMetrics = useMemo(() => {
+    // Filter by selected Month and Year
+    const filtered = overtimeJustifications.filter(item => {
+      if (!item.date) return false;
+      const parts = item.date.split('-');
+      if (parts.length < 3) return false;
+      const itemYear = parseInt(parts[0], 10);
+      const itemMonth = parseInt(parts[1], 10) - 1; // 0-indexed
+
+      if (itemYear !== filterYear) return false;
+      if (itemMonth !== filterMonth) return false;
+
+      if (overtimeFilterGroup !== 'all' && item.group !== overtimeFilterGroup) return false;
+      if (overtimeFilterArea !== 'all' && item.area !== overtimeFilterArea) return false;
+      if (overtimeFilterShift !== 'all' && item.shift !== overtimeFilterShift) return false;
+
+      return true;
+    });
+
+    const totalHours = filtered.reduce((acc, curr) => acc + (Number(curr.totalHours) || 0), 0);
+    const count = filtered.length;
+    const average = count > 0 ? Number((totalHours / count).toFixed(2)) : 0;
+
+    // Unique users
+    const uniqueUsersSet = new Set(filtered.map(j => j.userId || j.userName).filter(Boolean));
+    const uniqueUsersCount = uniqueUsersSet.size;
+
+    // Collab ranking (accumulated hours by user)
+    const collabMap: Record<string, { userName: string; group: string; roleName: string; totalHours: number; count: number }> = {};
+    filtered.forEach(item => {
+      const key = item.userId || item.userName || 'Desconhecido';
+      if (!collabMap[key]) {
+        collabMap[key] = {
+          userName: item.userName || 'Sem Nome',
+          group: item.group || 'Geral',
+          roleName: item.roleName || '',
+          totalHours: 0,
+          count: 0
+        };
+      }
+      collabMap[key].totalHours += Number(currHours(item.totalHours));
+      collabMap[key].count += 1;
+    });
+
+    function currHours(val: any) {
+      return Number(val) || 0;
+    }
+
+    const sortedCollabs = Object.values(collabMap)
+      .map(c => ({
+        ...c,
+        totalHours: Number(c.totalHours.toFixed(2))
+      }))
+      .sort((a, b) => b.totalHours - a.totalHours);
+
+    const chartRankingData = sortedCollabs.slice(0, overtimeRankingLimit).map(c => ({
+      name: c.userName.length > 18 ? c.userName.substring(0, 16) + '...' : c.userName,
+      fullName: c.userName,
+      hours: c.totalHours,
+      group: c.group,
+      roleName: c.roleName,
+      count: c.count
+    }));
+
+    // Group / Letra Distribution
+    const groupMap: Record<string, number> = {
+      'A': 0,
+      'B': 0,
+      'C': 0,
+      'D': 0,
+      'E': 0,
+      'Geral': 0
+    };
+    filtered.forEach(item => {
+      const grp = item.group || 'Geral';
+      groupMap[grp] = (groupMap[grp] || 0) + (Number(item.totalHours) || 0);
+    });
+
+    const groupRankingData = Object.entries(groupMap)
+      .map(([letter, hours]) => ({
+        letter: `Letra ${letter}`,
+        rawLetter: letter,
+        hours: Number(hours.toFixed(2)),
+        percentage: totalHours > 0 ? Math.round((hours / totalHours) * 100) : 0
+      }))
+      .sort((a, b) => b.hours - a.hours);
+
+    // Area Distribution
+    const areaMap: Record<string, number> = {};
+    filtered.forEach(item => {
+      const ar = item.area || 'Geral';
+      areaMap[ar] = (areaMap[ar] || 0) + (Number(item.totalHours) || 0);
+    });
+    const areaDistribution = Object.entries(areaMap)
+      .map(([area, hours]) => ({
+        name: area,
+        hours: Number(hours.toFixed(2)),
+        percentage: totalHours > 0 ? Math.round((hours / totalHours) * 100) : 0
+      }))
+      .sort((a, b) => b.hours - a.hours);
+
+    // Daily evolution in month
+    const daysInMonth = new Date(filterYear, filterMonth + 1, 0).getDate();
+    const dailyEvolution = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dayStr = String(d).padStart(2, '0');
+      const targetDateStr = `${filterYear}-${String(filterMonth + 1).padStart(2, '0')}-${dayStr}`;
+      const dayItems = filtered.filter(item => item.date === targetDateStr);
+      const dayHours = dayItems.reduce((acc, curr) => acc + (Number(curr.totalHours) || 0), 0);
+      dailyEvolution.push({
+        day: d,
+        name: `${d}/${filterMonth + 1}`,
+        hours: Number(dayHours.toFixed(2)),
+        count: dayItems.length
+      });
+    }
+
+    // Available areas and shifts for filters
+    const availableAreas = Array.from(new Set(overtimeJustifications.map(j => j.area).filter(Boolean)));
+    const availableShifts = Array.from(new Set(overtimeJustifications.map(j => j.shift).filter(Boolean)));
+
+    return {
+      filtered,
+      totalHours: Number(totalHours.toFixed(2)),
+      count,
+      average,
+      uniqueUsersCount,
+      topCollabs: sortedCollabs,
+      chartRankingData,
+      groupRankingData,
+      areaDistribution,
+      dailyEvolution,
+      availableAreas,
+      availableShifts
+    };
+  }, [overtimeJustifications, filterMonth, filterYear, overtimeFilterGroup, overtimeFilterArea, overtimeFilterShift, overtimeRankingLimit]);
 
   const currentMonthCompliance = useMemo(() => {
     if (complianceData.length === 0) return 0;
@@ -2397,6 +2555,457 @@ const Dashboard: React.FC = () => {
                     <div className="text-center py-12 opacity-40">
                       <History className="w-12 h-12 mx-auto mb-4 text-slate-300" />
                       <p className="text-xs font-black uppercase tracking-widest text-slate-400 font-bold">Nenhuma observação de segurança listada</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        ) : activeTab === 'overtime' ? (
+          <motion.div
+            key="overtime"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-8"
+          >
+            {/* Header and Filters Bar */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight uppercase flex items-center gap-2">
+                  <Clock className="w-6 h-6 text-emerald-600" />
+                  Horas Extras Analytics
+                </h2>
+                <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">
+                  Métricas de horas lançadas, ranking de colaboradores e distribuição por turno/letra
+                </p>
+              </div>
+
+              {/* Filters Panel */}
+              <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto justify-center md:justify-start">
+                <div className="flex items-center gap-2 px-3 md:border-r border-slate-100">
+                  <Calendar className="w-4 h-4 text-slate-400" />
+                  <select 
+                    value={filterMonth} 
+                    onChange={(e) => setFilterMonth(parseInt(e.target.value))}
+                    className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
+                  >
+                    {months.map((m, i) => <option key={`m-he-${m}-${i}`} value={i}>{m}</option>)}
+                  </select>
+                  <input 
+                    type="number" 
+                    value={filterYear}
+                    onChange={(e) => setFilterYear(parseInt(e.target.value))}
+                    className="w-20 bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 px-3 md:border-r border-slate-100">
+                  <Target className="w-4 h-4 text-slate-400" />
+                  <select 
+                    value={overtimeFilterGroup} 
+                    onChange={(e) => setOvertimeFilterGroup(e.target.value)}
+                    className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer"
+                  >
+                    <option value="all">Todas Letras</option>
+                    <option value="A">Letra A</option>
+                    <option value="B">Letra B</option>
+                    <option value="C">Letra C</option>
+                    <option value="D">Letra D</option>
+                    <option value="E">Letra E</option>
+                    <option value="Geral">Geral / ADM</option>
+                  </select>
+                </div>
+
+                {overtimeMetrics.availableAreas.length > 0 && (
+                  <div className="flex items-center gap-2 px-3 md:border-r border-slate-100">
+                    <Filter className="w-4 h-4 text-slate-400" />
+                    <select 
+                      value={overtimeFilterArea} 
+                      onChange={(e) => setOvertimeFilterArea(e.target.value)}
+                      className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer max-w-[130px] truncate"
+                    >
+                      <option value="all">Todas Áreas</option>
+                      {overtimeMetrics.availableAreas.map((area: string) => (
+                        <option key={area} value={area}>{area}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {overtimeMetrics.availableShifts.length > 0 && (
+                  <div className="flex items-center gap-2 px-3">
+                    <Clock3 className="w-4 h-4 text-slate-400" />
+                    <select 
+                      value={overtimeFilterShift} 
+                      onChange={(e) => setOvertimeFilterShift(e.target.value)}
+                      className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 cursor-pointer max-w-[130px] truncate"
+                    >
+                      <option value="all">Todos Turnos</option>
+                      {overtimeMetrics.availableShifts.map((sh: string) => (
+                        <option key={sh} value={sh}>{sh}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Top Stat KPI Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-4">
+                  <Clock className="w-6 h-6 text-emerald-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total de Horas Extras</span>
+                </div>
+                <div>
+                  <p className="text-4xl font-black text-slate-900">{overtimeMetrics.totalHours} <span className="text-base font-bold text-slate-400">hrs</span></p>
+                  <p className="text-xs text-slate-400 mt-1 font-medium">Acumulado no mês selecionado</p>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-4">
+                  <FileText className="w-6 h-6 text-blue-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lançamentos</span>
+                </div>
+                <div>
+                  <p className="text-4xl font-black text-blue-600">{overtimeMetrics.count}</p>
+                  <p className="text-xs text-slate-400 mt-1 font-medium">Justificativas registradas</p>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-4">
+                  <TrendingUp className="w-6 h-6 text-amber-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Média por Lançamento</span>
+                </div>
+                <div>
+                  <p className="text-4xl font-black text-amber-600">{overtimeMetrics.average} <span className="text-base font-bold text-slate-400">hrs</span></p>
+                  <p className="text-xs text-slate-400 mt-1 font-medium">Duração média de cada HE</p>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-4">
+                  <UsersIcon className="w-6 h-6 text-purple-500" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Colaboradores Únicos</span>
+                </div>
+                <div>
+                  <p className="text-4xl font-black text-purple-600">{overtimeMetrics.uniqueUsersCount}</p>
+                  <p className="text-xs text-slate-400 mt-1 font-medium">Fizeram HE neste período</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Ranking Chart + Top 3 Podium & Group Distribution */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Ranking Bar Chart */}
+              <div className="lg:col-span-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                  <div>
+                    <h3 className="font-black text-xl text-slate-900 tracking-tight flex items-center gap-2">
+                      <Award className="w-5 h-5 text-amber-500" />
+                      Ranking de Colaboradores (Horas Extras)
+                    </h3>
+                    <p className="text-xs text-slate-400 font-medium">Volume acumulado de horas extras por funcionário</p>
+                  </div>
+                  
+                  {/* Selector Top 5 / 10 / 15 / 20 */}
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl self-start sm:self-auto">
+                    {[5, 10, 15, 20].map((lim) => (
+                      <button
+                        key={lim}
+                        onClick={() => setOvertimeRankingLimit(lim)}
+                        className={cn(
+                          "px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
+                          overtimeRankingLimit === lim 
+                            ? "bg-white text-slate-900 shadow-xs" 
+                            : "text-slate-500 hover:text-slate-900"
+                        )}
+                      >
+                        Top {lim}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="h-[360px] w-full min-h-[360px]">
+                  {overtimeMetrics.chartRankingData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={360}>
+                      <BarChart 
+                        data={overtimeMetrics.chartRankingData} 
+                        layout="vertical"
+                        margin={{ top: 10, right: 30, left: 10, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          type="number" 
+                          stroke="#94a3b8" 
+                          fontSize={11} 
+                          tickLine={false}
+                          unit="h"
+                        />
+                        <YAxis 
+                          dataKey="name" 
+                          type="category" 
+                          stroke="#64748b" 
+                          fontSize={11} 
+                          tickLine={false} 
+                          width={140}
+                          tick={{ fill: '#334155', fontWeight: 600 }}
+                        />
+                        <Tooltip 
+                          cursor={{ fill: '#f8fafc' }}
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-slate-900 text-white p-3 rounded-2xl shadow-xl border border-slate-800 text-xs">
+                                  <p className="font-bold text-sm text-emerald-400">{data.fullName}</p>
+                                  {data.roleName && <p className="text-slate-300 text-[11px]">{data.roleName}</p>}
+                                  <div className="mt-2 pt-2 border-t border-slate-700 space-y-1">
+                                    <p className="flex justify-between gap-4"><span className="text-slate-400">Total Horas:</span> <span className="font-extrabold text-white">{data.hours} hrs</span></p>
+                                    <p className="flex justify-between gap-4"><span className="text-slate-400">Lançamentos:</span> <span className="font-semibold text-slate-200">{data.count}x</span></p>
+                                    <p className="flex justify-between gap-4"><span className="text-slate-400">Letra:</span> <span className="font-semibold text-emerald-300">Letra {data.group}</span></p>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Bar 
+                          dataKey="hours" 
+                          radius={[0, 8, 8, 0]} 
+                          barSize={20}
+                        >
+                          {overtimeMetrics.chartRankingData.map((_, index) => (
+                            <Cell 
+                              key={`cell-he-${index}`} 
+                              fill={
+                                index === 0 ? '#f59e0b' : 
+                                index === 1 ? '#0ea5e9' : 
+                                index === 2 ? '#10b981' : 
+                                '#64748b'
+                              } 
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-40 py-12">
+                      <Clock className="w-12 h-12 mb-3 text-slate-300" />
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-400">Nenhuma hora extra registrada no período</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Podium & Group Breakdown */}
+              <div className="lg:col-span-4 space-y-6 flex flex-col justify-between">
+                {/* Top 3 Leaders Card */}
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                  <h3 className="font-black text-lg text-slate-900 tracking-tight mb-4 flex items-center gap-2">
+                    <Award className="w-5 h-5 text-amber-500" />
+                    Top 3 Líderes em HE
+                  </h3>
+                  
+                  {overtimeMetrics.topCollabs.length > 0 ? (
+                    <div className="space-y-3">
+                      {overtimeMetrics.topCollabs.slice(0, 3).map((collab, idx) => (
+                        <div 
+                          key={idx}
+                          className={cn(
+                            "p-3.5 rounded-2xl flex items-center justify-between border transition-all",
+                            idx === 0 
+                              ? "bg-amber-50/70 border-amber-200/80 text-amber-950" 
+                              : idx === 1 
+                                ? "bg-sky-50/70 border-sky-200/80 text-sky-950" 
+                                : "bg-emerald-50/70 border-emerald-200/80 text-emerald-950"
+                          )}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={cn(
+                              "w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center flex-shrink-0 shadow-xs",
+                              idx === 0 ? "bg-amber-500 text-white" :
+                              idx === 1 ? "bg-sky-500 text-white" :
+                              "bg-emerald-500 text-white"
+                            )}>
+                              {idx + 1}º
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-extrabold text-xs truncate text-slate-900">{collab.userName}</p>
+                              <p className="text-[10px] text-slate-500 font-semibold truncate">
+                                Letra {collab.group} • {collab.count} lançamentos
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right flex-shrink-0 pl-2">
+                            <span className="text-sm font-black text-slate-900">{collab.totalHours}</span>
+                            <span className="text-[10px] font-bold text-slate-500 ml-0.5">hrs</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-8 text-center opacity-40">
+                      <p className="text-xs font-bold text-slate-400">Sem registros</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Hours by Letra */}
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex-1">
+                  <h3 className="font-black text-lg text-slate-900 tracking-tight mb-4">
+                    Distribuição por Letra
+                  </h3>
+                  
+                  <div className="space-y-3">
+                    {overtimeMetrics.groupRankingData.filter(g => g.hours > 0).length > 0 ? (
+                      overtimeMetrics.groupRankingData.filter(g => g.hours > 0).map((grp, idx) => (
+                        <div key={idx} className="space-y-1.5">
+                          <div className="flex justify-between text-xs font-bold">
+                            <span className="text-slate-700">{grp.letter}</span>
+                            <span className="text-slate-900 font-extrabold">
+                              {grp.hours} hrs <span className="text-[10px] text-slate-400 font-normal">({grp.percentage}%)</span>
+                            </span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${grp.percentage}%` }}
+                              transition={{ duration: 0.6, delay: idx * 0.1 }}
+                              className={cn(
+                                "h-full rounded-full",
+                                grp.rawLetter === 'A' ? 'bg-emerald-500' :
+                                grp.rawLetter === 'B' ? 'bg-blue-500' :
+                                grp.rawLetter === 'C' ? 'bg-amber-500' :
+                                grp.rawLetter === 'D' ? 'bg-purple-500' :
+                                grp.rawLetter === 'E' ? 'bg-rose-500' : 'bg-slate-500'
+                              )}
+                            />
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="py-6 text-center opacity-40">
+                        <p className="text-xs font-bold text-slate-400">Nenhuma hora lançada</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Daily Evolution & Recent Justifications */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Daily Evolution Chart */}
+              <div className="lg:col-span-7 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                <div className="mb-6">
+                  <h3 className="font-black text-xl text-slate-900 tracking-tight">Evolução Diária de Horas Extras</h3>
+                  <p className="text-xs text-slate-400 font-medium">Acompanhamento diário das horas extras no decorrer do mês</p>
+                </div>
+                <div className="h-[280px] w-full min-h-[280px]">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280}>
+                    <AreaChart data={overtimeMetrics.dailyEvolution} margin={{ top: 10, right: 10, left: -10, bottom: 5 }}>
+                      <defs>
+                        <linearGradient id="colorHeHours" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis 
+                        dataKey="day" 
+                        stroke="#94a3b8" 
+                        fontSize={10} 
+                        tickLine={false} 
+                        tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      />
+                      <YAxis 
+                        stroke="#94a3b8" 
+                        fontSize={10} 
+                        tickLine={false} 
+                        tick={{ fill: '#94a3b8', fontSize: 10 }}
+                        unit="h"
+                      />
+                      <Tooltip 
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            return (
+                              <div className="bg-slate-900 text-white p-3 rounded-2xl shadow-xl border border-slate-800 text-xs">
+                                <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Dia {data.day}</p>
+                                <p className="text-lg font-black text-emerald-400">{data.hours} horas</p>
+                                <p className="text-[10px] text-slate-300">{data.count} justificativas registradas</p>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey="hours" 
+                        stroke="#10b981" 
+                        strokeWidth={2.5}
+                        fillOpacity={1} 
+                        fill="url(#colorHeHours)" 
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Recent Justifications List */}
+              <div className="lg:col-span-5 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="font-black text-xl text-slate-900 tracking-tight">Últimos Lançamentos</h3>
+                    <p className="text-xs text-slate-400 font-medium">Justificativas recentes deste período</p>
+                  </div>
+                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold">
+                    {overtimeMetrics.filtered.length} total
+                  </span>
+                </div>
+
+                <div className="space-y-3 flex-1 overflow-y-auto max-h-[300px] pr-1 custom-scrollbar">
+                  {overtimeMetrics.filtered.length > 0 ? (
+                    overtimeMetrics.filtered.slice(0, 8).map((item, idx) => {
+                      const dateFormatted = item.date ? item.date.split('-').reverse().join('/') : '-';
+                      return (
+                        <div 
+                          key={`he-rec-${item.id || idx}`}
+                          className="p-3 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-100 transition-all flex items-center justify-between text-xs"
+                        >
+                          <div className="min-w-0 flex-1 pr-2">
+                            <p className="font-extrabold text-slate-900 truncate">{item.userName || 'Sem nome'}</p>
+                            <p className="text-[10px] text-slate-500 font-medium truncate">
+                              {dateFormatted} • Letra {item.group || 'Geral'} • {item.area || 'Área N/D'}
+                            </p>
+                            {item.justification && (
+                              <p className="text-[10px] text-slate-400 italic truncate mt-0.5 max-w-[200px]">
+                                "{item.justification}"
+                              </p>
+                            )}
+                          </div>
+                          <div className="text-right flex-shrink-0">
+                            <span className="font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100 inline-block">
+                              +{item.totalHours} hrs
+                            </span>
+                            <p className="text-[9px] text-slate-400 font-semibold mt-0.5">
+                              {item.startTime} - {item.endTime}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-40 py-10">
+                      <Clock className="w-10 h-10 mb-2 text-slate-300" />
+                      <p className="text-xs font-bold text-slate-400">Nenhum lançamento no período</p>
                     </div>
                   )}
                 </div>

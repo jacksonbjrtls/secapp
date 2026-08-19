@@ -50,8 +50,10 @@ import {
   Download,
   Info,
   Check,
-  Key
+  Key,
+  Briefcase
 } from 'lucide-react';
+import Assignments from './Assignments';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
 import { jsPDF } from 'jspdf';
@@ -72,7 +74,9 @@ import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 
 const Admin: React.FC = () => {
   const { isAdmin, isMaster, user, logoUrl, updateCompanyLogo } = useAuth();
-  const isSuperMaster = user?.email?.toLowerCase() === 'jacksonbjr@gmail.com';
+  const userEmailLower = user?.email?.toLowerCase().trim() || '';
+  const isSuperMaster = userEmailLower === 'jacksonbjr@gmail.com';
+  const canAccessMasterTabs = isMaster || userEmailLower === 'jackson.junior@eldoradobrasil.com.br' || userEmailLower === 'jacksonbjr@gmail.com';
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [editingNameUserId, setEditingNameUserId] = useState<string | null>(null);
   const [tempEditName, setTempEditName] = useState('');
@@ -89,7 +93,7 @@ const Admin: React.FC = () => {
   const [userToDelete, setUserToDelete] = useState<{ id: string; email: string } | null>(null);
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
-  const [activeTab, setActiveTab ] = useState<'users' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding' | 'import'>('users');
+  const [activeTab, setActiveTab ] = useState<'users' | 'assignments' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding' | 'import'>('users');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -2036,11 +2040,12 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
 
   const menuOptions = [
     { id: 'users' as const, label: 'Usuários', icon: Users, color: 'text-emerald-500' },
-    { id: 'domains' as const, label: 'Domínios', icon: Globe, color: 'text-indigo-500' },
-    { id: 'modules' as const, label: 'Módulos', icon: Sliders, color: 'text-amber-500' },
-    ...(isMaster ? [
+    { id: 'assignments' as const, label: 'Atribuições (Setores/Cargos/Brindes)', icon: Briefcase, color: 'text-teal-600' },
+    { id: 'logs' as const, label: 'Logs de Acesso', icon: History, color: 'text-purple-500' },
+    ...(canAccessMasterTabs ? [
+      { id: 'domains' as const, label: 'Domínios', icon: Globe, color: 'text-indigo-500' },
+      { id: 'modules' as const, label: 'Módulos', icon: Sliders, color: 'text-amber-500' },
       { id: 'branding' as const, label: 'Identidade Visual', icon: Palette, color: 'text-blue-500' },
-      { id: 'logs' as const, label: 'Logs de Acesso', icon: History, color: 'text-purple-500' },
       { id: 'import' as const, label: 'Importação de Dados (CSV)', icon: Upload, color: 'text-teal-500' },
       ...(isSuperMaster ? [
         { id: 'reset' as const, label: 'Reset Sistema', icon: ShieldAlert, color: 'text-rose-600' }
@@ -2443,7 +2448,15 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
           </div>
         </div>
       </motion.div>
+    ) : activeTab === 'assignments' ? (
+      <Assignments />
     ) : activeTab === 'domains' ? (
+      !canAccessMasterTabs ? (
+        <div className="p-12 bg-white border border-red-100 rounded-[2rem] shadow-sm text-center">
+          <h2 className="text-xl font-bold text-red-600 mb-2">Acesso Restrito</h2>
+          <p className="text-slate-500">Esta seção é de acesso exclusivo para o usuário Master e administradores autorizados.</p>
+        </div>
+      ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
            <motion.div 
              initial={{ opacity: 0, x: -20 }}
@@ -2571,7 +2584,14 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
               </div>
             </motion.div>
          </div>
-      ) : activeTab === 'modules' ? (
+      )
+    ) : activeTab === 'modules' ? (
+      !canAccessMasterTabs ? (
+        <div className="p-12 bg-white border border-red-100 rounded-[2rem] shadow-sm text-center">
+          <h2 className="text-xl font-bold text-red-600 mb-2">Acesso Restrito</h2>
+          <p className="text-slate-500">Esta seção é de acesso exclusivo para o usuário Master e administradores autorizados.</p>
+        </div>
+      ) : (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -2636,7 +2656,14 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
             })}
           </div>
         </motion.div>
-      ) : activeTab === 'branding' ? (
+      )
+    ) : activeTab === 'branding' ? (
+      !canAccessMasterTabs ? (
+        <div className="p-12 bg-white border border-red-100 rounded-[2rem] shadow-sm text-center">
+          <h2 className="text-xl font-bold text-red-600 mb-2">Acesso Restrito</h2>
+          <p className="text-slate-500">Esta seção é de acesso exclusivo para o usuário Master e administradores autorizados.</p>
+        </div>
+      ) : (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -2874,6 +2901,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
             </div>
           </div>
         </motion.div>
+        )
       ) : activeTab === 'reset' ? (
         !isSuperMaster ? (
           <div className="p-12 bg-white border border-red-100 rounded-[2rem] shadow-sm text-center">
@@ -3154,11 +3182,17 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
         </motion.div>
         )
       ) : activeTab === 'import' ? (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="space-y-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-50"
-        >
+        !canAccessMasterTabs ? (
+          <div className="p-12 bg-white border border-red-100 rounded-[2rem] shadow-sm text-center">
+            <h2 className="text-xl font-bold text-red-600 mb-2">Acesso Restrito</h2>
+            <p className="text-slate-500">Esta seção é de acesso exclusivo para o usuário Master e administradores autorizados.</p>
+          </div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="space-y-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-50"
+          >
           {/* Header section describing the importer */}
           <div className="border-b border-slate-100 pb-6">
             <h2 className="text-2xl font-black text-teal-800 tracking-tight flex items-center gap-3">
@@ -3408,6 +3442,7 @@ No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Servi
             </div>
           </div>
         </motion.div>
+        )
       ) : (
         <motion.div
            initial={{ opacity: 0, y: 10 }}

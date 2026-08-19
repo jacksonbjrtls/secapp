@@ -396,8 +396,23 @@ const DDS: React.FC = () => {
       limit(400)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
+        const data = doc.data() as any;
+        const decTitle = await decryptValue(data.title);
+        const decDesc = await decryptValue(data.description);
+        const decExecutor = await decryptValue(data.executor);
+        const decCreatedByName = await decryptValue(data.createdByName || data.creatorName);
+        return {
+          id: doc.id,
+          ...data,
+          title: decTitle,
+          description: decDesc,
+          executor: decExecutor,
+          createdByName: decCreatedByName,
+          creatorName: decCreatedByName
+        };
+      }));
       setSessions(docs);
       
       // Auto-pick active session smoothly
@@ -815,12 +830,17 @@ const DDS: React.FC = () => {
       
       // If sessionTitle is missing (backward compatibility), fetch it
       const historyWithTitles = await Promise.all(signatures.map(async (sig: any) => {
-        if (sig.sessionTitle) return sig;
+        if (sig.sessionTitle) {
+          const decTitle = await decryptValue(sig.sessionTitle);
+          return { ...sig, sessionTitle: decTitle };
+        }
         
         try {
           const sessionDoc = await getDocs(query(collection(db, 'dds_sessions'), where('__name__', '==', sig.sessionId)));
           if (!sessionDoc.empty) {
-            return { ...sig, sessionTitle: sessionDoc.docs[0].data().title };
+            const rawTitle = sessionDoc.docs[0].data().title;
+            const decTitle = await decryptValue(rawTitle);
+            return { ...sig, sessionTitle: decTitle };
           }
         } catch (err) {
           console.error(err);

@@ -9,9 +9,13 @@ export interface CachedUserItem {
   email: string;
   role?: string;
   status?: string;
+  group?: string;
+  sectorId?: string;
   sectorName?: string;
+  cargoId?: string;
   cargoName?: string;
   birthDate?: string;
+  tshirtSize?: string;
   registration?: string;
 }
 
@@ -68,9 +72,13 @@ export async function fetchUsersSafely(): Promise<CachedUserItem[]> {
             email: (decEmail || '').toLowerCase().trim(),
             role: data.role || 'operator',
             status: data.status || 'approved',
+            group: data.group || '',
+            sectorId: data.sectorId || '',
             sectorName: data.sectorName || '',
+            cargoId: data.cargoId || '',
             cargoName: data.cargoName || '',
             birthDate: data.birthDate || '',
+            tshirtSize: data.tshirtSize || '',
             registration: data.registration || '',
           };
         })
