@@ -42,8 +42,21 @@ import {
   CalendarDays,
   PlusCircle,
   Clock3,
-  Building
+  Building,
+  BarChart3,
+  Award,
+  FilterX
 } from 'lucide-react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  Cell 
+} from 'recharts';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { OvertimeJustification, OvertimeFunction, OvertimeArea, UserProfile } from '../types';
@@ -88,11 +101,16 @@ export default function Overtime() {
 
   // Search & Filter state for History
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterPeriodType, setFilterPeriodType] = useState<'month_year' | 'custom'>('month_year');
+  const [filterStartDate, setFilterStartDate] = useState<string>('');
+  const [filterEndDate, setFilterEndDate] = useState<string>('');
   const [filterMonth, setFilterMonth] = useState<string>('all');
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
   const [filterGroup, setFilterGroup] = useState<string>('all');
   const [filterArea, setFilterArea] = useState<string>('all');
   const [filterUser, setFilterUser] = useState<string>('all');
+  const [filterShiftOption, setFilterShiftOption] = useState<string>('all');
+  const [rankingLimit, setRankingLimit] = useState<number>(10);
 
   // Form State
   const [launchForOther, setLaunchForOther] = useState(false);
@@ -469,25 +487,33 @@ export default function Overtime() {
   // Filter justifications list based on parameters
   const filteredJustifications = useMemo(() => {
     return justifications.filter(item => {
-      // 1. Date parsing for month and year filtering
-      if (item.date) {
-        const [year, month] = item.date.split('-');
-        if (filterYear !== 'all' && year !== filterYear) return false;
-        if (filterMonth !== 'all' && month !== filterMonth) return false;
+      // 1. Period filtering (Custom date range vs Month/Year)
+      if (filterPeriodType === 'custom') {
+        if (filterStartDate && item.date < filterStartDate) return false;
+        if (filterEndDate && item.date > filterEndDate) return false;
       } else {
-        return false; // date is required
+        if (item.date) {
+          const [year, month] = item.date.split('-');
+          if (filterYear !== 'all' && year !== filterYear) return false;
+          if (filterMonth !== 'all' && month !== filterMonth) return false;
+        } else {
+          return false;
+        }
       }
 
       // 2. Group/Letra
       if (filterGroup !== 'all' && item.group !== filterGroup) return false;
 
-      // 3. Area
+      // 3. Shift
+      if (filterShiftOption !== 'all' && item.shift !== filterShiftOption) return false;
+
+      // 4. Area
       if (filterArea !== 'all' && item.area !== filterArea) return false;
 
-      // 4. User ID (Admin/Manager filter)
+      // 5. User ID (Admin/Manager filter)
       if (filterUser !== 'all' && item.userId !== filterUser) return false;
 
-      // 5. Search text (name, function, or explanation)
+      // 6. Search text (name, function, or explanation)
       if (searchTerm.trim() !== '') {
         const queryClean = searchTerm.toLowerCase();
         const matchesName = item.userName?.toLowerCase().includes(queryClean);
@@ -499,32 +525,75 @@ export default function Overtime() {
 
       return true;
     });
-  }, [justifications, filterMonth, filterYear, filterGroup, filterArea, filterUser, searchTerm]);
+  }, [
+    justifications, 
+    filterPeriodType, 
+    filterStartDate, 
+    filterEndDate, 
+    filterMonth, 
+    filterYear, 
+    filterGroup, 
+    filterShiftOption, 
+    filterArea, 
+    filterUser, 
+    searchTerm
+  ]);
 
-  // Statistics summaries
+  // Statistics and Ranking summaries
   const stats = useMemo(() => {
     const totalHours = filteredJustifications.reduce((sum, item) => sum + (item.totalHours || 0), 0);
     const count = filteredJustifications.length;
     const average = count > 0 ? Number((totalHours / count).toFixed(1)) : 0;
     
-    // Top users
-    const userHoursMap: Record<string, number> = {};
+    // User hours & justifications breakdown
+    const userMap: Record<string, { name: string; hours: number; count: number; group: string; area: string }> = {};
     filteredJustifications.forEach(item => {
-      userHoursMap[item.userName] = (userHoursMap[item.userName] || 0) + (item.totalHours || 0);
+      const uName = item.userName || 'Desconhecido';
+      if (!userMap[uName]) {
+        userMap[uName] = {
+          name: uName,
+          hours: 0,
+          count: 0,
+          group: item.group || '-',
+          area: item.area || '-'
+        };
+      }
+      userMap[uName].hours += (item.totalHours || 0);
+      userMap[uName].count += 1;
     });
 
-    const topCollaborators = Object.entries(userHoursMap)
-      .map(([name, hrs]) => ({ name, hours: Number(hrs.toFixed(1)) }))
-      .sort((a, b) => b.hours - a.hours)
-      .slice(0, 5);
+    const sortedUsers = Object.values(userMap)
+      .map(u => ({
+        ...u,
+        hours: Number(u.hours.toFixed(1))
+      }))
+      .sort((a, b) => b.hours - a.hours);
+
+    const topCollaborators = sortedUsers.slice(0, 5);
+    const chartRankingData = sortedUsers.slice(0, rankingLimit);
+
+    // Group / Letra breakdown
+    const groupHoursMap: Record<string, number> = {};
+    filteredJustifications.forEach(item => {
+      const grp = item.group ? `Letra ${item.group}` : 'Geral';
+      groupHoursMap[grp] = (groupHoursMap[grp] || 0) + (item.totalHours || 0);
+    });
+
+    const groupRankingData = Object.entries(groupHoursMap)
+      .map(([group, hours]) => ({ group, hours: Number(hours.toFixed(1)) }))
+      .sort((a, b) => b.hours - a.hours);
 
     return {
       totalHours: Number(totalHours.toFixed(1)),
       count,
       average,
-      topCollaborators
+      topCollaborators,
+      sortedUsers,
+      chartRankingData,
+      groupRankingData,
+      uniqueUsersCount: Object.keys(userMap).length
     };
-  }, [filteredJustifications]);
+  }, [filteredJustifications, rankingLimit]);
 
   // PDF Export
   const handleExportPDF = () => {
@@ -545,7 +614,10 @@ export default function Overtime() {
     
     docPdf.setFont('helvetica', 'normal');
     docPdf.setFontSize(10);
-    const filterDesc = `Filtros Aplicados: Ano ${filterYear} | Mês ${filterMonth === 'all' ? 'Todos' : filterMonth} | Grupo/Letra: ${filterGroup === 'all' ? 'Todos' : filterGroup} | Área: ${filterArea === 'all' ? 'Todas' : filterArea}`;
+    const periodStr = filterPeriodType === 'custom'
+      ? `Período: ${filterStartDate ? formatDateToBR(filterStartDate) : 'Início'} até ${filterEndDate ? formatDateToBR(filterEndDate) : 'Fim'}`
+      : `Ano: ${filterYear} | Mês: ${filterMonth === 'all' ? 'Todos' : filterMonth}`;
+    const filterDesc = `Filtros: ${periodStr} | Letra: ${filterGroup === 'all' ? 'Todas' : filterGroup} | Área: ${filterArea === 'all' ? 'Todas' : filterArea} | Turno: ${filterShiftOption === 'all' ? 'Todos' : filterShiftOption}`;
     docPdf.text(filterDesc, 15, 22);
     docPdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR')} por ${profile?.displayName || 'Sistema'}`, 15, 28);
 
@@ -1077,59 +1149,97 @@ export default function Overtime() {
           >
             {/* Cards metrics top row for Managers/Admins/Masters */}
             {(isManager || isAdmin || isMaster) && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm flex items-center justify-between">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm flex items-center justify-between">
                   <div>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Horas Extras Totais</p>
                     <h3 className="text-2xl font-black text-emerald-600 tracking-tight">{stats.totalHours} hrs</h3>
-                    <p className="text-xs text-slate-500 mt-0.5 font-bold">No período selecionado</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5 font-bold">No período filtrado</p>
                   </div>
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
                     <TrendingUp className="w-6 h-6" />
                   </div>
                 </div>
 
-                <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm flex items-center justify-between">
+                <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Justificativas</p>
-                    <h3 className="text-2xl font-black text-slate-900 tracking-tight">{stats.count} lançamentos</h3>
-                    <p className="text-xs text-slate-500 mt-0.5 font-bold">Registrados no sistema</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Lançamentos</p>
+                    <h3 className="text-2xl font-black text-slate-900 tracking-tight">{stats.count} registros</h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5 font-bold">Justificativas no filtro</p>
                   </div>
-                  <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-600">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-600 shrink-0">
                     <FileText className="w-6 h-6" />
                   </div>
                 </div>
 
-                <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm flex items-center justify-between">
+                <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Média por Colaborador</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Média por Lançamento</p>
                     <h3 className="text-2xl font-black text-blue-600 tracking-tight">{stats.average} hrs</h3>
-                    <p className="text-xs text-slate-500 mt-0.5 font-bold">Média por registro</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5 font-bold">Duração média de HE</p>
                   </div>
-                  <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
                     <Clock3 className="w-6 h-6" />
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Colaboradores com HE</p>
+                    <h3 className="text-2xl font-black text-amber-600 tracking-tight">{stats.uniqueUsersCount} pessoas</h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5 font-bold">Com horas no período</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600 shrink-0">
+                    <Users className="w-6 h-6" />
                   </div>
                 </div>
               </div>
             )}
 
             {/* Filter controls panel */}
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-5">
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                  <SlidersHorizontal className="w-4 h-4 text-slate-500" />
-                  Filtros e Pesquisa
-                </h3>
-                {(isManager || isAdmin || isMaster) && (
-                  <span className="text-xs text-slate-500 font-bold">
-                    {filteredJustifications.length} de {justifications.length} lançamentos encontrados
-                  </span>
-                )}
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-4 gap-3">
+                <div className="flex items-center gap-2">
+                  <SlidersHorizontal className="w-4 h-4 text-emerald-600" />
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                    Filtros & Parâmetros de Pesquisa
+                  </h3>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  {(isManager || isAdmin || isMaster) && (
+                    <span className="text-xs text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-xl">
+                      {filteredJustifications.length} de {justifications.length} registros
+                    </span>
+                  )}
+                  {/* Reset Filters button */}
+                  {(searchTerm || filterGroup !== 'all' || filterArea !== 'all' || filterUser !== 'all' || filterShiftOption !== 'all' || filterMonth !== 'all' || filterPeriodType === 'custom') && (
+                    <button
+                      onClick={() => {
+                        setSearchTerm('');
+                        setFilterPeriodType('month_year');
+                        setFilterMonth('all');
+                        setFilterYear(new Date().getFullYear().toString());
+                        setFilterStartDate('');
+                        setFilterEndDate('');
+                        setFilterGroup('all');
+                        setFilterArea('all');
+                        setFilterUser('all');
+                        setFilterShiftOption('all');
+                      }}
+                      className="text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-1 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <FilterX className="w-3.5 h-3.5" />
+                      Limpar Filtros
+                    </button>
+                  )}
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {/* Row 1: Search and Period Mode Selector */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                 {/* Search query input */}
-                <div className="relative md:col-span-2">
+                <div className="relative md:col-span-6 lg:col-span-5">
                   <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
                     type="text"
@@ -1140,96 +1250,381 @@ export default function Overtime() {
                   />
                 </div>
 
-                {/* Filter Month */}
-                <div className="flex gap-2">
-                  <select
-                    value={filterYear}
-                    onChange={(e) => setFilterYear(e.target.value)}
-                    className="w-1/2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                {/* Period mode toggle */}
+                <div className="md:col-span-6 lg:col-span-3 flex bg-slate-100 p-1 rounded-2xl border border-slate-200/60">
+                  <button
+                    type="button"
+                    onClick={() => setFilterPeriodType('month_year')}
+                    className={cn(
+                      "flex-1 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer text-center",
+                      filterPeriodType === 'month_year'
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    )}
                   >
-                    <option value="all">Ano: Todos</option>
-                    {['2024', '2025', '2026', '2027'].map((yr, yIdx) => (
-                      <option key={`ot-filter-yr-${yr}-${yIdx}`} value={yr}>{yr}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={filterMonth}
-                    onChange={(e) => setFilterMonth(e.target.value)}
-                    className="w-1/2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    Mês / Ano
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterPeriodType('custom')}
+                    className={cn(
+                      "flex-1 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer text-center",
+                      filterPeriodType === 'custom'
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    )}
                   >
-                    <option value="all">Mês: Todos</option>
-                    {[
-                      { v: '01', l: 'Jan' },
-                      { v: '02', l: 'Fev' },
-                      { v: '03', l: 'Mar' },
-                      { v: '04', l: 'Abr' },
-                      { v: '05', l: 'Mai' },
-                      { v: '06', l: 'Jun' },
-                      { v: '07', l: 'Jul' },
-                      { v: '08', l: 'Ago' },
-                      { v: '09', l: 'Set' },
-                      { v: '10', l: 'Out' },
-                      { v: '11', l: 'Nov' },
-                      { v: '12', l: 'Dez' },
-                    ].map((m, mIdx) => (
-                      <option key={`ot-filter-m-${m.v}-${mIdx}`} value={m.v}>{m.l}</option>
-                    ))}
-                  </select>
+                    Data Específica
+                  </button>
                 </div>
 
+                {/* Period controls based on type */}
+                <div className="md:col-span-12 lg:col-span-4">
+                  {filterPeriodType === 'month_year' ? (
+                    <div className="flex gap-2">
+                      <select
+                        value={filterYear}
+                        onChange={(e) => setFilterYear(e.target.value)}
+                        className="w-1/2 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                      >
+                        <option value="all">Ano: Todos</option>
+                        {['2024', '2025', '2026', '2027'].map((yr, yIdx) => (
+                          <option key={`ot-filter-yr-${yr}-${yIdx}`} value={yr}>{yr}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        value={filterMonth}
+                        onChange={(e) => setFilterMonth(e.target.value)}
+                        className="w-1/2 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                      >
+                        <option value="all">Mês: Todos</option>
+                        {[
+                          { v: '01', l: '01 - Jan' },
+                          { v: '02', l: '02 - Fev' },
+                          { v: '03', l: '03 - Mar' },
+                          { v: '04', l: '04 - Abr' },
+                          { v: '05', l: '05 - Mai' },
+                          { v: '06', l: '06 - Jun' },
+                          { v: '07', l: '07 - Jul' },
+                          { v: '08', l: '08 - Ago' },
+                          { v: '09', l: '09 - Set' },
+                          { v: '10', l: '10 - Out' },
+                          { v: '11', l: '11 - Nov' },
+                          { v: '12', l: '12 - Dez' },
+                        ].map((m, mIdx) => (
+                          <option key={`ot-filter-m-${m.v}-${mIdx}`} value={m.v}>{m.l}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="date"
+                        value={filterStartDate}
+                        onChange={(e) => setFilterStartDate(e.target.value)}
+                        placeholder="Início"
+                        className="w-1/2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <input
+                        type="date"
+                        value={filterEndDate}
+                        onChange={(e) => setFilterEndDate(e.target.value)}
+                        placeholder="Fim"
+                        className="w-1/2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Row 2: Letra, Colaborador, Área, Turno */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
                 {/* Filter Letra/Group */}
                 <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                    Filtrar por Letra
+                  </label>
                   <select
                     value={filterGroup}
                     onChange={(e) => setFilterGroup(e.target.value)}
-                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                   >
-                    <option value="all">Grupo: Todos</option>
+                    <option value="all">Todas as Letras</option>
                     {['A', 'B', 'C', 'D', 'E', 'Geral'].map((g, gIdx) => (
                       <option key={`ot-filter-group-${g}-${gIdx}`} value={g}>Letra {g}</option>
                     ))}
                   </select>
                 </div>
 
-                {/* Filter Area */}
-                {(isManager || isAdmin || isMaster) && (
-                  <>
-                    <div>
-                      <select
-                        value={filterArea}
-                        onChange={(e) => setFilterArea(e.target.value)}
-                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="all">Área: Todas</option>
-                        {areas.map(a => (
-                          <option key={a.id} value={a.name}>{a.name}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Filter User */}
-                    <div>
-                      <select
-                        value={filterUser}
-                        onChange={(e) => setFilterUser(e.target.value)}
-                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="all">Colaborador: Todos</option>
-                        {usersList.map(u => (
-                          <option key={u.uid} value={u.uid}>{u.displayName}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
+                {/* Filter User / Colaborador */}
+                {(isManager || isAdmin || isMaster) ? (
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                      Filtrar por Colaborador
+                    </label>
+                    <select
+                      value={filterUser}
+                      onChange={(e) => setFilterUser(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                    >
+                      <option value="all">Todos os Colaboradores</option>
+                      {usersList.map(u => (
+                        <option key={u.uid} value={u.uid}>{u.displayName}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                      Colaborador
+                    </label>
+                    <input 
+                      type="text" 
+                      disabled 
+                      value={profile?.displayName || 'Meus registros'} 
+                      className="w-full px-3 py-2.5 bg-slate-100 border border-slate-200 rounded-2xl text-xs font-bold text-slate-500 outline-none"
+                    />
+                  </div>
                 )}
+
+                {/* Filter Area */}
+                {(isManager || isAdmin || isMaster) ? (
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                      Filtrar por Área
+                    </label>
+                    <select
+                      value={filterArea}
+                      onChange={(e) => setFilterArea(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                    >
+                      <option value="all">Todas as Áreas</option>
+                      {areas.map(a => (
+                        <option key={a.id} value={a.name}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                      Filtrar por Área
+                    </label>
+                    <select
+                      value={filterArea}
+                      onChange={(e) => setFilterArea(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                    >
+                      <option value="all">Todas as Áreas</option>
+                      {areas.map(a => (
+                        <option key={a.id} value={a.name}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Filter Shift */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                    Filtrar por Turno
+                  </label>
+                  <select
+                    value={filterShiftOption}
+                    onChange={(e) => setFilterShiftOption(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                  >
+                    <option value="all">Todos os Turnos</option>
+                    <option value="Turno 1">Turno 1 (00:00 - 08:00)</option>
+                    <option value="Turno 2">Turno 2 (08:00 - 16:00)</option>
+                    <option value="Turno 3">Turno 3 (16:00 - 00:00)</option>
+                    <option value="ADM">ADM / Geral</option>
+                  </select>
+                </div>
               </div>
             </div>
+
+            {/* RANKING CHART & STATISTICAL OVERVIEW (ADMIN, MASTER, MANAGER ONLY) */}
+            {(isManager || isAdmin || isMaster) && (
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
+                <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-4 gap-3">
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+                      <BarChart3 className="w-5 h-5 text-emerald-600" />
+                      Gráfico de Ranking de Horas Extras por Colaborador
+                    </h3>
+                    <p className="text-xs text-slate-500 font-bold mt-0.5">
+                      Visualização dos colaboradores com maior volume de HE acumulado no período e filtros ativos
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-500">Exibir:</span>
+                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                      {[5, 10, 15, 20].map((lim) => (
+                        <button
+                          key={`lim-${lim}`}
+                          type="button"
+                          onClick={() => setRankingLimit(lim)}
+                          className={cn(
+                            "px-2.5 py-1 text-xs font-black rounded-lg transition-all cursor-pointer",
+                            rankingLimit === lim
+                              ? "bg-emerald-600 text-white shadow-xs"
+                              : "text-slate-600 hover:text-slate-900"
+                          )}
+                        >
+                          Top {lim}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {stats.chartRankingData.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 font-bold text-sm flex flex-col items-center justify-center gap-2">
+                    <BarChart3 className="w-10 h-10 text-slate-300 stroke-[1.5]" />
+                    <span>Nenhum dado de horas extras disponível para os filtros selecionados.</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+                    {/* Bar Chart Section (span 2 on large screens) */}
+                    <div className="lg:col-span-2 space-y-3">
+                      <div className="h-80 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={stats.chartRankingData}
+                            layout="vertical"
+                            margin={{ top: 10, right: 30, left: 40, bottom: 10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                            <XAxis 
+                              type="number" 
+                              tick={{ fill: '#64748b', fontSize: 11, fontWeight: 700 }}
+                              unit=" hrs"
+                            />
+                            <YAxis 
+                              type="category" 
+                              dataKey="name" 
+                              tick={{ fill: '#1e293b', fontSize: 11, fontWeight: 700 }}
+                              width={110}
+                            />
+                            <Tooltip
+                              formatter={(value: any) => [`${value} horas extras`, 'Total Acumulado']}
+                              labelFormatter={(label: any) => `Colaborador: ${label}`}
+                              contentStyle={{
+                                backgroundColor: '#0f172a',
+                                borderRadius: '16px',
+                                border: 'none',
+                                color: '#ffffff',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                padding: '10px 14px',
+                                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3)'
+                              }}
+                              itemStyle={{ color: '#34d399' }}
+                            />
+                            <Bar 
+                              dataKey="hours" 
+                              radius={[0, 10, 10, 0]}
+                              fill="#10b981"
+                            >
+                              {stats.chartRankingData.map((entry, index) => {
+                                const colors = ['#059669', '#10b981', '#34d399', '#6ee7b7', '#14b8a6', '#06b6d4', '#3b82f6'];
+                                return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                              })}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold px-2">
+                        <span>* Ordenado por total de horas extras decrescente</span>
+                        <span>Total de colaboradores listados: {stats.chartRankingData.length}</span>
+                      </div>
+                    </div>
+
+                    {/* Breakdown by Letra/Group & Top 3 Podium */}
+                    <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200/70 space-y-5">
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5 mb-3">
+                          <Award className="w-4 h-4 text-amber-500" />
+                          Top 3 Líderes em HE
+                        </h4>
+                        <div className="space-y-2.5">
+                          {stats.sortedUsers.slice(0, 3).map((item, idx) => (
+                            <div 
+                              key={`podium-${idx}`}
+                              className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between"
+                            >
+                              <div className="flex items-center gap-2.5 overflow-hidden">
+                                <div className={cn(
+                                  "w-6 h-6 rounded-full flex items-center justify-center text-xs font-black shrink-0",
+                                  idx === 0 ? "bg-amber-100 text-amber-700" :
+                                  idx === 1 ? "bg-slate-200 text-slate-700" :
+                                  "bg-orange-100 text-orange-700"
+                                )}>
+                                  {idx + 1}º
+                                </div>
+                                <div className="truncate">
+                                  <p className="text-xs font-bold text-slate-900 truncate">{item.name}</p>
+                                  <p className="text-[10px] text-slate-400 font-medium">Letra {item.group} • {item.count} lançamentos</p>
+                                </div>
+                              </div>
+                              <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg shrink-0">
+                                {item.hours}h
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <hr className="border-slate-200" />
+
+                      {/* By Group/Letra Distribution */}
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-3">
+                          Total de Horas por Letra
+                        </h4>
+                        <div className="space-y-2">
+                          {stats.groupRankingData.map((gItem, gIdx) => {
+                            const percent = stats.totalHours > 0 
+                              ? Math.round((gItem.hours / stats.totalHours) * 100) 
+                              : 0;
+                            return (
+                              <div key={`grp-bar-${gIdx}`} className="space-y-1">
+                                <div className="flex justify-between text-xs font-bold">
+                                  <span className="text-slate-700">{gItem.group}</span>
+                                  <span className="text-slate-900 font-black">{gItem.hours} hrs ({percent}%)</span>
+                                </div>
+                                <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                                  <div 
+                                    className="bg-emerald-500 h-2 rounded-full transition-all duration-500" 
+                                    style={{ width: `${percent}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* List and Statistics Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
               {/* Table of logs (span 3 on large screens) */}
               <div className="lg:col-span-3 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-emerald-600" />
+                    Histórico Geral de Lançamentos
+                  </h3>
+                  <span className="text-xs font-bold text-slate-500">
+                    {filteredJustifications.length} registros listados
+                  </span>
+                </div>
+
                 {loading ? (
                   <div className="p-12 text-center text-slate-400 font-bold text-sm">Carregando histórico...</div>
                 ) : filteredJustifications.length === 0 ? (
@@ -1268,7 +1663,7 @@ export default function Overtime() {
                             {/* Letra/Group */}
                             <td className="p-4 whitespace-nowrap">
                               <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 text-[10px] uppercase font-black">
-                                {item.group}
+                                Letra {item.group}
                               </span>
                             </td>
 
@@ -1326,8 +1721,8 @@ export default function Overtime() {
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
                   <div>
                     <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                      <Users className="w-4 h-4 text-slate-500" />
-                      Individual Ranking (Top 5)
+                      <Award className="w-4 h-4 text-amber-500" />
+                      Ranking Individual (Top 5)
                     </h3>
                     <div className="space-y-3">
                       {stats.topCollaborators.length === 0 ? (
@@ -1336,7 +1731,12 @@ export default function Overtime() {
                         stats.topCollaborators.map((collab, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs">
                             <div className="flex items-center gap-2 font-bold text-slate-700 overflow-hidden shrink">
-                              <span className="w-4 text-slate-400">{idx + 1}.</span>
+                              <span className={cn(
+                                "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0",
+                                idx === 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"
+                              )}>
+                                {idx + 1}
+                              </span>
                               <span className="truncate">{collab.name}</span>
                             </div>
                             <span className="font-black text-slate-900 shrink-0 pl-2">{collab.hours} hrs</span>
