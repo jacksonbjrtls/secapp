@@ -418,6 +418,37 @@ export default function StopsControl() {
     return mins;
   };
 
+  // Helper to calculate the earliest (minimum) start time among active work fronts
+  const calculateEarliestWorkFrontStartTime = (
+    currentFronts: Record<string, any>,
+    fallbackStartTime: string
+  ): string => {
+    const activeFrontStartTimes: string[] = [];
+    Object.values(currentFronts).forEach(item => {
+      if (item && item.active && item.startTime) {
+        activeFrontStartTimes.push(item.startTime);
+      }
+    });
+
+    if (activeFrontStartTimes.length === 0) {
+      return fallbackStartTime;
+    }
+
+    let earliestTime = activeFrontStartTimes[0];
+    let minMinutes = getTimeInMinutesRelative(earliestTime);
+
+    for (let i = 1; i < activeFrontStartTimes.length; i++) {
+      const current = activeFrontStartTimes[i];
+      const mins = getTimeInMinutesRelative(current);
+      if (mins < minMinutes) {
+        minMinutes = mins;
+        earliestTime = current;
+      }
+    }
+
+    return earliestTime;
+  };
+
   // Helper to calculate the latest (maximum) end time among active work fronts
   const calculateLatestWorkFrontEndTime = (
     currentFronts: Record<string, any>,
@@ -490,9 +521,9 @@ export default function StopsControl() {
     return Math.round(sizeInBytes / 1024);
   };
 
-  // Image Compression Helper - High quality visual with ultra-lightweight size (~15-28KB)
-  // Allows attaching 25-35+ photos across multiple work fronts within Firestore's 1MB document limit
-  const compressImageFile = (file: File, maxWidth = 520, maxHeight = 520, quality = 0.45): Promise<string> => {
+  // Image Compression Helper - High quality visual with ultra-lightweight size (~10-20KB)
+  // Allows attaching 40-50+ photos across multiple work fronts within Firestore's 1MB document limit
+  const compressImageFile = (file: File, maxWidth = 480, maxHeight = 480, quality = 0.38): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -522,10 +553,10 @@ export default function StopsControl() {
           
           let result = canvas.toDataURL('image/jpeg', quality);
 
-          // Second compression pass if result is larger than 32KB (~43KB base64 length)
-          if (result.length > 43000) {
+          // Second compression pass if result is larger than 24KB (~32KB base64 length)
+          if (result.length > 32000) {
             const secondCanvas = document.createElement('canvas');
-            const targetWidth = Math.min(width, 420);
+            const targetWidth = Math.min(width, 360);
             const targetHeight = Math.round((height * targetWidth) / width);
             secondCanvas.width = targetWidth;
             secondCanvas.height = targetHeight;
@@ -534,7 +565,7 @@ export default function StopsControl() {
               ctx2.fillStyle = '#FFFFFF';
               ctx2.fillRect(0, 0, targetWidth, targetHeight);
               ctx2.drawImage(img, 0, 0, targetWidth, targetHeight);
-              result = secondCanvas.toDataURL('image/jpeg', 0.38);
+              result = secondCanvas.toDataURL('image/jpeg', 0.32);
             }
           }
 
@@ -767,7 +798,7 @@ export default function StopsControl() {
     setFormWorkFronts(initial);
   };
 
-  const compressBase64 = (base64Str: string, maxWidth = 380, quality = 0.38): Promise<string> => {
+  const compressBase64 = (base64Str: string, maxWidth = 340, quality = 0.32): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -827,13 +858,17 @@ export default function StopsControl() {
         }
       });
 
+      // Ensure stop startTime and endTime naturally envelope all active work fronts
+      const effectiveStartTime = calculateEarliestWorkFrontStartTime(formWorkFronts, formStartTime);
+      const effectiveEndTime = calculateLatestWorkFrontEndTime(formWorkFronts, formEndTime, effectiveStartTime);
+
       const reportData: any = {
         type: formType,
         date: formDate,
         lineId: formLineId,
         lineName,
-        startTime: formStartTime,
-        endTime: formEndTime,
+        startTime: effectiveStartTime,
+        endTime: effectiveEndTime,
         rejectionTime: formRejectionTime,
         cutterSpeedMS1: Number(formSpeedMS1) || 0,
         cutterSpeedMS2: Number(formSpeedMS2) || 0,
@@ -853,14 +888,14 @@ export default function StopsControl() {
       // Safety check: calculate approximate size of JSON payload
       let payloadString = JSON.stringify(reportData);
       
-      // If payload is over 650KB (~650,000 chars), attempt aggressive re-compression of photos
-      if (payloadString.length > 650000) {
+      // If payload is over 550KB (~550,000 chars), attempt aggressive re-compression of photos
+      if (payloadString.length > 550000) {
         for (const wf of reportData.workFronts) {
           if (wf.photos && wf.photos.length > 0) {
             wf.photos = await Promise.all(
               wf.photos.map(async (ph: StopWorkFrontPhoto) => {
                 if (ph.url && ph.url.startsWith('data:image')) {
-                  const compressed = await compressBase64(ph.url, 360, 0.35);
+                  const compressed = await compressBase64(ph.url, 320, 0.28);
                   return { ...ph, url: compressed };
                 }
                 return ph;
@@ -871,14 +906,14 @@ export default function StopsControl() {
         payloadString = JSON.stringify(reportData);
       }
 
-      // Second ultra-pass if still over 850KB
-      if (payloadString.length > 850000) {
+      // Second ultra-pass if still over 800KB
+      if (payloadString.length > 800000) {
         for (const wf of reportData.workFronts) {
           if (wf.photos && wf.photos.length > 0) {
             wf.photos = await Promise.all(
               wf.photos.map(async (ph: StopWorkFrontPhoto) => {
                 if (ph.url && ph.url.startsWith('data:image')) {
-                  const compressed = await compressBase64(ph.url, 300, 0.30);
+                  const compressed = await compressBase64(ph.url, 260, 0.22);
                   return { ...ph, url: compressed };
                 }
                 return ph;
@@ -1441,7 +1476,32 @@ export default function StopsControl() {
 
       const chartX = 55;
       const chartWidth = 140;
-      const totalMins = getMinutesDiff(report.startTime, report.endTime) || 1;
+
+      // Compute dynamic time envelope across report and all active work fronts
+      const allStartTimes = [report.startTime, ...report.workFronts.map(w => w.startTime)].filter(Boolean);
+      const allEndTimes = [report.endTime, ...report.workFronts.map(w => w.endTime)].filter(Boolean);
+
+      let chartStart = report.startTime || allStartTimes[0] || '00:00';
+      let minStartMins = getTimeInMinutesRelative(chartStart);
+      allStartTimes.forEach(t => {
+        const mins = getTimeInMinutesRelative(t);
+        if (mins < minStartMins) {
+          minStartMins = mins;
+          chartStart = t;
+        }
+      });
+
+      let chartEnd = report.endTime || allEndTimes[0] || chartStart;
+      let maxEndMins = getTimeInMinutesRelative(chartEnd, chartStart);
+      allEndTimes.forEach(t => {
+        const mins = getTimeInMinutesRelative(t, chartStart);
+        if (mins > maxEndMins) {
+          maxEndMins = mins;
+          chartEnd = t;
+        }
+      });
+
+      const totalMins = Math.max(1, maxEndMins - minStartMins);
 
       // Draw Time Scale / Eixo de Tempo at the top of chart
       docPdf.setFontSize(8);
@@ -1453,7 +1513,7 @@ export default function StopsControl() {
         const pct = i / intervals;
         const xPos = chartX + pct * chartWidth;
         const offsetMins = Math.round(pct * totalMins);
-        const timeLabel = addMinutesToTime(report.startTime, offsetMins);
+        const timeLabel = addMinutesToTime(chartStart, offsetMins);
         
         // Draw vertical scale line
         docPdf.setDrawColor(226, 232, 240); // slate-200
@@ -1476,15 +1536,14 @@ export default function StopsControl() {
         docPdf.setTextColor(51, 65, 85); // slate-700
         docPdf.text(sanitizePdfText(wf.front), 15, rowY + 5);
 
-        // Precise time calculations relative to report.startTime (handling multi-hour and overnight correctly)
-        const stopStartMins = getTimeInMinutesRelative(report.startTime);
-        const wfStartMins = getTimeInMinutesRelative(wf.startTime, report.startTime);
+        // Precise time calculations relative to chartStart (handling multi-hour and overnight correctly)
+        const wfStartMins = getTimeInMinutesRelative(wf.startTime, chartStart);
         const wfEndMins = getTimeInMinutesRelative(wf.endTime, wf.startTime);
         
-        let startOffsetMins = Math.max(0, wfStartMins - stopStartMins);
+        let startOffsetMins = Math.max(0, wfStartMins - minStartMins);
         let wfDurationMins = Math.max(1, wfEndMins - wfStartMins);
         
-        // Clamp to total stop bounds
+        // Clamp to total chart bounds
         if (startOffsetMins > totalMins) startOffsetMins = totalMins;
         if (startOffsetMins + wfDurationMins > totalMins) {
           wfDurationMins = Math.max(1, totalMins - startOffsetMins);
@@ -2817,8 +2876,30 @@ export default function StopsControl() {
 
                   {/* Interactive Visual Gantt Chart in Modal */}
                   {viewingReport.workFronts.length > 0 && (() => {
-                    const totalStopMins = getMinutesDiff(viewingReport.startTime, viewingReport.endTime) || 1;
-                    const stopStartMins = getTimeInMinutesRelative(viewingReport.startTime);
+                    const allStartTimes = [viewingReport.startTime, ...viewingReport.workFronts.map(w => w.startTime)].filter(Boolean);
+                    const allEndTimes = [viewingReport.endTime, ...viewingReport.workFronts.map(w => w.endTime)].filter(Boolean);
+
+                    let chartStart = viewingReport.startTime || allStartTimes[0] || '00:00';
+                    let minStartMins = getTimeInMinutesRelative(chartStart);
+                    allStartTimes.forEach(t => {
+                      const mins = getTimeInMinutesRelative(t);
+                      if (mins < minStartMins) {
+                        minStartMins = mins;
+                        chartStart = t;
+                      }
+                    });
+
+                    let chartEnd = viewingReport.endTime || allEndTimes[0] || chartStart;
+                    let maxEndMins = getTimeInMinutesRelative(chartEnd, chartStart);
+                    allEndTimes.forEach(t => {
+                      const mins = getTimeInMinutesRelative(t, chartStart);
+                      if (mins > maxEndMins) {
+                        maxEndMins = mins;
+                        chartEnd = t;
+                      }
+                    });
+
+                    const totalStopMins = Math.max(1, maxEndMins - minStartMins);
 
                     return (
                       <div className="p-4 bg-slate-900 text-white rounded-2xl space-y-3 shadow-sm">
@@ -2828,26 +2909,26 @@ export default function StopsControl() {
                             Linha do Tempo Visual (Gantt)
                           </span>
                           <span className="text-[10px] font-mono text-slate-400 font-bold">
-                            {viewingReport.startTime} até {viewingReport.endTime} ({formatDurationString(totalStopMins)})
+                            {chartStart} até {chartEnd} ({formatDurationString(totalStopMins)})
                           </span>
                         </div>
 
                         {/* Timeline ruler */}
                         <div className="relative flex justify-between text-[9px] font-mono text-slate-400 pt-1 border-b border-slate-800 pb-1">
-                          <span>{viewingReport.startTime}</span>
-                          <span>{addMinutesToTime(viewingReport.startTime, Math.round(totalStopMins * 0.25))}</span>
-                          <span>{addMinutesToTime(viewingReport.startTime, Math.round(totalStopMins * 0.50))}</span>
-                          <span>{addMinutesToTime(viewingReport.startTime, Math.round(totalStopMins * 0.75))}</span>
-                          <span>{viewingReport.endTime}</span>
+                          <span>{chartStart}</span>
+                          <span>{addMinutesToTime(chartStart, Math.round(totalStopMins * 0.25))}</span>
+                          <span>{addMinutesToTime(chartStart, Math.round(totalStopMins * 0.50))}</span>
+                          <span>{addMinutesToTime(chartStart, Math.round(totalStopMins * 0.75))}</span>
+                          <span>{chartEnd}</span>
                         </div>
 
                         {/* Work fronts timeline bars */}
                         <div className="space-y-2.5 pt-1">
                           {viewingReport.workFronts.map((wf, idx) => {
-                            const wfStartMins = getTimeInMinutesRelative(wf.startTime, viewingReport.startTime);
+                            const wfStartMins = getTimeInMinutesRelative(wf.startTime, chartStart);
                             const wfEndMins = getTimeInMinutesRelative(wf.endTime, wf.startTime);
                             
-                            let startOffsetMins = Math.max(0, wfStartMins - stopStartMins);
+                            let startOffsetMins = Math.max(0, wfStartMins - minStartMins);
                             let wfDurationMins = Math.max(1, wfEndMins - wfStartMins);
 
                             if (startOffsetMins > totalStopMins) startOffsetMins = totalStopMins;

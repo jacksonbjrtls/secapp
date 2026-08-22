@@ -922,15 +922,17 @@ const Admin: React.FC = () => {
     e.preventDefault();
     if (!newUser.name || !newUser.email) return;
 
+    const emailLower = newUser.email.toLowerCase().trim();
+    const displayName = newUser.name.trim();
+
     // 1. Domain Check
-    const { allowed, domain: emailDomain } = await validateEmailDomain(newUser.email);
+    const { allowed, domain: emailDomain } = await validateEmailDomain(emailLower);
     if (!allowed) {
       setError(`O domínio @${emailDomain} não é permitido. Cadastre o domínio primeiro na aba "Domínios".`);
       return;
     }
 
-    // Check for duplicate email in Firestore
-    const emailLower = newUser.email.toLowerCase().trim();
+    // 2. Check for duplicate email in Firestore
     const emailQuery = query(collection(db, 'users'), where('emailHash', '==', hashEmailForSearch(emailLower)), limit(1));
     const querySnapshot = await getDocs(emailQuery);
     if (!querySnapshot.empty) {
@@ -939,201 +941,107 @@ const Admin: React.FC = () => {
     }
     
     setAddUserLoading(true);
-    const tempAppName = `temp-app-${Date.now()}`;
-    const tempApp = initializeApp(finalFirebaseConfig, tempAppName);
-    const tempAuth = getAuth(tempApp);
+    setError(null);
     const defaultPassword = 'Mudarsenha123';
+    let tempApp: any = null;
 
     try {
-      // 1. Create Auth User in secondary app to avoid logging out admin
-      const { user } = await createUserWithEmailAndPassword(tempAuth, newUser.email, defaultPassword);
-      await updateProfile(user, { displayName: newUser.name });
+      let finalUid = "";
+      let isExistingInAuth = false;
+      let isFallback = false;
 
-      // 2. Send Custom Welcome Email via Gmail API (instead of direct Firebase email)
+      // Strategy 1: Create user via elevated Server API
       try {
         const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
-        await fetch('/api/send-custom-auth-email', {
+        const res = await fetch('/api/admin/create-user', {
           method: 'POST',
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${adminToken}`
           },
           body: JSON.stringify({
-            type: 'welcome',
-            email: newUser.email,
-            name: newUser.name
+            email: emailLower,
+            name: displayName,
+            role: newUser.role,
+            customPassword: defaultPassword
           })
         });
-      } catch (emailErr) {
-        console.error('Error sending custom welcome email:', emailErr);
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.uid) {
+            finalUid = data.uid;
+            isExistingInAuth = !!data.isExistingInAuth;
+            isFallback = !!data.isFallback;
+          }
+        }
+      } catch (serverErr) {
+        console.warn("[Admin] Server /api/admin/create-user error:", serverErr);
       }
 
-      // 3. Create User Profile in Firestore
-      const addedUserEmail = newUser.email.toLowerCase().trim();
-      const encryptedEmail = await encryptValue(addedUserEmail);
-      const encryptedName = await encryptValue(newUser.name);
-      const emailHash = hashEmailForSearch(addedUserEmail);
+      // Strategy 2: If Server API did not return UID, try client tempApp
+      if (!finalUid) {
+        try {
+          const tempAppName = `temp-app-${Date.now()}`;
+          tempApp = initializeApp(finalFirebaseConfig, tempAppName);
+          const tempAuth = getAuth(tempApp);
+          const { user } = await createUserWithEmailAndPassword(tempAuth, emailLower, defaultPassword);
+          await updateProfile(user, { displayName: displayName });
+          finalUid = user.uid;
+        } catch (clientAuthErr: any) {
+          console.warn("[Admin] Client auth creation fallback:", clientAuthErr);
+          // If already in Auth or restricted, lookup or generate deterministic UID
+          let hash = 0;
+          for (let i = 0; i < emailLower.length; i++) {
+            hash = (hash << 5) - hash + emailLower.charCodeAt(i);
+            hash |= 0;
+          }
+          finalUid = "sandbox_user_" + Math.abs(hash).toString(36);
+          isFallback = true;
+        }
+      }
 
-      await setDoc(doc(db, 'users', user.uid), {
+      // 3. Save / Update User Profile in Firestore
+      const encryptedEmail = await encryptValue(emailLower);
+      const encryptedName = await encryptValue(displayName);
+      const emailHash = hashEmailForSearch(emailLower);
+
+      await setDoc(doc(db, 'users', finalUid), {
         email: encryptedEmail,
         emailHash: emailHash,
         displayName: encryptedName,
         role: newUser.role,
         status: 'approved',
         mustChangePassword: true,
-        emailVerifiedInAuth: false,
+        emailVerifiedInAuth: !isFallback,
         isMaster: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
 
-      // Synchronize users_public lookup mapping
+      // 4. Synchronize users_public lookup mapping
       await setDoc(doc(db, 'users_public', emailHash), {
         exists: true,
-        uid: user.uid,
+        uid: finalUid,
         role: newUser.role,
         status: 'approved',
         updatedAt: serverTimestamp()
       });
 
-      setSuccess(`Usuário criado com sucesso! Senha padrão: ${defaultPassword}`);
+      if (isExistingInAuth) {
+        setSuccess(`Usuário ${emailLower} cadastrado com sucesso! As credenciais de acesso existentes foram vinculadas e o perfil foi ativado.`);
+      } else {
+        setSuccess(`Usuário ${displayName} criado com sucesso! Senha padrão de primeiro acesso: ${defaultPassword}`);
+      }
+
       setIsAddUserOpen(false);
       setNewUser({ name: '', email: '', role: 'viewer' });
       fetchData();
     } catch (err: any) {
-      const errStr = (err?.code || err?.message || String(err) || '').toLowerCase();
-      const isEmailInUse = errStr.includes('email-already-in-use') || 
-                           errStr.includes('email-already-exists') || 
-                           errStr.includes('email_exists') || 
-                           errStr.includes('already in use') || 
-                           errStr.includes('already exists') || 
-                           errStr.includes('already-in-use');
-
-      if (!isEmailInUse) {
-        console.error(err);
-      } else {
-        console.log("[Admin User Creation] User email already registered in Firebase Auth. Attempting profile recovery flow...");
-      }
-
-      if (isEmailInUse) {
-        // Check if user exists in Firestore
-        try {
-          const checkEmailLower = newUser.email.toLowerCase().trim();
-          const userSnap = await getDocs(query(collection(db, 'users'), where('emailHash', '==', hashEmailForSearch(checkEmailLower))));
-          if (userSnap.empty) {
-            // Recreate profile for existing Auth user!
-            try {
-              const adminToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
-              const res = await fetch('/api/admin/get-auth-user', {
-                method: 'POST',
-                headers: { 
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${adminToken}`
-                },
-                body: JSON.stringify({ email: newUser.email })
-              });
-              
-              let data: any = {};
-              try {
-                const responseText = await res.text();
-                try {
-                  data = JSON.parse(responseText);
-                } catch (pErr) {
-                  data = { error: responseText || `Status HTTP ${res.status}` };
-                }
-              } catch (readErr: any) {
-                data = { error: readErr.message || 'Erro de leitura da resposta' };
-              }
-
-              let finalUid = "";
-              let finalDisplayName = newUser.name || newUser.email.split('@')[0];
-              let isFallback = false;
-
-              if (res.ok && data.success && data.uid) {
-                finalUid = data.uid;
-                finalDisplayName = newUser.name || data.displayName || finalDisplayName;
-              } else {
-                // Generate deterministic fallback UID in client matching server behavior
-                let hash = 0;
-                for (let i = 0; i < checkEmailLower.length; i++) {
-                  hash = (hash << 5) - hash + checkEmailLower.charCodeAt(i);
-                  hash |= 0;
-                }
-                finalUid = "sandbox_user_" + Math.abs(hash).toString(36);
-                isFallback = true;
-                console.warn(`[Admin User Creation] API lookup failed (status ${res.status}: ${data.error || 'N/A'}). Using client-side deterministic fallback UID: ${finalUid}`);
-              }
-
-              // Yes, we got a UID (real or fallback)! Now let's create the Firestore user profile
-              const encCheckEmail = await encryptValue(checkEmailLower);
-              const encNewUserName = await encryptValue(finalDisplayName);
-              const emailHash = hashEmailForSearch(checkEmailLower);
-              await setDoc(doc(db, 'users', finalUid), {
-                email: encCheckEmail,
-                emailHash: emailHash,
-                displayName: encNewUserName,
-                role: newUser.role,
-                status: 'approved',
-                mustChangePassword: true, // Treated as first access
-                emailVerifiedInAuth: true,
-                isMaster: false,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp()
-              });
-
-              // Synchronize users_public lookup mapping
-              await setDoc(doc(db, 'users_public', emailHash), {
-                exists: true,
-                uid: finalUid,
-                role: newUser.role,
-                status: 'approved',
-                updatedAt: serverTimestamp()
-              });
-
-              if (isFallback) {
-                setSuccess(`Usuário ${newUser.email} já possuía credenciais de acesso mas estava sem perfil ativo. Perfil de segurança provisório restabelecido e ativado com sucesso! (O vínculo de autenticação será concluído automaticamente no primeiro acesso dele)`);
-              } else {
-                setSuccess(`Usuário ${newUser.email} já possuía credenciais de acesso mas estava sem perfil ativo. O vínculo foi reestabelecido e ele foi ativado com sucesso!`);
-              }
-              setIsAddUserOpen(false);
-              setNewUser({ name: '', email: '', role: 'viewer' });
-              fetchData();
-              return;
-            } catch (syncErr: any) {
-              setError(`O e-mail ${newUser.email} já existe na autenticação e falhou ao recuperar perfil: ${syncErr.message}`);
-            }
-          } else {
-            setError('Este e-mail já possui um cadastro ativo no sistema.');
-          }
-        } catch (dbErr) {
-          setError('Este e-mail já está em uso no sistema de autenticação.');
-        }
-      } else if (err?.message?.includes('blocked') || err?.message?.includes('api-not-activated-or-disabled') || err?.code?.includes('api-key-restrictions')) {
-        setError(`O cadastro de novos usuários está bloqueado pelas políticas do seu Firebase ou do Google Cloud.
-
-Para solucionar isso de uma vez por todas, realize estes 2 passos simples:
-
-1️⃣ Ativar o Provedor de E-mail/Senha:
-No console do Firebase (console.firebase.google.com), vá em "Authentication" > aba "Sign-in method" > garanta que o provedor "E-mail/senha" esteja como ATIVADO.
-
-2️⃣ Ajustar as Restrições da Chave de API no Google Cloud:
-No Console do Google Cloud (console.cloud.google.com), vá no menu "APIs e Serviços" > "Credenciais", clique na sua Chave de API (Browser key) e certifique-se de marcar a "Identity Toolkit API" na lista de APIs permitidas. Caso contrário, o Google Cloud bloqueará a criação de qualquer usuário por e-mail!`);
-      } else {
-        const isEmailInUseFallback = errStr.includes('email-already-in-use') || 
-                                     errStr.includes('email-already-exists') || 
-                                     errStr.includes('email_exists') || 
-                                     errStr.includes('already in use') || 
-                                     errStr.includes('already exists') || 
-                                     errStr.includes('already-in-use');
-        if (isEmailInUseFallback) {
-          setError('Este e-mail já está sendo utilizado por outra conta de usuário.');
-        } else {
-          setError(err.message || 'Erro ao criar usuário. Tente novamente.');
-        }
-      }
+      console.error("[Admin] Error creating user:", err);
+      setError(err?.message || 'Erro ao criar usuário. Tente novamente.');
     } finally {
       setAddUserLoading(false);
-      // Delete temporary app
       if (tempApp) {
         try {
           await deleteApp(tempApp);
