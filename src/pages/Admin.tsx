@@ -18,7 +18,7 @@ import {
 import { db, auth } from '../lib/firebase';
 import { UserProfile, AllowedDomain, UserRole, UserStatus } from '../types';
 import { MASTER_EMAILS } from '../constants';
-import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers, CachedUserItem, subscribeToUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { encryptValue, decryptValue, hashEmailForSearch } from '../lib/crypto';
 import { useAuth } from '../hooks/useAuth';
@@ -648,101 +648,101 @@ const Admin: React.FC = () => {
 
 
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      let rawUsers = getLocalCachedUsers();
-      if (rawUsers.length === 0) {
-        rawUsers = await fetchUsersSafely();
-      }
+  const processUsersList = (rawUsers: CachedUserItem[]): UserProfile[] => {
+    const usersList = rawUsers
+      .map(u => {
+        const isUserMaster = MASTER_EMAILS.includes(u.email?.toLowerCase() || '');
+        return {
+          ...u,
+          isMaster: isUserMaster
+        } as UserProfile;
+      })
+      .filter(user => user.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
+      .filter(user => !user.isMaster || isMaster);
 
-      let domainsSnap: any = null;
-      try {
-        domainsSnap = await getDocs(query(collection(db, 'allowed_domains'), orderBy('createdAt', 'desc')));
-      } catch (dErr) {
-        handleFirestoreError(dErr, OperationType.LIST, 'allowed_domains');
+    // Group by email and auto-cleanup duplicates (sandbox vs real)
+    const emailGroups: { [email: string]: UserProfile[] } = {};
+    usersList.forEach(u => {
+      const emailKey = (u.email || '').toLowerCase().trim();
+      if (emailKey) {
+        if (!emailGroups[emailKey]) {
+          emailGroups[emailKey] = [];
+        }
+        emailGroups[emailKey].push(u);
       }
-      
-      const usersList = rawUsers
-        .map(u => {
-          const isUserMaster = MASTER_EMAILS.includes(u.email?.toLowerCase() || '');
-          return {
-            ...u,
-            isMaster: isUserMaster
-          } as UserProfile;
-        })
-        .filter(user => user.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
-        .filter(user => !user.isMaster || isMaster);
+    });
 
-      // Group by email and auto-cleanup duplicates (sandbox vs real)
-      const emailGroups: { [email: string]: UserProfile[] } = {};
-      usersList.forEach(u => {
-        const emailKey = (u.email || '').toLowerCase().trim();
-        if (emailKey) {
-          if (!emailGroups[emailKey]) {
-            emailGroups[emailKey] = [];
+    const uniqueUsers: UserProfile[] = [];
+    const toDeleteFromDb: string[] = [];
+
+    for (const emailKey of Object.keys(emailGroups)) {
+      const group = emailGroups[emailKey];
+      if (group.length === 1) {
+        uniqueUsers.push(group[0]);
+      } else {
+        // Find if we have a real UID and sandbox UIDs
+        const realUsers = group.filter(u => !u.uid.startsWith('sandbox_user_'));
+        const sandboxUsers = group.filter(u => u.uid.startsWith('sandbox_user_'));
+
+        if (realUsers.length > 0) {
+          // Keep the real user (newest real if multiple exist)
+          realUsers.sort((a, b) => {
+            const tA = a.createdAt?.seconds || 0;
+            const tB = b.createdAt?.seconds || 0;
+            return tB - tA;
+          });
+          uniqueUsers.push(realUsers[0]);
+
+          // Mark other real users as duplicates to delete
+          for (let i = 1; i < realUsers.length; i++) {
+            toDeleteFromDb.push(realUsers[i].uid);
           }
-          emailGroups[emailKey].push(u);
+          // Mark all sandbox users as duplicates to delete
+          sandboxUsers.forEach(su => toDeleteFromDb.push(su.uid));
+        } else {
+          // Only sandbox users exist. Keep the newest sandbox user.
+          sandboxUsers.sort((a, b) => {
+            const tA = a.createdAt?.seconds || 0;
+            const tB = b.createdAt?.seconds || 0;
+            return tB - tA;
+          });
+          uniqueUsers.push(sandboxUsers[0]);
+
+          // Mark other sandbox users to delete
+          for (let i = 1; i < sandboxUsers.length; i++) {
+            toDeleteFromDb.push(sandboxUsers[i].uid);
+          }
+        }
+      }
+    }
+
+    // Perform background deletion of duplicate profiles to heal the database
+    if (toDeleteFromDb.length > 0) {
+      console.log('[Admin fetchData] Healing duplicate user records by deleting stale UIDs:', toDeleteFromDb);
+      toDeleteFromDb.forEach(async (dupUid) => {
+        try {
+          await deleteDoc(doc(db, 'users', dupUid));
+        } catch (delErr) {
+          console.warn(`[Admin fetchData] Failed to delete duplicate profile document ${dupUid}:`, delErr);
         }
       });
+    }
 
-      const uniqueUsers: UserProfile[] = [];
-      const toDeleteFromDb: string[] = [];
+    return uniqueUsers;
+  };
 
-      for (const emailKey of Object.keys(emailGroups)) {
-        const group = emailGroups[emailKey];
-        if (group.length === 1) {
-          uniqueUsers.push(group[0]);
-        } else {
-          // Find if we have a real UID and sandbox UIDs
-          const realUsers = group.filter(u => !u.uid.startsWith('sandbox_user_'));
-          const sandboxUsers = group.filter(u => u.uid.startsWith('sandbox_user_'));
-
-          if (realUsers.length > 0) {
-            // Keep the real user (newest real if multiple exist)
-            realUsers.sort((a, b) => {
-              const tA = a.createdAt?.seconds || 0;
-              const tB = b.createdAt?.seconds || 0;
-              return tB - tA;
-            });
-            uniqueUsers.push(realUsers[0]);
-
-            // Mark other real users as duplicates to delete
-            for (let i = 1; i < realUsers.length; i++) {
-              toDeleteFromDb.push(realUsers[i].uid);
-            }
-            // Mark all sandbox users as duplicates to delete
-            sandboxUsers.forEach(su => toDeleteFromDb.push(su.uid));
-          } else {
-            // Only sandbox users exist. Keep the newest sandbox user.
-            sandboxUsers.sort((a, b) => {
-              const tA = a.createdAt?.seconds || 0;
-              const tB = b.createdAt?.seconds || 0;
-              return tB - tA;
-            });
-            uniqueUsers.push(sandboxUsers[0]);
-
-            // Mark other sandbox users to delete
-            for (let i = 1; i < sandboxUsers.length; i++) {
-              toDeleteFromDb.push(sandboxUsers[i].uid);
-            }
-          }
-        }
-      }
-
-      // Perform background deletion of duplicate profiles to heal the database
-      if (toDeleteFromDb.length > 0) {
-        console.log('[Admin fetchData] Healing duplicate user records by deleting stale UIDs:', toDeleteFromDb);
-        toDeleteFromDb.forEach(async (dupUid) => {
-          try {
-            await deleteDoc(doc(db, 'users', dupUid));
-          } catch (delErr) {
-            console.warn(`[Admin fetchData] Failed to delete duplicate profile document ${dupUid}:`, delErr);
-          }
-        });
-      }
-
+  const fetchData = async (force = true) => {
+    setLoading(true);
+    try {
+      const rawUsers = await fetchUsersSafely(force);
+      const uniqueUsers = processUsersList(rawUsers);
       setUsers(uniqueUsers);
+
+      const domainsSnap = await getDocs(query(collection(db, 'allowed_domains'), orderBy('createdAt', 'desc'))).catch((dErr) => {
+        handleFirestoreError(dErr, OperationType.LIST, 'allowed_domains');
+        return null;
+      });
+
       if (domainsSnap) {
         setDomains(domainsSnap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as AllowedDomain)));
       }
@@ -753,11 +753,76 @@ const Admin: React.FC = () => {
     }
   };
 
+  // Real-time synchronization for users and domains
   useEffect(() => {
-    if (isAdmin) {
-      fetchData();
+    if (!isAdmin) return;
+
+    // 1. Initial cached render
+    const cachedUsers = getLocalCachedUsers();
+    if (cachedUsers.length > 0) {
+      const processed = processUsersList(cachedUsers);
+      setUsers(processed);
+      setLoading(false);
+    } else {
+      setLoading(true);
     }
-  }, [isAdmin]);
+
+    // 2. Real-time users listener
+    const unsubUsers = onSnapshot(collection(db, 'users'), async (snapshot) => {
+      try {
+        const decryptedUsersList: CachedUserItem[] = await Promise.all(
+          snapshot.docs.map(async (d) => {
+            const data = d.data();
+            const decName = await decryptValue(data.displayName);
+            const decEmail = await decryptValue(data.email);
+            return {
+              uid: d.id,
+              displayName: decName || 'Sem nome',
+              email: (decEmail || '').toLowerCase().trim(),
+              role: data.role || 'viewer',
+              status: data.status || 'approved',
+              group: data.group || '',
+              sectorId: data.sectorId || '',
+              sectorName: data.sectorName || '',
+              cargoId: data.cargoId || '',
+              cargoName: data.cargoName || '',
+              birthDate: data.birthDate || '',
+              tshirtSize: data.tshirtSize || '',
+              registration: data.registration || '',
+              isMaster: !!data.isMaster,
+              mustChangePassword: !!data.mustChangePassword,
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt,
+            };
+          })
+        );
+
+        const validList = decryptedUsersList.filter(u => u.displayName !== 'Sem nome');
+        setLocalCachedUsers(validList);
+        const processed = processUsersList(validList);
+        setUsers(processed);
+      } catch (err: any) {
+        console.warn('Real-time decryption of users in Admin failed:', err);
+      } finally {
+        setLoading(false);
+      }
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'users');
+      setLoading(false);
+    });
+
+    // 3. Real-time allowed domains listener
+    const unsubDomains = onSnapshot(query(collection(db, 'allowed_domains'), orderBy('createdAt', 'desc')), (snapshot) => {
+      setDomains(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AllowedDomain)));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'allowed_domains');
+    });
+
+    return () => {
+      unsubUsers();
+      unsubDomains();
+    };
+  }, [isAdmin, isMaster]);
 
   const fetchLoginLogs = async () => {
     if (!isAdmin) return;

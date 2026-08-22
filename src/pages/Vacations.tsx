@@ -27,6 +27,7 @@ import { useAuth } from '../hooks/useAuth';
 import { 
   collection, 
   getDocs, 
+  onSnapshot,
   doc, 
   setDoc, 
   updateDoc, 
@@ -43,7 +44,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { cn, formatDateBR } from '../lib/utils';
 import { decryptValue } from '../lib/crypto';
-import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { VacationRequest, VacationQueueItem, WorkSector, WorkFunction, UserProfile } from '../types';
 
 export default function Vacations() {
@@ -437,11 +438,8 @@ export default function Vacations() {
       setFunctions(activeFunctions);
 
       // 3. Fetch Users safely
-      let rawUsers = getLocalCachedUsers();
-      if (rawUsers.length === 0) {
-        rawUsers = await fetchUsersSafely();
-      }
-      const usersList = rawUsers.filter(u => u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com');
+      const freshUsers = await fetchUsersSafely(true);
+      const usersList = freshUsers.filter(u => u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com');
       setAllUsers(usersList as any[]);
 
       // 4. Fetch Vacation Requests
@@ -494,6 +492,55 @@ export default function Vacations() {
 
   useEffect(() => {
     fetchData();
+
+    // 1. Live sectors
+    const unsubSectors = onSnapshot(collection(db, 'work_sectors'), (snapshot) => {
+      const sectorList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as WorkSector));
+      const combinedSectors = [...sectorList];
+      defaultSectors.forEach(ds => {
+        if (!combinedSectors.some(s => s.id === ds.id)) combinedSectors.push(ds as any);
+      });
+      setSectors(combinedSectors.filter(s => s.active !== false));
+    });
+
+    // 2. Live functions
+    const unsubFunctions = onSnapshot(collection(db, 'work_functions'), (snapshot) => {
+      const functionList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as WorkFunction));
+      const combinedFunctions = [...functionList];
+      defaultFunctions.forEach(df => {
+        if (!combinedFunctions.some(f => f.id === df.id)) combinedFunctions.push(df as any);
+      });
+      setFunctions(combinedFunctions.filter(f => f.active !== false));
+    });
+
+    // 3. Live vacation requests
+    const unsubReqs = onSnapshot(query(collection(db, 'vacation_requests'), orderBy('createdAt', 'desc')), (snapshot) => {
+      const reqList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VacationRequest));
+      setRequests(reqList);
+      if (user) {
+        setMyRequests(reqList.filter(r => r.userId === user.uid));
+      }
+    });
+
+    // 4. Live priority queue
+    const unsubQueue = onSnapshot(query(collection(db, 'vacation_queue'), orderBy('position', 'asc')), (snapshot) => {
+      const qList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VacationQueueItem));
+      setQueueItems(qList);
+    });
+
+    // 5. Live users subscriber
+    const unsubUsers = subscribeToUsers((liveUsers) => {
+      const usersList = liveUsers.filter(u => u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com');
+      setAllUsers(usersList as any[]);
+    });
+
+    return () => {
+      unsubSectors();
+      unsubFunctions();
+      unsubReqs();
+      unsubQueue();
+      unsubUsers();
+    };
   }, [user]);
 
   // Synchronize queueCargoId when sector changes or functions load

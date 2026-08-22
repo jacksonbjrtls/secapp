@@ -156,7 +156,29 @@ export default function Assignments() {
   useEffect(() => {
     fetchData();
 
-    // Listen in real-time to user updates (e.g. when user saves profile)
+    // 1. Listen in real-time to sectors
+    const unsubSectors = onSnapshot(collection(db, 'work_sectors'), (snapshot) => {
+      const sectorList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as WorkSector));
+      const combinedSectors = [...sectorList];
+      defaultSectors.forEach(ds => {
+        if (!combinedSectors.some(s => s.id === ds.id)) combinedSectors.push(ds as any);
+      });
+      const activeSectors = combinedSectors.filter(s => s.active !== false);
+      setSectors(activeSectors);
+    });
+
+    // 2. Listen in real-time to functions
+    const unsubFunctions = onSnapshot(collection(db, 'work_functions'), (snapshot) => {
+      const functionList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as WorkFunction));
+      const combinedFunctions = [...functionList];
+      defaultFunctions.forEach(df => {
+        if (!combinedFunctions.some(f => f.id === df.id)) combinedFunctions.push(df as any);
+      });
+      const activeFunctions = combinedFunctions.filter(f => f.active !== false);
+      setFunctions(activeFunctions);
+    });
+
+    // 3. Listen in real-time to user updates
     const unsubUsers = onSnapshot(collection(db, 'users'), async (snapshot) => {
       try {
         const decryptedList = await Promise.all(
@@ -168,7 +190,7 @@ export default function Assignments() {
               uid: d.id,
               displayName: decName || 'Sem nome',
               email: (decEmail || '').toLowerCase().trim(),
-              role: data.role || 'operator',
+              role: data.role || 'viewer',
               status: data.status || 'approved',
               group: data.group || '',
               sectorId: data.sectorId || '',
@@ -178,6 +200,8 @@ export default function Assignments() {
               birthDate: data.birthDate || '',
               tshirtSize: data.tshirtSize || '',
               registration: data.registration || '',
+              isMaster: !!data.isMaster,
+              mustChangePassword: !!data.mustChangePassword,
             };
           })
         );
@@ -192,6 +216,8 @@ export default function Assignments() {
     });
 
     return () => {
+      unsubSectors();
+      unsubFunctions();
       unsubUsers();
     };
   }, [user]);

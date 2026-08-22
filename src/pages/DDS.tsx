@@ -59,7 +59,7 @@ import {
   ArrowRightLeft
 } from 'lucide-react';
 import { DDSBulkImportModal } from '../components/dds/DDSBulkImportModal';
-import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { 
   PieChart, 
   Pie, 
@@ -361,7 +361,7 @@ const DDS: React.FC = () => {
     const fetchUsers = async () => {
       if (!profile) return;
       try {
-        const userList = await fetchUsersSafely();
+        const userList = await fetchUsersSafely(true);
         const filteredAndSortedList = userList
           .filter(user => {
             const userEmail = user.email || '';
@@ -377,6 +377,21 @@ const DDS: React.FC = () => {
       }
     };
     fetchUsers();
+
+    const unsubUsers = subscribeToUsers((liveUsers) => {
+      const filteredAndSortedList = liveUsers
+        .filter(user => {
+          const userEmail = user.email || '';
+          if (userEmail === 'jacksonbjr@gmail.com') return false;
+          return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
+        })
+        .sort((a, b) => a.displayName.localeCompare(b.displayName));
+      setRegisteredUsers(filteredAndSortedList);
+    });
+
+    return () => {
+      unsubUsers();
+    };
   }, [profile]);
 
   useEffect(() => {

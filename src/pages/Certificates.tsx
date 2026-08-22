@@ -6,11 +6,12 @@ import autoTable from 'jspdf-autotable';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../hooks/useAuth';
-import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { db } from '../lib/firebase';
 import { 
   collection, 
   getDocs, 
+  onSnapshot,
   addDoc, 
   updateDoc, 
   deleteDoc, 
@@ -165,6 +166,33 @@ const Certificates: React.FC = () => {
 
   const canManage = isManager || isAdmin || isMaster;
 
+  const updateRegisteredUsersFromRaw = (rawUsers: any[]) => {
+    const uniqueUsersMap = new Map<string, any>();
+    rawUsers.forEach((u) => {
+      if (u.email) {
+        if (!uniqueUsersMap.has(u.email)) {
+          uniqueUsersMap.set(u.email, {
+            id: u.uid,
+            displayName: u.displayName || 'Sem nome',
+            email: u.email
+          });
+        }
+      } else {
+        uniqueUsersMap.set(u.uid, {
+          id: u.uid,
+          displayName: u.displayName || 'Sem nome',
+          email: ''
+        });
+      }
+    });
+    const uniqueUsersList = Array.from(uniqueUsersMap.values());
+
+    const filteredAndSortedList = uniqueUsersList
+      .filter(u => u.displayName !== 'Sem nome' && u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    setRegisteredUsers(filteredAndSortedList);
+  };
+
   // Fetch courses and users
   const fetchData = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -177,35 +205,8 @@ const Certificates: React.FC = () => {
       setCourses(coursesList);
 
       if (canManage) {
-        let rawUsers = getLocalCachedUsers();
-        if (rawUsers.length === 0) {
-          rawUsers = await fetchUsersSafely();
-        }
-
-        const uniqueUsersMap = new Map<string, any>();
-        rawUsers.forEach((u) => {
-          if (u.email) {
-            if (!uniqueUsersMap.has(u.email)) {
-              uniqueUsersMap.set(u.email, {
-                id: u.uid,
-                displayName: u.displayName || 'Sem nome',
-                email: u.email
-              });
-            }
-          } else {
-            uniqueUsersMap.set(u.uid, {
-              id: u.uid,
-              displayName: u.displayName || 'Sem nome',
-              email: ''
-            });
-          }
-        });
-        const uniqueUsersList = Array.from(uniqueUsersMap.values());
-
-        const filteredAndSortedList = uniqueUsersList
-          .filter(u => u.displayName !== 'Sem nome' && u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
-          .sort((a, b) => a.displayName.localeCompare(b.displayName));
-        setRegisteredUsers(filteredAndSortedList);
+        const freshUsers = await fetchUsersSafely(true);
+        updateRegisteredUsersFromRaw(freshUsers);
       }
     } catch (err) {
       console.warn('Could not refresh certificates data:', err);
@@ -215,8 +216,37 @@ const Certificates: React.FC = () => {
   };
 
   useEffect(() => {
-    if (authLoading) return;
-    fetchData();
+    if (authLoading || !isApproved) return;
+
+    // Real-time listener for training courses
+    const unsubCourses = onSnapshot(
+      query(collection(db, 'training_courses'), orderBy('createdAt', 'desc')),
+      (coursesSnap) => {
+        const coursesList = coursesSnap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as TrainingCourse[];
+        setCourses(coursesList);
+        setLoading(false);
+      },
+      (err) => {
+        console.warn('Error in training_courses onSnapshot:', err);
+        setLoading(false);
+      }
+    );
+
+    // Real-time listener for registered users
+    let unsubUsers = () => {};
+    if (canManage) {
+      unsubUsers = subscribeToUsers((liveUsers) => {
+        updateRegisteredUsersFromRaw(liveUsers);
+      });
+    }
+
+    return () => {
+      unsubCourses();
+      unsubUsers();
+    };
   }, [authLoading, isApproved, canManage]);
 
   // URL auto-sign parameter handler

@@ -4,7 +4,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { decryptValue } from '../lib/crypto';
 import { MASTER_EMAILS } from '../constants';
-import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { Metric } from '../types';
 import { 
@@ -247,6 +247,18 @@ const Dashboard: React.FC = () => {
 
     fetchOtherStats();
 
+    // Live subscription for users count
+    const unsubUsers = subscribeToUsers((liveUsers) => {
+      const nonMasterUsersCount = liveUsers.filter(user => {
+        if (user.email === 'jacksonbjr@gmail.com') return false;
+        return !MASTER_EMAILS.includes(user.email) || isMaster;
+      }).length;
+      setStats(prev => ({
+        ...prev,
+        totalUsers: nonMasterUsersCount
+      }));
+    });
+
     // Forklift Real-time Listeners
     const unsubForklifts = onSnapshot(collection(db, 'forklifts'), (snapshot) => {
       const docs = snapshot.docs.map(d => d.data());
@@ -355,6 +367,7 @@ const Dashboard: React.FC = () => {
 
     return () => {
       unsubscribe();
+      unsubUsers();
       unsubForklifts();
       unsubChecklists();
       unsubCheckItems();

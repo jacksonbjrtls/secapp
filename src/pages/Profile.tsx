@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { updateProfile, updatePassword, updateEmail } from 'firebase/auth';
-import { doc, updateDoc, serverTimestamp, collection, getDocs, query, orderBy, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, getDocs, onSnapshot, query, orderBy, setDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -84,55 +84,52 @@ const Profile: React.FC = () => {
   const [sectors, setSectors] = useState<any[]>([]);
   const [functions, setFunctions] = useState<any[]>([]);
 
-  // Fetch sectors and functions
+  // Fetch sectors and functions in real-time
   React.useEffect(() => {
-    const fetchSectorsAndFunctions = async () => {
-      try {
-        const sectorSnap = await getDocs(collection(db, 'work_sectors'));
-        const sectorList: any[] = sectorSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        
-        const functionSnap = await getDocs(collection(db, 'work_functions'));
-        const functionList: any[] = functionSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const defaultSectors = [
+      { id: 'secagem', name: 'Secagem (Parte Úmida, SDCD, Cortadeira)', active: true },
+      { id: 'enfardamento', name: 'Enfardamento', active: true }
+    ];
 
-        const defaultSectors = [
-          { id: 'secagem', name: 'Secagem (Parte Úmida, SDCD, Cortadeira)', active: true },
-          { id: 'enfardamento', name: 'Enfardamento', active: true }
-        ];
+    const defaultFunctions = [
+      { id: 'op_area_1', name: 'Operador de Área 1', sectorId: 'secagem', active: true },
+      { id: 'op_area_2', name: 'Operador de Área 2', sectorId: 'secagem', active: true },
+      { id: 'op_area_3', name: 'Operador de Área 3', sectorId: 'secagem', active: true },
+      { id: 'op_painel', name: 'Operador de Painel', sectorId: 'secagem', active: true },
+      { id: 'op_assistente', name: 'Operador Assistente', sectorId: 'secagem', active: true },
+      { id: 'especialista', name: 'Especialista', sectorId: 'secagem', active: true },
+      { id: 'lider_area', name: 'Líder de Área', sectorId: 'secagem', active: true },
+      { id: 'op_enfardamento', name: 'Operador de Enfardamento', sectorId: 'enfardamento', active: true },
+      { id: 'lider_enfardamento', name: 'Líder de Enfardamento', sectorId: 'enfardamento', active: true },
+      { id: 'aux_enfardamento', name: 'Auxiliar de Enfardamento', sectorId: 'enfardamento', active: true }
+    ];
 
-        const defaultFunctions = [
-          { id: 'op_area_1', name: 'Operador de Área 1', sectorId: 'secagem', active: true },
-          { id: 'op_area_2', name: 'Operador de Área 2', sectorId: 'secagem', active: true },
-          { id: 'op_area_3', name: 'Operador de Área 3', sectorId: 'secagem', active: true },
-          { id: 'op_painel', name: 'Operador de Painel', sectorId: 'secagem', active: true },
-          { id: 'op_assistente', name: 'Operador Assistente', sectorId: 'secagem', active: true },
-          { id: 'especialista', name: 'Especialista', sectorId: 'secagem', active: true },
-          { id: 'lider_area', name: 'Líder de Área', sectorId: 'secagem', active: true },
-          { id: 'op_enfardamento', name: 'Operador de Enfardamento', sectorId: 'enfardamento', active: true },
-          { id: 'lider_enfardamento', name: 'Líder de Enfardamento', sectorId: 'enfardamento', active: true },
-          { id: 'aux_enfardamento', name: 'Auxiliar de Enfardamento', sectorId: 'enfardamento', active: true }
-        ];
+    const unsubSectors = onSnapshot(collection(db, 'work_sectors'), (sectorSnap) => {
+      const sectorList: any[] = sectorSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const combinedSectors = [...sectorList];
+      defaultSectors.forEach(ds => {
+        if (!combinedSectors.some(s => s.id === ds.id)) {
+          combinedSectors.push(ds);
+        }
+      });
+      setSectors(combinedSectors.filter(s => s.active !== false));
+    });
 
-        const combinedSectors = [...sectorList];
-        defaultSectors.forEach(ds => {
-          if (!combinedSectors.some(s => s.id === ds.id)) {
-            combinedSectors.push(ds);
-          }
-        });
+    const unsubFunctions = onSnapshot(collection(db, 'work_functions'), (functionSnap) => {
+      const functionList: any[] = functionSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const combinedFunctions = [...functionList];
+      defaultFunctions.forEach(df => {
+        if (!combinedFunctions.some(f => f.id === df.id)) {
+          combinedFunctions.push(df);
+        }
+      });
+      setFunctions(combinedFunctions.filter(f => f.active !== false));
+    });
 
-        const combinedFunctions = [...functionList];
-        defaultFunctions.forEach(df => {
-          if (!combinedFunctions.some(f => f.id === df.id)) {
-            combinedFunctions.push(df);
-          }
-        });
-
-        setSectors(combinedSectors.filter(s => s.active !== false));
-        setFunctions(combinedFunctions.filter(f => f.active !== false));
-      } catch (err) {
-        console.error('Erro ao buscar setores/funções:', err);
-      }
+    return () => {
+      unsubSectors();
+      unsubFunctions();
     };
-    fetchSectorsAndFunctions();
   }, []);
 
   // States for direct PDF generation

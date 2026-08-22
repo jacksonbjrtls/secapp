@@ -3,7 +3,7 @@ import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
-import { fetchUsersSafely, getLocalCachedUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { decryptValue } from '../lib/crypto';
 import { 
@@ -284,11 +284,8 @@ const Reports: React.FC = () => {
           const safetyList = safetySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           setSafetyObservationsData(safetyList);
 
-          let rawUsers = getLocalCachedUsers();
-          if (rawUsers.length === 0) {
-            rawUsers = await fetchUsersSafely();
-          }
-          const usersList = rawUsers
+          const freshUsers = await fetchUsersSafely(true);
+          const usersList = freshUsers
             .filter(user => {
               const userEmail = user.email || '';
               if (userEmail === 'jacksonbjr@gmail.com') return false;
@@ -305,6 +302,24 @@ const Reports: React.FC = () => {
       }
     };
     fetchData();
+
+    let unsubUsers = () => {};
+    if (isAdmin || isMaster) {
+      unsubUsers = subscribeToUsers((liveUsers) => {
+        const usersList = liveUsers
+          .filter(user => {
+            const userEmail = user.email || '';
+            if (userEmail === 'jacksonbjr@gmail.com') return false;
+            return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
+          })
+          .sort((a, b) => a.displayName.localeCompare(b.displayName));
+        setAllUsers(usersList.map(u => ({ id: u.uid, ...u })));
+      });
+    }
+
+    return () => {
+      unsubUsers();
+    };
   }, [isManager, isAdmin, isMaster]);
 
   const handleCleanupOrphans = async (confirmed = false) => {
