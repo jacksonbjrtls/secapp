@@ -56,9 +56,14 @@ import {
   FileSpreadsheet,
   RotateCcw,
   UserPlus,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Printer,
+  FileText,
+  Download
 } from 'lucide-react';
 import { DDSBulkImportModal } from '../components/dds/DDSBulkImportModal';
+import { DdsPdfModal } from '../components/dds/DdsPdfModal';
+import { exportSingleSessionDdsPdf, exportDdsHistoryPdf } from '../lib/ddsPdfGenerator';
 import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { 
   PieChart, 
@@ -235,6 +240,20 @@ const DDS: React.FC = () => {
   const [filterShift, setFilterShift] = useState<string>('all');
   const [selectedLetter, setSelectedLetter] = useState<string>('all');
   const [participantSearch, setParticipantSearch] = useState<string>('');
+
+  // PDF Export Modal State
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [pdfTargetSession, setPdfTargetSession] = useState<any | null>(null);
+
+  const handleOpenSessionPdfModal = (session: any) => {
+    setPdfTargetSession(session);
+    setPdfModalOpen(true);
+  };
+
+  const handleOpenHistoryPdfModal = () => {
+    setPdfTargetSession(null);
+    setPdfModalOpen(true);
+  };
   
   // Admin form state (Automatic Date, Shift, and Group according to scale)
   const [newTitle, setNewTitle] = useState('');
@@ -2130,21 +2149,31 @@ const DDS: React.FC = () => {
                          )}>
                            <Clock className={cn("w-4 h-4 flex-shrink-0", inShift ? "text-emerald-600" : "text-amber-600")} />
                            <span>
-                             Janela do {targetShift}: <strong>{startStr} às {endStr}</strong>
-                             {inShift ? " (Turno em andamento)" : " (Fora do horário do turno)"}
-                           </span>
-                         </div>
-                       );
-                     })()}
-                   </div>
-                    <div className="flex items-center gap-1">
+                            Janela do {targetShift}: <strong>{startStr} às {endStr}</strong>
+                            {inShift ? " (Turno em andamento)" : " (Fora do horário do turno)"}
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenSessionPdfModal(activeSession)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold transition-all border border-emerald-200 shadow-2xs cursor-pointer"
+                        title="Imprimir Lista de Participantes e Ficha do DDS (PDF)"
+                      >
+                        <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="text-[11px]">Imprimir PDF</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
                           setActiveSession(null);
                           setPasscode('');
                         }}
-                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-xl transition-all text-xs font-semibold flex items-center gap-1"
+                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-xl transition-all text-xs font-semibold flex items-center gap-1 cursor-pointer"
                         title="Desmarcar sessão atual"
                       >
                         <X className="w-4 h-4" />
@@ -2154,14 +2183,14 @@ const DDS: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => handleDeleteSession(activeSession.id)}
-                          className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100 flex-shrink-0 cursor-pointer"
+                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100 flex-shrink-0 cursor-pointer"
                           title="Excluir Sessão de DDS e Assinaturas"
                         >
-                          <Trash2 className="w-5 h-5 text-rose-500" />
+                          <Trash2 className="w-4 h-4 text-rose-500" />
                         </button>
                       )}
                     </div>
-                 </div>
+                  </div>
 
                  {!activeSession.passcode ? (
                    <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100 flex flex-col items-center gap-3 text-center">
@@ -2613,6 +2642,16 @@ const DDS: React.FC = () => {
               </div>
 
               <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+                <button
+                  type="button"
+                  onClick={handleOpenHistoryPdfModal}
+                  className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3.5 py-1.5 rounded-xl border border-emerald-200 hover:border-emerald-300 transition-all cursor-pointer shadow-2xs"
+                  title="Exportar ou Imprimir Relatório PDF com os filtros atuais"
+                >
+                  <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                  Imprimir Relatório (PDF)
+                </button>
+
                 {(isAdmin || isMaster) && (
                   <button
                     onClick={() => setShowWipeAllModal(true)}
@@ -2867,6 +2906,16 @@ const DDS: React.FC = () => {
                                   {activeSession?.id === session.id ? 'Selecionado' : 'Assinar'}
                                 </button>
 
+                                {/* Print PDF for this Session */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenSessionPdfModal(session)}
+                                  className="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-all border border-transparent hover:border-emerald-200 cursor-pointer"
+                                  title="Imprimir Lista de Participantes e Ficha do DDS (PDF)"
+                                >
+                                  <Printer className="w-4 h-4 text-emerald-600" />
+                                </button>
+
                                 {/* Manager / Admin / Master Edit Action */}
                                 {(isManager || isAdmin || isMaster) && (
                                   <button
@@ -2964,6 +3013,16 @@ const DDS: React.FC = () => {
                                       Resetar Lista
                                     </button>
                                   )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenSessionPdfModal(session)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-all cursor-pointer shadow-2xs"
+                                    title="Imprimir lista completa de participantes em PDF"
+                                  >
+                                    <Printer className="w-3 h-3 text-emerald-600" />
+                                    Imprimir Lista PDF
+                                  </button>
+
                                   {session.passcode && (
                                     <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 flex items-center gap-1 font-mono">
                                       <Key className="w-3 h-3 text-emerald-600" />
@@ -3629,6 +3688,22 @@ const DDS: React.FC = () => {
         <DDSBulkImportModal
           isOpen={showBulkImportModal}
           onClose={() => setShowBulkImportModal(false)}
+        />
+
+        <DdsPdfModal
+          isOpen={pdfModalOpen}
+          onClose={() => setPdfModalOpen(false)}
+          targetSession={pdfTargetSession}
+          filteredSessions={filteredSessions}
+          allSignaturesList={allSignaturesList}
+          signaturesBySession={signaturesBySession}
+          registeredUsers={registeredUsers}
+          filters={{
+            filterDate,
+            filterShift,
+            selectedLetter,
+            participantSearch
+          }}
         />
       </div>
     );
