@@ -73,10 +73,12 @@ const WireControl: React.FC = () => {
   const [showTabMenu, setShowTabMenu] = useState(false);
 
   useEffect(() => {
-    if (!isElevated && (activeTab === 'dashboard' || activeTab === 'audit' || activeTab === 'history' || activeTab === 'config' || activeTab === 'bulk_import')) {
+    if (!isMaster && activeTab === 'bulk_import') {
+      setActiveTab(isElevated ? 'dashboard' : 'receiving');
+    } else if (!isElevated && (activeTab === 'dashboard' || activeTab === 'audit' || activeTab === 'history' || activeTab === 'config')) {
       setActiveTab('receiving');
     }
-  }, [isElevated, activeTab]);
+  }, [isElevated, isMaster, activeTab]);
   
   // Filtering State
   const [startDate, setStartDate] = useState('');
@@ -229,7 +231,7 @@ const WireControl: React.FC = () => {
                       { id: 'audit', label: 'Auditoria de Arames', icon: ClipboardList, roles: [isManager, isAdmin, isMaster] },
                       { id: 'history', label: 'Histórico de Lotes', icon: History, roles: [isManager, isAdmin, isMaster] },
                       { id: 'config', label: 'Ajustes do Sistema', icon: Settings, roles: [isManager, isAdmin, isMaster] },
-                      { id: 'bulk_import', label: 'Importação em Massa', icon: FileSpreadsheet, roles: [isAdmin, isMaster] }
+                      { id: 'bulk_import', label: 'Importação em Massa', icon: FileSpreadsheet, roles: [isMaster] }
                     ].map((tab: any) => {
                       if (tab.roles && !tab.roles.some(Boolean)) return null;
                       const isSelected = activeTab === tab.id;
@@ -330,7 +332,7 @@ const WireControl: React.FC = () => {
           </motion.div>
         )}
 
-        {activeTab === 'bulk_import' && (isAdmin || isMaster) && (
+        {activeTab === 'bulk_import' && isMaster && (
           <motion.div
             key="bulk_import"
             initial={{ opacity: 0, y: 20 }}

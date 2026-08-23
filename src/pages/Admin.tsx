@@ -2019,7 +2019,9 @@ const Admin: React.FC = () => {
       { id: 'domains' as const, label: 'Domínios', icon: Globe, color: 'text-indigo-500' },
       { id: 'modules' as const, label: 'Módulos', icon: Sliders, color: 'text-amber-500' },
       { id: 'branding' as const, label: 'Identidade Visual', icon: Palette, color: 'text-blue-500' },
-      { id: 'import' as const, label: 'Importação de Dados (CSV)', icon: Upload, color: 'text-teal-500' },
+      ...(isMaster ? [
+        { id: 'import' as const, label: 'Importação de Dados (CSV)', icon: Upload, color: 'text-teal-500' }
+      ] : []),
       ...(isSuperMaster ? [
         { id: 'reset' as const, label: 'Reset Sistema', icon: ShieldAlert, color: 'text-rose-600' }
       ] : [])
@@ -3155,10 +3157,10 @@ const Admin: React.FC = () => {
         </motion.div>
         )
       ) : activeTab === 'import' ? (
-        !canAccessMasterTabs ? (
+        !isMaster ? (
           <div className="p-12 bg-white border border-red-100 rounded-[2rem] shadow-sm text-center">
             <h2 className="text-xl font-bold text-red-600 mb-2">Acesso Restrito</h2>
-            <p className="text-slate-500">Esta seção é de acesso exclusivo para o usuário Master e administradores autorizados.</p>
+            <p className="text-slate-500">Esta seção é de acesso exclusivo para o usuário Master.</p>
           </div>
         ) : (
           <motion.div

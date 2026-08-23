@@ -1618,22 +1618,26 @@ export default function Maintenance() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleDownloadTemplate}
-                      className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl transition-all flex items-center gap-2 border border-emerald-200/80"
-                    >
-                      <FileDown className="w-4 h-4 text-emerald-600" />
-                      Baixar Modelo (.CSV)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsImportModalOpen(true)}
-                      className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-lg transition-all flex items-center gap-2"
-                    >
-                      <FolderInput className="w-4 h-4 text-emerald-400" />
-                      Importar Lista (CSV / Texto)
-                    </button>
+                    {isMaster && (
+                      <button
+                        type="button"
+                        onClick={handleDownloadTemplate}
+                        className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl transition-all flex items-center gap-2 border border-emerald-200/80"
+                      >
+                        <FileDown className="w-4 h-4 text-emerald-600" />
+                        Baixar Modelo (.CSV)
+                      </button>
+                    )}
+                    {isMaster && (
+                      <button
+                        type="button"
+                        onClick={() => setIsImportModalOpen(true)}
+                        className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-lg transition-all flex items-center gap-2"
+                      >
+                        <FolderInput className="w-4 h-4 text-emerald-400" />
+                        Importar Lista (CSV / Texto)
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -2632,7 +2636,7 @@ export default function Maintenance() {
 
       {/* ADMIN TAG IMPORT CSV MODAL */}
       <AnimatePresence>
-        {isImportModalOpen && (
+        {isImportModalOpen && isMaster && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}

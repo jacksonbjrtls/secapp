@@ -1713,7 +1713,7 @@ const DDS: React.FC = () => {
           <p className="text-slate-500 mt-1">Participe do treinamento diário e valide sua presença.</p>
         </div>
 
-        {(isManager || isAdmin || isMaster) && (
+        {isMaster && (
           <button
             type="button"
             onClick={() => setShowBulkImportModal(true)}
@@ -3952,10 +3952,12 @@ const DDS: React.FC = () => {
           )}
         </AnimatePresence>
 
-        <DDSBulkImportModal
-          isOpen={showBulkImportModal}
-          onClose={() => setShowBulkImportModal(false)}
-        />
+        {showBulkImportModal && isMaster && (
+          <DDSBulkImportModal
+            isOpen={showBulkImportModal}
+            onClose={() => setShowBulkImportModal(false)}
+          />
+        )}
 
         <DdsPdfModal
           isOpen={pdfModalOpen}

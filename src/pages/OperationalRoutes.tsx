@@ -4132,18 +4132,20 @@ const OperationalRoutes: React.FC = () => {
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
                     <h4 className="text-xs font-black text-slate-950 uppercase tracking-widest ml-1">Equipamentos associados ({templateEquipments.length})</h4>
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCsvText('');
-                          setCsvParseResults([]);
-                          setIsCsvImportModalOpen(true);
-                        }}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg flex items-center gap-1.5 leading-none uppercase tracking-wider text-[10px] transition-colors shadow-sm"
-                        title="Importar Equipamentos via arquivo CSV"
-                      >
-                        <Upload className="w-3.5 h-3.5" /> Importar CSV
-                      </button>
+                      {isMaster && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCsvText('');
+                            setCsvParseResults([]);
+                            setIsCsvImportModalOpen(true);
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg flex items-center gap-1.5 leading-none uppercase tracking-wider text-[10px] transition-colors shadow-sm"
+                          title="Importar Equipamentos via arquivo CSV"
+                        >
+                          <Upload className="w-3.5 h-3.5" /> Importar CSV
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={handleAddEquipmentField}
@@ -4430,7 +4432,7 @@ const OperationalRoutes: React.FC = () => {
 
       {/* MODAL IMPORTAÇÃO DE EQUIPAMENTOS EM MASSA VIA CSV */}
       <AnimatePresence>
-        {isCsvImportModalOpen && (
+        {isCsvImportModalOpen && isMaster && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
