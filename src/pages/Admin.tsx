@@ -75,7 +75,7 @@ import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 const Admin: React.FC = () => {
   const { isAdmin, isMaster, user, logoUrl, updateCompanyLogo } = useAuth();
   const userEmailLower = user?.email?.toLowerCase().trim() || '';
-  const isSuperMaster = userEmailLower === 'jacksonbjr@gmail.com';
+  const isSuperMaster = isMaster || userEmailLower === 'jacksonbjr@gmail.com';
   const canAccessMasterTabs = isMaster || userEmailLower === 'jackson.junior@eldoradobrasil.com.br' || userEmailLower === 'jacksonbjr@gmail.com';
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [editingNameUserId, setEditingNameUserId] = useState<string | null>(null);
@@ -2022,7 +2022,7 @@ const Admin: React.FC = () => {
       ...(isMaster ? [
         { id: 'import' as const, label: 'Importação de Dados (CSV)', icon: Upload, color: 'text-teal-500' }
       ] : []),
-      ...(isSuperMaster ? [
+      ...(isMaster ? [
         { id: 'reset' as const, label: 'Reset Sistema', icon: ShieldAlert, color: 'text-rose-600' }
       ] : [])
     ] : [])
@@ -2878,10 +2878,10 @@ const Admin: React.FC = () => {
         </motion.div>
         )
       ) : activeTab === 'reset' ? (
-        !isSuperMaster ? (
+        !isMaster ? (
           <div className="p-12 bg-white border border-red-100 rounded-[2rem] shadow-sm text-center">
             <h2 className="text-xl font-bold text-red-600 mb-2">Acesso Negado</h2>
-            <p className="text-slate-500">Apenas o usuário master principal (jacksonbjr@gmail.com) tem permissão para visualizar e limpar os dados do sistema.</p>
+            <p className="text-slate-500">Apenas usuários com perfil Master têm permissão para visualizar e resetar os dados do sistema.</p>
           </div>
         ) : (
           <motion.div

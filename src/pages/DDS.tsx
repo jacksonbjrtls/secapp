@@ -1114,8 +1114,8 @@ const DDS: React.FC = () => {
   };
 
   const handleResetSessionSignatures = (session: any, count: number) => {
-    if (!isAdmin && !isMaster && !isManager) {
-      setError('Apenas gestores, administradores ou master podem resetar listas de assinaturas.');
+    if (!isMaster) {
+      setError('Apenas usuários com nível Master podem resetar listas de assinaturas.');
       return;
     }
     setSessionToReset({ id: session.id, title: session.title, count });
@@ -1184,8 +1184,8 @@ const DDS: React.FC = () => {
   };
 
   const confirmWipeAllDDSData = async () => {
-    if (!isAdmin && !isMaster) {
-      setError('Apenas administradores ou master podem limpar toda a base de DDS.');
+    if (!isMaster) {
+      setError('Apenas o usuário Master pode zerar e limpar toda a base de DDS.');
       return;
     }
     setWipeInProgress(true);
@@ -2800,7 +2800,7 @@ const DDS: React.FC = () => {
                   Imprimir Relatório (PDF)
                 </button>
 
-                {(isAdmin || isMaster) && (
+                {isMaster && (
                   <button
                     onClick={() => setShowWipeAllModal(true)}
                     className="flex items-center gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-xl border border-rose-200 transition-all"
@@ -3171,8 +3171,8 @@ const DDS: React.FC = () => {
                                   </button>
                                 )}
 
-                                {/* Manager / Admin / Master Reset Signatures Action */}
-                                {(isManager || isAdmin || isMaster) && (
+                                {/* Master Reset Signatures Action */}
+                                {isMaster && (
                                   <button
                                     type="button"
                                     onClick={() => handleResetSessionSignatures(session, sessionSigs.length)}
@@ -3233,7 +3233,7 @@ const DDS: React.FC = () => {
                                 </div>
                                 
                                 <div className="flex items-center gap-2">
-                                  {(isManager || isAdmin || isMaster) && sessionSigs.length > 0 && (
+                                  {isMaster && sessionSigs.length > 0 && (
                                     <button
                                       type="button"
                                       onClick={() => handleResetSessionSignatures(session, sessionSigs.length)}
@@ -3434,9 +3434,9 @@ const DDS: React.FC = () => {
         </div>
       </div>
 
-        {/* Wipe All DDS Confirmation Modal (Admin/Master) */}
+        {/* Wipe All DDS Confirmation Modal (Master) */}
         <AnimatePresence>
-          {showWipeAllModal && (
+          {showWipeAllModal && isMaster && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -3535,9 +3535,9 @@ const DDS: React.FC = () => {
           )}
         </AnimatePresence>
 
-        {/* Reset Session Signatures Confirmation Modal (Manager/Admin/Master) */}
+        {/* Reset Session Signatures Confirmation Modal (Master) */}
         <AnimatePresence>
-          {sessionToReset && (
+          {sessionToReset && isMaster && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
