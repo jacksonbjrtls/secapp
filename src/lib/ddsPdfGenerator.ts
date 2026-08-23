@@ -154,92 +154,98 @@ export const exportSingleSessionDdsPdf = async (
   const sessionDateObj = safeToDate(session.createdAt || session.date) || new Date();
   const sessionDateFormatted = formatDateBR(sessionDateObj);
 
+  const cardHeight = 33;
   doc.setFillColor(248, 250, 252); // slate-50
   doc.setDrawColor(226, 232, 240); // slate-200
   doc.setLineWidth(0.3);
-  doc.roundedRect(14, curY, pageWidth - 28, 38, 3, 3, 'FD');
+  doc.roundedRect(14, curY, pageWidth - 28, cardHeight, 2.5, 2.5, 'FD');
 
   // Top info bar inside card
   doc.setFillColor(241, 245, 249); // slate-100
-  doc.rect(14, curY, pageWidth - 28, 8, 'F');
-  doc.line(14, curY + 8, pageWidth - 14, curY + 8);
+  doc.rect(14, curY, pageWidth - 28, 7.5, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.line(14, curY + 7.5, pageWidth - 14, curY + 7.5);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
+  doc.setFontSize(8);
   doc.setTextColor(15, 23, 42); // slate-900
-  doc.text('DADOS GERAIS DA SESSAO DE DDS', 18, curY + 5.5);
+  doc.text('DADOS GERAIS DA SESSAO DE DDS', 18, curY + 5.2);
+
+  // Right-aligned status pill text in top bar
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(adesaoPercent >= 75 ? 5 : 220, adesaoPercent >= 75 ? 150 : 38, adesaoPercent >= 75 ? 105 : 38);
+  doc.text(`${totalAssinados}/${totalPrevisto} assinaturas (${adesaoPercent}% adesao)`, pageWidth - 18, curY + 5.2, { align: 'right' });
 
   const displayTitle = formatSessionDisplayTitle(session);
   
+  // Row 1: Tema / Titulo
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
+  doc.setFontSize(7.2);
   doc.setTextColor(71, 85, 105); // slate-600
-  doc.text('Tema / Titulo:', 18, curY + 14);
+  doc.text('Tema / Titulo:', 18, curY + 12.5);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
+  doc.setFontSize(7.5);
   doc.setTextColor(5, 150, 105); // emerald-600
-  doc.text(sanitizePdfText(displayTitle).substring(0, 75), 45, curY + 14);
+  doc.text(sanitizePdfText(displayTitle), 38, curY + 12.5, { maxWidth: pageWidth - 56 });
 
-  // Grid line 1: Data, Turno, Letra da Escala
+  // Row 2: Data do DDS, Turno / Escala, Senha
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
+  doc.setFontSize(7);
   doc.setTextColor(71, 85, 105);
-  doc.text('Data do DDS:', 18, curY + 20);
+  doc.text('Data:', 18, curY + 18);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
-  doc.text(sessionDateFormatted, 45, curY + 20);
+  doc.text(sessionDateFormatted, 28, curY + 18);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(71, 85, 105);
-  doc.text('Turno / Escala:', 85, curY + 20);
+  doc.text('Turno / Escala:', 62, curY + 18);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
-  doc.text(`${sanitizePdfText(session.shift || 'Turno 1')} - Letra ${session.group || '-'}`, 112, curY + 20);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(71, 85, 105);
-  doc.text('Previsto / Realizado:', 148, curY + 20);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(adesaoPercent >= 75 ? 5 : 220, adesaoPercent >= 75 ? 150 : 38, adesaoPercent >= 75 ? 105 : 38);
-  doc.text(`${totalAssinados} de ${totalPrevisto} (${adesaoPercent}% adesao)`, 182, curY + 20, { align: 'right' });
-
-  // Grid line 2: Responsável / Facilitador, Criador, Senha
-  const executorName = session.executor || session.createdByName || session.creatorName || 'Nao informado';
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(71, 85, 105);
-  doc.text('Facilitador / Lider:', 18, curY + 26);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(15, 23, 42);
-  doc.text(sanitizePdfText(executorName), 45, curY + 26);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(71, 85, 105);
-  doc.text('Registrado por:', 85, curY + 26);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(15, 23, 42);
-  doc.text(sanitizePdfText(session.createdByName || session.creatorName || executorName), 112, curY + 26);
+  doc.text(`${sanitizePdfText(session.shift || 'Turno 1')} - Letra ${session.group || '-'}`, 84, curY + 18);
 
   if (session.passcode) {
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(71, 85, 105);
-    doc.text('Senha Validacao:', 148, curY + 26);
+    doc.text('Senha:', 140, curY + 18);
     doc.setFont('courier', 'bold');
+    doc.setFontSize(7.5);
     doc.setTextColor(5, 150, 105);
-    doc.text(session.passcode, 182, curY + 26, { align: 'right' });
+    doc.text(session.passcode, 152, curY + 18);
   }
 
-  // Grid line 3: Horário do Turno
+  // Row 3: Facilitador / Lider e Registrado por
+  const executorName = session.executor || session.createdByName || session.creatorName || 'Nao informado';
+  const registeredByName = session.createdByName || session.creatorName || executorName;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(71, 85, 105);
+  doc.text('Facilitador:', 18, curY + 23.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(15, 23, 42);
+  doc.text(sanitizePdfText(executorName), 34, curY + 23.5, { maxWidth: 45 });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Registrado por:', 84, curY + 23.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(15, 23, 42);
+  doc.text(sanitizePdfText(registeredByName), 106, curY + 23.5, { maxWidth: 50 });
+
+  // Row 4: Janela Operacional e Setor
   const shiftHours = session.shift === 'Turno 1' 
     ? '00h00 as 08h00' 
     : session.shift === 'Turno 2' 
       ? '08h00 as 16h00' 
       : '16h00 as 00h00';
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
   doc.setTextColor(100, 116, 139);
-  doc.text(`Janela Operacional: ${shiftHours} | Setor: Secagem e Enfardamento`, 18, curY + 33);
+  doc.text(`Janela Operacional: ${shiftHours} | Setor: Secagem e Enfardamento | Unidade: Eldorado Brasil`, 18, curY + 29);
 
-  curY += 42;
+  curY += cardHeight + 4;
 
   // Description / Content Box (if exists and enabled)
   if (includeDescription && session.description && session.description.trim()) {
@@ -248,19 +254,19 @@ export const exportSingleSessionDdsPdf = async (
     doc.setLineWidth(0.3);
 
     const splitDesc = doc.splitTextToSize(sanitizePdfText(session.description), pageWidth - 36);
-    const descBoxHeight = Math.max(16, (splitDesc.length * 3.8) + 10);
+    const descBoxHeight = Math.max(13, (splitDesc.length * 3.2) + 7);
 
     doc.roundedRect(14, curY, pageWidth - 28, descBoxHeight, 2, 2, 'FD');
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
+    doc.setFontSize(7.2);
     doc.setTextColor(5, 150, 105);
-    doc.text('CONTEUDO E ORIENTACOES DE SEGURANCA ABORDADAS:', 18, curY + 5.5);
+    doc.text('CONTEUDO E ORIENTACOES DE SEGURANCA ABORDADAS:', 18, curY + 4.8);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
+    doc.setFontSize(6.8);
     doc.setTextColor(51, 65, 85);
-    doc.text(splitDesc, 18, curY + 10.5);
+    doc.text(splitDesc, 18, curY + 9);
 
     curY += descBoxHeight + 4;
   }
@@ -349,28 +355,28 @@ export const exportSingleSessionDdsPdf = async (
       fillColor: [15, 23, 42], // slate-900
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 7.5,
+      fontSize: 6.8,
       halign: 'left',
-      cellPadding: 2.2
+      cellPadding: 1.8
     },
     bodyStyles: {
-      fontSize: 7,
+      fontSize: 6.2,
       textColor: [30, 41, 59],
-      cellPadding: 2
+      cellPadding: 1.5
     },
     alternateRowStyles: {
       fillColor: [248, 250, 252]
     },
     columnStyles: {
-      0: { cellWidth: 7, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 38, fontStyle: 'bold' },
+      0: { cellWidth: 6, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 40, fontStyle: 'bold' },
       2: { cellWidth: 16, halign: 'center' },
       3: { cellWidth: 26 },
       4: { cellWidth: 22 },
-      5: { cellWidth: 18, halign: 'center' },
-      6: { cellWidth: 16, halign: 'center' },
-      7: { cellWidth: 13, halign: 'center' },
-      8: { cellWidth: 34, fontSize: 6.5, fontStyle: 'bold', textColor: [5, 150, 105] }
+      5: { cellWidth: 16, halign: 'center' },
+      6: { cellWidth: 14, halign: 'center' },
+      7: { cellWidth: 12, halign: 'center' },
+      8: { cellWidth: 30, fontSize: 5.8, fontStyle: 'bold', textColor: [5, 150, 105], halign: 'center' }
     },
     margin: { left: 14, right: 14 }
   });
@@ -648,27 +654,27 @@ export const exportDdsHistoryPdf = async (
         fillColor: [15, 23, 42],
         textColor: [255, 255, 255],
         fontStyle: 'bold',
-        fontSize: 7.5,
-        cellPadding: 2.5
+        fontSize: 6.8,
+        cellPadding: 1.8
       },
       bodyStyles: {
-        fontSize: 7,
+        fontSize: 6.2,
         textColor: [30, 41, 59],
-        cellPadding: 2
+        cellPadding: 1.5
       },
       alternateRowStyles: {
         fillColor: [248, 250, 252]
       },
       columnStyles: {
-        0: { cellWidth: 7, halign: 'center', fontStyle: 'bold' },
-        1: { cellWidth: 16, halign: 'center' },
-        2: { cellWidth: 16, halign: 'center' },
-        3: { cellWidth: 14, halign: 'center' },
-        4: { cellWidth: 50, fontStyle: 'bold' },
-        5: { cellWidth: 32 },
+        0: { cellWidth: 6, halign: 'center', fontStyle: 'bold' },
+        1: { cellWidth: 15, halign: 'center' },
+        2: { cellWidth: 15, halign: 'center' },
+        3: { cellWidth: 13, halign: 'center' },
+        4: { cellWidth: 48, fontStyle: 'bold' },
+        5: { cellWidth: 30 },
         6: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
-        7: { cellWidth: 13, halign: 'center' },
-        8: { cellWidth: 16, halign: 'center', fontSize: 6.5, fontStyle: 'bold' }
+        7: { cellWidth: 14, halign: 'center' },
+        8: { cellWidth: 23, halign: 'center', fontSize: 6.0, fontStyle: 'bold' }
       },
       margin: { left: 14, right: 14 }
     });
@@ -689,7 +695,7 @@ export const exportDdsHistoryPdf = async (
       const executor = session.executor || session.createdByName || session.creatorName || 'Nao informado';
 
       // Check if we need a new page for next session
-      if (curY > pageHeight - 50) {
+      if (curY > pageHeight - 45) {
         doc.addPage();
         curY = 20;
       }
@@ -698,30 +704,30 @@ export const exportDdsHistoryPdf = async (
       doc.setFillColor(241, 245, 249);
       doc.setDrawColor(203, 213, 225);
       doc.setLineWidth(0.3);
-      doc.roundedRect(14, curY, pageWidth - 28, 16, 2, 2, 'FD');
+      doc.roundedRect(14, curY, pageWidth - 28, 13, 2, 2, 'FD');
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
+      doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text(`Sessao ${sIdx + 1}: ${sanitizePdfText(titleClean)}`, 18, curY + 6);
+      doc.text(`Sessao ${sIdx + 1}: ${sanitizePdfText(titleClean)}`, 18, curY + 4.8, { maxWidth: pageWidth - 40 });
 
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
+      doc.setFontSize(6.5);
       doc.setTextColor(71, 85, 105);
       doc.text(
-        `Data: ${sDate} | ${session.shift || 'Turno 1'} (Letra ${session.group || '-'}) | Facilitador: ${sanitizePdfText(executor)} | ${sSigs.length} de ${sPrevisto} assinaturas (${sAdesao}%)`,
+        `Data: ${sDate} | ${session.shift || 'Turno 1'} (Letra ${session.group || '-'}) | Facilitador: ${sanitizePdfText(executor).substring(0, 26)} | ${sSigs.length} de ${sPrevisto} assinaturas (${sAdesao}%)`,
         18,
-        curY + 11.5
+        curY + 9.5
       );
 
-      curY += 18;
+      curY += 15;
 
       if (sSigs.length === 0) {
         doc.setFont('helvetica', 'italic');
-        doc.setFontSize(7);
+        doc.setFontSize(6.5);
         doc.setTextColor(148, 163, 184);
         doc.text('Nenhuma assinatura digital registrada para esta sessao.', 18, curY + 2);
-        curY += 8;
+        curY += 7;
       } else {
         const participantRows = sSigs.map((sig, pIdx) => {
           const rawName = sig.userName || 'Sem nome';
@@ -759,29 +765,29 @@ export const exportDdsHistoryPdf = async (
           headStyles: {
             fillColor: [51, 65, 85],
             textColor: [255, 255, 255],
-            fontSize: 7,
-            cellPadding: 1.8
+            fontSize: 6.5,
+            cellPadding: 1.5
           },
           bodyStyles: {
-            fontSize: 6.5,
-            cellPadding: 1.6
+            fontSize: 6.0,
+            cellPadding: 1.3
           },
           alternateRowStyles: {
             fillColor: [248, 250, 252]
           },
           columnStyles: {
-            0: { cellWidth: 7, halign: 'center' },
-            1: { cellWidth: 45, fontStyle: 'bold' },
-            2: { cellWidth: 18, halign: 'center' },
-            3: { cellWidth: 35 },
+            0: { cellWidth: 6, halign: 'center' },
+            1: { cellWidth: 42, fontStyle: 'bold' },
+            2: { cellWidth: 16, halign: 'center' },
+            3: { cellWidth: 32 },
             4: { cellWidth: 16, halign: 'center' },
-            5: { cellWidth: 15, halign: 'center' },
-            6: { cellWidth: 46, fontSize: 6, textColor: [5, 150, 105], fontStyle: 'bold' }
+            5: { cellWidth: 14, halign: 'center' },
+            6: { cellWidth: 56, fontSize: 5.6, textColor: [5, 150, 105], fontStyle: 'bold' }
           },
           margin: { left: 14, right: 14 }
         });
 
-        curY = (doc as any).lastAutoTable.finalY + 6;
+        curY = (doc as any).lastAutoTable.finalY + 5;
       }
     }
   }

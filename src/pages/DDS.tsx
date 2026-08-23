@@ -241,6 +241,11 @@ const DDS: React.FC = () => {
   const [selectedLetter, setSelectedLetter] = useState<string>('all');
   const [participantSearch, setParticipantSearch] = useState<string>('');
 
+  // Collapsible panels state
+  const [isSignPanelCollapsed, setIsSignPanelCollapsed] = useState(false);
+  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(false);
+  const [isFiltersCollapsed, setIsFiltersCollapsed] = useState(false);
+
   // PDF Export Modal State
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [pdfTargetSession, setPdfTargetSession] = useState<any | null>(null);
@@ -813,6 +818,14 @@ const DDS: React.FC = () => {
 
     return groups;
   }, [filteredSessions]);
+
+  // Active filters count for compact pill badges
+  const activeFiltersCount = useMemo(() => {
+    return (filterDate !== 'all' ? 1 : 0) + 
+           (filterShift !== 'all' ? 1 : 0) + 
+           (selectedLetter !== 'all' ? 1 : 0) + 
+           (participantSearch.trim() !== '' ? 1 : 0);
+  }, [filterDate, filterShift, selectedLetter, participantSearch]);
 
   useEffect(() => {
     if (!activeSession || !auth.currentUser) {
@@ -2105,190 +2118,291 @@ const DDS: React.FC = () => {
             animate={{ opacity: 1, y: 0 }}
             className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm"
           >
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
-                <Lock className="w-6 h-6" />
+            <div className="flex items-center justify-between gap-4 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 flex-shrink-0">
+                  <Lock className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                    Validar Presença
+                    {hasSigned && (
+                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-black rounded-full uppercase">
+                        Assinado
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-sm text-slate-400">
+                    {isSignPanelCollapsed && activeSession 
+                      ? `${formatSessionDisplayTitle(activeSession)} • ${activeSession.shift} (Letra ${activeSession.group})`
+                      : 'Insira a senha fornecida pelo administrador'}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-xl font-bold text-slate-900 tracking-tight">Validar Presença</h3>
-                <p className="text-sm text-slate-400">Insira a senha fornecida pelo administrador</p>
-              </div>
-            </div>
 
-            {activeSession ? (
-              <form onSubmit={handleSign} className="space-y-6">
-                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex items-start justify-between gap-4">
-                   <div>
-                     <div className="flex items-center gap-2 mb-2">
-                       <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded uppercase">
-                         {activeSession.shift}
-                       </span>
-                       <span className="px-2 py-0.5 bg-slate-200 text-slate-700 text-[10px] font-bold rounded uppercase">
-                         Letra {activeSession.group}
-                       </span>
-                     </div>
-                     <h4 className="font-bold text-slate-900 mb-1">{formatSessionDisplayTitle(activeSession)}</h4>
-                     <p className="text-sm text-slate-500 mb-2">{activeSession.description || 'Nenhuma descrição fornecida.'}</p>
-                     <p className="text-xs text-slate-400">Executante: <span className="font-bold text-slate-600">{activeSession.executor}</span></p>
-
-                     {/* Shift Schedule Notice */}
-                     {(() => {
-                       const sessionDate = safeToDate(activeSession.createdAt || activeSession.date) || new Date();
-                       const targetShift = activeSession.shift as Shift;
-                       const inShift = isWithinShiftWindow(sessionDate, targetShift, new Date());
-                       const { start, end } = getShiftTimeRange(sessionDate, targetShift);
-                       const startStr = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
-                       const endStr = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
-
-                       return (
-                         <div className={cn(
-                           "mt-3 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border",
-                           inShift 
-                             ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                             : "bg-amber-50 text-amber-800 border-amber-200"
-                         )}>
-                           <Clock className={cn("w-4 h-4 flex-shrink-0", inShift ? "text-emerald-600" : "text-amber-600")} />
-                           <span>
-                            Janela do {targetShift}: <strong>{startStr} às {endStr}</strong>
-                            {inShift ? " (Turno em andamento)" : " (Fora do horário do turno)"}
-                          </span>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenSessionPdfModal(activeSession)}
-                        className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold transition-all border border-emerald-200 shadow-2xs cursor-pointer"
-                        title="Imprimir Lista de Participantes e Ficha do DDS (PDF)"
-                      >
-                        <Printer className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="text-[11px]">Imprimir PDF</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveSession(null);
-                          setPasscode('');
-                        }}
-                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-xl transition-all text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                        title="Desmarcar sessão atual"
-                      >
-                        <X className="w-4 h-4" />
-                        <span className="text-[10px] hidden sm:inline">Desmarcar</span>
-                      </button>
-                      {(isAdmin || isMaster) && (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSession(activeSession.id)}
-                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100 flex-shrink-0 cursor-pointer"
-                          title="Excluir Sessão de DDS e Assinaturas"
-                        >
-                          <Trash2 className="w-4 h-4 text-rose-500" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                 {!activeSession.passcode ? (
-                   <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100 flex flex-col items-center gap-3 text-center">
-                     <Clock className="w-8 h-8 text-amber-500 animate-pulse" />
-                     <div>
-                       <h4 className="font-bold text-amber-900">Aguardando Validação</h4>
-                       <p className="text-xs text-amber-700 mt-1">Este DDS foi criado mas a senha ainda não foi gerada por um gestor.</p>
-                     </div>
-                   </div>
-                 ) : (
-                   <>
-                     <div className="space-y-2">
-                       <div className="flex items-center justify-between ml-1 mb-1">
-                         <label className="text-sm font-bold text-slate-700 uppercase tracking-wider text-[10px]">Senha de 6 Dígitos</label>
-                         <button 
-                           type="button"
-                           onClick={() => setIsScanning(!isScanning)}
-                           className={cn(
-                             "flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
-                             isScanning ? "bg-rose-500 text-white" : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
-                           )}
-                         >
-                           <QrCode className="w-3 h-3" />
-                           {isScanning ? 'Cancelar' : 'Escanear QR'}
-                         </button>
-                       </div>
-
-                       {isScanning && (
-                         <div className="mb-4 overflow-hidden rounded-2xl border-2 border-emerald-500 bg-black min-h-[250px]">
-                           <div id="reader" className="w-full h-full"></div>
-                         </div>
-                       )}
-
-                       <input
-                         type="text"
-                         maxLength={6}
-                         className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-emerald-100 focus:border-emerald-500 transition-all font-mono text-2xl tracking-[1em] text-center"
-                         placeholder="000000"
-                         value={passcode}
-                         onChange={(e) => setPasscode(e.target.value)}
-                         required
-                       />
-                       <div className="flex flex-col items-center gap-2 mt-2">
-                         <div className="flex items-center justify-center gap-2 text-xs font-bold text-emerald-600 uppercase tracking-widest">
-                           <Timer className="w-3.5 h-3.5" />
-                           Expira em: <CountdownTimer expiresAt={safeToDate(activeSession.expiresAt)} />
-                         </div>
-                         {isManager && ((safeToDate(activeSession.expiresAt)?.getTime() || 0) < Date.now()) && (
-                           <button
-                             type="button"
-                             onClick={() => handleRenewSession(activeSession.id)}
-                             className="mt-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-100 transition-all cursor-pointer"
-                           >
-                             Reativar Senha (Manager)
-                           </button>
-                         )}
-                       </div>
-                     </div>
-
-                    {error && (
-                      <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium flex items-center gap-2 border border-red-100">
-                        <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                        {error}
-                      </div>
-                    )}
-
-                    {success && (
-                      <div className="bg-emerald-50 text-emerald-600 p-4 rounded-xl text-sm font-bold flex items-center gap-2 border border-emerald-100">
-                        <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-                        {successMessage || 'Operação realizada com sucesso!'}
-                      </div>
-                    )}
-
-                    {hasSigned ? (
-                       <div className="w-full bg-emerald-500 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-emerald-100 border-b-4 border-emerald-700">
-                          <CheckCircle2 className="w-6 h-6" />
-                          DDS ASSINADO COM SUCESSO
-                       </div>
-                    ) : (
-                      <button
-                        type="submit"
-                        disabled={loading || passcode.length < 6}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-emerald-100 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
-                      >
-                        {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : <UserCheck className="w-6 h-6" />}
-                        Assinar DDS
-                      </button>
-                    )}
+              {/* Botão para Recolher / Expandir Tela de Assinatura */}
+              <button
+                type="button"
+                onClick={() => setIsSignPanelCollapsed(!isSignPanelCollapsed)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 transition-all cursor-pointer shadow-2xs flex-shrink-0"
+                title={isSignPanelCollapsed ? "Expandir tela de validação/assinatura" : "Recolher tela de validação/assinatura"}
+              >
+                {isSignPanelCollapsed ? (
+                  <>
+                    <ChevronDown className="w-4 h-4 text-emerald-600" />
+                    <span>Expandir</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronUp className="w-4 h-4 text-slate-500" />
+                    <span>Recolher</span>
                   </>
                 )}
-              </form>
-            ) : (
-              <div className="text-center py-12 px-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                <AlertCircle className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                <h4 className="text-slate-900 font-bold">Nenhum DDS Ativo</h4>
-                <p className="text-slate-500 text-sm mt-1">Aguarde o administrador iniciar uma sessão para o período.</p>
-              </div>
-            )}
+              </button>
+            </div>
+
+            <AnimatePresence>
+              {!isSignPanelCollapsed ? (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden space-y-6"
+                >
+                  {activeSession ? (
+                    <form onSubmit={handleSign} className="space-y-6">
+                      <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex items-start justify-between gap-4">
+                         <div>
+                           <div className="flex items-center gap-2 mb-2">
+                             <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded uppercase">
+                               {activeSession.shift}
+                             </span>
+                             <span className="px-2 py-0.5 bg-slate-200 text-slate-700 text-[10px] font-bold rounded uppercase">
+                               Letra {activeSession.group}
+                             </span>
+                           </div>
+                           <h4 className="font-bold text-slate-900 mb-1">{formatSessionDisplayTitle(activeSession)}</h4>
+                           <p className="text-sm text-slate-500 mb-2">{activeSession.description || 'Nenhuma descrição fornecida.'}</p>
+                           <p className="text-xs text-slate-400">Executante: <span className="font-bold text-slate-600">{activeSession.executor}</span></p>
+
+                           {/* Shift Schedule Notice */}
+                           {(() => {
+                             const sessionDate = safeToDate(activeSession.createdAt || activeSession.date) || new Date();
+                             const targetShift = activeSession.shift as Shift;
+                             const inShift = isWithinShiftWindow(sessionDate, targetShift, new Date());
+                             const { start, end } = getShiftTimeRange(sessionDate, targetShift);
+                             const startStr = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+                             const endStr = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+
+                             return (
+                               <div className={cn(
+                                 "mt-3 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border",
+                                 inShift 
+                                   ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                   : "bg-amber-50 text-amber-800 border-amber-200"
+                               )}>
+                                 <Clock className={cn("w-4 h-4 flex-shrink-0", inShift ? "text-emerald-600" : "text-amber-600")} />
+                                 <span>
+                                  Janela do {targetShift}: <strong>{startStr} às {endStr}</strong>
+                                  {inShift ? " (Turno em andamento)" : " (Fora do horário do turno)"}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenSessionPdfModal(activeSession)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold transition-all border border-emerald-200 shadow-2xs cursor-pointer"
+                              title="Imprimir Lista de Participantes e Ficha do DDS (PDF)"
+                            >
+                              <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                              <span className="text-[11px]">Imprimir PDF</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveSession(null);
+                                setPasscode('');
+                              }}
+                              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-xl transition-all text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                              title="Desmarcar sessão atual"
+                            >
+                              <X className="w-4 h-4" />
+                              <span className="text-[10px] hidden sm:inline">Desmarcar</span>
+                            </button>
+                            {(isAdmin || isMaster) && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSession(activeSession.id)}
+                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100 flex-shrink-0 cursor-pointer"
+                                title="Excluir Sessão de DDS e Assinaturas"
+                              >
+                                <Trash2 className="w-4 h-4 text-rose-500" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                       {!activeSession.passcode ? (
+                         <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100 flex flex-col items-center gap-3 text-center">
+                           <Clock className="w-8 h-8 text-amber-500 animate-pulse" />
+                           <div>
+                             <h4 className="font-bold text-amber-900">Aguardando Validação</h4>
+                             <p className="text-xs text-amber-700 mt-1">Este DDS foi criado mas a senha ainda não foi gerada por um gestor.</p>
+                           </div>
+                         </div>
+                       ) : (
+                         <>
+                           <div className="space-y-2">
+                             <div className="flex items-center justify-between ml-1 mb-1">
+                               <label className="text-sm font-bold text-slate-700 uppercase tracking-wider text-[10px]">Senha de 6 Dígitos</label>
+                               <button 
+                                 type="button"
+                                 onClick={() => setIsScanning(!isScanning)}
+                                 className={cn(
+                                   "flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
+                                   isScanning ? "bg-rose-500 text-white" : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
+                                 )}
+                               >
+                                 <QrCode className="w-3 h-3" />
+                                 {isScanning ? 'Cancelar' : 'Escanear QR'}
+                               </button>
+                             </div>
+
+                             {isScanning && (
+                               <div className="mb-4 overflow-hidden rounded-2xl border-2 border-emerald-500 bg-black min-h-[250px]">
+                                 <div id="reader" className="w-full h-full"></div>
+                               </div>
+                             )}
+
+                             <input
+                               type="text"
+                               maxLength={6}
+                               className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-emerald-100 focus:border-emerald-500 transition-all font-mono text-2xl tracking-[1em] text-center"
+                               placeholder="000000"
+                               value={passcode}
+                               onChange={(e) => setPasscode(e.target.value)}
+                               required
+                             />
+                             <div className="flex flex-col items-center gap-2 mt-2">
+                               <div className="flex items-center justify-center gap-2 text-xs font-bold text-emerald-600 uppercase tracking-widest">
+                                 <Timer className="w-3.5 h-3.5" />
+                                 Expira em: <CountdownTimer expiresAt={safeToDate(activeSession.expiresAt)} />
+                               </div>
+                               {isManager && ((safeToDate(activeSession.expiresAt)?.getTime() || 0) < Date.now()) && (
+                                 <button
+                                   type="button"
+                                   onClick={() => handleRenewSession(activeSession.id)}
+                                   className="mt-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-100 transition-all cursor-pointer"
+                                 >
+                                   Reativar Senha (Manager)
+                                 </button>
+                               )}
+                             </div>
+                           </div>
+
+                          {error && (
+                            <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium flex items-center gap-2 border border-red-100">
+                              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                              {error}
+                            </div>
+                          )}
+
+                          {success && (
+                            <div className="bg-emerald-50 text-emerald-600 p-4 rounded-xl text-sm font-bold flex items-center gap-2 border border-emerald-100">
+                              <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                              {successMessage || 'Operação realizada com sucesso!'}
+                            </div>
+                          )}
+
+                          {hasSigned ? (
+                             <div className="w-full bg-emerald-500 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-emerald-100 border-b-4 border-emerald-700">
+                                <CheckCircle2 className="w-6 h-6" />
+                                DDS ASSINADO COM SUCESSO
+                             </div>
+                          ) : (
+                            <button
+                              type="submit"
+                              disabled={loading || passcode.length < 6}
+                              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-emerald-100 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 cursor-pointer"
+                            >
+                              {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : <UserCheck className="w-6 h-6" />}
+                              Assinar DDS
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </form>
+                  ) : (
+                    <div className="text-center py-12 px-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <AlertCircle className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                      <h4 className="text-slate-900 font-bold">Nenhum DDS Ativo</h4>
+                      <p className="text-slate-500 text-sm mt-1">Aguarde o administrador iniciar uma sessão para o período.</p>
+                    </div>
+                  )}
+                </motion.div>
+              ) : (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
+                >
+                  {activeSession ? (
+                    <>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 bg-emerald-600 text-white text-[10px] font-black rounded uppercase">
+                          {activeSession.shift}
+                        </span>
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-black rounded uppercase">
+                          Letra {activeSession.group}
+                        </span>
+                        <span className="font-bold text-slate-800">
+                          {formatSessionDisplayTitle(activeSession)}
+                        </span>
+                        {hasSigned && (
+                          <span className="text-emerald-600 font-bold flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Assinado
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSessionPdfModal(activeSession)}
+                          className="px-2.5 py-1.5 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 hover:border-emerald-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer flex-shrink-0"
+                          title="Imprimir Lista de Participantes em PDF"
+                        >
+                          <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="hidden sm:inline">PDF</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsSignPanelCollapsed(false)}
+                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer flex-shrink-0 shadow-2xs"
+                        >
+                          <UserCheck className="w-3.5 h-3.5" />
+                          {hasSigned ? 'Ver Confirmação' : 'Expandir e Assinar'}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-slate-500 font-medium">Nenhum DDS ativo selecionado no momento.</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsSignPanelCollapsed(false)}
+                        className="px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                      >
+                        Expandir
+                      </button>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
 
           {/* Monthly Metric Chart moved here, below Validation */}
@@ -2642,6 +2756,40 @@ const DDS: React.FC = () => {
               </div>
 
               <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+                {/* Recolher / Expandir Filtros */}
+                <button
+                  type="button"
+                  onClick={() => setIsFiltersCollapsed(!isFiltersCollapsed)}
+                  className={cn(
+                    "flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-2xs",
+                    isFiltersCollapsed
+                      ? "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                      : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                  )}
+                  title={isFiltersCollapsed ? "Exibir barra de filtros" : "Recolher barra de filtros"}
+                >
+                  <Filter className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>{isFiltersCollapsed ? 'Exibir Filtros' : 'Recolher Filtros'}</span>
+                  {activeFiltersCount > 0 && isFiltersCollapsed && (
+                    <span className="w-4 h-4 bg-emerald-600 text-white text-[10px] rounded-full flex items-center justify-center font-black">
+                      {activeFiltersCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* Se houver lista de assinaturas aberta em algum card, botão para recolher */}
+                {expandedSessionId && (
+                  <button
+                    type="button"
+                    onClick={() => setExpandedSessionId(null)}
+                    className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl border border-slate-200 transition-all cursor-pointer"
+                    title="Recolher lista de assinaturas aberta"
+                  >
+                    <Users className="w-3.5 h-3.5 text-slate-500" />
+                    Recolher Assinaturas
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={handleOpenHistoryPdfModal}
@@ -2677,115 +2825,197 @@ const DDS: React.FC = () => {
                     Limpar Filtros
                   </button>
                 )}
+
+                {/* Recolher / Expandir Todo o Histórico */}
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryCollapsed(!isHistoryCollapsed)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 transition-all cursor-pointer shadow-2xs border border-slate-200"
+                  title={isHistoryCollapsed ? "Expandir seção de histórico e filtros" : "Recolher seção de histórico e filtros"}
+                >
+                  {isHistoryCollapsed ? (
+                    <>
+                      <ChevronDown className="w-4 h-4 text-emerald-600" />
+                      <span>Expandir Histórico</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronUp className="w-4 h-4 text-slate-500" />
+                      <span>Recolher Histórico</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
-            {/* Filter Bar */}
-            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 mb-6 space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Data:</span>
-                <button
-                  type="button"
-                  onClick={() => setFilterDate(new Date().toISOString().split('T')[0])}
-                  className={cn(
-                    "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
-                    filterDate === new Date().toISOString().split('T')[0]
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
-                  )}
+            <AnimatePresence>
+              {!isHistoryCollapsed ? (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
                 >
-                  Hoje
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const yesterday = new Date();
-                    yesterday.setDate(yesterday.getDate() - 1);
-                    setFilterDate(yesterday.toISOString().split('T')[0]);
-                  }}
-                  className={cn(
-                    "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
-                    filterDate !== 'all' && filterDate === (() => {
-                      const y = new Date();
-                      y.setDate(y.getDate() - 1);
-                      return y.toISOString().split('T')[0];
-                    })()
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                  {/* Active filters badge summary when Filter Bar is collapsed */}
+                  {isFiltersCollapsed && activeFiltersCount > 0 && (
+                    <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl px-4 py-2.5 mb-6 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-emerald-900 flex items-center gap-1">
+                          <Filter className="w-3.5 h-3.5 text-emerald-700" /> Filtros Ativos ({activeFiltersCount}):
+                        </span>
+                        {filterDate !== 'all' && (
+                          <span className="px-2 py-0.5 bg-white border border-emerald-200 text-emerald-800 rounded-lg font-semibold text-[11px]">
+                            Data: {formatDateBR(filterDate)}
+                          </span>
+                        )}
+                        {filterShift !== 'all' && (
+                          <span className="px-2 py-0.5 bg-white border border-emerald-200 text-emerald-800 rounded-lg font-semibold text-[11px]">
+                            {filterShift}
+                          </span>
+                        )}
+                        {selectedLetter !== 'all' && (
+                          <span className="px-2 py-0.5 bg-white border border-emerald-200 text-emerald-800 rounded-lg font-semibold text-[11px]">
+                            Letra {selectedLetter}
+                          </span>
+                        )}
+                        {participantSearch && (
+                          <span className="px-2 py-0.5 bg-white border border-emerald-200 text-emerald-800 rounded-lg font-semibold text-[11px]">
+                            Busca: "{participantSearch}"
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFilterDate('all');
+                          setFilterShift('all');
+                          setSelectedLetter('all');
+                          setParticipantSearch('');
+                        }}
+                        className="text-emerald-700 hover:text-emerald-900 font-bold underline text-[11px] flex-shrink-0 cursor-pointer"
+                      >
+                        Limpar Filtros
+                      </button>
+                    </div>
                   )}
-                >
-                  Ontem
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterDate('all')}
-                  className={cn(
-                    "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
-                    filterDate === 'all'
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
-                  )}
-                >
-                  Todas as Datas
-                </button>
 
-                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-1.5 ml-auto">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <input
-                    type="date"
-                    value={filterDate === 'all' ? '' : filterDate}
-                    onChange={(e) => setFilterDate(e.target.value || 'all')}
-                    className="bg-transparent text-xs font-medium text-slate-700 outline-none cursor-pointer"
-                  />
-                </div>
-              </div>
+                  {/* Filter Bar */}
+                  <AnimatePresence>
+                    {!isFiltersCollapsed && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 mb-6 space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Data:</span>
+                            <button
+                              type="button"
+                              onClick={() => setFilterDate(new Date().toISOString().split('T')[0])}
+                              className={cn(
+                                "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
+                                filterDate === new Date().toISOString().split('T')[0]
+                                  ? "bg-emerald-600 text-white shadow-sm"
+                                  : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                              )}
+                            >
+                              Hoje
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const yesterday = new Date();
+                                yesterday.setDate(yesterday.getDate() - 1);
+                                setFilterDate(yesterday.toISOString().split('T')[0]);
+                              }}
+                              className={cn(
+                                "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
+                                filterDate !== 'all' && filterDate === (() => {
+                                  const y = new Date();
+                                  y.setDate(y.getDate() - 1);
+                                  return y.toISOString().split('T')[0];
+                                })()
+                                  ? "bg-emerald-600 text-white shadow-sm"
+                                  : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                              )}
+                            >
+                              Ontem
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFilterDate('all')}
+                              className={cn(
+                                "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
+                                filterDate === 'all'
+                                  ? "bg-emerald-600 text-white shadow-sm"
+                                  : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                              )}
+                            >
+                              Todas as Datas
+                            </button>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/60">
-                {/* Shift Selector */}
-                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
-                  <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                  <select
-                    className="bg-transparent text-xs font-semibold text-slate-700 outline-none w-full cursor-pointer"
-                    value={filterShift}
-                    onChange={(e) => setFilterShift(e.target.value)}
-                  >
-                    <option value="all">Todos os Turnos</option>
-                    <option value="Turno 1">Turno 1 (00h-08h)</option>
-                    <option value="Turno 2">Turno 2 (08h-16h)</option>
-                    <option value="Turno 3">Turno 3 (16h-00h)</option>
-                  </select>
-                </div>
+                            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-1.5 ml-auto">
+                              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                              <input
+                                type="date"
+                                value={filterDate === 'all' ? '' : filterDate}
+                                onChange={(e) => setFilterDate(e.target.value || 'all')}
+                                className="bg-transparent text-xs font-medium text-slate-700 outline-none cursor-pointer"
+                              />
+                            </div>
+                          </div>
 
-                {/* Letter Selector */}
-                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
-                  <Filter className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                  <select
-                    className="bg-transparent text-xs font-semibold text-slate-700 outline-none w-full cursor-pointer"
-                    value={selectedLetter}
-                    onChange={(e) => setSelectedLetter(e.target.value)}
-                  >
-                    <option value="all">Todas as Letras</option>
-                    <option value="A">Letra A</option>
-                    <option value="B">Letra B</option>
-                    <option value="C">Letra C</option>
-                    <option value="D">Letra D</option>
-                    <option value="E">Letra E</option>
-                  </select>
-                </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/60">
+                            {/* Shift Selector */}
+                            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                              <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                              <select
+                                className="bg-transparent text-xs font-semibold text-slate-700 outline-none w-full cursor-pointer"
+                                value={filterShift}
+                                onChange={(e) => setFilterShift(e.target.value)}
+                              >
+                                <option value="all">Todos os Turnos</option>
+                                <option value="Turno 1">Turno 1 (00h-08h)</option>
+                                <option value="Turno 2">Turno 2 (08h-16h)</option>
+                                <option value="Turno 3">Turno 3 (16h-00h)</option>
+                              </select>
+                            </div>
 
-                {/* Search Input */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Buscar tema, facilitador ou colaborador..."
-                    className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 placeholder-slate-400 outline-none focus:ring-2 focus:ring-emerald-500"
-                    value={participantSearch}
-                    onChange={(e) => setParticipantSearch(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
+                            {/* Letter Selector */}
+                            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                              <Filter className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                              <select
+                                className="bg-transparent text-xs font-semibold text-slate-700 outline-none w-full cursor-pointer"
+                                value={selectedLetter}
+                                onChange={(e) => setSelectedLetter(e.target.value)}
+                              >
+                                <option value="all">Todas as Letras</option>
+                                <option value="A">Letra A</option>
+                                <option value="B">Letra B</option>
+                                <option value="C">Letra C</option>
+                                <option value="D">Letra D</option>
+                                <option value="E">Letra E</option>
+                              </select>
+                            </div>
+
+                            {/* Search Input */}
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                              <input
+                                type="text"
+                                placeholder="Buscar tema, facilitador ou colaborador..."
+                                className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 placeholder-slate-400 outline-none focus:ring-2 focus:ring-emerald-500"
+                                value={participantSearch}
+                                onChange={(e) => setParticipantSearch(e.target.value)}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
             {/* Session Cards List Grouped By Date and Shift */}
             <div className="space-y-6 max-h-[750px] overflow-y-auto pr-1 custom-scrollbar">
@@ -2892,6 +3122,7 @@ const DDS: React.FC = () => {
                                     if (session.passcode) {
                                       setPasscode(session.passcode);
                                     }
+                                    setIsSignPanelCollapsed(false);
                                     window.scrollTo({ top: 0, behavior: 'smooth' });
                                   }}
                                   className={cn(
@@ -3163,6 +3394,42 @@ const DDS: React.FC = () => {
                 </div>
               </div>
             )}
+                </motion.div>
+              ) : (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-600"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0">
+                      <History className="w-4 h-4" />
+                    </div>
+                    <div className="text-xs">
+                      <p className="font-bold text-slate-800">
+                        Histórico recolhido ({filteredSessions.length} {filteredSessions.length === 1 ? 'sessão listada' : 'sessões listadas'})
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {activeFiltersCount > 0 
+                          ? `${activeFiltersCount} filtro(s) aplicado(s) no momento.` 
+                          : 'Clique no botão ao lado para expandir e visualizar as sessões e presenças.'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsHistoryCollapsed(false)}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                      Expandir Histórico
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
