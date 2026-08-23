@@ -46,10 +46,11 @@ service cloud.firestore {
     }
 
     function isApproved() {
-      return isMaster() || (
+      return isMaster() || isAdmin() || (
         isSignedIn() && 
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', '') == 'approved'
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', '').lower() in ['approved', 'aprovado', 'active', 'ativo'] ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '').lower() in ['admin', 'master', 'manager', 'administrador'])
       );
     }
 
@@ -66,8 +67,7 @@ service cloud.firestore {
       return isSignedIn() && (
         isMaster() || (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin' ||
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'master' ||
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '').lower() in ['admin', 'master', 'administrador'] ||
            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isMaster', false) == true)
         )
       );
@@ -75,11 +75,9 @@ service cloud.firestore {
 
     function isManager() {
       return isSignedIn() && (
-        isMaster() || (
+        isMaster() || isAdmin() || (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'manager' ||
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin' ||
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'master' ||
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '').lower() in ['manager', 'admin', 'master', 'administrador', 'gerente'] ||
            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isMaster', false) == true)
         )
       );
@@ -526,13 +524,13 @@ service cloud.firestore {
 
     // Stops Reports (Controle de Paradas)
     match /stops_reports/{reportId} {
-      allow get, list: if isApproved();
-      allow create: if isApproved() && isNotDisabled() && isValidId(reportId) &&
-                      (isManager() || request.resource.data.userId == request.auth.uid) &&
+      allow get, list: if isApproved() || isAdmin() || isManager() || isMaster() || isSignedIn();
+      allow create: if (isApproved() || isAdmin() || isManager() || isMaster()) && isNotDisabled() &&
+                      (isAdmin() || isManager() || isMaster() || request.resource.data.userId == request.auth.uid) &&
                       (request.resource.data.createdAt == request.time || request.resource.data.createdAt is timestamp);
-      allow update: if isApproved() && isNotDisabled() && isValidId(reportId) &&
-                      (isManager() || resource.data.userId == request.auth.uid);
-      allow delete: if isMaster() || (isManager() && isValidId(reportId));
+      allow update: if (isApproved() || isAdmin() || isManager() || isMaster()) && isNotDisabled() &&
+                      (isAdmin() || isManager() || isMaster() || resource.data.userId == request.auth.uid);
+      allow delete: if isMaster() || isAdmin() || isManager() || (isApproved() && resource.data.userId == request.auth.uid) || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 
     // Overtime Justifications

@@ -77,16 +77,16 @@ const formatDateToBR = (dateStr: string): string => {
 };
 
 const DEFAULT_WORK_FRONTS = [
-  'Mecânica',
-  'Elétrica',
-  'Instrumentação',
-  'Hidráulica',
-  'Civil',
   'Caldeiraria',
+  'Civil',
+  'Elétrica',
+  'Hidráulica',
+  'Instrumentação',
+  'Mecânica',
   'Operacional'
-];
+].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
 
-const SPEED_OPTIONS = Array.from({ length: 251 }, (_, i) => i);
+const SPEED_OPTIONS = [0, ...Array.from({ length: 151 }, (_, i) => 100 + i)];
 
 const getStopTypeLabel = (type: string): string => {
   switch (type) {
@@ -284,7 +284,9 @@ export default function StopsControl() {
   useEffect(() => {
     const unsubWorkFronts = onSnapshot(doc(db, 'system_config', 'stop_work_fronts'), (snap) => {
       if (snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length > 0) {
-        const loadedList: string[] = snap.data().list;
+        const loadedList: string[] = [...snap.data().list].sort((a: string, b: string) =>
+          a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
+        );
         setWorkFrontOptions(loadedList);
 
         // Keep formWorkFronts in sync with loaded options
@@ -655,7 +657,10 @@ export default function StopsControl() {
       return;
     }
 
-    const updatedList = [...workFrontOptions, trimmed];
+    const updatedList = [...workFrontOptions, trimmed].sort((a, b) =>
+      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
+    );
+    setNewWorkFrontName('');
     setSavingWorkFronts(true);
     try {
       await setDoc(doc(db, 'system_config', 'stop_work_fronts'), {
@@ -664,7 +669,6 @@ export default function StopsControl() {
         updatedBy: user?.displayName || user?.email || 'Admin'
       });
       setWorkFrontOptions(updatedList);
-      setNewWorkFrontName('');
     } catch (err) {
       console.error("Error adding work front:", err);
       alert("Erro ao salvar nova frente de trabalho.");
@@ -674,7 +678,9 @@ export default function StopsControl() {
   };
 
   const handleDeleteCustomWorkFront = async (frontToDelete: string) => {
-    const updatedList = workFrontOptions.filter(f => f !== frontToDelete);
+    const updatedList = workFrontOptions
+      .filter(f => f !== frontToDelete)
+      .sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
     setSavingWorkFronts(true);
     try {
       await setDoc(doc(db, 'system_config', 'stop_work_fronts'), {
@@ -701,13 +707,14 @@ export default function StopsControl() {
 
   const canEditReport = (report: StopReport | null) => {
     if (!report) return false;
-    if (isManager || isAdmin || isMaster) return true;
-    return !!(user?.uid && report.userId === user.uid);
+    if (isMaster || isAdmin || isManager) return true;
+    return !!(user?.uid && (report.userId === user.uid || report.userId === user.email));
   };
 
   const canDeleteReport = (report: StopReport | null) => {
     if (!report) return false;
-    return isManager || isAdmin || isMaster;
+    if (isMaster || isAdmin || isManager) return true;
+    return !!(user?.uid && (report.userId === user.uid || report.userId === user.email));
   };
 
   // Set form fields for editing
@@ -2055,9 +2062,12 @@ export default function StopsControl() {
                         onChange={(e) => setFormSpeedMS1(Number(e.target.value))}
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                       >
-                        {SPEED_OPTIONS.map((speed, spIdx) => (
-                          <option key={`speed-ms1-${speed}-${spIdx}`} value={speed}>
-                            {speed} m/min
+                        {formSpeedMS1 > 0 && !SPEED_OPTIONS.includes(formSpeedMS1) && (
+                          <option value={formSpeedMS1}>{formSpeedMS1} m/min</option>
+                        )}
+                        {SPEED_OPTIONS.map((speed) => (
+                          <option key={`speed-ms1-${speed}`} value={speed}>
+                            {speed === 0 ? '0 m/min (Parada)' : `${speed} m/min`}
                           </option>
                         ))}
                       </select>
@@ -2073,9 +2083,12 @@ export default function StopsControl() {
                         onChange={(e) => setFormSpeedMS2(Number(e.target.value))}
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 text-sm outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                       >
-                        {SPEED_OPTIONS.map((speed, spIdx) => (
-                          <option key={`speed-ms2-${speed}-${spIdx}`} value={speed}>
-                            {speed} m/min
+                        {formSpeedMS2 > 0 && !SPEED_OPTIONS.includes(formSpeedMS2) && (
+                          <option value={formSpeedMS2}>{formSpeedMS2} m/min</option>
+                        )}
+                        {SPEED_OPTIONS.map((speed) => (
+                          <option key={`speed-ms2-${speed}`} value={speed}>
+                            {speed === 0 ? '0 m/min (Parada)' : `${speed} m/min`}
                           </option>
                         ))}
                       </select>
