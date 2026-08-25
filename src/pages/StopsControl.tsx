@@ -730,25 +730,7 @@ export default function StopsControl() {
 
   const canDeleteReport = (report: StopReport | null) => {
     if (!report) return false;
-    if (isMaster || isAdmin || isManager) return true;
-    if (!user) return false;
-    const currentUid = user.uid;
-    const currentEmail = (profile?.email || user.email || '').toLowerCase().trim();
-    const currentName = (profile?.displayName || user.displayName || '').toLowerCase().trim();
-    const currentEmailUser = currentEmail.split('@')[0];
-
-    const reportUserId = (report.userId || '').toLowerCase().trim();
-    const reportCreatedBy = (String((report as any).createdBy || '')).toLowerCase().trim();
-    const reportUserEmail = (String(report.userEmail || '')).toLowerCase().trim();
-    const reportUserName = (report.userName || '').toLowerCase().trim();
-
-    return !!(
-      (report.userId && (report.userId === currentUid || reportUserId === currentEmail || (currentEmailUser && reportUserId === currentEmailUser))) ||
-      (reportCreatedBy && (reportCreatedBy === currentUid || reportCreatedBy === currentEmail || (currentEmailUser && reportCreatedBy === currentEmailUser))) ||
-      (reportUserEmail && currentEmail && (reportUserEmail === currentEmail || (currentEmailUser && reportUserEmail === currentEmailUser))) ||
-      (reportUserName && currentName && (reportUserName === currentName || reportUserName.includes(currentName) || currentName.includes(reportUserName))) ||
-      (reportUserName && currentEmailUser && (reportUserName === currentEmailUser || reportUserName.includes(currentEmailUser)))
-    );
+    return isMaster || isAdmin;
   };
 
   // Set form fields for editing
@@ -1017,6 +999,10 @@ export default function StopsControl() {
 
   const confirmDeleteReport = async () => {
     if (!deleteConfirm) return;
+    if (!isMaster && !isAdmin) {
+      alert("Apenas administradores e master têm permissão para excluir relatórios.");
+      return;
+    }
     setSubmitting(true);
     try {
       await deleteDoc(doc(db, 'stops_reports', deleteConfirm.id));
