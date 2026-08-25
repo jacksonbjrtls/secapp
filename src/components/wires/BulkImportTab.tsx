@@ -5,13 +5,10 @@ import {
   updateDoc,
   doc,
   serverTimestamp,
-  getDocs,
-  query,
-  where
+  getDocs
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { handleFirestoreError, OperationType } from '../../lib/errorHandler';
-import { WireBatch, WireCoil, WireSupplier, WireStorageBay } from '../../types';
+import { WireBatch, WireCoil, WireSupplier, WireStorageBay, ProductionLine } from '../../types';
 import { 
   FileSpreadsheet, 
   Loader2, 
@@ -20,13 +17,21 @@ import {
   UploadCloud, 
   Trash2, 
   Play, 
-  Plus, 
-  Info, 
+  Plus,
   Database,
-  ArrowRight,
   Clipboard,
   FileText,
-  ShieldCheck
+  ShieldCheck,
+  Zap,
+  Download,
+  Filter,
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Sparkles,
+  Layers,
+  Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../hooks/useAuth';
@@ -35,9 +40,14 @@ import { cn } from '../../lib/utils';
 interface BulkImportTabProps {
   suppliers: WireSupplier[];
   storageBays: WireStorageBay[];
+  coils?: WireCoil[];
+  batches?: WireBatch[];
+  lines?: ProductionLine[];
 }
 
-interface ParsedRow {
+export type RowActionType = 'NEW' | 'UPDATE_CONSUMED' | 'UPDATE_DATA' | 'UNCHANGED' | 'ERROR';
+
+export interface ParsedRow {
   index: number;
   raw: string[];
   id?: string;
@@ -57,19 +67,223 @@ interface ParsedRow {
   storageBayName: string;
   errors: string[];
   warnings: string[];
+  action: RowActionType;
+  actionReason?: string;
+  existingDbId?: string;
 }
 
-export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storageBays }) => {
+export const BulkImportTab: React.FC<BulkImportTabProps> = ({ 
+  suppliers, 
+  storageBays,
+  coils = [],
+  batches = [],
+  lines = []
+}) => {
   const { profile } = useAuth();
-  const [inputText, setInputText] = useState('');
   
-  // Download CSV template separated by semicolon (Excellent for Excel in Portuguese)
-  const downloadTemplateCSV = () => {
-    const headers = ['ID', 'Operador', 'Data Entrada', 'Data Consumo', 'Linha', 'Turma / Letra', 'Turno', 'Máquina', 'Fornecedor', 'Status', 'Código da Bobina', 'Bitola (mm)', 'Peso (kg)', 'Nota Fiscal', 'Local Baia'];
-    const row1 = ['2474', 'Alessandro Sousa Santos', '04/12/2025', '', '', '', '', '', 'Morlan', 'Disponível', '0002273002394374 M837804', '2,18', '1060', '773778-1', '1 C2'];
-    const row2 = ['2484', 'Carlos Oliveira', '04/12/2025', '10/12/2025', 'Linha 01', 'Turma A', 'Turno 1', 'Desbobinador 02', 'Belgo Bekaert', 'Consumido', '0002280020245484', '2,30', '1004', '773776-1', '1 E1'];
+  // -------------------------------------------------------------
+  // 1. STATE FOR EXPORT / TEMPLATE DOWNLOAD
+  // -------------------------------------------------------------
+  const [showExportSection, setShowExportSection] = useState(false);
+  const [exportFilterStatus, setExportFilterStatus] = useState<'all' | 'in_stock' | 'consumed'>('in_stock');
+  const [exportFilterSupplier, setExportFilterSupplier] = useState<string>('all');
+  const [exportFilterBay, setExportFilterBay] = useState<string>('all');
+  const [exportFilterDiameter, setExportFilterDiameter] = useState<string>('all');
+  const [exportSearchTerm, setExportSearchTerm] = useState<string>('');
+  const [copiedExportSuccess, setCopiedExportSuccess] = useState(false);
+
+  // Map batches by ID for rapid NF / Date resolution
+  const batchesMap = useMemo(() => {
+    const map = new Map<string, WireBatch>();
+    batches.forEach(b => map.set(b.id, b));
+    return map;
+  }, [batches]);
+
+  // Map suppliers by ID
+  const suppliersMap = useMemo(() => {
+    const map = new Map<string, WireSupplier>();
+    suppliers.forEach(s => map.set(s.id, s));
+    return map;
+  }, [suppliers]);
+
+  // Distinct diameters available in stock
+  const distinctDiameters = useMemo(() => {
+    const set = new Set<number>();
+    coils.forEach(c => {
+      if (c.diameter) set.add(c.diameter);
+    });
+    return Array.from(set).sort((a, b) => a - b);
+  }, [coils]);
+
+  // Filtered coils for Export
+  const filteredExportCoils = useMemo(() => {
+    return coils.filter(c => {
+      // Status filter
+      if (exportFilterStatus === 'in_stock') {
+        if (c.status === 'consumed') return false;
+      } else if (exportFilterStatus === 'consumed') {
+        if (c.status !== 'consumed') return false;
+      }
+
+      // Supplier filter
+      if (exportFilterSupplier !== 'all' && c.supplierId !== exportFilterSupplier) {
+        return false;
+      }
+
+      // Storage Bay filter
+      if (exportFilterBay !== 'all') {
+        const bayName = (c.storageBayName || '').toUpperCase().trim();
+        if (bayName !== exportFilterBay.toUpperCase().trim()) return false;
+      }
+
+      // Diameter filter
+      if (exportFilterDiameter !== 'all') {
+        const d = parseFloat(exportFilterDiameter);
+        if (Math.abs(c.diameter - d) > 0.001) return false;
+      }
+
+      // Search term
+      if (exportSearchTerm.trim()) {
+        const term = exportSearchTerm.toLowerCase().trim();
+        const batch = batchesMap.get(c.batchId);
+        const matchCoil = (c.coilNumber || '').toLowerCase().includes(term);
+        const matchNf = (batch?.nfNumber || '').toLowerCase().includes(term);
+        if (!matchCoil && !matchNf) return false;
+      }
+
+      return true;
+    });
+  }, [coils, exportFilterStatus, exportFilterSupplier, exportFilterBay, exportFilterDiameter, exportSearchTerm, batchesMap]);
+
+  // Format a single coil to standard import/export columns
+  const formatCoilToRowData = (c: WireCoil, idx: number) => {
+    const batch = batchesMap.get(c.batchId);
+    const supplier = suppliersMap.get(c.supplierId) || (batch ? { name: batch.supplierName } : undefined);
     
-    const csvContent = "\uFEFF" + [headers.join(';'), row1.join(';'), row2.join(';')].join('\n');
+    // Entry date
+    let entryDateFormatted = '';
+    if (c.receivedAt) {
+      if (typeof c.receivedAt === 'string') {
+        entryDateFormatted = c.receivedAt.split('T')[0].split('-').reverse().join('/');
+      } else if (c.receivedAt.toDate) {
+        const d = c.receivedAt.toDate();
+        entryDateFormatted = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+      }
+    } else if (batch?.date) {
+      entryDateFormatted = batch.date.split('-').reverse().join('/');
+    }
+
+    // Consumed date
+    let consumedDateFormatted = '';
+    if (c.consumedAt) {
+      if (typeof c.consumedAt === 'string') {
+        consumedDateFormatted = c.consumedAt.split('T')[0].split('-').reverse().join('/');
+      } else if (c.consumedAt.toDate) {
+        const d = c.consumedAt.toDate();
+        consumedDateFormatted = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+      }
+    }
+
+    const id = String(idx + 1);
+    const operator = (c as any).consumedBy || batch?.responsibleName || 'Operador';
+    const lineName = (c as any).lineName || '';
+    const consumedByGroup = (c as any).consumedByGroup || '';
+    const shift = (c as any).consumedShift || '';
+    const equipment = (c as any).consumedIn || '';
+    const supplierName = supplier?.name || batch?.supplierName || 'Geral';
+    const status = c.status === 'consumed' ? 'Consumido' : 'Disponível';
+    const coilNumber = c.coilNumber || '';
+    const diameter = c.diameter ? c.diameter.toFixed(2).replace('.', ',') : '2,30';
+    const weight = c.weight ? String(c.weight) : '1000';
+    const nfNumber = batch?.nfNumber || '';
+    const storageBay = c.storageBayName || batch?.storageBayName || 'GERAL';
+
+    return [
+      id,
+      operator,
+      entryDateFormatted,
+      consumedDateFormatted,
+      lineName,
+      consumedByGroup,
+      shift,
+      equipment,
+      supplierName,
+      status,
+      coilNumber,
+      diameter,
+      weight,
+      nfNumber,
+      storageBay
+    ];
+  };
+
+  const headerColumns = [
+    'ID', 
+    'Operador', 
+    'Data Entrada', 
+    'Data Consumo', 
+    'Linha', 
+    'Turma / Letra', 
+    'Turno', 
+    'Máquina', 
+    'Fornecedor', 
+    'Status', 
+    'Código da Bobina', 
+    'Bitola (mm)', 
+    'Peso (kg)', 
+    'Nota Fiscal', 
+    'Local Baia'
+  ];
+
+  // Export to CSV (semicolon separated with BOM for Excel)
+  const handleExportCSV = () => {
+    const rows = filteredExportCoils.map((c, idx) => formatCoilToRowData(c, idx));
+    const csvContent = "\uFEFF" + [headerColumns.join(';'), ...rows.map(r => r.join(';'))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    const filterLabel = exportFilterStatus === 'in_stock' ? 'estoque' : (exportFilterStatus === 'consumed' ? 'consumidos' : 'todos');
+    link.setAttribute("download", `arames_${filterLabel}_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Export to TSV (tab separated for Sheets/Excel copy)
+  const handleExportTSV = () => {
+    const rows = filteredExportCoils.map((c, idx) => formatCoilToRowData(c, idx));
+    const tsvContent = "\uFEFF" + [headerColumns.join('\t'), ...rows.map(r => r.join('\t'))].join('\n');
+    const blob = new Blob([tsvContent], { type: 'text/tab-separated-values;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    const filterLabel = exportFilterStatus === 'in_stock' ? 'estoque' : (exportFilterStatus === 'consumed' ? 'consumidos' : 'todos');
+    link.setAttribute("download", `arames_${filterLabel}_${new Date().toISOString().split('T')[0]}.txt`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Copy rows directly to Clipboard (TSV format)
+  const handleCopyRowsToClipboard = async () => {
+    const rows = filteredExportCoils.map((c, idx) => formatCoilToRowData(c, idx));
+    const tsvContent = [headerColumns.join('\t'), ...rows.map(r => r.join('\t'))].join('\n');
+    try {
+      await navigator.clipboard.writeText(tsvContent);
+      setCopiedExportSuccess(true);
+      setTimeout(() => setCopiedExportSuccess(false), 3000);
+    } catch {
+      alert('Não foi possível copiar automaticamente para a área de transferência.');
+    }
+  };
+
+  // Blank template download (Empty template for Excel)
+  const downloadTemplateCSV = () => {
+    const row1 = ['1', 'Alessandro Sousa Santos', '04/12/2025', '', '', '', '', '', 'Morlan', 'Disponível', '0002273002394374 M837804', '2,18', '1060', '773778-1', '1 C2'];
+    const row2 = ['2', 'Carlos Oliveira', '04/12/2025', '10/12/2025', 'Linha 01', 'Turma A', 'Turno 1', 'Desbobinador 02', 'Belgo Bekaert', 'Consumido', '0002280020245484', '2,30', '1004', '773776-1', '1 E1'];
+    
+    const csvContent = "\uFEFF" + [headerColumns.join(';'), row1.join(';'), row2.join(';')].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -80,13 +294,11 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     document.body.removeChild(link);
   };
 
-  // Download TSV template separated by tabs (Excellent for Google Sheets copy-paste)
   const downloadTemplateTSV = () => {
-    const headers = ['ID', 'Operador', 'Data Entrada', 'Data Consumo', 'Linha', 'Turma / Letra', 'Turno', 'Máquina', 'Fornecedor', 'Status', 'Código da Bobina', 'Bitola (mm)', 'Peso (kg)', 'Nota Fiscal', 'Local Baia'];
-    const row1 = ['2474', 'Alessandro Sousa Santos', '04/12/2025', '', '', '', '', '', 'Morlan', 'Disponível', '0002273002394374 M837804', '2,18', '1060', '773778-1', '1 C2'];
-    const row2 = ['2484', 'Carlos Oliveira', '04/12/2025', '10/12/2025', 'Linha 01', 'Turma A', 'Turno 1', 'Desbobinador 02', 'Belgo Bekaert', 'Consumido', '0002280020245484', '2,30', '1004', '773776-1', '1 E1'];
+    const row1 = ['1', 'Alessandro Sousa Santos', '04/12/2025', '', '', '', '', '', 'Morlan', 'Disponível', '0002273002394374 M837804', '2,18', '1060', '773778-1', '1 C2'];
+    const row2 = ['2', 'Carlos Oliveira', '04/12/2025', '10/12/2025', 'Linha 01', 'Turma A', 'Turno 1', 'Desbobinador 02', 'Belgo Bekaert', 'Consumido', '0002280020245484', '2,30', '1004', '773776-1', '1 E1'];
     
-    const tsvContent = "\uFEFF" + [headers.join('\t'), row1.join('\t'), row2.join('\t')].join('\n');
+    const tsvContent = "\uFEFF" + [headerColumns.join('\t'), row1.join('\t'), row2.join('\t')].join('\n');
     const blob = new Blob([tsvContent], { type: 'text/tab-separated-values;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -97,26 +309,46 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     document.body.removeChild(link);
   };
 
+  // -------------------------------------------------------------
+  // 2. STATE FOR BULK IMPORT & DIFF PARSER
+  // -------------------------------------------------------------
+  const [inputText, setInputText] = useState('');
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
+  const [previewFilter, setPreviewFilter] = useState<'ALL' | 'NEW' | 'UPDATE' | 'UNCHANGED' | 'ERROR'>('ALL');
   const [delimiter, setDelimiter] = useState<'tsv' | 'csv_comma' | 'csv_semicolon' | 'auto'>('auto');
+  const [hasHeaders, setHasHeaders] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [stepStatus, setStepStatus] = useState<string>('');
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [updateExistingBayDetails, setUpdateExistingBayDetails] = useState(true);
+
   const [importSummary, setImportSummary] = useState({
     batchesCreated: 0,
     coilsCreated: 0,
     coilsUpdatedToConsumed: 0,
-    coilsSkippedDuplicates: 0,
+    coilsUpdatedData: 0,
+    coilsSkippedUnchanged: 0,
     duplicatesInSheetMerged: 0,
     suppliersCreated: 0,
     baysCreated: 0,
-    totalWeight: 0
+    totalWeight: 0,
+    quotaSavingsCount: 0
   });
 
-  const [hasHeaders, setHasHeaders] = useState(true);
+  // Map of existing coils by normalized coilNumber
+  const existingCoilsKeyMap = useMemo(() => {
+    const map = new Map<string, WireCoil>();
+    coils.forEach(c => {
+      if (c.coilNumber) {
+        const k = c.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
+        map.set(k, c);
+      }
+    });
+    return map;
+  }, [coils]);
 
-  // Column mapping states - index of headers
+  // Column mapping states
   const [colMapping, setColMapping] = useState<{ [key: string]: number }>({
     id: -1,
     operator: -1,
@@ -135,7 +367,7 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     storageBay: -1,
   });
 
-  // Automatically parse text on input or delimiter change
+  // Automatic parsing and diff calculation
   useEffect(() => {
     if (!inputText.trim()) {
       setParsedRows([]);
@@ -160,13 +392,13 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       activeDelim = delimiter === 'tsv' ? '\t' : (delimiter === 'csv_semicolon' ? ';' : ',');
     }
 
-    const lines = inputText.split(/\r?\n/).filter(line => line.trim().length > 0);
-    if (lines.length === 0) {
+    const linesRaw = inputText.split(/\r?\n/).filter(line => line.trim().length > 0);
+    if (linesRaw.length === 0) {
       setParsedRows([]);
       return;
     }
 
-    // Helper to parse CSV line keeping text in quotes together
+    // Helper to parse line respecting quotes
     const parseLine = (line: string, delim: string): string[] => {
       if (delim === '\t') return line.split('\t');
       
@@ -188,9 +420,9 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       return result;
     };
 
-    const firstLineRaw = parseLine(lines[0], activeDelim);
+    const firstLineRaw = parseLine(linesRaw[0], activeDelim);
     
-    // 2. Map headers or set defaults
+    // 2. Map headers
     const mapping = {
       id: -1,
       operator: -1,
@@ -231,10 +463,7 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       });
     }
 
-    // Default mappings if headers are not found or disabled
     if (!hasHeaders || Object.values(mapping).every(v => v === -1)) {
-      // Fallback ordered mappings:
-      // ID | Operador | Data Entrada | Data Consumo | Linha | Turma / Letra | Turno | Máquina | Fornecedor | Status | Código | Bitola (mm) | Peso | Nota Fiscal | Quantidade Baia
       mapping.id = 0;
       mapping.operator = 1 < firstLineRaw.length ? 1 : -1;
       mapping.date = 2 < firstLineRaw.length ? 2 : -1;
@@ -274,12 +503,12 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       return '';
     };
 
-    // 3. Process data lines
+    // 3. Process data lines and calculate Diff in real-time
     const startIdx = hasHeaders ? 1 : 0;
     const processed: ParsedRow[] = [];
 
-    for (let i = startIdx; i < lines.length; i++) {
-      const line = lines[i];
+    for (let i = startIdx; i < linesRaw.length; i++) {
+      const line = linesRaw[i];
       if (!line.trim()) continue;
 
       const rawRow = parseLine(line, activeDelim);
@@ -292,7 +521,6 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       const errors: string[] = [];
       const warnings: string[] = [];
 
-      // Raw fields
       const id = getField(mapping.id);
       const operator = getField(mapping.operator, 'Administrador');
       const rawDate = getField(mapping.date);
@@ -304,7 +532,6 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       const coilNumber = getField(mapping.coilNumber);
       let supplierName = getField(mapping.supplier, 'Geral');
 
-      // Auto-detect Morlan if coil number looks like a Morlan GD code
       if (coilNumber && (coilNumber.toUpperCase().startsWith('GD') || /GD\d{10,20}/i.test(coilNumber))) {
         supplierName = 'Morlan';
       }
@@ -315,8 +542,6 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
       const nfNumber = getField(mapping.nfNumber);
       const rawStorageBay = getField(mapping.storageBay);
 
-      // Conversions and Validations
-      
       // Entry Date Normalization
       let normDate = normalizeDateStr(rawDate);
       if (!normDate) {
@@ -376,12 +601,12 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         errors.push('Código da bobina ausente.');
       }
 
-      // NF check
-      if (!nfNumber) {
-        errors.push('Número da Nota Fiscal ausente.');
+      // NF check (needed for new batches)
+      if (!nfNumber && errors.length === 0) {
+        warnings.push('Sem número de NF. Será gerado lote avulso.');
       }
 
-      // Storage Bay extraction (e.g. "1 C2" -> "C2")
+      // Storage Bay extraction
       let storageBayName = 'GERAL';
       if (rawStorageBay) {
         const cleanedBay = rawStorageBay.replace(/^\d+\s+/, '').trim().toUpperCase();
@@ -392,16 +617,49 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         warnings.push('Local da baia ausente. Alocando na baia GERAL.');
       }
 
-      // Check if Supplier already exists
-      const supplierExists = suppliers.some(s => s.name.toLowerCase().trim() === supplierName.toLowerCase().trim());
-      if (!supplierExists && supplierName) {
-        warnings.push(`Novo fornecedor '${supplierName}' será adicionado automaticamente.`);
-      }
+      const cleanCoilKey = coilNumber ? coilNumber.toLowerCase().trim().replace(/\s+/g, ' ') : '';
+      const existingCoil = cleanCoilKey ? existingCoilsKeyMap.get(cleanCoilKey) : undefined;
 
-      // Check if Storage Bay already exists
-      const bayExists = storageBays.some(b => b.name.toUpperCase().trim() === storageBayName.toUpperCase().trim());
-      if (!bayExists && storageBayName) {
-        warnings.push(`Nova baia de armazenamento '${storageBayName}' será cadastrada automaticamente.`);
+      // Smart Diff Action Determination
+      let action: RowActionType = 'NEW';
+      let actionReason = 'Nova bobina. Será cadastrada.';
+      let existingDbId: string | undefined = undefined;
+
+      if (errors.length > 0) {
+        action = 'ERROR';
+        actionReason = errors.join('; ');
+      } else if (!existingCoil) {
+        action = 'NEW';
+        actionReason = 'Código não encontrado no banco. Será criado novo cadastro.';
+      } else {
+        // Coil exists in DB
+        existingDbId = existingCoil.id;
+        const dbStatus = existingCoil.status || 'received';
+        const isDbConsumed = dbStatus === 'consumed';
+        const isIncomingConsumed = status === 'consumed';
+
+        if (!isDbConsumed && isIncomingConsumed) {
+          // Status changed from received to consumed
+          action = 'UPDATE_CONSUMED';
+          actionReason = 'Existente no banco como disponível. Será atualizada para CONSUMIDA.';
+        } else if (isDbConsumed && !isIncomingConsumed) {
+          // Status changed from consumed to received
+          action = 'UPDATE_DATA';
+          actionReason = 'Existente no banco como consumida. Será revertida para DISPONÍVEL.';
+        } else {
+          // Check other attributes (Storage Bay change, Line change, etc.)
+          const dbBay = (existingCoil.storageBayName || '').toUpperCase().trim();
+          const incomingBay = storageBayName.toUpperCase().trim();
+          const bayChanged = incomingBay && dbBay && incomingBay !== dbBay;
+
+          if (bayChanged && updateExistingBayDetails) {
+            action = 'UPDATE_DATA';
+            actionReason = `Mudança de baia detectada: ${dbBay} ➔ ${incomingBay}.`;
+          } else {
+            action = 'UNCHANGED';
+            actionReason = 'Dados idênticos aos do banco. Será PULADA para poupar cota do Firebase.';
+          }
+        }
       }
 
       processed.push({
@@ -420,76 +678,55 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         coilNumber: coilNumber.trim().replace(/\s+/g, ' '),
         diameter,
         weight,
-        nfNumber,
+        nfNumber: nfNumber || 'S/NF',
         storageBayName,
         errors,
-        warnings
+        warnings,
+        action,
+        actionReason,
+        existingDbId
       });
     }
 
-    // Detect duplicates within the spreadsheet and flag warnings
-    const coilCounts: { [coil: string]: { count: number; hasConsumed: boolean } } = {};
-    processed.forEach(r => {
-      if (r.coilNumber) {
-        const k = r.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
-        if (!coilCounts[k]) coilCounts[k] = { count: 0, hasConsumed: false };
-        coilCounts[k].count++;
-        if (r.status === 'consumed') coilCounts[k].hasConsumed = true;
-      }
-    });
-
-    processed.forEach(r => {
-      if (r.coilNumber) {
-        const k = r.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
-        if (coilCounts[k].count > 1) {
-          if (r.status === 'consumed') {
-            r.warnings.push('Bobina duplicada na planilha. Será mantida com status CONSUMIDO.');
-          } else if (coilCounts[k].hasConsumed) {
-            r.warnings.push('Bobina duplicada na planilha. Será desconsiderada a favor do registro CONSUMIDO.');
-          } else {
-            r.warnings.push('Bobina duplicada na planilha. Apenas 1 registro será importado.');
-          }
-        }
-      }
-    });
-
     setParsedRows(processed);
-  }, [inputText, delimiter, hasHeaders, suppliers, storageBays]);
+  }, [inputText, delimiter, hasHeaders, existingCoilsKeyMap, updateExistingBayDetails]);
 
-  // Helper function to deduplicate import rows favoring 'consumed' status and richest data
-  const deduplicateImportRows = (rows: ParsedRow[]): { deduplicated: ParsedRow[]; duplicatesMergedCount: number } => {
-    const mapByCoil = new Map<string, ParsedRow>();
-    let duplicatesMergedCount = 0;
+  // Helper stats for Smart Import
+  const stats = useMemo(() => {
+    const total = parsedRows.length;
+    const newCount = parsedRows.filter(r => r.action === 'NEW').length;
+    const updateConsumedCount = parsedRows.filter(r => r.action === 'UPDATE_CONSUMED').length;
+    const updateDataCount = parsedRows.filter(r => r.action === 'UPDATE_DATA').length;
+    const unchangedCount = parsedRows.filter(r => r.action === 'UNCHANGED').length;
+    const errorCount = parsedRows.filter(r => r.action === 'ERROR').length;
+    const validCount = total - errorCount;
+    const writesCount = newCount + updateConsumedCount + updateDataCount;
 
-    rows.forEach(row => {
-      const key = row.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
-      if (!key) {
-        mapByCoil.set(`no_code_${row.index}`, row);
-        return;
-      }
-
-      if (!mapByCoil.has(key)) {
-        mapByCoil.set(key, row);
-      } else {
-        duplicatesMergedCount++;
-        const existing = mapByCoil.get(key)!;
-        // Prioritize 'consumed' status
-        if (row.status === 'consumed' && existing.status !== 'consumed') {
-          mapByCoil.set(key, row);
-        } else if (row.status === existing.status) {
-          // If both have same status, pick the one with more consumption details or operator
-          if ((!existing.lineName && row.lineName) || (!existing.operator && row.operator)) {
-            mapByCoil.set(key, row);
-          }
-        }
-      }
-    });
+    const totalWeight = parsedRows.filter(r => r.action !== 'ERROR').reduce((sum, r) => sum + r.weight, 0);
 
     return {
-      deduplicated: Array.from(mapByCoil.values()),
-      duplicatesMergedCount
+      total,
+      newCount,
+      updateConsumedCount,
+      updateDataCount,
+      totalUpdatesCount: updateConsumedCount + updateDataCount,
+      unchangedCount,
+      errorCount,
+      validCount,
+      writesCount,
+      totalWeight
     };
-  };
+  }, [parsedRows]);
+
+  // Filtered rows for the preview table
+  const displayedRows = useMemo(() => {
+    if (previewFilter === 'ALL') return parsedRows;
+    if (previewFilter === 'NEW') return parsedRows.filter(r => r.action === 'NEW');
+    if (previewFilter === 'UPDATE') return parsedRows.filter(r => r.action === 'UPDATE_CONSUMED' || r.action === 'UPDATE_DATA');
+    if (previewFilter === 'UNCHANGED') return parsedRows.filter(r => r.action === 'UNCHANGED');
+    if (previewFilter === 'ERROR') return parsedRows.filter(r => r.action === 'ERROR');
+    return parsedRows;
+  }, [parsedRows, previewFilter]);
 
   // Handle spreadsheet file upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -504,111 +741,31 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
     reader.readAsText(file, 'UTF-8');
   };
 
-  // Helper stats
-  const stats = useMemo(() => {
-    const validRows = parsedRows.filter(r => r.errors.length === 0);
-    const invalidRows = parsedRows.filter(r => r.errors.length > 0);
-    
-    const { deduplicated: deduplicatedValidRows, duplicatesMergedCount } = deduplicateImportRows(validRows);
-
-    // Group unique NF batches to be created from deduplicated set
-    const uniqueBatches = new Set(deduplicatedValidRows.map(r => `${r.nfNumber}-${r.supplierName.toLowerCase()}-${r.date}`));
-    const totalWeight = validRows.reduce((sum, r) => sum + r.weight, 0);
-
-    // Dynamic unique suppliers and bays to be newly added
-    const uniqueNewSuppliers = new Set(
-      validRows
-        .filter(r => !suppliers.some(s => s.name.toLowerCase().trim() === r.supplierName.toLowerCase().trim()))
-        .map(r => r.supplierName)
-    );
-
-    const uniqueNewBays = new Set(
-      validRows
-        .filter(r => !storageBays.some(b => b.name.toUpperCase().trim() === r.storageBayName.toUpperCase().trim()))
-        .map(r => r.storageBayName)
-    );
-
-    return {
-      validCount: validRows.length,
-      invalidCount: invalidRows.length,
-      uniqueCoilsCount: deduplicatedValidRows.length,
-      sheetDuplicatesCount: duplicatesMergedCount,
-      batchesCount: uniqueBatches.size,
-      totalWeight,
-      newSuppliersCount: uniqueNewSuppliers.size,
-      newSuppliersList: Array.from(uniqueNewSuppliers),
-      newBaysCount: uniqueNewBays.size,
-      newBaysList: Array.from(uniqueNewBays),
-    };
-  }, [parsedRows, suppliers, storageBays]);
-
-  // Bulk execution flow
+  // Execution flow (Smart Sync - writes ONLY new and updated coils)
   const handleImportExec = async () => {
-    const validRows = parsedRows.filter(r => r.errors.length === 0);
-    if (validRows.length === 0) return;
+    const rowsToExecute = parsedRows.filter(r => r.action === 'NEW' || r.action === 'UPDATE_CONSUMED' || r.action === 'UPDATE_DATA');
+    if (rowsToExecute.length === 0) {
+      alert('Não há bobinas novas ou com alterações para gravar. Todas as bobinas são idênticas às já salvas!');
+      return;
+    }
 
     setIsProcessing(true);
     setProgressPercent(5);
     
     try {
-      // 0. Deduplicate rows within the spreadsheet prioritizing 'consumed'
-      const { deduplicated: sheetRowsToImport, duplicatesMergedCount } = deduplicateImportRows(validRows);
-
-      setStepStatus('Consultando banco de dados para checar duplicidades de bobinas...');
+      setStepStatus('Consultando fornecedores e baias...');
       setProgressPercent(15);
-
-      // Fetch all existing coils from Firestore
-      const existingCoilsSnap = await getDocs(collection(db, 'wire_coils'));
-      const existingCoilsMap = new Map<string, { id: string; status: string }>();
-      existingCoilsSnap.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.coilNumber) {
-          existingCoilsMap.set(data.coilNumber.toLowerCase().trim().replace(/\s+/g, ' '), {
-            id: docSnap.id,
-            status: data.status || 'received'
-          });
-        }
-      });
-
-      // Classify incoming coils:
-      // 1. rowsToCreate: Coil code not found in DB
-      // 2. rowsToUpdateToConsumed: Coil code found in DB with status 'received'/'in_stock', but incoming import has 'consumed'
-      // 3. skippedDuplicatesCount: Coil already in DB as 'consumed' or both DB and incoming are 'received'
-      const rowsToCreate: ParsedRow[] = [];
-      const rowsToUpdateToConsumed: { existingId: string; coil: ParsedRow }[] = [];
-      let skippedDuplicatesCount = 0;
-
-      sheetRowsToImport.forEach(row => {
-        const key = row.coilNumber.toLowerCase().trim().replace(/\s+/g, ' ');
-        const existing = existingCoilsMap.get(key);
-
-        if (!existing) {
-          rowsToCreate.push(row);
-        } else {
-          if (existing.status !== 'consumed' && row.status === 'consumed') {
-            rowsToUpdateToConsumed.push({ existingId: existing.id, coil: row });
-          } else {
-            skippedDuplicatesCount++;
-          }
-        }
-      });
-
-      setStepStatus('Verificando fornecedores e criando itens não cadastrados...');
-      setProgressPercent(25);
 
       const liveSuppliers = [...suppliers];
       const liveBays = [...storageBays];
-
-      let suppliersAddedCount = 0;
-      let baysAddedCount = 0;
 
       const supplierNameToIdMap: { [name: string]: string } = {};
       liveSuppliers.forEach(s => {
         supplierNameToIdMap[s.name.toLowerCase().trim()] = s.id;
       });
 
-      const allActiveRows = [...rowsToCreate, ...rowsToUpdateToConsumed.map(r => r.coil)];
-      const uniqueSuppliersToCreate = Array.from(new Set(allActiveRows.map(r => r.supplierName.trim()))) as string[];
+      const uniqueSuppliersToCreate = Array.from(new Set(rowsToExecute.map(r => r.supplierName.trim()))) as string[];
+      let suppliersAddedCount = 0;
       for (const sName of uniqueSuppliersToCreate) {
         const key = sName.toLowerCase().trim();
         if (!supplierNameToIdMap[key]) {
@@ -621,15 +778,16 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         }
       }
 
-      setStepStatus('Verificando baias de estoque e cadastrando ausentes...');
-      setProgressPercent(35);
+      setStepStatus('Verificando baias de armazenamento...');
+      setProgressPercent(25);
 
       const bayNameToIdMap: { [name: string]: string } = {};
       liveBays.forEach(b => {
         bayNameToIdMap[b.name.toUpperCase().trim()] = b.id;
       });
 
-      const uniqueBaysToCreate = Array.from(new Set(allActiveRows.map(r => r.storageBayName.trim()))) as string[];
+      const uniqueBaysToCreate = Array.from(new Set(rowsToExecute.map(r => r.storageBayName.trim()))) as string[];
+      let baysAddedCount = 0;
       for (const bName of uniqueBaysToCreate) {
         const key = bName.toUpperCase().trim();
         if (!bayNameToIdMap[key]) {
@@ -642,145 +800,181 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
         }
       }
 
-      // Update existing coils in DB to 'consumed' if needed
+      // 1. Process Updates (Only for changed coils)
+      const updateRows = rowsToExecute.filter(r => (r.action === 'UPDATE_CONSUMED' || r.action === 'UPDATE_DATA') && r.existingDbId);
       let updatedToConsumedCount = 0;
-      if (rowsToUpdateToConsumed.length > 0) {
-        setStepStatus(`Atualizando ${rowsToUpdateToConsumed.length} bobinas do banco para o status CONSUMIDO...`);
-        setProgressPercent(45);
+      let updatedDataCount = 0;
 
-        await Promise.all(
-          rowsToUpdateToConsumed.map(async ({ existingId, coil }) => {
-            const targetConsumedDate = coil.consumedDate || coil.date;
-            await updateDoc(doc(db, 'wire_coils', existingId), {
-              status: 'consumed',
-              consumedAt: `${targetConsumedDate}T16:00:00Z`,
-              consumedBy: coil.operator || 'Importação Histórica',
-              consumedByGroup: coil.consumedByGroup || null,
-              lineName: coil.lineName || null,
-              consumedShift: coil.shift || null,
-              consumedIn: coil.equipment || null,
-              updatedAt: serverTimestamp()
-            });
-            updatedToConsumedCount++;
-          })
-        );
-      }
+      if (updateRows.length > 0) {
+        setStepStatus(`Atualizando ${updateRows.length} bobinas alteradas no Firestore...`);
+        setProgressPercent(35);
 
-      // Group NEW rows into Batches to create
-      setStepStatus('Agrupando bobinas novas e gerando lotes de carga (NFs)...');
-      setProgressPercent(55);
+        // Process in chunks of 50
+        const chunkSize = 50;
+        for (let i = 0; i < updateRows.length; i += chunkSize) {
+          const chunk = updateRows.slice(i, i + chunkSize);
+          await Promise.all(
+            chunk.map(async (row) => {
+              if (!row.existingDbId) return;
+              const targetConsumedDate = row.consumedDate || row.date;
+              const isConsumed = row.status === 'consumed';
+              const bayId = bayNameToIdMap[row.storageBayName.toUpperCase().trim()] || '';
 
-      interface BatchGroup {
-        nfNumber: string;
-        supplierName: string;
-        date: string;
-        responsibleName: string;
-        storageBayName: string;
-        coils: ParsedRow[];
-      }
-
-      const groups: { [key: string]: BatchGroup } = {};
-      rowsToCreate.forEach(row => {
-        const groupKey = `${row.nfNumber}-${row.supplierName.toLowerCase()}-${row.date}`;
-        if (!groups[groupKey]) {
-          groups[groupKey] = {
-            nfNumber: row.nfNumber,
-            supplierName: row.supplierName,
-            date: row.date,
-            responsibleName: row.operator || 'Sistema',
-            storageBayName: row.storageBayName,
-            coils: []
-          };
+              if (row.action === 'UPDATE_CONSUMED') {
+                await updateDoc(doc(db, 'wire_coils', row.existingDbId), {
+                  status: 'consumed',
+                  consumedAt: `${targetConsumedDate}T16:00:00Z`,
+                  consumedBy: row.operator || 'Importação Histórica',
+                  consumedByGroup: row.consumedByGroup || null,
+                  lineName: row.lineName || null,
+                  consumedShift: row.shift || null,
+                  consumedIn: row.equipment || null,
+                  storageBayName: row.storageBayName,
+                  storageBayId: bayId,
+                  updatedAt: serverTimestamp()
+                });
+                updatedToConsumedCount++;
+              } else if (row.action === 'UPDATE_DATA') {
+                await updateDoc(doc(db, 'wire_coils', row.existingDbId), {
+                  status: row.status,
+                  storageBayName: row.storageBayName,
+                  storageBayId: bayId,
+                  weight: row.weight,
+                  diameter: row.diameter,
+                  updatedAt: serverTimestamp()
+                });
+                updatedDataCount++;
+              }
+            })
+          );
+          const chunkProgress = 35 + Math.floor(((i + chunk.length) / updateRows.length) * 25);
+          setProgressPercent(chunkProgress);
         }
-        groups[groupKey].coils.push(row);
-      });
+      }
 
-      const totalGroups = Object.keys(groups).length;
-      let currentStepNum = 0;
+      // 2. Process NEW Coils (Group into Batches by NF)
+      const newRows = rowsToExecute.filter(r => r.action === 'NEW');
       let batchesAddedCount = 0;
       let coilsAddedCount = 0;
 
-      for (const groupKey of Object.keys(groups)) {
-        currentStepNum++;
-        const group = groups[groupKey];
-        setStepStatus(`Importando lote ${currentStepNum} de ${totalGroups || 1} (NF: ${group.nfNumber})...`);
+      if (newRows.length > 0) {
+        setStepStatus(`Agrupando ${newRows.length} novas bobinas em lotes (NFs)...`);
+        setProgressPercent(60);
 
-        const supplierId = supplierNameToIdMap[group.supplierName.toLowerCase().trim()];
-        const storageBayId = bayNameToIdMap[group.storageBayName.toUpperCase().trim()];
-        const batchTotalWeight = group.coils.reduce((sum, c) => sum + c.weight, 0);
+        interface BatchGroup {
+          nfNumber: string;
+          supplierName: string;
+          date: string;
+          responsibleName: string;
+          storageBayName: string;
+          coils: ParsedRow[];
+        }
 
-        const batchRef = await addDoc(collection(db, 'wire_batches'), {
-          nfNumber: group.nfNumber,
-          supplierId,
-          supplierName: group.supplierName,
-          date: group.date,
-          responsibleId: profile?.uid || 'imported',
-          responsibleName: group.responsibleName,
-          totalWeight: batchTotalWeight,
-          coilsCount: group.coils.length,
-          status: 'closed',
-          storageBayId: storageBayId || '',
-          storageBayName: group.storageBayName,
-          createdAt: serverTimestamp()
+        const groups: { [key: string]: BatchGroup } = {};
+        newRows.forEach(row => {
+          const groupKey = `${row.nfNumber}-${row.supplierName.toLowerCase()}-${row.date}`;
+          if (!groups[groupKey]) {
+            groups[groupKey] = {
+              nfNumber: row.nfNumber,
+              supplierName: row.supplierName,
+              date: row.date,
+              responsibleName: row.operator || 'Sistema',
+              storageBayName: row.storageBayName,
+              coils: []
+            };
+          }
+          groups[groupKey].coils.push(row);
         });
 
-        batchesAddedCount++;
+        const totalGroups = Object.keys(groups).length;
+        let currentStepNum = 0;
 
-        await Promise.all(
-          group.coils.map(async coil => {
-            const coilStorageBayId = bayNameToIdMap[coil.storageBayName.toUpperCase().trim()];
-            const targetConsumedDate = coil.consumedDate || coil.date;
-            const isConsumed = coil.status === 'consumed';
+        for (const groupKey of Object.keys(groups)) {
+          currentStepNum++;
+          const group = groups[groupKey];
+          setStepStatus(`Criando lote ${currentStepNum} de ${totalGroups || 1} (NF: ${group.nfNumber})...`);
 
-            await addDoc(collection(db, 'wire_coils'), {
-              coilNumber: coil.coilNumber,
-              batchId: batchRef.id,
-              supplierId,
-              diameter: coil.diameter,
-              weight: coil.weight,
-              status: coil.status,
-              storageBayId: coilStorageBayId || '',
-              storageBayName: coil.storageBayName,
-              receivedAt: `${coil.date}T12:00:00Z`,
-              consumedAt: isConsumed ? `${targetConsumedDate}T16:00:00Z` : null,
-              consumedBy: isConsumed ? (coil.operator || 'Importação Histórica') : null,
-              consumedByGroup: isConsumed ? (coil.consumedByGroup || null) : null,
-              lineName: isConsumed ? (coil.lineName || null) : null,
-              consumedShift: isConsumed ? (coil.shift || null) : null,
-              consumedIn: isConsumed ? (coil.equipment || null) : null
-            });
-            coilsAddedCount++;
-          })
-        );
+          const supplierId = supplierNameToIdMap[group.supplierName.toLowerCase().trim()] || '';
+          const storageBayId = bayNameToIdMap[group.storageBayName.toUpperCase().trim()] || '';
+          const batchTotalWeight = group.coils.reduce((sum, c) => sum + c.weight, 0);
 
-        const deltaProgress = 55 + Math.floor((currentStepNum / (totalGroups || 1)) * 40);
-        setProgressPercent(deltaProgress);
+          const batchRef = await addDoc(collection(db, 'wire_batches'), {
+            nfNumber: group.nfNumber,
+            supplierId,
+            supplierName: group.supplierName,
+            date: group.date,
+            responsibleId: profile?.uid || 'imported',
+            responsibleName: group.responsibleName,
+            totalWeight: batchTotalWeight,
+            coilsCount: group.coils.length,
+            status: 'closed',
+            storageBayId: storageBayId,
+            storageBayName: group.storageBayName,
+            createdAt: serverTimestamp()
+          });
+
+          batchesAddedCount++;
+
+          await Promise.all(
+            group.coils.map(async coil => {
+              const coilStorageBayId = bayNameToIdMap[coil.storageBayName.toUpperCase().trim()] || '';
+              const targetConsumedDate = coil.consumedDate || coil.date;
+              const isConsumed = coil.status === 'consumed';
+
+              await addDoc(collection(db, 'wire_coils'), {
+                coilNumber: coil.coilNumber,
+                batchId: batchRef.id,
+                supplierId,
+                diameter: coil.diameter,
+                weight: coil.weight,
+                status: coil.status,
+                storageBayId: coilStorageBayId,
+                storageBayName: coil.storageBayName,
+                receivedAt: `${coil.date}T12:00:00Z`,
+                consumedAt: isConsumed ? `${targetConsumedDate}T16:00:00Z` : null,
+                consumedBy: isConsumed ? (coil.operator || 'Importação Histórica') : null,
+                consumedByGroup: isConsumed ? (coil.consumedByGroup || null) : null,
+                lineName: isConsumed ? (coil.lineName || null) : null,
+                consumedShift: isConsumed ? (coil.shift || null) : null,
+                consumedIn: isConsumed ? (coil.equipment || null) : null
+              });
+              coilsAddedCount++;
+            })
+          );
+
+          const deltaProgress = 60 + Math.floor((currentStepNum / (totalGroups || 1)) * 38);
+          setProgressPercent(deltaProgress);
+        }
       }
 
-      setStepStatus('Sincronização concluída com sucesso!');
+      setStepStatus('Sincronização inteligente concluída com sucesso!');
       setProgressPercent(100);
+
       setImportSummary({
         batchesCreated: batchesAddedCount,
         coilsCreated: coilsAddedCount,
         coilsUpdatedToConsumed: updatedToConsumedCount,
-        coilsSkippedDuplicates: skippedDuplicatesCount,
-        duplicatesInSheetMerged: duplicatesMergedCount,
+        coilsUpdatedData: updatedDataCount,
+        coilsSkippedUnchanged: stats.unchangedCount,
+        duplicatesInSheetMerged: 0,
         suppliersCreated: suppliersAddedCount,
         baysCreated: baysAddedCount,
-        totalWeight: validRows.reduce((acc, r) => acc + r.weight, 0)
+        totalWeight: rowsToExecute.reduce((acc, r) => acc + r.weight, 0),
+        quotaSavingsCount: stats.unchangedCount
       });
+
       setIsSuccess(true);
       setInputText('');
     } catch (err) {
       console.error('Error during bulk load:', err);
-      alert('Houve um erro técnico de permissões ao salvar os dados. Verifique a internet e tente novamente.');
+      alert('Houve um erro de comunicação ou permissão ao salvar no Firestore. Verifique a internet e tente novamente.');
     } finally {
       setIsProcessing(false);
     }
   };
 
   const clearAll = () => {
-    if (confirm('Deseja limpar todos os dados digitados?')) {
+    if (confirm('Deseja limpar o texto colado e os dados pré-processados?')) {
       setInputText('');
       setParsedRows([]);
     }
@@ -788,120 +982,319 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
 
   return (
     <div className="space-y-8 pb-12" id="bulk-import-container">
-      {/* Visual Instruction Header with zero tech larp details */}
-      <div className="bg-slate-50 border border-slate-200/60 p-6 rounded-[2rem] flex flex-col xl:flex-row gap-6 xl:items-center">
-        <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 shadow-sm">
-          <FileSpreadsheet className="w-6 h-6" />
+      
+      {/* ------------------------------------------------------------- */}
+      {/* TOP SECTION: SMART EXPORT TO EXCEL / MODEL GENERATOR          */}
+      {/* ------------------------------------------------------------- */}
+      <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-6 sm:p-8 rounded-[2.5rem] shadow-xl border border-slate-700/50 space-y-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0 shadow-inner">
+              <Download className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-black tracking-tight text-white">
+                  Exportar Estoque & Histórico para o Excel
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Modelo Oficial
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 font-medium max-w-3xl leading-relaxed">
+                Exporte as bobinas em estoque com filtros personalizados para o Excel, altere o status para <strong>Consumido</strong> ou adicione novas bobinas na planilha, e reimporte para atualizar apenas as modificações sem reenviar tudo.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={() => setShowExportSection(prev => !prev)}
+              className="flex items-center gap-2 px-5 py-3 bg-white/10 hover:bg-white/15 border border-white/20 text-white rounded-2xl text-xs font-bold transition-all active:scale-95 cursor-pointer backdrop-blur-sm shadow-md"
+            >
+              <Filter className="w-4 h-4 text-emerald-400" />
+              <span>{showExportSection ? 'Ocultar Filtros de Exportação' : 'Filtrar & Exportar para Excel'}</span>
+              {showExportSection ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
-        <div className="flex-1">
-          <h2 className="text-lg font-black text-slate-900 leading-tight">Painel de Carga em Massa (Exclusivo Administrador)</h2>
-          <p className="text-xs text-slate-500 font-semibold mt-1 leading-relaxed">
-            Importe folhas inteiras de bobinas de arame para nossa base de dados. Aceita o formato padrão de planilhas. Basta selecionar todas as linhas em sua planilha, copiar, colar no bloco de texto abaixo e clicar em Processar.
-          </p>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-3 shrink-0">
-          <button
-            onClick={downloadTemplateCSV}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 hover:text-slate-900 rounded-xl text-xs font-bold shadow-sm transition-all active:scale-95 cursor-pointer"
-            title="Download de arquivo CSV configurado com ponto-e-vírgula excelente para Microsoft Excel em Português"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-            <span>Modelo Excel (.csv)</span>
-          </button>
-          <button
-            onClick={downloadTemplateTSV}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 hover:text-slate-900 rounded-xl text-xs font-bold shadow-sm transition-all active:scale-95 cursor-pointer"
-            title="Download de arquivo TSV com tabulações excelente para copiar e colar no Google Sheets"
-          >
-            <FileText className="w-4 h-4 text-sky-600" />
-            <span>Modelo Sheets (.txt)</span>
-          </button>
-        </div>
+
+        {/* Expandable Filter & Export Controls */}
+        <AnimatePresence>
+          {showExportSection && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="pt-4 border-t border-slate-700/60 space-y-6 overflow-hidden"
+            >
+              {/* Filter controls row */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                
+                {/* Status Filter */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Status das Bobinas
+                  </label>
+                  <select
+                    value={exportFilterStatus}
+                    onChange={(e: any) => setExportFilterStatus(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-bold text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="in_stock">🟢 Apenas em Estoque (Disponíveis)</option>
+                    <option value="consumed">⚪ Apenas Consumidas</option>
+                    <option value="all">📦 Todas as Bobinas ({coils.length})</option>
+                  </select>
+                </div>
+
+                {/* Supplier Filter */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Fornecedor
+                  </label>
+                  <select
+                    value={exportFilterSupplier}
+                    onChange={(e) => setExportFilterSupplier(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-bold text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="all">Todos os Fornecedores</option>
+                    {suppliers.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Bay Filter */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Baia / Local
+                  </label>
+                  <select
+                    value={exportFilterBay}
+                    onChange={(e) => setExportFilterBay(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-bold text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="all">Todas as Baias</option>
+                    {storageBays.map(b => (
+                      <option key={b.id} value={b.name}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Diameter Filter */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Bitola (mm)
+                  </label>
+                  <select
+                    value={exportFilterDiameter}
+                    onChange={(e) => setExportFilterDiameter(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-xs font-bold text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="all">Todas as Bitolas</option>
+                    {distinctDiameters.map(d => (
+                      <option key={d} value={String(d)}>{d.toFixed(2)} mm</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Search Text */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Busca Rápida
+                  </label>
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Código bobina ou NF..."
+                      value={exportSearchTerm}
+                      onChange={(e) => setExportSearchTerm(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-2.5 text-xs font-bold text-white outline-none focus:ring-2 focus:ring-emerald-500 placeholder:text-slate-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary and Action buttons */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-slate-800/80 rounded-2xl border border-slate-700/80">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-3 w-3 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </span>
+                  <div className="text-xs">
+                    <span className="font-black text-white">{filteredExportCoils.length}</span> bobinas filtradas correspondentes •{' '}
+                    <span className="font-bold text-emerald-400">
+                      {filteredExportCoils.reduce((sum, c) => sum + (c.weight || 0), 0).toLocaleString('pt-BR')} kg
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={handleExportCSV}
+                    disabled={filteredExportCoils.length === 0}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    title="Baixar arquivo CSV compatível com Excel em Português"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Baixar Excel (.csv)</span>
+                  </button>
+
+                  <button
+                    onClick={handleExportTSV}
+                    disabled={filteredExportCoils.length === 0}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow-lg transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    title="Baixar arquivo de texto com tabulações para Google Sheets"
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>Baixar Sheets (.txt)</span>
+                  </button>
+
+                  <button
+                    onClick={handleCopyRowsToClipboard}
+                    disabled={filteredExportCoils.length === 0}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    title="Copiar todas as linhas formatadas para colar no Excel ou no campo de importação"
+                  >
+                    {copiedExportSuccess ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span className="text-emerald-300">Copiado com Sucesso!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4 text-slate-300" />
+                        <span>Copiar Linhas</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
+      {/* ------------------------------------------------------------- */}
+      {/* SUCCESS SCREEN AFTER IMPORT                                    */}
+      {/* ------------------------------------------------------------- */}
       {isSuccess ? (
         <motion.div 
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="bg-white border border-slate-200 p-8 rounded-[2.5rem] shadow-xl max-w-2xl mx-auto text-center space-y-6"
+          className="bg-white border border-slate-200 p-8 sm:p-12 rounded-[2.5rem] shadow-xl max-w-3xl mx-auto text-center space-y-6"
         >
           <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-500 mx-auto shadow-inner">
             <CheckCircle2 className="w-10 h-10 animate-bounce" />
           </div>
           <div className="space-y-2">
-            <h3 className="text-2xl font-black text-slate-900 tracking-tight">Carga Realizada com Sucesso!</h3>
-            <p className="text-sm font-semibold text-slate-500">Toda a base de dados em massa foi processada e salva no Firestore</p>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-5 bg-slate-50 rounded-3xl border border-slate-100">
-            <div className="text-center">
-              <span className="block text-2xl font-black text-slate-900">{importSummary.coilsCreated}</span>
-              <span className="text-[10px] uppercase font-black text-slate-400">Novas Bobinas</span>
-            </div>
-            <div className="text-center">
-              <span className="block text-2xl font-black text-emerald-600">{importSummary.coilsUpdatedToConsumed}</span>
-              <span className="text-[10px] uppercase font-black text-slate-400">Atu. Consumidas</span>
-            </div>
-            <div className="text-center">
-              <span className="block text-2xl font-black text-amber-600">{importSummary.coilsSkippedDuplicates + importSummary.duplicatesInSheetMerged}</span>
-              <span className="text-[10px] uppercase font-black text-slate-400">Duplicatas Tratadas</span>
-            </div>
-            <div className="text-center">
-              <span className="block text-2xl font-black text-slate-900">{importSummary.batchesCreated}</span>
-              <span className="text-[10px] uppercase font-black text-slate-400">Lotes (NFs)</span>
-            </div>
-          </div>
-          
-          <div className="text-center py-1">
-            <p className="text-xs font-semibold text-slate-400">
-              Peso total integrado: <strong className="text-slate-800 font-bold ml-1">{importSummary.totalWeight.toLocaleString('pt-BR')} kg</strong>
+            <h3 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Sincronização Inteligente Concluída!</h3>
+            <p className="text-sm font-semibold text-slate-500">
+              O banco de dados foi atualizado com economia de cotas do Firebase.
             </p>
           </div>
 
-          <button
-            onClick={() => setIsSuccess(false)}
-            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md transition-all active:scale-95 cursor-pointer"
-          >
-            Fazer Nova Importação
-          </button>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-6 bg-slate-50 rounded-3xl border border-slate-100">
+            <div className="text-center">
+              <span className="block text-2xl sm:text-3xl font-black text-slate-900">{importSummary.coilsCreated}</span>
+              <span className="text-[10px] uppercase font-black text-slate-400">Novas Bobinas</span>
+            </div>
+            <div className="text-center">
+              <span className="block text-2xl sm:text-3xl font-black text-emerald-600">{importSummary.coilsUpdatedToConsumed}</span>
+              <span className="text-[10px] uppercase font-black text-slate-400">Atu. Consumidas</span>
+            </div>
+            <div className="text-center">
+              <span className="block text-2xl sm:text-3xl font-black text-blue-600">{importSummary.coilsUpdatedData}</span>
+              <span className="text-[10px] uppercase font-black text-slate-400">Atu. Dados/Baias</span>
+            </div>
+            <div className="text-center">
+              <span className="block text-2xl sm:text-3xl font-black text-amber-500">{importSummary.quotaSavingsCount}</span>
+              <span className="text-[10px] uppercase font-black text-slate-400">Cota Economizada</span>
+            </div>
+          </div>
+          
+          <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-2xl flex items-center justify-center gap-3 text-xs font-semibold text-emerald-800">
+            <Zap className="w-4 h-4 text-amber-500 shrink-0" />
+            <span>
+              <strong>{importSummary.quotaSavingsCount} bobinas inalteradas</strong> foram puladas sem gerar nenhuma gravação no Firebase.
+            </span>
+          </div>
+
+          <div className="pt-2">
+            <button
+              onClick={() => setIsSuccess(false)}
+              className="px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md transition-all active:scale-95 cursor-pointer"
+            >
+              Fazer Nova Importação
+            </button>
+          </div>
         </motion.div>
       ) : (
+        /* ------------------------------------------------------------- */
+        /* MAIN IMPORT FORM & REAL-TIME QUOTA SAVER PANEL                */
+        /* ------------------------------------------------------------- */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
           {/* Main pasted text inputs */}
           <div className="lg:col-span-7 space-y-6">
             <div className="bg-white border border-slate-200/80 p-6 lg:p-8 rounded-[2.5rem] shadow-sm space-y-6">
               
-              {/* Toolbar & selectors */}
+              {/* Header with templates buttons */}
               <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
                 <div className="flex items-center gap-2">
                   <Clipboard className="w-5 h-5 text-emerald-600 animate-pulse" />
-                  <span className="text-sm font-black text-slate-900 uppercase tracking-tight">Conteúdo da Carga</span>
+                  <span className="text-sm font-black text-slate-900 uppercase tracking-tight">Colar Planilha para Importação</span>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Divisor:</span>
-                    <select
-                      value={delimiter}
-                      onChange={(e: any) => setDelimiter(e.target.value)}
-                      className="bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold p-1 outline-none focus:ring-1 focus:ring-emerald-500"
-                    >
-                      <option value="auto">Auto-detectar</option>
-                      <option value="tsv">Tabulações (Excel)</option>
-                      <option value="csv_semicolon">Ponto e Vírgula (;)</option>
-                      <option value="csv_comma">Vírgula (,)</option>
-                    </select>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={downloadTemplateCSV}
+                    className="flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-slate-200 transition-all"
+                    title="Baixar modelo em branco para Excel (.csv)"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Modelo Vazio</span>
+                  </button>
+                </div>
+              </div>
 
-                  <label className="flex items-center gap-1 cursor-pointer select-none">
+              {/* Toolbar: Delimiter & Headers */}
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Separador:</span>
+                  <select
+                    value={delimiter}
+                    onChange={(e: any) => setDelimiter(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg text-xs font-bold px-2 py-1 outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="auto">Auto-detectar</option>
+                    <option value="tsv">Tabulações (Excel/Sheets)</option>
+                    <option value="csv_semicolon">Ponto e Vírgula (;)</option>
+                    <option value="csv_comma">Vírgula (,)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
                     <input 
                       type="checkbox" 
                       checked={hasHeaders} 
                       onChange={(e) => setHasHeaders(e.target.checked)}
                       className="accent-emerald-600 rounded text-xs"
                     />
-                    <span className="text-[10px] font-black text-slate-500 uppercase">Contém Cabeçalho</span>
+                    <span className="text-[10px] font-black text-slate-600 uppercase">Contém Cabeçalho</span>
+                  </label>
+
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Atualiza baia e dados de bobinas já existentes se houver diferença">
+                    <input 
+                      type="checkbox" 
+                      checked={updateExistingBayDetails} 
+                      onChange={(e) => setUpdateExistingBayDetails(e.target.checked)}
+                      className="accent-emerald-600 rounded text-xs"
+                    />
+                    <span className="text-[10px] font-black text-slate-600 uppercase">Atualizar Baias/Dados</span>
                   </label>
                 </div>
               </div>
@@ -911,33 +1304,33 @@ export const BulkImportTab: React.FC<BulkImportTabProps> = ({ suppliers, storage
                 <textarea
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  placeholder={`Cole as linhas de sua planilha Excel ou Google Sheets aqui...
+                  placeholder={`Cole as linhas copiadas de sua planilha Excel ou Google Sheets aqui...
 Exemplo:
 ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornecedor	Status	Código da Bobina	Bitola (mm)	Peso (kg)	Nota Fiscal	Local Baia
-2474	Alessandro Sousa Santos	04/12/2025	10/12/2025	Linha 01	Turma A	Turno 1	Desbobinador 02	Morlan	Consumido	0002273002394374 M837804	2,18	1060	773778-1	1 C2
-2484	Carlos Oliveira	04/12/2025	12/12/2025	Linha 02	Turma B	Turno 2	Desbobinador 01	Belgo Bekaert	Consumido	0002280020245484	2,30	1004	773776-1	1 E1`}
-                  rows={14}
+1	Alessandro Santos	04/12/2025	10/12/2025	Linha 01	Turma A	Turno 1	Desbobinador 02	Morlan	Consumido	0002273002394374 M837804	2,18	1060	773778-1	1 C2
+2	Carlos Oliveira	04/12/2025		Linha 02		Turno 2		Belgo Bekaert	Disponível	0002280020245484	2,30	1004	773776-1	1 E1`}
+                  rows={13}
                   className="w-full p-4 bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 rounded-3xl outline-none text-[11px] font-mono leading-relaxed focus:ring-2 focus:ring-emerald-500 shadow-inner transition-all resize-y"
                   disabled={isProcessing}
                 />
               </div>
 
-              {/* File drop zone & helper actions */}
+              {/* File upload & clean actions */}
               <div className="flex flex-col sm:flex-row items-center gap-4 justify-between border-t border-slate-100 pt-4">
-                <div className="relative">
+                <div>
                   <input
                     type="file"
                     accept=".csv,.tsv,.txt"
                     onChange={handleFileUpload}
-                    id="csv-file-upload"
+                    id="csv-file-upload-input"
                     className="hidden"
                     disabled={isProcessing}
                   />
                   <label
-                    htmlFor="csv-file-upload"
-                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer shadow-sm transition-all"
+                    htmlFor="csv-file-upload-input"
+                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer shadow-sm transition-all"
                   >
-                    <UploadCloud className="w-4 h-4 text-slate-500" /> Upload de Arquivo
+                    <UploadCloud className="w-4 h-4 text-slate-500" /> Upload de Arquivo (.csv / .txt)
                   </label>
                 </div>
 
@@ -945,9 +1338,9 @@ ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornece
                   <button
                     onClick={clearAll}
                     disabled={isProcessing}
-                    className="flex items-center gap-2 text-rose-600 hover:bg-rose-50 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all disabled:opacity-50"
+                    className="flex items-center gap-2 text-rose-600 hover:bg-rose-50 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer"
                   >
-                    <Trash2 className="w-4 h-4" /> Limpar Tudo
+                    <Trash2 className="w-4 h-4" /> Limpar Bloco de Texto
                   </button>
                 )}
               </div>
@@ -956,17 +1349,20 @@ ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornece
             {/* Smart Column Mapping feedback if data parsed */}
             {parsedRows.length > 0 && (
               <div className="bg-white border border-slate-200 p-6 rounded-[2.5rem] shadow-sm space-y-4">
-                <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">Mapeamento Inteligente de Colunas</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">Mapeamento Inteligente de Colunas</span>
+                  <span className="text-[10px] text-slate-400 font-bold">Auto-detectado</span>
+                </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {[
                     { label: 'Nota Fiscal', key: 'nfNumber' },
                     { label: 'Fornecedor', key: 'supplier' },
+                    { label: 'Status', key: 'status' },
+                    { label: 'Código Bobina', key: 'coilNumber' },
                     { label: 'Bitola', key: 'diameter' },
                     { label: 'Peso', key: 'weight' },
-                    { label: 'Código Bobina', key: 'coilNumber' },
-                    { label: 'Baia / Local', key: 'storageBay' },
                     { label: 'Data Consumo', key: 'consumedDate' },
-                    { label: 'Linha / Turma', key: 'lineName' },
+                    { label: 'Baia / Local', key: 'storageBay' },
                   ].map(m => {
                     const mappedIdx = colMapping[m.key];
                     const isMapped = mappedIdx !== -1;
@@ -984,78 +1380,73 @@ ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornece
             )}
           </div>
 
-          {/* Verification & Actions bar */}
+          {/* Verification & Smart Diff Impact Summary */}
           <div className="lg:col-span-5 space-y-6">
             <div className="bg-white border border-slate-200 p-6 lg:p-8 rounded-[2.5rem] shadow-sm space-y-6">
-              <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
-                <Database className="w-5 h-5 text-emerald-600" /> Resumo do Pré-Processamento
-              </h3>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="text-xs font-bold text-slate-500">Bobinas na Planilha</span>
-                  <span className="text-sm font-black text-slate-800">{stats.validCount}</span>
-                </div>
-                {stats.sheetDuplicatesCount > 0 && (
-                  <div className="flex items-center justify-between p-3.5 bg-amber-50 rounded-2xl border border-amber-100">
-                    <span className="text-xs font-bold text-amber-700">Duplicatas Internas Na Planilha</span>
-                    <span className="text-sm font-black text-amber-700">-{stats.sheetDuplicatesCount}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between p-3.5 bg-emerald-50/60 rounded-2xl border border-emerald-100">
-                  <span className="text-xs font-bold text-emerald-800">Bobinas Únicas a Processar</span>
-                  <span className="text-sm font-black text-emerald-600">{stats.uniqueCoilsCount}</span>
-                </div>
-                {stats.invalidCount > 0 && (
-                  <div className="flex items-center justify-between p-3.5 bg-rose-50 rounded-2xl border border-rose-100">
-                    <span className="text-xs font-bold text-rose-500">Com Erros (Serão Ignoradas)</span>
-                    <span className="text-sm font-black text-rose-600">{stats.invalidCount}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="text-xs font-bold text-slate-500 font-semibold">Total de Lotes (NFs)</span>
-                  <span className="text-sm font-black text-slate-800">{stats.batchesCount}</span>
-                </div>
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="text-xs font-bold text-slate-500 font-semibold">Peso Total Estimado</span>
-                  <span className="text-sm font-black text-slate-800">{stats.totalWeight.toLocaleString('pt-BR')} kg</span>
-                </div>
+              
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+                  <Database className="w-5 h-5 text-emerald-600" /> Análise de Impacto no Firebase
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-emerald-100 text-emerald-800">
+                  Smart Sync
+                </span>
               </div>
 
-              {/* Duplicate Rule Info Box */}
-              <div className="p-4 bg-blue-50/60 rounded-2xl border border-blue-100 space-y-2">
-                <div className="flex items-center gap-1.5 text-blue-700 font-black text-[10px] uppercase tracking-wider">
-                  <ShieldCheck className="w-4 h-4 shrink-0 text-blue-600" />
-                  <span>Proteção Inteligente Anti-Duplicidade</span>
+              {/* Quota Saver Highlights */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span className="text-xs font-bold text-slate-600">Total na Planilha</span>
+                  <span className="text-sm font-black text-slate-800">{stats.total}</span>
                 </div>
-                <p className="text-[11px] leading-relaxed text-blue-900 font-medium">
-                  Se a mesma bobina constar no sistema e na importação com status diferentes, o sistema <strong>preservará e manterá o status CONSUMIDO</strong> de forma prioritária e automática.
+
+                <div className="flex items-center justify-between p-3.5 bg-emerald-50/70 rounded-2xl border border-emerald-100">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span className="text-xs font-bold text-emerald-900">Novas Bobinas a Cadastrar</span>
+                  </div>
+                  <span className="text-sm font-black text-emerald-700">+{stats.newCount}</span>
+                </div>
+
+                <div className="flex items-center justify-between p-3.5 bg-blue-50/70 rounded-2xl border border-blue-100">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                    <span className="text-xs font-bold text-blue-900">Atualizações de Status / Consumo</span>
+                  </div>
+                  <span className="text-sm font-black text-blue-700">~{stats.totalUpdatesCount}</span>
+                </div>
+
+                <div className="flex items-center justify-between p-3.5 bg-amber-50/70 rounded-2xl border border-amber-100">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="text-xs font-bold text-amber-900">Inalteradas (Economia de Cota)</span>
+                  </div>
+                  <span className="text-sm font-black text-amber-700">✓ {stats.unchangedCount}</span>
+                </div>
+
+                {stats.errorCount > 0 && (
+                  <div className="flex items-center justify-between p-3.5 bg-rose-50 rounded-2xl border border-rose-100">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                      <span className="text-xs font-bold text-rose-700">Com Erros (Serão Ignoradas)</span>
+                    </div>
+                    <span className="text-sm font-black text-rose-600">{stats.errorCount}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Quota-Saving Explanation Banner */}
+              <div className="p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl border border-emerald-200/80 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-emerald-800 font-black text-[10px] uppercase tracking-wider">
+                  <Zap className="w-4 h-4 text-emerald-600" />
+                  <span>Gravação Otimizada de Cotas Ativa</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-emerald-900 font-medium">
+                  Apenas <strong>{stats.writesCount} gravações</strong> serão executadas no Firestore. As <strong>{stats.unchangedCount} bobinas inalteradas</strong> serão puladas automaticamente com custo zero de cota.
                 </p>
               </div>
 
-              {/* Dynamic Auto-Registration warnings */}
-              {(stats.newSuppliersCount > 0 || stats.newBaysCount > 0) && (
-                <div className="p-4 bg-amber-50/50 rounded-2xl border border-amber-200/60 space-y-3">
-                  <div className="flex items-center gap-1.5 text-amber-700">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                    <span className="text-[10px] font-black uppercase tracking-wider">Ajustes Automáticos Encontrados</span>
-                  </div>
-
-                  <div className="text-[11px] leading-relaxed text-slate-600 space-y-1.5 font-semibold">
-                    {stats.newSuppliersCount > 0 && (
-                      <p>
-                        🔍 <strong>Fornecedores novos ({stats.newSuppliersCount}):</strong> {stats.newSuppliersList.join(', ')} serão criados automaticamente.
-                      </p>
-                    )}
-                    {stats.newBaysCount > 0 && (
-                      <p>
-                        📍 <strong>Novas baias de estoque ({stats.newBaysCount}):</strong> {stats.newBaysList.join(', ')} serão cadastradas automaticamente.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-
+              {/* Progress or Submit Action */}
               {isProcessing ? (
                 <div className="space-y-3 pt-2">
                   <div className="flex items-center justify-between">
@@ -1071,16 +1462,21 @@ ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornece
                 </div>
               ) : (
                 <button
-                  disabled={stats.validCount === 0}
+                  disabled={stats.writesCount === 0}
                   onClick={handleImportExec}
                   className={cn(
                     "w-full flex items-center justify-center gap-3 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all",
-                    stats.validCount === 0 
+                    stats.writesCount === 0 
                       ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
                       : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-100 hover:shadow-xl cursor-pointer active:scale-95"
                   )}
                 >
-                  <Play className="w-4 h-4" /> Importar {stats.validCount || ''} Bobinas Válidas
+                  <Play className="w-4 h-4" /> 
+                  <span>
+                    {stats.writesCount > 0 
+                      ? `Sincronizar ${stats.writesCount} Bobinas (${stats.newCount} novas, ${stats.totalUpdatesCount} atualizações)`
+                      : 'Nenhuma alteração a sincronizar'}
+                  </span>
                 </button>
               )}
             </div>
@@ -1088,16 +1484,45 @@ ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornece
         </div>
       )}
 
-      {/* Inline validator report / Grid preview */}
+      {/* ------------------------------------------------------------- */}
+      {/* INTERACTIVE DIFF PREVIEW TABLE                                */}
+      {/* ------------------------------------------------------------- */}
       {parsedRows.length > 0 && !isSuccess && (
         <div className="bg-white border border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden" id="bulk-preview-grid">
-          <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-            <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Visualização das Bobinas Reconhecidas ({parsedRows.length})</span>
-            <div className="flex items-center gap-3">
-              <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-1 rounded-md font-black">VALID: {stats.validCount}</span>
-              {stats.invalidCount > 0 && (
-                <span className="text-[10px] bg-rose-100 text-rose-700 px-2 py-1 rounded-md font-black">ERR: {stats.invalidCount}</span>
-              )}
+          
+          {/* Filter tabs above the table */}
+          <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">
+                Visualização do Pré-Processamento ({parsedRows.length} bobinas)
+              </span>
+              <p className="text-[11px] text-slate-500 font-medium">
+                Confira a ação que será executada em cada bobina antes de gravar no Firestore
+              </p>
+            </div>
+
+            {/* Filter buttons */}
+            <div className="flex flex-wrap items-center gap-1.5 bg-slate-200/60 p-1.5 rounded-xl">
+              {[
+                { key: 'ALL' as const, label: 'Todas', count: stats.total, color: 'text-slate-700' },
+                { key: 'NEW' as const, label: '🟢 Novas', count: stats.newCount, color: 'text-emerald-700' },
+                { key: 'UPDATE' as const, label: '🟡 Atualizações', count: stats.totalUpdatesCount, color: 'text-blue-700' },
+                { key: 'UNCHANGED' as const, label: '⚡ Inalteradas', count: stats.unchangedCount, color: 'text-amber-700' },
+                ...(stats.errorCount > 0 ? [{ key: 'ERROR' as const, label: '🔴 Erros', count: stats.errorCount, color: 'text-rose-700' }] : [])
+              ].map(f => (
+                <button
+                  key={f.key}
+                  onClick={() => setPreviewFilter(f.key)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer",
+                    previewFilter === f.key 
+                      ? "bg-white shadow-sm " + f.color
+                      : "text-slate-500 hover:text-slate-800"
+                  )}
+                >
+                  {f.label} ({f.count})
+                </button>
+              ))}
             </div>
           </div>
 
@@ -1106,34 +1531,76 @@ ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornece
               <thead>
                 <tr className="border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase bg-slate-50/50">
                   <th className="px-4 py-3.5">#</th>
-                  <th className="px-4 py-3.5">Status Banco</th>
+                  <th className="px-4 py-3.5">Ação Prevista (Firestore)</th>
+                  <th className="px-4 py-3.5">Status Planilha</th>
                   <th className="px-4 py-3.5">Nota Fiscal</th>
                   <th className="px-4 py-3.5">Código Bobina</th>
                   <th className="px-4 py-3.5">Fornecedor</th>
-                  <th className="px-4 py-3.5">Bitola (mm)</th>
-                  <th className="px-4 py-3.5">Peso (kg)</th>
+                  <th className="px-4 py-3.5">Bitola</th>
+                  <th className="px-4 py-3.5">Peso</th>
                   <th className="px-4 py-3.5">Linha / Turma</th>
                   <th className="px-4 py-3.5">Data Consumo</th>
                   <th className="px-4 py-3.5">Baia</th>
-                  <th className="px-4 py-3.5 text-right">Validação</th>
+                  <th className="px-4 py-3.5 text-right">Diagnóstico</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 text-xs">
-                {parsedRows.map((row) => {
-                  const hasErr = row.errors.length > 0;
+                {displayedRows.map((row) => {
                   return (
-                    <tr key={row.index} className={cn("transition-colors hover:bg-slate-50/45", hasErr && "bg-rose-50/20")}>
+                    <tr 
+                      key={row.index} 
+                      className={cn(
+                        "transition-colors hover:bg-slate-50/60",
+                        row.action === 'NEW' && "bg-emerald-50/15",
+                        row.action === 'UPDATE_CONSUMED' && "bg-blue-50/20",
+                        row.action === 'UPDATE_DATA' && "bg-sky-50/20",
+                        row.action === 'UNCHANGED' && "opacity-75 bg-slate-50/30",
+                        row.action === 'ERROR' && "bg-rose-50/30"
+                      )}
+                    >
                       <td className="px-4 py-3.5 font-semibold text-slate-400">{row.index}</td>
+                      
+                      {/* Action Badge */}
+                      <td className="px-4 py-3.5">
+                        {row.action === 'NEW' && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            <Plus className="w-3 h-3" /> Criar Nova
+                          </span>
+                        )}
+                        {row.action === 'UPDATE_CONSUMED' && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 border border-blue-200">
+                            <Sparkles className="w-3 h-3" /> Consumir
+                          </span>
+                        )}
+                        {row.action === 'UPDATE_DATA' && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider bg-sky-100 text-sky-800 border border-sky-200">
+                            <Layers className="w-3 h-3" /> Atualizar
+                          </span>
+                        )}
+                        {row.action === 'UNCHANGED' && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200" title="Sem alterações. Poupando cota.">
+                            <Zap className="w-3 h-3 text-amber-500" /> Pular (Inalterada)
+                          </span>
+                        )}
+                        {row.action === 'ERROR' && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200">
+                            <AlertTriangle className="w-3 h-3" /> Erro
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Status */}
                       <td className="px-4 py-3.5">
                         <span className={cn(
-                          "px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider",
-                          row.status === 'consumed' ? "bg-slate-100 text-slate-500" : "bg-emerald-50 text-emerald-600"
+                          "px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider",
+                          row.status === 'consumed' ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"
                         )}>
                           {row.status === 'consumed' ? 'Consumido' : 'Disponível'}
                         </span>
                       </td>
+
                       <td className="px-4 py-3.5 font-bold text-slate-800">{row.nfNumber || '—'}</td>
-                      <td className="px-4 py-3.5 font-mono text-slate-600">{row.coilNumber || '—'}</td>
+                      <td className="px-4 py-3.5 font-mono text-slate-700">{row.coilNumber || '—'}</td>
                       <td className="px-4 py-3.5 font-semibold text-slate-700">{row.supplierName || '—'}</td>
                       <td className="px-4 py-3.5 font-mono text-slate-600">{row.diameter.toFixed(2)} mm</td>
                       <td className="px-4 py-3.5 font-semibold text-slate-800">{row.weight.toLocaleString('pt-BR')} kg</td>
@@ -1148,18 +1615,12 @@ ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornece
                           {row.storageBayName}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 text-right font-medium">
-                        {hasErr ? (
-                          <div className="flex items-center gap-1.5 justify-end text-rose-500 font-bold">
-                            <AlertTriangle className="w-4 h-4 shrink-0" />
-                            <span>Erro de dados</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5 justify-end text-emerald-600 font-medium">
-                            <CheckCircle2 className="w-4 h-4 shrink-0" />
-                            <span>Ok</span>
-                          </div>
-                        )}
+
+                      {/* Diagnostic reason */}
+                      <td className="px-4 py-3.5 text-right font-medium text-[11px] text-slate-500">
+                        <span className="truncate max-w-[200px] inline-block" title={row.actionReason}>
+                          {row.actionReason}
+                        </span>
                       </td>
                     </tr>
                   );

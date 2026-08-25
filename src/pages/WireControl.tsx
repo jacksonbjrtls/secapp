@@ -339,7 +339,13 @@ const WireControl: React.FC = () => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
           >
-            <BulkImportTab suppliers={suppliers} storageBays={storageBays} />
+            <BulkImportTab 
+              suppliers={suppliers} 
+              storageBays={storageBays} 
+              coils={coils}
+              batches={batches}
+              lines={lines}
+            />
           </motion.div>
         )}
         
