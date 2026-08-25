@@ -129,7 +129,7 @@ const getStopTypeModalBadgeClass = (type: string): string => {
 };
 
 export default function StopsControl() {
-  const { user, isManager, isAdmin, isMaster, logoUrl } = useAuth();
+  const { user, profile, isManager, isAdmin, isMaster, logoUrl } = useAuth();
   
   // Tabs: 'register' | 'history' | 'stats'
   const [activeTab, setActiveTab] = useState<'register' | 'history' | 'stats'>('register');
@@ -708,13 +708,47 @@ export default function StopsControl() {
   const canEditReport = (report: StopReport | null) => {
     if (!report) return false;
     if (isMaster || isAdmin || isManager) return true;
-    return !!(user?.uid && (report.userId === user.uid || report.userId === user.email));
+    if (!user) return false;
+    const currentUid = user.uid;
+    const currentEmail = (profile?.email || user.email || '').toLowerCase().trim();
+    const currentName = (profile?.displayName || user.displayName || '').toLowerCase().trim();
+    const currentEmailUser = currentEmail.split('@')[0];
+
+    const reportUserId = (report.userId || '').toLowerCase().trim();
+    const reportCreatedBy = (String((report as any).createdBy || '')).toLowerCase().trim();
+    const reportUserEmail = (String(report.userEmail || '')).toLowerCase().trim();
+    const reportUserName = (report.userName || '').toLowerCase().trim();
+
+    return !!(
+      (report.userId && (report.userId === currentUid || reportUserId === currentEmail || (currentEmailUser && reportUserId === currentEmailUser))) ||
+      (reportCreatedBy && (reportCreatedBy === currentUid || reportCreatedBy === currentEmail || (currentEmailUser && reportCreatedBy === currentEmailUser))) ||
+      (reportUserEmail && currentEmail && (reportUserEmail === currentEmail || (currentEmailUser && reportUserEmail === currentEmailUser))) ||
+      (reportUserName && currentName && (reportUserName === currentName || reportUserName.includes(currentName) || currentName.includes(reportUserName))) ||
+      (reportUserName && currentEmailUser && (reportUserName === currentEmailUser || reportUserName.includes(currentEmailUser)))
+    );
   };
 
   const canDeleteReport = (report: StopReport | null) => {
     if (!report) return false;
     if (isMaster || isAdmin || isManager) return true;
-    return !!(user?.uid && (report.userId === user.uid || report.userId === user.email));
+    if (!user) return false;
+    const currentUid = user.uid;
+    const currentEmail = (profile?.email || user.email || '').toLowerCase().trim();
+    const currentName = (profile?.displayName || user.displayName || '').toLowerCase().trim();
+    const currentEmailUser = currentEmail.split('@')[0];
+
+    const reportUserId = (report.userId || '').toLowerCase().trim();
+    const reportCreatedBy = (String((report as any).createdBy || '')).toLowerCase().trim();
+    const reportUserEmail = (String(report.userEmail || '')).toLowerCase().trim();
+    const reportUserName = (report.userName || '').toLowerCase().trim();
+
+    return !!(
+      (report.userId && (report.userId === currentUid || reportUserId === currentEmail || (currentEmailUser && reportUserId === currentEmailUser))) ||
+      (reportCreatedBy && (reportCreatedBy === currentUid || reportCreatedBy === currentEmail || (currentEmailUser && reportCreatedBy === currentEmailUser))) ||
+      (reportUserEmail && currentEmail && (reportUserEmail === currentEmail || (currentEmailUser && reportUserEmail === currentEmailUser))) ||
+      (reportUserName && currentName && (reportUserName === currentName || reportUserName.includes(currentName) || currentName.includes(reportUserName))) ||
+      (reportUserName && currentEmailUser && (reportUserName === currentEmailUser || reportUserName.includes(currentEmailUser)))
+    );
   };
 
   // Set form fields for editing
@@ -882,7 +916,9 @@ export default function StopsControl() {
         workFronts: activeWorkFronts,
         observation: formObservation,
         userId: editingReport ? (editingReport.userId || user?.uid || 'anonymous') : (user?.uid || 'anonymous'),
-        userName: editingReport ? (editingReport.userName || user?.displayName || 'Operador') : (user?.displayName || 'Operador'),
+        userName: editingReport ? (editingReport.userName || profile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'Operador') : (profile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'Operador'),
+        userEmail: editingReport ? (editingReport.userEmail || profile?.email || user?.email || '') : (profile?.email || user?.email || ''),
+        createdBy: editingReport ? (editingReport.createdBy || user?.uid || 'anonymous') : (user?.uid || 'anonymous'),
       };
 
       if (editingReport) {

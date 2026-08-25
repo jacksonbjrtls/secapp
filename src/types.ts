@@ -380,6 +380,8 @@ export interface StopReport {
   observation: string;
   userId: string;
   userName: string;
+  userEmail?: string;
+  createdBy?: string;
   createdAt: any;
   updatedAt?: any;
 }
