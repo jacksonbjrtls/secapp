@@ -8,6 +8,7 @@ import { getLocalCachedUsers, setLocalCachedUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { decryptValue } from '../lib/crypto';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
+import { isResponseCompliant } from '../lib/qualityUtils';
 import { 
   Activity, 
   ShieldAlert, 
@@ -518,64 +519,6 @@ export const Overview: React.FC = () => {
       return om.date === todayYmd;
     });
 
-    const isResponseCompliant = (itemId: string, value: any, template: any) => {
-      const item = template?.items?.find((i: any) => i.id === itemId);
-      if (!item) return true;
-
-      const isDryer = template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
-      if (isDryer && value) {
-        if (typeof value === 'object' && value !== null) {
-          const statuses = Object.values(value) as string[];
-          const hasNonCompliant = statuses.some(s => {
-            const lowerS = String(s).toLowerCase();
-            if (lowerS.includes('pouco') || lowerS.includes('limp')) return false;
-            return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
-          });
-          return !hasNonCompliant;
-        } else {
-          const lowerVal = String(value).toLowerCase();
-          if (lowerVal.includes('pouco') || lowerVal === 'pouco sujo' || lowerVal === 'pouco suja' || lowerVal.includes('limp')) {
-            return true;
-          }
-          if (lowerVal.includes('suj') || lowerVal.includes('tamponado') || lowerVal.includes('tamponada') || lowerVal.includes('vermelho')) {
-            return false;
-          }
-        }
-      }
-
-      const valStr = String(value).toUpperCase().trim();
-
-      if (item.type === 'condition') {
-        if (item.conditionOptionsId) {
-          const optionSet = qualityOptionSets.find(os => os.id === item.conditionOptionsId);
-          if (optionSet && optionSet.options && optionSet.options.length > 0) {
-            // Index 0 in options is ALWAYS the compliant option (e.g., "OK", "CONFORME", etc.)
-            // Any other option selected is a non-conformity!
-            return String(value) === String(optionSet.options[0]);
-          }
-        }
-        if (valStr === 'NOT_OK' || valStr === 'NÃO OK' || valStr === 'NAO OK' || valStr === 'NOK' || valStr === 'REJEITADO' || valStr === 'FALHA') {
-          return false;
-        }
-        if (valStr.includes('NÃO') || valStr.includes('NAO') || valStr.includes('NOT')) {
-          return false;
-        }
-      }
-      if (item.type === 'range') {
-        if (valStr === 'LOW' || valStr === 'HIGH' || valStr === 'BAIXO' || valStr === 'ALTO') {
-          return false;
-        }
-      }
-      if (item.type === 'number') {
-        const numValue = Number(value);
-        if (!isNaN(numValue)) {
-          if (item.min !== undefined && numValue < item.min) return false;
-          if (item.max !== undefined && numValue > item.max) return false;
-        }
-      }
-      return true;
-    };
-
     // Extract conformities status:
     // How many answers are not compliant
     let totalNonConformities = 0;
@@ -588,7 +531,7 @@ export const Overview: React.FC = () => {
       
       let subFails = 0;
       sub.responses?.forEach((r: any) => {
-        const compliant = isResponseCompliant(r.itemId, r.value, template);
+        const compliant = isResponseCompliant(r.itemId, r.value, template, qualityOptionSets);
         if (!compliant) {
           totalNonConformities++;
           subFails++;

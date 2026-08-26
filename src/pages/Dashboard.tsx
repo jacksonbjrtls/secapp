@@ -6,6 +6,7 @@ import { decryptValue } from '../lib/crypto';
 import { MASTER_EMAILS } from '../constants';
 import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { isResponseCompliant } from '../lib/qualityUtils';
 import { Metric } from '../types';
 import { 
   BarChart, 
@@ -695,49 +696,6 @@ const Dashboard: React.FC = () => {
 
   // Quality Metrics
   const qualityMetrics = useMemo(() => {
-    const isResponseCompliant = (itemId: string, value: any, template: any) => {
-      const item = template?.items?.find((i: any) => i.id === itemId);
-      if (!item) return true;
-
-      const isDryer = template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
-      if (isDryer && value) {
-        if (typeof value === 'object' && value !== null) {
-          const statuses = Object.values(value) as string[];
-          const hasNonCompliant = statuses.some(s => {
-            const lowerS = String(s).toLowerCase();
-            if (lowerS.includes('pouco') || lowerS.includes('limp')) return false;
-            return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
-          });
-          return !hasNonCompliant;
-        } else {
-          const lowerVal = String(value).toLowerCase();
-          if (lowerVal.includes('pouco') || lowerVal === 'pouco sujo' || lowerVal === 'pouco suja' || lowerVal.includes('limp')) {
-            return true;
-          }
-          if (lowerVal.includes('suj') || lowerVal.includes('tamponado') || lowerVal.includes('tamponada') || lowerVal.includes('vermelho')) {
-            return false;
-          }
-        }
-      }
-
-      if (item.type === 'condition') {
-        if (item.conditionOptionsId) {
-          const optionSet = qualityOptionSets.find(os => os.id === item.conditionOptionsId);
-          if (optionSet && optionSet.options.length > 0) {
-            return value === optionSet.options[0];
-          }
-        }
-        if (value === 'not_ok') return false;
-        const lowerVal = String(value).toLowerCase();
-        if (lowerVal.includes('não') || lowerVal.includes('nao') || lowerVal.includes('not')) return false;
-        if (lowerVal === 'nok' || lowerVal === 'fail') return false;
-      }
-      if (item.type === 'range') {
-        if (value === 'low' || value === 'high') return false;
-      }
-      return true;
-    };
-
     const daysInMonth = new Date(filterYear, filterMonth + 1, 0).getDate();
     const trend = [];
     const ncDist: Record<string, number> = {};
@@ -757,7 +715,7 @@ const Dashboard: React.FC = () => {
 
         sub.responses.forEach((resp: any) => {
           dayTotalItems++;
-          const compliant = isResponseCompliant(resp.itemId, resp.value, template);
+          const compliant = isResponseCompliant(resp.itemId, resp.value, template, qualityOptionSets);
           if (compliant) {
             dayCompliantItems++;
           } else {
@@ -786,7 +744,7 @@ const Dashboard: React.FC = () => {
       if (!d || d.getMonth() !== filterMonth || d.getFullYear() !== filterYear) return acc;
       const template = qualityTemplates.find(t => t.id === sub.templateId);
       if (!template) return acc;
-      return acc + sub.responses.filter((r: any) => isResponseCompliant(r.itemId, r.value, template)).length;
+      return acc + sub.responses.filter((r: any) => isResponseCompliant(r.itemId, r.value, template, qualityOptionSets)).length;
     }, 0);
 
     return {

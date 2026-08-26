@@ -36,6 +36,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { getCurrentShift, getGroupForShift, Shift } from '../lib/scaleUtils';
+import { isResponseCompliant } from '../lib/qualityUtils';
 import { 
   ClipboardCheck, 
   Settings, 
@@ -3203,76 +3204,6 @@ const Quality: React.FC = () => {
     }
   };
 
-  const isResponseCompliant = (itemId: string, value: any, template: QualityChecklistTemplate) => {
-    const item = template.items.find(i => i.id === itemId);
-    if (!item) return true;
-
-    const isDryer = template?.name ? (template.name.toLowerCase().includes('limpeza') || template.name.toLowerCase().includes('secador')) : false;
-    if (isDryer && value) {
-      if (typeof value === 'object' && value !== null) {
-        const statuses = Object.values(value) as string[];
-        const hasNonCompliant = statuses.some(s => {
-          const lowerS = String(s).toLowerCase();
-          if (lowerS.includes('pouco') || lowerS.includes('limp')) return false;
-          return lowerS.includes('suj') || lowerS.includes('tamponado') || lowerS.includes('tamponada') || lowerS.includes('vermelho');
-        });
-        return !hasNonCompliant;
-      } else {
-        const lowerVal = String(value).toLowerCase();
-        if (lowerVal.includes('pouco') || lowerVal === 'pouco sujo' || lowerVal === 'pouco suja' || lowerVal.includes('limp')) {
-          return true;
-        }
-        if (lowerVal.includes('suj') || lowerVal.includes('tamponado') || lowerVal.includes('tamponada') || lowerVal.includes('vermelho')) {
-          return false;
-        }
-      }
-    }
-
-    // Check explicit expectedValue defined by template creator
-    if (item.expectedValue !== undefined && item.expectedValue !== null && item.expectedValue !== '') {
-      if (value === undefined || value === null || value === '') return true;
-      const normVal = String(value).trim().toLowerCase();
-      const normExp = String(item.expectedValue).trim().toLowerCase();
-      
-      if (normVal === normExp) return true;
-      if (normExp === 'ok' && (normVal === 'conforme' || normVal === 'ok' || normVal === 'sim')) return true;
-      if (normExp === 'not_ok' && (normVal === 'não conforme' || normVal === 'nao conforme' || normVal === 'nok' || normVal === 'not_ok' || normVal === 'não' || normVal === 'nao')) return true;
-      
-      return false;
-    }
-
-    if (item.type === 'condition') {
-      // If custom options are used
-      if (item.conditionOptionsId) {
-        const optionSet = optionSets.find(os => os.id === item.conditionOptionsId);
-        if (optionSet && optionSet.options.length > 0) {
-          // Heuristic: First option is usually the compliant one (e.g., "OK", "CONFORME", "SIM")
-          return value === optionSet.options[0];
-        }
-      }
-
-      if (value === 'not_ok') return false;
-      const lowerVal = String(value).toLowerCase();
-      if (lowerVal.includes('não') || lowerVal.includes('nao') || lowerVal.includes('not')) return false;
-      if (lowerVal === 'nok' || lowerVal === 'fail') return false;
-    }
-
-    if (item.type === 'range') {
-      if (value === 'low' || value === 'high') return false;
-    }
-
-    if (item.type === 'number') {
-      if (value === undefined || value === null || value === '') return true;
-      const numValue = Number(value);
-      if (!isNaN(numValue)) {
-        if (item.min !== undefined && numValue < item.min) return false;
-        if (item.max !== undefined && numValue > item.max) return false;
-      }
-    }
-
-    return true;
-  };
-
   const calculateComplianceRate = () => {
     if (submissions.length === 0) return 0;
     
@@ -3286,7 +3217,7 @@ const Quality: React.FC = () => {
       sub.responses.forEach(resp => {
         // Some items might be optional or just info, but usually all in checklist are "compliance items"
         totalItemsChecked++;
-        if (isResponseCompliant(resp.itemId, resp.value, template)) {
+        if (isResponseCompliant(resp.itemId, resp.value, template, optionSets)) {
           compliantItemsCount++;
         }
       });
@@ -3841,23 +3772,30 @@ const Quality: React.FC = () => {
       unitY += 12;
 
       if (sub.unitInspection.evaluation) {
+        const overallStatus = sub.unitInspection.evaluation.overallStatus || 'Conforme';
         const evalData = [
-          ['Amarração de Arames:', sub.unitInspection.evaluation.wireTyingStatus || 'N/A', 'Qualidade da Capa:', sub.unitInspection.evaluation.coverQualityStatus || 'N/A'],
-          ['Impressão de Etiquetas:', sub.unitInspection.evaluation.labelPrintingStatus || 'N/A', 'Geometria e Altura:', sub.unitInspection.evaluation.unitHeightStatus || 'N/A'],
-          ['Status Geral da Unit:', sub.unitInspection.evaluation.overallStatus || 'Conforme', '', '']
+          ['Status Geral da Unit:', sanitizePdfText(overallStatus)]
         ];
 
         autoTable(doc, {
           startY: unitY,
           body: evalData,
           theme: 'grid',
-          styles: { fontSize: 8, cellPadding: 2 },
+          styles: { fontSize: 8.5, cellPadding: 2.5 },
           headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold' },
           columnStyles: {
-            0: { fontStyle: 'bold', cellWidth: 40 },
-            1: { cellWidth: 45 },
-            2: { fontStyle: 'bold', cellWidth: 40 },
-            3: { cellWidth: 45 }
+            0: { fontStyle: 'bold', cellWidth: 50, fillColor: [248, 250, 252] },
+            1: { fontStyle: 'bold', cellWidth: 125 }
+          },
+          didParseCell: (data) => {
+            if (data.section === 'body' && data.column.index === 1) {
+              const val = String(data.cell.raw || '');
+              if (val.toLowerCase().includes('não') || val.toLowerCase().includes('nao') || val.toLowerCase().includes('nok') || val.toLowerCase().includes('não conforme')) {
+                data.cell.styles.textColor = [220, 38, 38];
+              } else {
+                data.cell.styles.textColor = [16, 185, 129];
+              }
+            }
           }
         });
 
@@ -3900,6 +3838,7 @@ const Quality: React.FC = () => {
 
         availablePhotos.forEach((p) => {
           const url = photos[p.key];
+          const displayLabel = sub.unitInspection?.photoLabels?.[p.key] || p.label;
           if (url) {
             if (startX + imgWidth > pageWidth - 14) {
               startX = 14;
@@ -3914,7 +3853,7 @@ const Quality: React.FC = () => {
               doc.setFontSize(7);
               doc.setFont('helvetica', 'bold');
               doc.setTextColor(71, 85, 105);
-              doc.text(sanitizePdfText(p.label), startX, unitY);
+              doc.text(sanitizePdfText(displayLabel), startX, unitY);
               doc.addImage(url, 'JPEG', startX, unitY + 2, imgWidth, imgHeight);
               doc.setDrawColor(203, 213, 225);
               doc.rect(startX, unitY + 2, imgWidth, imgHeight, 'S');
@@ -8307,7 +8246,7 @@ const Quality: React.FC = () => {
                 {viewingSubmission.responses.map((resp, idx) => {
                   const template = templates.find(t => t.id === viewingSubmission.templateId);
                   const item = template?.items.find(i => i.id === resp.itemId);
-                  const compliant = template ? isResponseCompliant(resp.itemId, resp.value, template) : true;
+                  const compliant = template ? isResponseCompliant(resp.itemId, resp.value, template, optionSets) : true;
                   
                   return (
                     <div key={`resp-${resp.itemId || 'item'}-${idx}`} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-4">
@@ -8367,30 +8306,30 @@ const Quality: React.FC = () => {
                           <div className="ml-14 grid grid-cols-2 sm:grid-cols-4 gap-2">
                             {resp.value.left_top !== undefined || resp.value.right_top !== undefined || resp.value.left_bottom !== undefined || resp.value.right_bottom !== undefined ? (
                               <>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_top || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left_top, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_top || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left_top, template, optionSets)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Esquerdo Sup.</span>
                                   <span className="text-xs font-black">{resp.value.left_top || 'Limpo'}</span>
                                 </div>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_top || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right_top, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_top || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right_top, template, optionSets)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Direito Sup.</span>
                                   <span className="text-xs font-black">{resp.value.right_top || 'Limpo'}</span>
                                 </div>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_bottom || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left_bottom, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.left_bottom || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left_bottom, template, optionSets)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Esquerdo Inf.</span>
                                   <span className="text-xs font-black">{resp.value.left_bottom || 'Limpo'}</span>
                                 </div>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_bottom || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right_bottom, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center", getBadgeColorClasses(resp.value.right_bottom || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right_bottom, template, optionSets)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Direito Inf.</span>
                                   <span className="text-xs font-black">{resp.value.right_bottom || 'Limpo'}</span>
                                 </div>
                               </>
                             ) : (
                               <>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.left || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.left || 'Limpo', isResponseCompliant(resp.itemId, resp.value.left, template, optionSets)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Superior</span>
                                   <span className="text-xs font-black">{resp.value.left || 'Limpo'}</span>
                                 </div>
-                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.right || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right, template)))}>
+                                <div className={cn("p-2.5 rounded-xl border flex flex-col items-center justify-center text-center col-span-2", getBadgeColorClasses(resp.value.right || 'Limpo', isResponseCompliant(resp.itemId, resp.value.right, template, optionSets)))}>
                                   <span className="text-[8px] font-black uppercase tracking-wider opacity-70">Inferior</span>
                                   <span className="text-xs font-black">{resp.value.right || 'Limpo'}</span>
                                 </div>
