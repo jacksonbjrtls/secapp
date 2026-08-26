@@ -13,6 +13,7 @@ import {
   ChevronRight,
   ChevronDown,
   ClipboardCheck,
+  ClipboardList,
   Building2,
   Calendar,
   User as UserIcon,
@@ -37,8 +38,13 @@ import {
   Paperclip,
   Maximize2,
   RefreshCw,
-  Smartphone
+  Smartphone,
+  Download,
+  FileText,
+  Printer
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   collection, 
   addDoc, 
@@ -115,7 +121,7 @@ interface GlobalSettings {
 }
 
 const Forklifts: React.FC = () => {
-  const { profile, isAdmin, isManager, isMaster } = useAuth();
+  const { profile, isAdmin, isManager, isMaster, logoUrl } = useAuth();
   const [activeTab, setActiveTab] = useState<'checklists' | 'history' | 'admin'>('checklists');
   const [forklifts, setForklifts] = useState<Forklift[]>([]);
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
@@ -153,6 +159,7 @@ const Forklifts: React.FC = () => {
   const [testingEmail, setTestingEmail] = useState(false);
   const [draftDocId, setDraftDocId] = useState<string | null>(null);
   const [savingStatus, setSavingStatus] = useState<'saved' | 'saving' | 'offline'>('saved');
+  const [generatingPdfId, setGeneratingPdfId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'forklift' | 'item' | 'checklist', title: string; userId?: string } | null>(null);
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
@@ -755,6 +762,491 @@ const Forklifts: React.FC = () => {
     }
   };
 
+  // Sanitize text for jsPDF output
+  const sanitizePdfText = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return text
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x00-\x7F]/g, '');
+  };
+
+  // Render small SecApp branding footer on all PDF pages
+  const addSecAppPdfFooter = async (docPdf: jsPDF) => {
+    const totalPages = (docPdf as any).internal.getNumberOfPages();
+    let logoBase64: string | null = null;
+    
+    try {
+      logoBase64 = await new Promise<string | null>((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              resolve(canvas.toDataURL('image/png'));
+              return;
+            }
+          } catch {
+            // ignore canvas error
+          }
+          resolve(null);
+        };
+        img.onerror = () => resolve(null);
+        img.src = logoUrl || '/logo_file/logo_400pixel.png';
+      });
+    } catch {
+      logoBase64 = null;
+    }
+
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      docPdf.setPage(pageNum);
+      
+      const pageWidth = docPdf.internal.pageSize.getWidth();
+      const pageHeight = docPdf.internal.pageSize.getHeight();
+      const footerY = pageHeight - 10;
+
+      // Subtle horizontal divider
+      docPdf.setDrawColor(226, 232, 240); // slate-200
+      docPdf.setLineWidth(0.3);
+      docPdf.line(15, footerY - 4, pageWidth - 15, footerY - 4);
+
+      let textStartX = 15;
+      if (logoBase64) {
+        try {
+          docPdf.addImage(logoBase64, 'PNG', 15, footerY - 3, 10, 4);
+          textStartX = 27;
+        } catch {
+          // ignore addImage fallback
+        }
+      }
+
+      if (logoBase64) {
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(8);
+        docPdf.setTextColor(148, 163, 184); // slate-400
+        docPdf.text('| Sistema de Gestao Operacional', textStartX, footerY + 0.8);
+      } else {
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8);
+        docPdf.setTextColor(5, 150, 105); // emerald-600
+        docPdf.text('SecApp', textStartX, footerY + 0.8);
+
+        const secAppWidth = docPdf.getTextWidth('SecApp');
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setTextColor(148, 163, 184); // slate-400
+        docPdf.text(' | Sistema de Gestao Operacional', textStartX + secAppWidth, footerY + 0.8);
+      }
+
+      // Page numbers on right
+      docPdf.text(`Pagina ${pageNum} de ${totalPages}`, pageWidth - 15, footerY + 0.8, { align: 'right' });
+    }
+  };
+
+  // Generate Individual Forklift Checklist Inspection PDF (Standardized Theme matching Stops Control)
+  const handleExportChecklistPdf = async (checklist: Checklist) => {
+    setGeneratingPdfId(checklist.id);
+    try {
+      const docPdf = new jsPDF();
+      const pageWidth = docPdf.internal.pageSize.getWidth();
+      const pageHeight = docPdf.internal.pageSize.getHeight();
+
+      // Header styling - Standardized Emerald Theme
+      docPdf.setFillColor(5, 150, 105); // emerald-600
+      docPdf.rect(0, 0, pageWidth, 40, 'F');
+
+      // Title
+      docPdf.setTextColor(255, 255, 255);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.setFontSize(18);
+      docPdf.text(sanitizePdfText('RELATÓRIO DE INSPEÇÃO DE EMPILHADEIRA'), 15, 22);
+
+      // Subtitle / Generation time
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.setTextColor(190, 242, 219); // emerald-100
+      docPdf.text(sanitizePdfText(`Gerado em: ${new Date().toLocaleString('pt-BR')}`), 15, 32);
+
+      // Status pill badge on the top right
+      const isConform = checklist.status === 'normal';
+      if (isConform) {
+        docPdf.setFillColor(255, 255, 255);
+        docPdf.roundedRect(pageWidth - 55, 14, 40, 12, 2, 2, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(9.5);
+        docPdf.setTextColor(5, 150, 105);
+        docPdf.text('LIBERADA (OK)', pageWidth - 35, 21.5, { align: 'center' });
+      } else {
+        docPdf.setFillColor(254, 226, 226);
+        docPdf.roundedRect(pageWidth - 60, 14, 45, 12, 2, 2, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(9.5);
+        docPdf.setTextColor(225, 29, 72);
+        docPdf.text('BLOQUEADA (NC)', pageWidth - 37.5, 21.5, { align: 'center' });
+      }
+
+      // Section 1: Informações Gerais da Inspeção
+      docPdf.setTextColor(5, 150, 105);
+      docPdf.setFontSize(13);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text(sanitizePdfText('Informações Gerais da Inspeção'), 15, 53);
+
+      const dateFormatted = format(safeToDate(checklist.timestamp) || new Date(), 'dd/MM/yyyy HH:mm');
+      const dayOfWeek = format(safeToDate(checklist.timestamp) || new Date(), "EEEE", { locale: ptBR });
+      const matchedForklift = forklifts.find(f => f.id === checklist.forkliftId || f.number === checklist.forkliftNumber);
+      const sectorName = matchedForklift?.sector || 'Operação Geral';
+
+      const generalData = [
+        [
+          sanitizePdfText('Equipamento:'),
+          sanitizePdfText(checklist.forkliftNumber),
+          sanitizePdfText('Data e Hora:'),
+          `${dateFormatted} (${sanitizePdfText(dayOfWeek)})`
+        ],
+        [
+          sanitizePdfText('Condutor/Inspetor:'),
+          sanitizePdfText(checklist.conductorName || 'Não informado'),
+          sanitizePdfText('Turno / Letra:'),
+          `Turno ${sanitizePdfText(checklist.shift || 'N/A')} - Letra ${sanitizePdfText(checklist.group || 'N/A')}`
+        ],
+        [
+          sanitizePdfText('Setor / Área:'),
+          sanitizePdfText(sectorName),
+          sanitizePdfText('Status Geral:'),
+          isConform ? 'CONFORME / LIBERADA' : 'ANORMAL / BLOQUEADA'
+        ]
+      ];
+
+      autoTable(docPdf, {
+        startY: 58,
+        head: [],
+        body: generalData,
+        theme: 'plain',
+        styles: { cellPadding: 2, fontSize: 9.5, textColor: [51, 65, 85] },
+        columnStyles: {
+          0: { fontStyle: 'bold', cellWidth: 35 },
+          1: { cellWidth: 65 },
+          2: { fontStyle: 'bold', cellWidth: 45 },
+          3: { cellWidth: 45 }
+        }
+      });
+
+      // Section 2: Itens Inspecionados e Conformidade
+      let currentY = (docPdf as any).lastAutoTable.finalY + 8;
+      docPdf.setTextColor(5, 150, 105);
+      docPdf.setFontSize(13);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text(sanitizePdfText('Itens Inspecionados e Conformidade'), 15, currentY);
+
+      // Prepare items inspection table body
+      const tableRows: any[] = [];
+      const itemEntries = Object.entries(checklist.itemResults || {});
+      const photosToRender: { itemName: string; url: string; observation?: string; status: string }[] = [];
+
+      itemEntries.forEach(([itemId, res], index) => {
+        const matchedItem = checkItems.find(i => i.id === itemId);
+        const itemName = matchedItem?.name || `Item ${index + 1}`;
+        const unit = matchedItem?.unit ? ` ${matchedItem.unit}` : '';
+
+        let formattedValue = '';
+        if (typeof res.value === 'boolean') {
+          formattedValue = res.value ? 'OK' : 'NÃO OK';
+        } else if (res.value === 'normal') {
+          formattedValue = 'Normal';
+        } else if (res.value === 'anormal') {
+          formattedValue = 'Anormal';
+        } else if (res.value === 'open') {
+          formattedValue = 'Aberto';
+        } else if (res.value === 'closed') {
+          formattedValue = 'Fechado';
+        } else {
+          formattedValue = `${res.value ?? '-'}${unit}`;
+        }
+
+        const isItemNormal = res.status === 'normal';
+        const obs = res.observation ? sanitizePdfText(res.observation) : '-';
+
+        tableRows.push([
+          (index + 1).toString(),
+          sanitizePdfText(itemName),
+          sanitizePdfText(formattedValue),
+          isItemNormal ? 'NORMAL / OK' : 'ANORMAL',
+          obs
+        ]);
+
+        if (res.mediaUrl && (res.mediaUrl.startsWith('data:image') || res.mediaUrl.startsWith('http'))) {
+          photosToRender.push({
+            itemName,
+            url: res.mediaUrl,
+            observation: res.observation,
+            status: res.status
+          });
+        }
+      });
+
+      if (tableRows.length === 0) {
+        tableRows.push(['-', 'Nenhum item registrado nesta inspeção', '-', '-', '-']);
+      }
+
+      autoTable(docPdf, {
+        startY: currentY + 4,
+        margin: { left: 15, right: 15 },
+        head: [[sanitizePdfText('#'), sanitizePdfText('Item Avaliado'), sanitizePdfText('Valor Registrado'), sanitizePdfText('Condição'), sanitizePdfText('Observações')]],
+        body: tableRows,
+        theme: 'grid',
+        styles: { fontSize: 8.5, cellPadding: 2.5, overflow: 'linebreak' },
+        headStyles: {
+          fillColor: [5, 150, 105], // emerald-600
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 8.5,
+          halign: 'left'
+        },
+        columnStyles: {
+          0: { cellWidth: 10, halign: 'center' },
+          1: { cellWidth: 60 },
+          2: { cellWidth: 35 },
+          3: { cellWidth: 32, fontStyle: 'bold' },
+          4: { cellWidth: 43 }
+        },
+        didParseCell: (data) => {
+          if (data.section === 'body') {
+            if (data.column.index === 3) {
+              const cellText = String(data.cell.raw || '');
+              if (cellText.includes('ANORMAL')) {
+                data.cell.styles.textColor = [225, 29, 72]; // rose-600
+                data.cell.styles.fontStyle = 'bold';
+              } else {
+                data.cell.styles.textColor = [5, 150, 105]; // emerald-600
+              }
+            }
+          }
+        }
+      });
+
+      currentY = (docPdf as any).lastAutoTable.finalY + 8;
+
+      // Section 3: Observações do Condutor
+      if (checklist.notes && checklist.notes.trim()) {
+        if (currentY + 28 > pageHeight - 20) {
+          docPdf.addPage();
+          currentY = 20;
+        }
+
+        docPdf.setTextColor(5, 150, 105);
+        docPdf.setFontSize(13);
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.text(sanitizePdfText('Observações Adicionais do Condutor'), 15, currentY);
+
+        currentY += 5;
+
+        docPdf.setFillColor(248, 250, 252);
+        docPdf.setDrawColor(226, 232, 240);
+        docPdf.roundedRect(15, currentY, pageWidth - 30, 20, 2, 2, 'FD');
+
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(8.5);
+        docPdf.setTextColor(30, 41, 59);
+        const splitNotes = docPdf.splitTextToSize(sanitizePdfText(checklist.notes), pageWidth - 36);
+        docPdf.text(splitNotes, 18, currentY + 7);
+
+        currentY += 26;
+      }
+
+      // Section 4: Evidências Fotográficas Anexadas
+      if (photosToRender.length > 0) {
+        if (currentY + 55 > pageHeight - 20) {
+          docPdf.addPage();
+          currentY = 20;
+        }
+
+        docPdf.setTextColor(5, 150, 105);
+        docPdf.setFontSize(13);
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.text(sanitizePdfText('Evidências Fotográficas Anexadas'), 15, currentY);
+
+        currentY += 6;
+
+        let photoX = 15;
+        const photoWidth = 56;
+        const photoHeight = 42;
+
+        for (let i = 0; i < photosToRender.length; i++) {
+          const photo = photosToRender[i];
+
+          if (photoX + photoWidth > pageWidth - 15) {
+            photoX = 15;
+            currentY += photoHeight + 14;
+          }
+
+          if (currentY + photoHeight + 14 > pageHeight - 20) {
+            docPdf.addPage();
+            currentY = 20;
+            photoX = 15;
+          }
+
+          // Photo header label
+          docPdf.setFont('helvetica', 'bold');
+          docPdf.setFontSize(7.5);
+          docPdf.setTextColor(51, 65, 85);
+          docPdf.text(sanitizePdfText(photo.itemName), photoX, currentY);
+
+          try {
+            docPdf.addImage(photo.url, 'JPEG', photoX, currentY + 2, photoWidth, photoHeight);
+            docPdf.setDrawColor(203, 213, 225);
+            docPdf.rect(photoX, currentY + 2, photoWidth, photoHeight, 'S');
+
+            // Status tag below image
+            docPdf.setFont('helvetica', 'normal');
+            docPdf.setFontSize(7);
+            if (photo.status === 'normal') {
+              docPdf.setTextColor(5, 150, 105);
+              docPdf.text('Status: Normal/OK', photoX, currentY + photoHeight + 5.5);
+            } else {
+              docPdf.setTextColor(225, 29, 72);
+              docPdf.text('Status: Anormal', photoX, currentY + photoHeight + 5.5);
+            }
+          } catch (imgErr) {
+            console.warn('Erro ao inserir foto no PDF:', imgErr);
+            docPdf.setFont('helvetica', 'italic');
+            docPdf.setFontSize(7);
+            docPdf.setTextColor(148, 163, 184);
+            docPdf.text('[Foto indisponível para visualização]', photoX, currentY + 15);
+          }
+
+          photoX += photoWidth + 6;
+        }
+
+        currentY += photoHeight + 14;
+      }
+
+      // Add branding footer
+      await addSecAppPdfFooter(docPdf);
+
+      // File name format: Checklist_Empilhadeira_[NUM]_[DATA].pdf
+      const safeNum = checklist.forkliftNumber.replace(/[^a-zA-Z0-9]/g, '_');
+      const safeDateStr = format(safeToDate(checklist.timestamp) || new Date(), 'yyyyMMdd_HHmm');
+      docPdf.save(`Checklist_Empilhadeira_${safeNum}_${safeDateStr}.pdf`);
+    } catch (pdfErr) {
+      console.error('Erro ao gerar PDF do checklist:', pdfErr);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro na Geração do PDF',
+        message: 'Não foi possível gerar o relatório PDF desta inspeção. Tente novamente.',
+        type: 'error'
+      });
+    } finally {
+      setGeneratingPdfId(null);
+    }
+  };
+
+  // Generate Landscape General Report PDF for all Forklift Inspections
+  const handleExportAllChecklistsPdf = async () => {
+    try {
+      const docPdf = new jsPDF('landscape');
+      
+      // Header styling - Standardized Emerald Theme
+      docPdf.setFillColor(5, 150, 105); // emerald-600
+      docPdf.rect(0, 0, 297, 35, 'F');
+      
+      docPdf.setTextColor(255, 255, 255);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.setFontSize(18);
+      docPdf.text(sanitizePdfText('INSPEÇÕES DE EMPILHADEIRAS - RELATÓRIO GERAL'), 15, 18);
+      
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.setTextColor(190, 242, 219); // emerald-100
+      docPdf.text(sanitizePdfText(`Total de Registros: ${checklists.length} inspeções realizadas`), 15, 27);
+      docPdf.text(sanitizePdfText(`Gerado em: ${new Date().toLocaleString('pt-BR')}`), 210, 27);
+
+      const headers = [[
+        sanitizePdfText('Data / Hora'),
+        sanitizePdfText('Turno / Letra'),
+        sanitizePdfText('Equipamento'),
+        sanitizePdfText('Setor'),
+        sanitizePdfText('Condutor / Responsável'),
+        sanitizePdfText('Status'),
+        sanitizePdfText('Itens com Anormalidade / Observações')
+      ]];
+
+      const body = checklists.map(log => {
+        const dateStr = format(safeToDate(log.timestamp) || new Date(), 'dd/MM/yyyy HH:mm');
+        const matchedForklift = forklifts.find(f => f.id === log.forkliftId || f.number === log.forkliftNumber);
+        const sector = matchedForklift?.sector || 'Geral';
+        
+        // Find abnormal items
+        const abnormalItems: string[] = [];
+        Object.entries(log.itemResults || {}).forEach(([itemId, r]: [string, any]) => {
+          if (r?.status === 'anormal') {
+            const item = checkItems.find(i => i.id === itemId);
+            abnormalItems.push(item?.name || 'Item Anormal');
+          }
+        });
+
+        let notesText = abnormalItems.length > 0 ? `Anormal: ${abnormalItems.join(', ')}` : 'Todos itens conformes';
+        if (log.notes && log.notes.trim()) {
+          notesText += ` | Obs: ${log.notes.trim()}`;
+        }
+
+        return [
+          dateStr,
+          `Turno ${log.shift} - ${log.group}`,
+          sanitizePdfText(log.forkliftNumber),
+          sanitizePdfText(sector),
+          sanitizePdfText(log.conductorName),
+          log.status === 'normal' ? 'LIBERADA (OK)' : 'BLOQUEADA (NC)',
+          sanitizePdfText(notesText)
+        ];
+      });
+
+      autoTable(docPdf, {
+        startY: 42,
+        head: headers,
+        body: body,
+        theme: 'grid',
+        headStyles: { fillColor: [5, 150, 105], textColor: [255, 255, 255], fontSize: 8.5, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        columnStyles: {
+          0: { cellWidth: 32 },
+          1: { cellWidth: 28 },
+          2: { cellWidth: 28 },
+          3: { cellWidth: 32 },
+          4: { cellWidth: 42 },
+          5: { cellWidth: 30, fontStyle: 'bold' },
+          6: { cellWidth: 85 }
+        },
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 5) {
+            const val = String(data.cell.raw || '');
+            if (val.includes('BLOQUEADA')) {
+              data.cell.styles.textColor = [225, 29, 72];
+            } else {
+              data.cell.styles.textColor = [5, 150, 105];
+            }
+          }
+        }
+      });
+
+      // Add SecApp footer branding
+      await addSecAppPdfFooter(docPdf);
+
+      docPdf.save(`Relatorio_Geral_Empilhadeiras_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (err) {
+      console.error('Erro ao gerar relatório geral em PDF:', err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro na Geração do PDF',
+        message: 'Não foi possível gerar o relatório geral em PDF. Tente novamente.',
+        type: 'error'
+      });
+    }
+  };
+
   const handleToggleStatus = async (forklift: Forklift) => {
     const newStatus = forklift.status === 'liberada' ? 'bloqueada' : 'liberada';
     try {
@@ -1199,9 +1691,31 @@ const Forklifts: React.FC = () => {
         )}
 
         {activeTab === 'history' && (
-          <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 sm:p-5 rounded-[2rem] border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-black">
+                  <ClipboardList className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-slate-800">Histórico de Inspeções</h4>
+                  <p className="text-xs text-slate-400 font-medium">{checklists.length} inspeções registradas no sistema</p>
+                </div>
+              </div>
+              <button
+                onClick={handleExportAllChecklistsPdf}
+                disabled={checklists.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all disabled:opacity-50"
+                title="Exportar tabela geral de inspeções em PDF"
+              >
+                <FileOutput className="w-4 h-4 text-emerald-400" />
+                Exportar Relatório Geral (PDF)
+              </button>
+            </div>
+
+            <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 px-6">
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Data e Hora</th>
@@ -1259,7 +1773,24 @@ const Forklifts: React.FC = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right">
-                           <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
+                           <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
+                             <button
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 handleExportChecklistPdf(log);
+                               }}
+                               disabled={generatingPdfId === log.id}
+                               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl transition-all text-xs font-bold border border-slate-200 hover:border-emerald-200 disabled:opacity-50"
+                               title="Gerar e Baixar Relatório PDF desta Inspeção"
+                             >
+                               {generatingPdfId === log.id ? (
+                                 <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                               ) : (
+                                 <FileOutput className="w-3.5 h-3.5 text-emerald-600" />
+                               )}
+                               <span className="hidden sm:inline">PDF</span>
+                             </button>
+
                              {(isAdmin || isManager || isMaster || (log.userId && auth.currentUser?.uid && log.userId === auth.currentUser.uid)) && (
                                <button 
                                  onClick={(e) => {
@@ -1273,26 +1804,27 @@ const Forklifts: React.FC = () => {
                                  }}
                                  className="p-1 px-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all text-xs font-bold"
                                  title="Excluir Inspeção"
-                               >
-                                 Excluir
-                               </button>
-                             )}
-                             <button 
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 setExpandedChecklistId(expandedChecklistId === log.id ? null : log.id);
-                               }}
-                               className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
-                             >
-                               {expandedChecklistId === log.id ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-                             </button>
-                           </div>
-                        </td>
+                                >
+                                  Excluir
+                                </button>
+                              )}
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedChecklistId(expandedChecklistId === log.id ? null : log.id);
+                                }}
+                                className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
+                                title={expandedChecklistId === log.id ? "Recolher detalhes" : "Expandir detalhes"}
+                              >
+                                {expandedChecklistId === log.id ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                              </button>
+                            </div>
+                         </td>
                       </tr>
                       <AnimatePresence>
                         {expandedChecklistId === log.id && (
                           <tr>
-                            <td colSpan={5} className="px-6 py-0 border-none">
+                            <td colSpan={6} className="px-6 py-0 border-none">
                               <motion.div
                                 initial={{ height: 0, opacity: 0 }}
                                 animate={{ height: 'auto', opacity: 1 }}
@@ -1300,6 +1832,34 @@ const Forklifts: React.FC = () => {
                                 className="overflow-hidden"
                               >
                                 <div className="py-6 px-10 bg-slate-50/50 rounded-3xl mb-4 border border-slate-100">
+                                  <div className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-4 border-b border-slate-200/60">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-black text-sm">
+                                        <Truck className="w-5 h-5" />
+                                      </div>
+                                      <div>
+                                        <h5 className="text-sm font-black text-slate-800">
+                                          Detalhamento da Inspeção - {log.forkliftNumber}
+                                        </h5>
+                                        <p className="text-xs text-slate-400 font-medium">
+                                          Condutor: {log.conductorName} | {format(safeToDate(log.timestamp) || new Date(), 'dd/MM/yyyy HH:mm')}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={() => handleExportChecklistPdf(log)}
+                                      disabled={generatingPdfId === log.id}
+                                      className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all disabled:opacity-50"
+                                    >
+                                      {generatingPdfId === log.id ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <FileOutput className="w-4 h-4" />
+                                      )}
+                                      Exportar Relatório PDF
+                                    </button>
+                                  </div>
+
                                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                     {Object.entries(log.itemResults).map(([itemId, result]: [string, any], itemIdx) => {
                                       const item = checkItems.find(i => i.id === itemId);
@@ -1374,6 +1934,7 @@ const Forklifts: React.FC = () => {
               </table>
             </div>
           </div>
+        </div>
         )}
 
         {activeTab === 'admin' && (
