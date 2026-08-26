@@ -28,7 +28,8 @@ import {
   Award,
   Clock,
   Gift,
-  Wrench
+  Wrench,
+  BookOpen
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
@@ -66,9 +67,10 @@ interface NavItemProps {
   show: boolean;
   isActive: boolean;
   onClick: () => void;
+  isExternal?: boolean;
 }
 
-const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, show, isActive, onClick }) => {
+const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, show, isActive, onClick, isExternal }) => {
   const {
     attributes,
     listeners,
@@ -88,6 +90,8 @@ const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, s
     opacity: isDragging ? 0.5 : 1,
   };
 
+  const isPdfOrExternal = isExternal || href.endsWith('.pdf');
+
   return (
     <div ref={setNodeRef} style={style} className="group relative">
       <div 
@@ -97,29 +101,61 @@ const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, s
       >
         <GripVertical className="w-4 h-4" />
       </div>
-      <Link
-        to={href}
-        className={cn(
-          "flex items-center gap-3 px-4 py-2.5 pl-8 rounded-lg text-sm font-medium transition-all",
-          isActive
-            ? "bg-emerald-50 text-emerald-700 shadow-sm"
-            : "text-slate-600 hover:bg-slate-50 hover:text-emerald-600"
-        )}
-        onClick={onClick}
-      >
-        <Icon className={cn(
-          "w-5 h-5",
-          isActive ? "text-emerald-600" : "text-slate-400 group-hover:text-emerald-600"
-        )} />
-        {name === 'Treinamentos/Certificados' ? (
-          <div className="flex flex-col leading-tight text-left">
-            <span>Treinamentos</span>
-            <span className="text-slate-400 font-normal">Certificados</span>
-          </div>
-        ) : (
-          name
-        )}
-      </Link>
+      {isPdfOrExternal ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "flex items-center gap-3 px-4 py-2.5 pl-8 rounded-lg text-sm font-medium transition-all group",
+            "text-slate-600 hover:bg-slate-50 hover:text-emerald-600"
+          )}
+          onClick={onClick}
+          title="Abrir Manual do Sistema (PDF)"
+        >
+          <Icon className="w-5 h-5 text-slate-400 group-hover:text-emerald-600 shrink-0" />
+          {name === 'Manual do Sistema' ? (
+            <div className="flex flex-col leading-tight text-left flex-1 min-w-0">
+              <span>Manual do</span>
+              <span className="text-slate-400 font-normal">Sistema</span>
+            </div>
+          ) : (
+            <span className="flex-1 text-left truncate">{name}</span>
+          )}
+          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 border border-emerald-200 uppercase tracking-wider shrink-0">
+            PDF
+          </span>
+        </a>
+      ) : (
+        <Link
+          to={href}
+          className={cn(
+            "flex items-center gap-3 px-4 py-2.5 pl-8 rounded-lg text-sm font-medium transition-all",
+            isActive
+              ? "bg-emerald-50 text-emerald-700 shadow-sm"
+              : "text-slate-600 hover:bg-slate-50 hover:text-emerald-600"
+          )}
+          onClick={onClick}
+        >
+          <Icon className={cn(
+            "w-5 h-5 shrink-0",
+            isActive ? "text-emerald-600" : "text-slate-400 group-hover:text-emerald-600"
+          )} />
+          {name === 'Treinamentos/Certificados' ? (
+            <div className="flex flex-col leading-tight text-left">
+              <span>Treinamentos</span>
+              <span className="text-slate-400 font-normal">Certificados</span>
+            </div>
+          ) : name === 'Manual do Sistema' ? (
+            <div className="flex flex-col leading-tight text-left">
+              <span>Manual do</span>
+              <span className="text-slate-400 font-normal">Sistema</span>
+            </div>
+          ) : (
+            <span className="truncate">{name}</span>
+          )}
+        </Link>
+      )}
     </div>
   );
 };
@@ -330,6 +366,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'vacations', name: 'Controle de Férias', href: '/vacations', icon: CalendarDays, show: activeModules.vacations !== false },
       { id: 'admin', name: 'Painel Administrativo', href: '/admin', icon: Users, show: !!isAdmin },
       { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
+      { id: 'manual', name: 'Manual do Sistema', href: '/Manual_do_Usuario_SecApp.pdf', icon: BookOpen, show: true, isExternal: true },
     ];
 
     // Default alphabetical sorting
@@ -474,6 +511,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                         href={item.href}
                         icon={item.icon}
                         show={item.show}
+                        isExternal={item.isExternal}
                         isActive={location.pathname === item.href}
                         onClick={() => setIsSidebarOpen(false)}
                       />
@@ -592,7 +630,19 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <h1 className="text-lg font-bold text-slate-800">
             {navigation.find(item => item.href === location.pathname)?.name || (location.pathname === '/profile' ? 'Meu Perfil' : 'Resumo do Sistema')}
           </h1>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* Manual do Sistema Button */}
+            <a
+              href="/Manual_do_Usuario_SecApp.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-all text-xs font-bold shadow-sm"
+              title="Abrir Manual de Instruções do SecApp em PDF"
+            >
+              <BookOpen className="w-4 h-4 text-emerald-600" />
+              <span>Manual (PDF)</span>
+            </a>
+
             {/* Font Size Adjuster for desktop header */}
             <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200" title="Acessibilidade: Tamanho do Texto">
               <span className="inline-flex items-end font-sans select-none leading-none border border-slate-200 rounded bg-white px-2 py-1 text-slate-500 mr-1 shrink-0">

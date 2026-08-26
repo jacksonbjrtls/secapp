@@ -745,6 +745,32 @@ const Login: React.FC = () => {
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Entrar'}
               </button>
+
+              {/* First access and domain guidance banner */}
+              <div className="pt-4 border-t border-slate-100 space-y-2.5 text-left">
+                <div className="bg-emerald-50/70 border border-emerald-100 rounded-2xl p-3.5 flex items-start gap-2.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="text-xs text-emerald-900 leading-snug">
+                    <p className="font-bold">Instruções de Primeiro Acesso:</p>
+                    <p className="text-emerald-800 mt-0.5 text-[11px] leading-relaxed">
+                      Utilize seu e-mail corporativo <span className="font-semibold">@eldoradobrasil.com.br</span> e a senha temporária <span className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-emerald-900">Mudarsenha123</span>. Após esse login, o sistema solicitará a criação da sua senha pessoal.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between px-1 text-[11px] text-slate-400 font-medium">
+                  <span>Domínio liberado: @eldoradobrasil.com.br</span>
+                  <a
+                    href="/Manual_do_Usuario_SecApp.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-600 hover:text-emerald-700 font-bold hover:underline inline-flex items-center gap-1"
+                    title="Abrir Manual do Sistema em PDF"
+                  >
+                    Manual (PDF)
+                  </a>
+                </div>
+              </div>
             </form>
           ) : message ? (
             <div className="space-y-6 text-center animate-fade-in">
