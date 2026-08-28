@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   collection, 
   addDoc, 
@@ -22,7 +22,11 @@ import {
   CheckCircle2,
   ShieldAlert,
   ChevronDown,
-  MapPin
+  MapPin,
+  CloudCheck,
+  RotateCcw,
+  Sparkles,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
@@ -38,10 +42,75 @@ interface ReceivingTabProps {
   storageBays: WireStorageBay[];
 }
 
+const WIRE_RECEIVING_DRAFT_KEY = 'secapp_wire_receiving_draft_v1';
+
+interface StoredDraft {
+  currentBatch: Partial<WireBatch>;
+  scannedCoils: Partial<WireCoil>[];
+  lastSavedAt: string;
+}
+
 export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager, storageBays }) => {
   const { profile } = useAuth();
-  const [currentBatch, setCurrentBatch] = useState<Partial<WireBatch> | null>(null);
-  const [scannedCoils, setScannedCoils] = useState<Partial<WireCoil>[]>([]);
+  
+  // Initialize state directly from localStorage if a draft exists
+  const [currentBatch, setCurrentBatch] = useState<Partial<WireBatch> | null>(() => {
+    try {
+      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
+      if (saved) {
+        const parsed: StoredDraft = JSON.parse(saved);
+        if (parsed.currentBatch && Object.keys(parsed.currentBatch).length > 0) {
+          return parsed.currentBatch;
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar rascunho de recebimento:', e);
+    }
+    return null;
+  });
+
+  const [scannedCoils, setScannedCoils] = useState<Partial<WireCoil>[]>(() => {
+    try {
+      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
+      if (saved) {
+        const parsed: StoredDraft = JSON.parse(saved);
+        if (Array.isArray(parsed.scannedCoils)) {
+          return parsed.scannedCoils;
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar bobinas do rascunho:', e);
+    }
+    return [];
+  });
+
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(() => {
+    try {
+      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
+      if (saved) {
+        const parsed: StoredDraft = JSON.parse(saved);
+        return parsed.lastSavedAt ? new Date(parsed.lastSavedAt).toLocaleTimeString('pt-BR') : null;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  });
+
+  const [draftRestoredBanner, setDraftRestoredBanner] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
+      if (saved) {
+        const parsed: StoredDraft = JSON.parse(saved);
+        return Boolean(parsed.currentBatch || (parsed.scannedCoils && parsed.scannedCoils.length > 0));
+      }
+    } catch (e) {
+      // ignore
+    }
+    return false;
+  });
+
+  const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [qrInput, setQrInput] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -50,9 +119,30 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
   const [manualData, setManualData] = useState({ coilNumber: '', weight: '', diameter: 2.30 });
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
+  // Auto-save effect: Whenever currentBatch or scannedCoils changes, save to localStorage
+  useEffect(() => {
+    try {
+      if (currentBatch || scannedCoils.length > 0) {
+        const now = new Date();
+        const draft: StoredDraft = {
+          currentBatch: currentBatch || {},
+          scannedCoils,
+          lastSavedAt: now.toISOString()
+        };
+        localStorage.setItem(WIRE_RECEIVING_DRAFT_KEY, JSON.stringify(draft));
+        setLastSavedTime(now.toLocaleTimeString('pt-BR'));
+      } else {
+        localStorage.removeItem(WIRE_RECEIVING_DRAFT_KEY);
+        setLastSavedTime(null);
+      }
+    } catch (e) {
+      console.warn('Erro ao salvar rascunho de recebimento:', e);
+    }
+  }, [currentBatch, scannedCoils]);
+
   const startNewBatch = () => {
     if (!isManager) return;
-    setCurrentBatch({
+    const initialBatch: Partial<WireBatch> = {
       nfNumber: '',
       supplierId: '',
       supplierName: '',
@@ -62,8 +152,24 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       coilsCount: 0,
       storageBayId: '',
       storageBayName: ''
-    });
+    };
+    setCurrentBatch(initialBatch);
     setScannedCoils([]);
+    setDraftRestoredBanner(false);
+  };
+
+  const handleDiscardDraft = () => {
+    try {
+      localStorage.removeItem(WIRE_RECEIVING_DRAFT_KEY);
+    } catch (e) {
+      console.warn(e);
+    }
+    setCurrentBatch(null);
+    setScannedCoils([]);
+    setLastSavedTime(null);
+    setDraftRestoredBanner(false);
+    setShowDiscardModal(false);
+    setError('');
   };
 
   const processScanData = (data: string) => {
@@ -194,14 +300,30 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         });
       }
 
+      // Successfully saved to database - clean up local draft
+      try {
+        localStorage.removeItem(WIRE_RECEIVING_DRAFT_KEY);
+      } catch (e) {
+        console.warn(e);
+      }
       setCurrentBatch(null);
       setScannedCoils([]);
+      setLastSavedTime(null);
+      setDraftRestoredBanner(false);
       setShowSuccessModal(true);
     } catch (err) {
       console.error(err);
       setError('Erro ao salvar recebimento.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCloseOrDiscardClick = () => {
+    if (scannedCoils.length > 0 || (currentBatch && (currentBatch.nfNumber || currentBatch.supplierId))) {
+      setShowDiscardModal(true);
+    } else {
+      handleDiscardDraft();
     }
   };
 
@@ -218,9 +340,68 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         isOpen={showSuccessModal}
         onClose={() => setShowSuccessModal(false)}
         title="Sucesso!"
-        message="Recebimento finalizado com sucesso!"
+        message="Recebimento finalizado com sucesso e dados salvos no banco!"
         type="success"
       />
+
+      <ConfirmationModal
+        isOpen={showDiscardModal}
+        onClose={() => setShowDiscardModal(false)}
+        onConfirm={handleDiscardDraft}
+        title="Descartar Recebimento em Andamento?"
+        message={`Deseja realmente cancelar este recebimento? O rascunho salvo e todas as ${scannedCoils.length} bobina(s) registradas serão descartados.`}
+        confirmText="Sim, Descartar"
+        cancelText="Voltar ao Recebimento"
+        type="danger"
+      />
+
+      {/* Auto-restored draft notification banner */}
+      <AnimatePresence>
+        {draftRestoredBanner && currentBatch && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="bg-emerald-50 border border-emerald-200 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-200">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-black text-emerald-950">Rascunho de Recebimento Recuperado</h4>
+                  {lastSavedTime && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 text-[10px] font-black uppercase">
+                      Salvo às {lastSavedTime}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-emerald-800 font-medium mt-0.5">
+                  Seus dados não foram perdidos: {scannedCoils.length} bobina(s) carregada(s){currentBatch.nfNumber ? ` (NF: ${currentBatch.nfNumber})` : ''}. Você pode continuar exatamente de onde parou.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+              <button
+                type="button"
+                onClick={() => setDraftRestoredBanner(false)}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-sm"
+              >
+                Continuar
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDiscardModal(true)}
+                className="px-4 py-2 bg-white hover:bg-rose-50 border border-rose-200 text-rose-600 text-xs font-black uppercase tracking-wider rounded-xl transition-all"
+              >
+                Descartar
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showManualModal && (
@@ -327,11 +508,21 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                   <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
                     <ShieldAlert className="w-5 h-5" />
                   </div>
-                  <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Dados da Carga</h3>
+                  <div>
+                    <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Dados da Carga</h3>
+                    {lastSavedTime && (
+                      <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 mt-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Auto-salvo às {lastSavedTime}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <button 
-                  onClick={() => setCurrentBatch(null)} 
-                  className="p-3 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-95"
+                  type="button"
+                  onClick={handleCloseOrDiscardClick} 
+                  title="Cancelar ou descartar rascunho"
+                  className="p-3 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-95 cursor-pointer"
                 >
                   <X className="w-6 h-6" />
                 </button>
@@ -450,8 +641,14 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                <div className="relative z-10">
                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8">
                    <div>
-                     <h3 className="text-2xl font-black text-slate-900 tracking-tight">Captura de Bobinas</h3>
-                     <p className="text-sm font-medium text-slate-500 mt-1">Bipe as etiquetas ou use a câmera para acelerar o processo.</p>
+                     <div className="flex flex-wrap items-center gap-2.5">
+                       <h3 className="text-2xl font-black text-slate-900 tracking-tight">Captura de Bobinas</h3>
+                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-100/80 text-emerald-800 rounded-full text-[10px] font-black uppercase tracking-wider">
+                         <CloudCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                         Salvamento Automático
+                       </span>
+                     </div>
+                     <p className="text-sm font-medium text-slate-500 mt-1">Bipe as etiquetas ou use a câmera. Seus dados são salvos em tempo real.</p>
                    </div>
                    <div className="flex gap-3">
                      <button 
