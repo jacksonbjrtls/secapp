@@ -65,6 +65,27 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
   const [bayFilter, setBayFilter] = useState('');
   const [subTab, setSubTab] = useState<'pending' | 'confirmed' | 'written_off'>('pending');
   
+  // Autocomplete / real-time suggestion states
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const suggestionContainerRef = React.useRef<HTMLDivElement>(null);
+
+  // Close suggestions dropdown on outside click
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (suggestionContainerRef.current && !suggestionContainerRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  // Reset active index when search text changes
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [qrInput]);
+
   // Write-off modal states
   const [writeOffModal, setWriteOffModal] = useState<{
     isOpen: boolean;
@@ -130,12 +151,32 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
     });
   }, [coils, session, supplierMap, bayMap]);
 
-  // Filter lists based on three primary sub-tabs
+  // Real-time suggestions when operator types part of the coil code
+  const suggestions = useMemo(() => {
+    const term = qrInput.trim().toLowerCase();
+    if (!term) return [];
+    return enrichedCoils
+      .filter(c => 
+        c.coilNumber.toLowerCase().includes(term) ||
+        c.supplierName.toLowerCase().includes(term) ||
+        (c.storageBayName && c.storageBayName.toLowerCase().includes(term))
+      )
+      .slice(0, 10);
+  }, [qrInput, enrichedCoils]);
+
+  // Effective unified search term (auto-filters the whole table as user types)
+  const effectiveSearchTerm = useMemo(() => {
+    return (qrInput.trim() || searchFilter.trim()).toLowerCase();
+  }, [qrInput, searchFilter]);
+
+  // Filter lists based on three primary sub-tabs and real-time typed search
   const filteredList = useMemo(() => {
     return enrichedCoils.filter(c => {
-      // Basic core filters
-      const matchesSearch = !searchFilter || 
-        c.coilNumber.toLowerCase().includes(searchFilter.toLowerCase());
+      // Basic core filters with real-time automatic matching
+      const matchesSearch = !effectiveSearchTerm || 
+        c.coilNumber.toLowerCase().includes(effectiveSearchTerm) ||
+        c.supplierName.toLowerCase().includes(effectiveSearchTerm) ||
+        (c.bayName && c.bayName.toLowerCase().includes(effectiveSearchTerm));
       const matchesSupplier = !supplierFilter || c.supplierId === supplierFilter;
       const matchesDiameter = !diameterFilter || String(c.diameter) === diameterFilter;
       const matchesBay = !bayFilter || c.storageBayId === bayFilter;
@@ -154,7 +195,7 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
         return c.status === 'consumed';
       }
     });
-  }, [enrichedCoils, subTab, searchFilter, supplierFilter, diameterFilter, bayFilter]);
+  }, [enrichedCoils, subTab, effectiveSearchTerm, supplierFilter, diameterFilter, bayFilter]);
 
   // Overall metric stats
   const stats = useMemo(() => {
@@ -190,6 +231,37 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
     }
   };
 
+  // Keyboard handler for autocomplete suggestions
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showSuggestions || suggestions.length === 0) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleConfirmCoilByCode(qrInput);
+      }
+      return;
+    }
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex(prev => (prev + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex(prev => (prev - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (activeIndex >= 0 && activeIndex < suggestions.length) {
+        const selected = suggestions[activeIndex];
+        handleConfirmCoilByCode(selected.coilNumber);
+        setShowSuggestions(false);
+      } else {
+        handleConfirmCoilByCode(qrInput);
+        setShowSuggestions(false);
+      }
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false);
+    }
+  };
+
   // Perform a barcode confirmation check
   const handleConfirmCoilByCode = (code: string) => {
     const trimmedInput = code.trim();
@@ -207,9 +279,10 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
           ...prev,
           confirmedIds: [...prev.confirmedIds, matched.id]
         }));
-        triggerNotification('success', `Bobina encontrada! #${matched.coilNumber} (${matched.diameter}mm - ${matched.weight}kg) adicionada com sucesso.`);
+        triggerNotification('success', `Bobina encontrada! #${matched.coilNumber} (${matched.diameter}mm - ${matched.weight}kg) confirmada como presente.`);
       }
       setQrInput('');
+      setShowSuggestions(false);
     } else {
       // Check if it belongs to consumed
       const isConsumed = coils.find(c => c.status === 'consumed' && isCoilMatch(c.coilNumber, trimmedInput));
@@ -414,32 +487,208 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
         </div>
       </div>
 
-      {/* Field Scanner Search Bar */}
-      <div className="bg-white p-5 md:p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-        <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
-          <Barcode className="w-4 h-4 text-emerald-600" />
-          Verificação Rápida de Campo
-        </h4>
+      {/* Field Scanner Search Bar with Smart Autocomplete for Damaged QR Codes */}
+      <div className="bg-white p-5 md:p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 relative z-30">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
+            <Barcode className="w-4 h-4 text-emerald-600" />
+            Verificação Rápida de Campo (Leitura de QR Code ou Digitação Parcial)
+          </h4>
+          <span className="text-[11px] font-bold text-slate-400">
+            {qrInput.trim() ? `${suggestions.length} resultado(s) filtrado(s)` : 'Filtragem inteligente em tempo real'}
+          </span>
+        </div>
         
-        <form onSubmit={(e) => { e.preventDefault(); handleConfirmCoilByCode(qrInput); }} className="flex flex-col sm:flex-row items-stretch gap-3">
-          <div className="flex-grow relative">
-            <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={qrInput}
-              onChange={(e) => setQrInput(e.target.value)}
-              placeholder="Digite o código da bobina (ou leia com o scanner móvel)... Ex: GD03040000125487"
-              className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all shadow-inner"
-            />
-          </div>
-          
-          <button
-            type="submit"
-            className="px-6 py-3.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-md shadow-slate-900/10 flex items-center justify-center gap-2"
+        <div ref={suggestionContainerRef} className="relative">
+          <form 
+            onSubmit={(e) => { 
+              e.preventDefault(); 
+              if (activeIndex >= 0 && activeIndex < suggestions.length) {
+                handleConfirmCoilByCode(suggestions[activeIndex].coilNumber);
+              } else {
+                handleConfirmCoilByCode(qrInput);
+              }
+            }} 
+            className="flex flex-col sm:flex-row items-stretch gap-3"
           >
-            Confirmar Presença
-          </button>
-        </form>
+            <div className="flex-grow relative">
+              <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={qrInput}
+                onChange={(e) => {
+                  setQrInput(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onKeyDown={handleKeyDown}
+                placeholder="Se o QR estiver danificado, digite parte do código... Ex: GD03 ou 125487"
+                className="w-full pl-12 pr-10 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all shadow-inner"
+              />
+              {qrInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQrInput('');
+                    setShowSuggestions(false);
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-full transition-all"
+                  title="Limpar texto digitado"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            
+            <button
+              type="submit"
+              className="px-6 py-3.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-md shadow-slate-900/10 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+            >
+              <Check className="w-4 h-4 text-emerald-400 stroke-[3]" />
+              Confirmar Presença
+            </button>
+          </form>
+
+          {/* Real-time Suggestions Dropdown when typing damaged QR / partial code */}
+          <AnimatePresence>
+            {showSuggestions && qrInput.trim().length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                transition={{ duration: 0.15 }}
+                className="absolute left-0 right-0 top-full mt-2 bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden z-50 max-h-96 flex flex-col"
+              >
+                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[11px] font-black text-slate-500 uppercase tracking-wider">
+                  <span>Bobinas encontradas com "{qrInput}" ({suggestions.length})</span>
+                  <span className="text-[10px] text-slate-400 font-medium lowercase">Use ↑ ↓ e Enter ou clique</span>
+                </div>
+
+                <div className="overflow-y-auto divide-y divide-slate-100 p-1">
+                  {suggestions.length === 0 ? (
+                    <div className="p-6 text-center text-slate-400 space-y-1">
+                      <Barcode className="w-8 h-8 mx-auto text-slate-300 stroke-[1.5]" />
+                      <p className="text-xs font-bold text-slate-600">Nenhuma bobina corresponde a "{qrInput}"</p>
+                      <p className="text-[11px] text-slate-400">Verifique os dígitos da etiqueta ou tente pesquisar pelo fornecedor.</p>
+                    </div>
+                  ) : (
+                    suggestions.map((coil, idx) => {
+                      const isSelected = activeIndex === idx;
+                      return (
+                        <div
+                          key={coil.id}
+                          onClick={() => {
+                            handleConfirmCoilByCode(coil.coilNumber);
+                          }}
+                          className={cn(
+                            "p-3 rounded-xl transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer group",
+                            isSelected ? "bg-emerald-50/80 border border-emerald-200" : "hover:bg-slate-50 border border-transparent"
+                          )}
+                        >
+                          <div className="flex items-start sm:items-center gap-3">
+                            <div className={cn(
+                              "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-xs font-black",
+                              coil.isConfirmed ? "bg-emerald-100 text-emerald-700" : coil.status === 'consumed' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
+                            )}>
+                              {coil.isConfirmed ? "✓" : coil.status === 'consumed' ? "✕" : (idx + 1)}
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-slate-900 group-hover:text-emerald-700 text-sm">
+                                  #{coil.coilNumber}
+                                </span>
+                                {coil.isConfirmed ? (
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[9px] font-black uppercase">
+                                    Já Confirmada
+                                  </span>
+                                ) : coil.status === 'consumed' ? (
+                                  <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[9px] font-black uppercase">
+                                    Baixada
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-black uppercase">
+                                    Pendente
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500 font-bold">
+                                <span>{coil.supplierName}</span>
+                                <span>•</span>
+                                <span>Bitola: {coil.diameter.toFixed(2)} mm</span>
+                                <span>•</span>
+                                <span className="font-mono">{coil.weight} kg</span>
+                                <span>•</span>
+                                <span className="flex items-center gap-1 text-slate-600">
+                                  <MapPin className="w-3 h-3 text-slate-400" />
+                                  {coil.bayName}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                            {coil.status !== 'consumed' && !coil.isConfirmed && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleTogglePresence(coil.id, false, coil.coilNumber);
+                                  setQrInput('');
+                                  setShowSuggestions(false);
+                                }}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center gap-1 cursor-pointer"
+                              >
+                                <Check className="w-3 h-3 stroke-[2.5]" />
+                                Presente
+                              </button>
+                            )}
+
+                            {coil.isConfirmed && (
+                              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                                Confirmada no Local
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="p-2.5 bg-slate-50 border-t border-slate-100 text-[10px] text-slate-400 flex items-center justify-between font-medium">
+                  <span>Dica: Clique na bobina para validar ou pressione Enter</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSuggestions(false)}
+                    className="text-slate-500 hover:text-slate-800 font-bold"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Live Filter Indicator when typing */}
+        {qrInput.trim() && (
+          <div className="flex items-center justify-between bg-emerald-50/70 border border-emerald-200/60 rounded-xl px-3.5 py-2 text-xs text-emerald-900">
+            <span className="font-bold flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5 text-emerald-600" />
+              Filtrando bobinas automaticamente por <span className="font-mono font-black bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-emerald-950">"{qrInput.trim()}"</span> ({filteredList.length} bobinas na aba atual)
+            </span>
+            <button
+              onClick={() => {
+                setQrInput('');
+                setShowSuggestions(false);
+              }}
+              className="text-[10px] font-black uppercase tracking-wider text-emerald-700 hover:text-emerald-950 underline cursor-pointer"
+            >
+              Limpar Filtro
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Control Workspace: Multi-Lists / Filter Toolbar */}
