@@ -157,6 +157,34 @@ export interface WireCoil {
   auditReason?: string;
 }
 
+export interface WireReceivingDraft {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  currentBatch: Partial<WireBatch>;
+  scannedCoils: Partial<WireCoil>[];
+  lastSavedAt: string;
+  status?: 'in_progress' | 'completed' | 'discarded';
+  updatedAt?: any;
+}
+
+export interface WireAuditLog {
+  id: string;
+  action: 'WIRE_BATCH_SAVED' | 'WIRE_BATCH_EDITED' | 'WIRE_COIL_STATUS_CHANGED' | 'WIRE_DRAFT_DISCARDED';
+  batchId?: string;
+  managerId: string;
+  managerName: string;
+  managerEmail?: string;
+  nfNumber?: string;
+  supplierName?: string;
+  coilsCount?: number;
+  totalWeight?: number;
+  storageBayName?: string;
+  details?: Record<string, any>;
+  timestamp: any;
+}
+
 export interface QualitySector {
   id: string;
   name: string;

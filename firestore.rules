@@ -335,6 +335,20 @@ service cloud.firestore {
       allow delete: if isMaster() || (isAdmin() && isValidId(coilId));
     }
 
+    // Wire Receiving Drafts (Sincronização em nuvem entre múltiplos celulares/dispositivos)
+    match /wire_receiving_drafts/{draftId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(draftId);
+      allow delete: if isSignedIn() && isValidId(draftId);
+    }
+
+    // Wire Audit Logs (Auditoria de salvamento e movimentações de arames)
+    match /wire_audit_logs/{logId} {
+      allow get, list: if isApproved();
+      allow create: if isApproved() && isValidId(logId);
+      allow update, delete: if isMaster();
+    }
+
     // Monthly Production (Manual Inputs)
     match /monthly_production/{id} {
       function isValidProduction(data) {

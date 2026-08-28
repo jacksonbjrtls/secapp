@@ -230,6 +230,41 @@
       },
       "required": ["coilNumber", "batchId", "diameter", "weight", "status", "receivedAt"]
     },
+    "WireReceivingDraft": {
+      "title": "Wire Receiving Draft",
+      "description": "Cloud-synced in-progress wire receiving batch draft for cross-device persistence.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "currentBatch": { "type": "object" },
+        "scannedCoils": { "type": "array" },
+        "lastSavedAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["in_progress", "completed", "discarded"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "lastSavedAt"]
+    },
+    "WireAuditLog": {
+      "title": "Wire Audit Log",
+      "description": "Security and traceability audit logs for wire receiving and inventory transactions.",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "batchId": { "type": "string" },
+        "managerId": { "type": "string" },
+        "managerName": { "type": "string" },
+        "managerEmail": { "type": "string" },
+        "nfNumber": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "coilsCount": { "type": "integer" },
+        "totalWeight": { "type": "number" },
+        "storageBayName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "managerId", "timestamp"]
+    },
     "MonthlyProduction": {
       "title": "Monthly Production",
       "description": "Manual input for monthly production tonnage.",
