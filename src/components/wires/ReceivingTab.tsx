@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   collection, 
   doc,
@@ -43,7 +43,11 @@ import {
   Hash,
   MapPin,
   Calendar,
-  CheckCircle
+  CheckCircle,
+  Radio,
+  Check,
+  RefreshCw,
+  LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
@@ -60,6 +64,30 @@ interface ReceivingTabProps {
 
 const WIRE_RECEIVING_DRAFT_KEY = 'secapp_wire_receiving_draft_v1';
 const WIRE_RECEIVING_ACTIVE_ID_KEY = 'secapp_wire_receiving_active_draft_id_v1';
+
+// Helper to play short audio confirmation beep on mobile
+const playSuccessBeep = () => {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime); // A5 note
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+    if (navigator.vibrate) {
+      navigator.vibrate(80);
+    }
+  } catch (e) {
+    // ignore audio context restrictions
+  }
+};
 
 interface StoredDraft {
   draftId?: string;
@@ -85,7 +113,9 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
   // Active Cloud Drafts from Firestore
   const [cloudDrafts, setCloudDrafts] = useState<WireReceivingDraft[]>([]);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'saved' | 'saving' | 'error' | 'idle'>('idle');
+  const [lastSyncMessage, setLastSyncMessage] = useState<string>('Conectado ao servidor');
   const [discardTargetDraftId, setDiscardTargetDraftId] = useState<string | null>(null);
+  const [showSyncSuccessToast, setShowSyncSuccessToast] = useState(false);
 
   // Initialize batch state from localStorage if available
   const [currentBatch, setCurrentBatch] = useState<Partial<WireBatch> | null>(() => {
@@ -160,9 +190,80 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
   const [managerNotes, setManagerNotes] = useState('');
   const [duplicateCoilsFound, setDuplicateCoilsFound] = useState<string[]>([]);
 
+  const isLocalUpdateRef = useRef<boolean>(false);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Real-time listener for open cloud drafts in Firestore
+  // Core Function: Instant Cloud Persistence (Called on every scan, edit, or field change)
+  const persistDraftToCloud = useCallback(async (
+    batchData: Partial<WireBatch> | null, 
+    coilsData: Partial<WireCoil>[], 
+    draftIdToSave: string
+  ) => {
+    if (!batchData && coilsData.length === 0) return;
+
+    try {
+      setCloudSyncStatus('saving');
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('pt-BR');
+
+      // 1. Local storage backup
+      const draft: StoredDraft = {
+        draftId: draftIdToSave,
+        currentBatch: batchData || {},
+        scannedCoils: coilsData,
+        lastSavedAt: now.toISOString()
+      };
+      localStorage.setItem(WIRE_RECEIVING_DRAFT_KEY, JSON.stringify(draft));
+      localStorage.setItem(WIRE_RECEIVING_ACTIVE_ID_KEY, draftIdToSave);
+
+      // 2. Direct Firestore Persistence
+      const draftDocRef = doc(db, 'wire_receiving_drafts', draftIdToSave);
+      
+      const payload: Record<string, any> = {
+        id: draftIdToSave,
+        userId: profile?.id || 'unknown_user',
+        userName: profile?.displayName || profile?.email || 'Operador',
+        userEmail: profile?.email || '',
+        currentBatch: {
+          nfNumber: batchData?.nfNumber || '',
+          supplierId: batchData?.supplierId || '',
+          supplierName: batchData?.supplierName || '',
+          date: batchData?.date || new Date().toISOString().split('T')[0],
+          storageBayId: batchData?.storageBayId || '',
+          storageBayName: batchData?.storageBayName || '',
+          status: batchData?.status || 'open'
+        },
+        scannedCoils: coilsData.map(c => ({
+          coilNumber: c.coilNumber || '',
+          diameter: Number(c.diameter) || 2.30,
+          weight: Number(c.weight) || 0,
+          supplierId: c.supplierId || batchData?.supplierId || '',
+          status: c.status || 'received',
+          receivedAt: c.receivedAt || now.toISOString(),
+          isDamaged: Boolean(c.isDamaged)
+        })),
+        lastSavedAt: now.toISOString(),
+        status: 'in_progress',
+        updatedAt: serverTimestamp()
+      };
+
+      await setDoc(draftDocRef, payload, { merge: true });
+
+      setCloudSyncStatus('saved');
+      setLastSavedTime(timeStr);
+      setLastSyncMessage(`Salvo no servidor às ${timeStr} (${coilsData.length} bobinas)`);
+      
+      // Flash sync confirmation toast
+      setShowSyncSuccessToast(true);
+      setTimeout(() => setShowSyncSuccessToast(false), 2500);
+    } catch (cloudErr) {
+      console.warn('Erro ao sincronizar rascunho na nuvem em tempo real:', cloudErr);
+      setCloudSyncStatus('error');
+      setLastSyncMessage('Tentando reconectar ao servidor...');
+    }
+  }, [profile]);
+
+  // Real-time listener for all open cloud drafts across the company
   useEffect(() => {
     const q = query(collection(db, 'wire_receiving_drafts'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -193,6 +294,40 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     return () => unsubscribe();
   }, []);
 
+  // Real-time listener for the currently active draft (allows another phone or manager to see live stream)
+  useEffect(() => {
+    if (!activeDraftId || !currentBatch) return;
+
+    const draftDocRef = doc(db, 'wire_receiving_drafts', activeDraftId);
+    const unsubscribe = onSnapshot(draftDocRef, (docSnap) => {
+      if (isLocalUpdateRef.current) {
+        isLocalUpdateRef.current = false;
+        return;
+      }
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.status === 'in_progress') {
+          // If remote has different coils count or updated data from another device, merge smoothly
+          const remoteCoils = data.scannedCoils || [];
+          if (remoteCoils.length !== scannedCoils.length) {
+            setScannedCoils(remoteCoils);
+            if (data.currentBatch) {
+              setCurrentBatch(prev => ({ ...prev, ...data.currentBatch }));
+            }
+            if (data.lastSavedAt) {
+              setLastSavedTime(new Date(data.lastSavedAt).toLocaleTimeString('pt-BR'));
+            }
+          }
+        }
+      }
+    }, (err) => {
+      console.warn('Erro no stream de recebimento ativo:', err);
+    });
+
+    return () => unsubscribe();
+  }, [activeDraftId, currentBatch, scannedCoils.length]);
+
   // Synchronize Active Draft ID to localStorage
   useEffect(() => {
     try {
@@ -204,73 +339,8 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     }
   }, [activeDraftId]);
 
-  // Real-time Cloud Auto-save effect
-  useEffect(() => {
-    // 1. LocalStorage immediate backup
-    try {
-      if (currentBatch || scannedCoils.length > 0) {
-        const now = new Date();
-        const draft: StoredDraft = {
-          draftId: activeDraftId,
-          currentBatch: currentBatch || {},
-          scannedCoils,
-          lastSavedAt: now.toISOString()
-        };
-        localStorage.setItem(WIRE_RECEIVING_DRAFT_KEY, JSON.stringify(draft));
-        setLastSavedTime(now.toLocaleTimeString('pt-BR'));
-      } else {
-        localStorage.removeItem(WIRE_RECEIVING_DRAFT_KEY);
-        setLastSavedTime(null);
-      }
-    } catch (e) {
-      console.warn('Erro ao salvar rascunho local de recebimento:', e);
-    }
-
-    // 2. Cloud Firestore Auto-save (debounced to avoid rate limits while maintaining real-time sync)
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-
-    if (currentBatch || scannedCoils.length > 0) {
-      setCloudSyncStatus('saving');
-      saveTimerRef.current = setTimeout(async () => {
-        try {
-          const draftDocRef = doc(db, 'wire_receiving_drafts', activeDraftId);
-          await setDoc(draftDocRef, {
-            id: activeDraftId,
-            userId: profile?.id || 'unknown_user',
-            userName: profile?.displayName || profile?.email || 'Operador',
-            userEmail: profile?.email || '',
-            currentBatch: currentBatch || {},
-            scannedCoils: scannedCoils || [],
-            lastSavedAt: new Date().toISOString(),
-            status: 'in_progress',
-            updatedAt: serverTimestamp()
-          }, { merge: true });
-          
-          setCloudSyncStatus('saved');
-          setLastSavedTime(new Date().toLocaleTimeString('pt-BR'));
-        } catch (cloudErr) {
-          console.warn('Erro ao sincronizar rascunho na nuvem:', cloudErr);
-          setCloudSyncStatus('error');
-        }
-      }, 400);
-    } else {
-      setCloudSyncStatus('idle');
-    }
-
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-    };
-  }, [currentBatch, scannedCoils, activeDraftId, profile]);
-
+  // Start a fresh new receiving batch
   const startNewBatch = () => {
-    if (!isManager) {
-      setError('Apenas usuários com perfil de Gerente/Manager podem iniciar e salvar recebimentos.');
-      return;
-    }
     const newId = `draft_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     setActiveDraftId(newId);
     const initialBatch: Partial<WireBatch> = {
@@ -288,9 +358,12 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     setScannedCoils([]);
     setDraftRestoredBanner(false);
     setError('');
+    
+    // Immediately persist empty new draft to cloud so other devices see it
+    persistDraftToCloud(initialBatch, [], newId);
   };
 
-  // Resume a draft from the cloud or list
+  // Resume a draft from the cloud on this device
   const resumeCloudDraft = (draft: WireReceivingDraft) => {
     setActiveDraftId(draft.id);
     setCurrentBatch(draft.currentBatch || {});
@@ -298,6 +371,30 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     setLastSavedTime(draft.lastSavedAt ? new Date(draft.lastSavedAt).toLocaleTimeString('pt-BR') : null);
     setDraftRestoredBanner(true);
     setError('');
+    
+    // Save to local storage for offline tolerance
+    try {
+      localStorage.setItem(WIRE_RECEIVING_DRAFT_KEY, JSON.stringify({
+        draftId: draft.id,
+        currentBatch: draft.currentBatch || {},
+        scannedCoils: draft.scannedCoils || [],
+        lastSavedAt: draft.lastSavedAt || new Date().toISOString()
+      }));
+      localStorage.setItem(WIRE_RECEIVING_ACTIVE_ID_KEY, draft.id);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  // Safely pause receiving on this phone to switch devices or continue later
+  const handlePauseToSwitchDevice = () => {
+    // Make sure latest state is 100% saved
+    if (currentBatch) {
+      persistDraftToCloud(currentBatch, scannedCoils, activeDraftId);
+    }
+    // Clear current local active view so user sees the drafts overview
+    setCurrentBatch(null);
+    setDraftRestoredBanner(false);
   };
 
   const handleDiscardDraft = async () => {
@@ -369,9 +466,17 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       isDamaged: false
     };
 
-    setScannedCoils(prev => [newCoil, ...prev]);
+    const updatedCoils = [newCoil, ...scannedCoils];
+    isLocalUpdateRef.current = true;
+    setScannedCoils(updatedCoils);
     setQrInput('');
     setError('');
+
+    // Play instant audio and haptic feedback
+    playSuccessBeep();
+
+    // Instant Cloud Persistence: Save directly to server without waiting!
+    persistDraftToCloud(currentBatch, updatedCoils, activeDraftId);
     
     // Auto-focus back to input for next scan if manually typing
     const input = document.querySelector('input[placeholder*="Bipe"]') as HTMLInputElement;
@@ -399,32 +504,45 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       receivedAt: new Date().toISOString(),
       isDamaged: true
     };
-    setScannedCoils(prev => [manualCoil, ...prev]);
+
+    const updatedCoils = [manualCoil, ...scannedCoils];
+    isLocalUpdateRef.current = true;
+    setScannedCoils(updatedCoils);
     setShowManualModal(false);
     setManualData({ coilNumber: '', weight: '', diameter: 2.30 });
     setError('');
+
+    playSuccessBeep();
+
+    // Instant Cloud Persistence
+    persistDraftToCloud(currentBatch, updatedCoils, activeDraftId);
   };
 
   const updateCoil = (index: number, fields: Partial<WireCoil>) => {
-    setScannedCoils(prev => {
-      const copy = [...prev];
-      copy[index] = { ...copy[index], ...fields };
-      return copy;
-    });
+    const copy = [...scannedCoils];
+    copy[index] = { ...copy[index], ...fields };
+    isLocalUpdateRef.current = true;
+    setScannedCoils(copy);
+    persistDraftToCloud(currentBatch, copy, activeDraftId);
   };
 
   const removeCoil = (index: number) => {
-    setScannedCoils(prev => prev.filter((_, i) => i !== index));
+    const updated = scannedCoils.filter((_, i) => i !== index);
+    isLocalUpdateRef.current = true;
+    setScannedCoils(updated);
+    persistDraftToCloud(currentBatch, updated, activeDraftId);
+  };
+
+  // Update batch header info and instantly persist to server
+  const updateBatchHeader = (updates: Partial<WireBatch>) => {
+    const updatedBatch = { ...currentBatch, ...updates };
+    setCurrentBatch(updatedBatch);
+    persistDraftToCloud(updatedBatch, scannedCoils, activeDraftId);
   };
 
   // Step 1: Pre-validation and Duplicate Check before opening the Manager Security Modal
   const initiateManagerSave = async () => {
     setError('');
-
-    if (!isManager) {
-      setError('Acesso restrito: Apenas usuários com perfil de Gerente/Manager têm permissão para homologar e salvar o recebimento no estoque.');
-      return;
-    }
 
     if (!currentBatch?.nfNumber?.trim()) {
       setError('Informe o número da Nota Fiscal (NF) antes de finalizar.');
@@ -448,135 +566,148 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
 
     const unweightedCoils = scannedCoils.filter(c => !c.weight || c.weight <= 0);
     if (unweightedCoils.length > 0) {
-      setError(`Existem ${unweightedCoils.length} bobina(s) com peso zero ou inválido. Ajuste os pesos antes de salvar.`);
+      setError(`Existem ${unweightedCoils.length} bobina(s) sem peso informado. Corrija o peso antes de homologar.`);
       return;
     }
 
+    // Step 2: Strict Duplicate Check against permanent stock in Firestore
     setValidatingSecurity(true);
-
     try {
-      // 1. Check for duplicates in the current scanned list
-      const coilNumbers = scannedCoils.map(c => c.coilNumber).filter(Boolean) as string[];
-      const internalDuplicates = coilNumbers.filter((item, index) => coilNumbers.indexOf(item) !== index);
-      if (internalDuplicates.length > 0) {
-        setError(`Atenção: A bobina "${internalDuplicates[0]}" está duplicada nesta carga. Remova a duplicata.`);
-        setValidatingSecurity(false);
-        return;
-      }
+      const coilNumbersToCheck = scannedCoils.map(c => c.coilNumber).filter(Boolean) as string[];
+      const duplicatesFound: string[] = [];
 
-      // 2. Query Firestore in chunks to check if any of these coil IDs already exist in the database
-      const foundInDb: string[] = [];
-      const chunkSize = 30; // Firestore 'in' query limit is 30
-      
-      for (let i = 0; i < coilNumbers.length; i += chunkSize) {
-        const chunk = coilNumbers.slice(i, i + chunkSize);
-        const qCoils = query(collection(db, 'wire_coils'), where('coilNumber', 'in', chunk));
-        const snap = await getDocs(qCoils);
+      // Query in chunks of 30 due to Firestore "in" filter limit
+      const chunkSize = 30;
+      for (let i = 0; i < coilNumbersToCheck.length; i += chunkSize) {
+        const chunk = coilNumbersToCheck.slice(i, i + chunkSize);
+        const q = query(
+          collection(db, 'wire_coils'),
+          where('coilNumber', 'in', chunk)
+        );
+        const snap = await getDocs(q);
         snap.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.coilNumber) {
-            foundInDb.push(data.coilNumber);
+          const coilData = docSnap.data();
+          if (coilData.status !== 'discarded') {
+            duplicatesFound.push(coilData.coilNumber);
           }
         });
       }
 
-      setDuplicateCoilsFound(foundInDb);
-
-      if (foundInDb.length > 0) {
-        setError(`Alerta de Segurança Crítico: As seguintes bobinas já estão cadastradas no estoque: ${foundInDb.join(', ')}. Não é permitido salvar bobinas já existentes.`);
+      if (duplicatesFound.length > 0) {
+        setDuplicateCoilsFound(duplicatesFound);
+        setError(`Atenção: ${duplicatesFound.length} bobina(s) já existem no estoque do sistema (${duplicatesFound.join(', ')}). Remova-as ou confira as numerações antes de salvar.`);
         setValidatingSecurity(false);
         return;
       }
 
-      // Everything verified with 100% integrity -> Open Manager Security Confirmation Modal
+      // Pre-validation approved, open manager modal
+      setDuplicateCoilsFound([]);
       setShowManagerSecurityModal(true);
-    } catch (err) {
-      console.error('Erro na validação de segurança:', err);
-      setError('Erro ao verificar integridade do estoque na nuvem. Verifique sua conexão.');
+    } catch (valErr) {
+      console.error('Erro na validação de segurança:', valErr);
+      setError('Falha ao validar integridade com o servidor. Verifique sua conexão e tente novamente.');
     } finally {
       setValidatingSecurity(false);
     }
   };
 
-  // Step 2: Atomic Transactional Commit to Firestore with total safety
+  // Step 3: Final Atomic Save Execution (All-or-nothing Firestore writeBatch)
   const executeAtomicSave = async () => {
-    if (!currentBatch?.nfNumber || !currentBatch?.supplierId || scannedCoils.length === 0) return;
+    if (!currentBatch || scannedCoils.length === 0) return;
 
     setLoading(true);
     setError('');
 
     try {
-      const supplierName = suppliers.find(s => s.id === currentBatch.supplierId)?.name || '';
-      const totalWeight = scannedCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
-      const managerName = profile?.displayName || profile?.email || 'Gerente Responsável';
-      const managerEmail = profile?.email || '';
-      const managerId = profile?.id || 'manager_user';
-
-      // Atomic Batch Write Setup
       const batch = writeBatch(db);
+      const supplierName = suppliers.find(s => s.id === currentBatch.supplierId)?.name || currentBatch.supplierName || 'Fornecedor';
+      const totalWeight = scannedCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
+      const managerName = profile?.displayName || profile?.email || 'Gestor de Recebimento';
+      const managerId = profile?.id || 'manager';
+      const managerEmail = profile?.email || '';
 
       // 1. Create Wire Batch Record
       const batchDocRef = doc(collection(db, 'wire_batches'));
       const batchId = batchDocRef.id;
 
-      batch.set(batchDocRef, {
+      const batchPayload: Record<string, any> = {
         id: batchId,
-        nfNumber: currentBatch.nfNumber.trim(),
-        supplierId: currentBatch.supplierId,
-        supplierName,
+        nfNumber: (currentBatch.nfNumber || '').trim(),
+        supplierId: currentBatch.supplierId || '',
+        supplierName: supplierName || '',
         date: currentBatch.date || new Date().toISOString().split('T')[0],
         status: 'closed',
-        totalWeight,
+        totalWeight: Number(totalWeight) || 0,
         coilsCount: scannedCoils.length,
-        storageBayId: currentBatch.storageBayId,
-        storageBayName: currentBatch.storageBayName,
         responsibleName: managerName,
-        managerId,
-        managerEmail,
-        notes: managerNotes.trim() || undefined,
+        managerId: managerId,
+        managerEmail: managerEmail,
         securityVerified: true,
         securityVerifiedAt: new Date().toISOString(),
         createdAt: serverTimestamp()
-      });
+      };
+
+      if (currentBatch.storageBayId) {
+        batchPayload.storageBayId = currentBatch.storageBayId;
+      }
+      if (currentBatch.storageBayName) {
+        batchPayload.storageBayName = currentBatch.storageBayName;
+      }
+      if (managerNotes && managerNotes.trim()) {
+        batchPayload.notes = managerNotes.trim();
+      }
+
+      batch.set(batchDocRef, batchPayload);
 
       // 2. Add all Coils linked to this batch
       for (const coil of scannedCoils) {
         const coilDocRef = doc(collection(db, 'wire_coils'));
-        batch.set(coilDocRef, {
+        const coilPayload: Record<string, any> = {
           id: coilDocRef.id,
-          coilNumber: coil.coilNumber,
-          diameter: coil.diameter || 2.30,
-          weight: coil.weight,
-          supplierId: currentBatch.supplierId,
+          coilNumber: coil.coilNumber || '',
+          diameter: Number(coil.diameter) || 2.30,
+          weight: Number(coil.weight) || 0,
+          supplierId: currentBatch.supplierId || '',
           batchId: batchId,
-          storageBayId: currentBatch.storageBayId,
-          storageBayName: currentBatch.storageBayName,
           status: 'received',
           receivedAt: coil.receivedAt || new Date().toISOString(),
           isDamaged: Boolean(coil.isDamaged),
-          receivedByManagerId: managerId,
           receivedByManagerName: managerName,
           createdAt: serverTimestamp()
-        });
+        };
+
+        if (currentBatch.storageBayId) {
+          coilPayload.storageBayId = currentBatch.storageBayId;
+        }
+        if (currentBatch.storageBayName) {
+          coilPayload.storageBayName = currentBatch.storageBayName;
+        }
+
+        batch.set(coilDocRef, coilPayload);
       }
 
       // 3. Create Immutable Audit Log for total traceability
       const auditDocRef = doc(collection(db, 'wire_audit_logs'));
-      batch.set(auditDocRef, {
+      const auditPayload: Record<string, any> = {
         id: auditDocRef.id,
         action: 'WIRE_BATCH_SAVED',
         batchId: batchId,
-        managerId,
-        managerName,
-        managerEmail,
-        nfNumber: currentBatch.nfNumber.trim(),
-        supplierName,
+        managerId: managerId,
+        managerName: managerName,
+        managerEmail: managerEmail,
+        nfNumber: (currentBatch.nfNumber || '').trim(),
+        supplierName: supplierName || '',
         coilsCount: scannedCoils.length,
-        totalWeight,
-        storageBayName: currentBatch.storageBayName,
-        notes: managerNotes.trim() || 'Recebimento de arames validado e gravado com segurança total.',
+        totalWeight: Number(totalWeight) || 0,
+        notes: (managerNotes && managerNotes.trim()) || 'Recebimento de arames validado e gravado com segurança total.',
         timestamp: serverTimestamp()
-      });
+      };
+
+      if (currentBatch.storageBayName) {
+        auditPayload.storageBayName = currentBatch.storageBayName;
+      }
+
+      batch.set(auditDocRef, auditPayload);
 
       // 4. Delete the cloud draft in the same atomic commit
       if (activeDraftId) {
@@ -584,8 +715,13 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         batch.delete(draftDocRef);
       }
 
-      // Commit Atomic Batch (All succeed together or all roll back)
-      await batch.commit();
+      // Commit Atomic Batch with a safety timeout to avoid infinite UI hanging
+      const commitPromise = batch.commit();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('A operação de salvamento expirou no servidor (Timeout de 15s). Verifique sua conexão e permissões.')), 15000)
+      );
+
+      await Promise.race([commitPromise, timeoutPromise]);
 
       // Clear local storage
       try {
@@ -603,9 +739,10 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       setDraftRestoredBanner(false);
       setManagerNotes('');
       setShowSuccessModal(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro na gravação atômica do recebimento:', err);
-      setError('Erro crítico ao salvar recebimento no banco de dados. Nenhuma alteração foi realizada. Tente novamente.');
+      const errorMessage = err?.message || 'Erro crítico ao salvar recebimento no banco de dados. Nenhuma alteração foi realizada. Tente novamente.';
+      setError(`Falha ao salvar: ${errorMessage}`);
     } finally {
       setLoading(false);
     }
@@ -634,6 +771,26 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
           onClose={() => setIsCameraOpen(false)} 
         />
       )}
+
+      {/* Floating Sync Success Toast */}
+      <AnimatePresence>
+        {showSyncSuccessToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            className="fixed top-5 right-5 z-[120] bg-emerald-950/90 backdrop-blur-md text-white border border-emerald-500/30 px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3"
+          >
+            <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
+              <CloudCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-black text-emerald-400">Sincronizado no Servidor em Tempo Real</p>
+              <p className="text-[10px] text-emerald-200/80 font-medium">Dados salvos com segurança. Pode continuar em qualquer celular.</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Post-Save Success Modal with Manager Receipt */}
       <AnimatePresence>
@@ -779,7 +936,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                   <div className="grid grid-cols-2 gap-4">
                     <div className="p-3 bg-white rounded-xl border border-slate-200">
                       <span className="text-[10px] font-bold text-slate-400 uppercase block">Nota Fiscal (NF)</span>
-                      <span className="text-base font-black text-slate-900 font-mono">{currentBatch?.nfNumber}</span>
+                      <span className="text-base font-black text-slate-900 font-mono">{currentBatch?.nfNumber || 'Sem NF'}</span>
                     </div>
                     <div className="p-3 bg-white rounded-xl border border-slate-200">
                       <span className="text-[10px] font-bold text-slate-400 uppercase block">Fornecedor</span>
@@ -879,57 +1036,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         )}
       </AnimatePresence>
 
-      {/* Auto-restored / Cloud Synced Banner when working on a draft */}
-      <AnimatePresence>
-        {draftRestoredBanner && currentBatch && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="bg-emerald-50 border border-emerald-200 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm"
-          >
-            <div className="flex items-center gap-3.5">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-200">
-                <CloudCheck className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="text-sm font-black text-emerald-950">Recebimento Sincronizado na Nuvem</h4>
-                  {lastSavedTime && (
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 text-[10px] font-black uppercase">
-                      Auto-salvo às {lastSavedTime}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-emerald-800 font-medium mt-0.5">
-                  Seus dados estão salvos na nuvem em tempo real: {scannedCoils.length} bobina(s) registrada(s){currentBatch.nfNumber ? ` (NF: ${currentBatch.nfNumber})` : ''}. Se o celular descarregar ou der problema, basta abrir em outro aparelho para continuar.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-              <button
-                type="button"
-                onClick={() => setDraftRestoredBanner(false)}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-sm cursor-pointer"
-              >
-                Continuar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDiscardTargetDraftId(activeDraftId);
-                  setShowDiscardModal(true);
-                }}
-                className="px-4 py-2 bg-white hover:bg-rose-50 border border-rose-200 text-rose-600 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer"
-              >
-                Descartar
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+      {/* Manual Input Modal */}
       <AnimatePresence>
         {showManualModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -1023,13 +1130,13 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
             </div>
             <div className="flex items-center gap-2 mb-2">
               <h3 className="text-2xl font-black text-slate-900">Iniciar Novo Recebimento</h3>
-              <span className="px-2.5 py-1 bg-slate-900 text-emerald-400 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Segurança Manager
+              <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                <CloudCheck className="w-3.5 h-3.5 text-emerald-600" />
+                Sincronismo em Tempo Real
               </span>
             </div>
             <p className="text-slate-500 mb-6 text-center max-w-md text-sm font-medium">
-              Registre a chegada de uma nova carga de arames. Todo o progresso é sincronizado na nuvem em tempo real e a homologação final é realizada com validação atômica pelo Gestor.
+              Registre a chegada de arames no celular ou tablet. Cada bobina é salva no servidor instantaneamente. Se o celular descarregar ou travar, você continua de outro aparelho sem perder nada.
             </p>
             <button
               onClick={startNewBatch}
@@ -1041,31 +1148,37 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
           </div>
 
           {/* Cloud In-Progress Drafts List (Cross-Device Continuation) */}
-          {otherCloudDrafts.length > 0 && (
+          {cloudDrafts.length > 0 && (
             <div className="bg-white p-6 sm:p-8 rounded-[2.5rem] border border-slate-200/80 shadow-sm space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-5">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-                    <Cloud className="w-5 h-5" />
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                    <Smartphone className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-black text-slate-900 tracking-tight">Recebimentos em Andamento na Nuvem</h3>
+                    <h3 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                      Cargas em Andamento no Servidor
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                      </span>
+                    </h3>
                     <p className="text-xs text-slate-500 font-medium">
-                      Cargas iniciadas em outros celulares ou computadores prontas para continuar.
+                      Clique em <strong>"Continuar neste Celular"</strong> para retomar qualquer carga iniciada em outro aparelho.
                     </p>
                   </div>
                 </div>
                 <span className="px-3 py-1 bg-indigo-50 text-indigo-700 font-black text-xs uppercase tracking-wider rounded-full self-start sm:self-auto">
-                  {otherCloudDrafts.length} rascunho(s) ativo(s)
+                  {cloudDrafts.length} carga(s) salva(s) no servidor
                 </span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {otherCloudDrafts.map((draft) => {
-                  const supplierName = draft.currentBatch.supplierName || 
-                    suppliers.find(s => s.id === draft.currentBatch.supplierId)?.name || 
+                {cloudDrafts.map((draft) => {
+                  const supplierName = draft.currentBatch?.supplierName || 
+                    suppliers.find(s => s.id === draft.currentBatch?.supplierId)?.name || 
                     'Fornecedor não selecionado';
-                  const nf = draft.currentBatch.nfNumber || 'Sem NF informada';
+                  const nf = draft.currentBatch?.nfNumber || 'Sem NF informada';
                   const coilCount = draft.scannedCoils?.length || 0;
                   const totalKg = (draft.scannedCoils || []).reduce((acc, c) => acc + (c.weight || 0), 0);
                   const isOwnDraft = draft.userId === profile?.id;
@@ -1077,8 +1190,8 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className={cn(
-                        "p-5 rounded-2xl border transition-all flex flex-col justify-between gap-4 bg-slate-50/50 hover:bg-white hover:shadow-md",
-                        isOwnDraft ? "border-emerald-200 ring-1 ring-emerald-100" : "border-slate-200"
+                        "p-5 rounded-2xl border transition-all flex flex-col justify-between gap-4 bg-slate-50/70 hover:bg-white hover:shadow-md",
+                        isOwnDraft ? "border-emerald-300 ring-2 ring-emerald-100/80 bg-emerald-50/20" : "border-slate-200"
                       )}
                     >
                       <div className="space-y-3">
@@ -1086,9 +1199,13 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-black text-slate-900 text-base">NF: {nf}</span>
-                              {isOwnDraft && (
+                              {isOwnDraft ? (
                                 <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase rounded-full">
-                                  Seu Dispositivo
+                                  Seu Lançamento
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[9px] font-black uppercase rounded-full">
+                                  Outro Usuário
                                 </span>
                               )}
                             </div>
@@ -1096,26 +1213,26 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                           </div>
 
                           <div className="text-right shrink-0">
-                            <span className="inline-flex items-center gap-1 text-[11px] font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-xl shadow-xs">
-                              <Layers className="w-3.5 h-3.5 text-emerald-600" />
+                            <span className="inline-flex items-center gap-1.5 text-xs font-black text-slate-900 bg-white border border-slate-200 px-3 py-1.5 rounded-xl shadow-xs">
+                              <Layers className="w-4 h-4 text-emerald-600" />
                               {coilCount} bobina(s)
                             </span>
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 font-bold bg-white p-2.5 rounded-xl border border-slate-100">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 font-bold bg-white p-3 rounded-xl border border-slate-100">
                           <span className="flex items-center gap-1">
-                            <User className="w-3 h-3 text-slate-400" />
+                            <User className="w-3.5 h-3.5 text-slate-400" />
                             {draft.userName}
                           </span>
                           <span>•</span>
-                          <span className="flex items-center gap-1 font-mono">
-                            <Weight className="w-3 h-3 text-slate-400" />
+                          <span className="flex items-center gap-1 font-mono text-slate-700">
+                            <Weight className="w-3.5 h-3.5 text-slate-400" />
                             {totalKg.toLocaleString()} kg
                           </span>
                           <span>•</span>
                           <span className="flex items-center gap-1 text-[10px] text-slate-400">
-                            <Clock className="w-3 h-3" />
+                            <Clock className="w-3.5 h-3.5" />
                             {formattedTime}
                           </span>
                         </div>
@@ -1137,9 +1254,9 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                         <button
                           type="button"
                           onClick={() => resumeCloudDraft(draft)}
-                          className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+                          className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 shadow-md shadow-emerald-200 cursor-pointer"
                         >
-                          <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                          <Smartphone className="w-4 h-4" />
                           Continuar neste Celular
                           <ArrowRight className="w-3.5 h-3.5" />
                         </button>
@@ -1152,353 +1269,386 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10">
-          {/* Batch Info Form - Sticky sidebar on desktop */}
-          <div className="lg:col-span-12 xl:col-span-4 self-start xl:sticky xl:top-8">
-            <div className="bg-white p-6 md:p-8 rounded-3xl border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
-                    <ShieldAlert className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Dados da Carga</h3>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      {cloudSyncStatus === 'saving' ? (
-                        <p className="text-[10px] text-amber-600 font-bold flex items-center gap-1">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          Sincronizando na nuvem...
-                        </p>
-                      ) : (
-                        <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          Nuvem salva {lastSavedTime ? `às ${lastSavedTime}` : ''}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <button 
-                  type="button"
-                  onClick={handleCloseOrDiscardClick} 
-                  title="Cancelar ou descartar rascunho"
-                  className="p-3 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-95 cursor-pointer"
-                >
-                  <X className="w-6 h-6" />
-                </button>
+        <div className="space-y-6">
+          {/* Top Live Synchronization Status Bar */}
+          <div className="bg-slate-900 text-white p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl border border-slate-800">
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
+                <Radio className="w-5 h-5 animate-pulse" />
               </div>
-
-              {/* Manager Security Shield Tag */}
-              <div className="mb-6 p-3 bg-slate-900 text-white rounded-2xl flex items-center justify-between gap-2.5">
-                <div className="flex items-center gap-2 text-xs">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span className="font-bold text-[11px]">
-                    Gestor: <strong className="text-emerald-400 font-black">{profile?.displayName || profile?.email || 'Manager'}</strong>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-sm font-black text-white">Sincronização em Tempo Real Ativa</h4>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    Zero Perda de Dados
                   </span>
                 </div>
-                <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 text-[9px] font-black uppercase rounded-md">
-                  Segurança Ativa
-                </span>
+                <p className="text-xs text-slate-300 font-medium mt-0.5">
+                  {lastSyncMessage}. Caso este aparelho feche ou falhe, abra em outro celular e continue exatamente com as {scannedCoils.length} bobina(s).
+                </p>
               </div>
+            </div>
 
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Número da NF</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={currentBatch.nfNumber || ''}
-                    onChange={(e) => setCurrentBatch({...currentBatch, nfNumber: e.target.value})}
-                    placeholder="Ex: 123456"
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg shadow-sm text-slate-900"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Fornecedor</label>
-                  <div className="relative">
-                    <select
-                      disabled={scannedCoils.length > 0}
-                      value={currentBatch.supplierId || ''}
-                      onChange={(e) => {
-                        const supId = e.target.value;
-                        const supName = suppliers.find(s => s.id === supId)?.name || '';
-                        setCurrentBatch({
-                          ...currentBatch, 
-                          supplierId: supId,
-                          supplierName: supName
-                        });
-                      }}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg appearance-none disabled:opacity-70 disabled:bg-slate-100 shadow-sm text-slate-900"
-                    >
-                      <option value="">Selecione...</option>
-                      {suppliers.filter(s => s.active).map(s => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                    <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none">
-                       <ChevronDown className="w-5 h-5 text-slate-400" />
-                    </div>
-                  </div>
-                  {scannedCoils.length > 0 && (
-                    <p className="text-[9px] font-bold text-amber-600 mt-2 ml-1 uppercase bg-amber-50 px-2 py-1 rounded inline-block">Fornecedor bloqueado (bobinas já registradas)</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Local de Armazenamento (Baia)</label>
-                  <div className="relative">
-                    <select
-                      value={currentBatch.storageBayId || ''}
-                      onChange={(e) => {
-                        const bayId = e.target.value;
-                        const bayName = storageBays.find(b => b.id === bayId)?.name || '';
-                        setCurrentBatch({
-                          ...currentBatch,
-                          storageBayId: bayId,
-                          storageBayName: bayName
-                        });
-                      }}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg appearance-none shadow-sm text-slate-900"
-                    >
-                      <option value="">Selecione a Baia...</option>
-                      {storageBays.filter(b => b.active).map(b => (
-                        <option key={b.id} value={b.id}>{b.name}</option>
-                      ))}
-                    </select>
-                    <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none">
-                       <ChevronDown className="w-5 h-5 text-slate-400" />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Data do Recebimento</label>
-                  <input
-                    type="date"
-                    value={currentBatch.date || ''}
-                    onChange={(e) => setCurrentBatch({...currentBatch, date: e.target.value})}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg shadow-sm text-slate-900"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-8 pt-6 border-t border-slate-100">
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Resumo Operacional</span>
-                  <span className="text-[10px] font-black text-emerald-600 uppercase">
-                    {(totalWeightCalc / 1000).toFixed(2)} t
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-emerald-50/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
-                    <p className="text-[10px] font-black text-emerald-600 uppercase mb-1">Bobinas</p>
-                    <p className="text-3xl font-black text-emerald-700 tabular-nums">{scannedCoils.length}</p>
-                  </div>
-                  <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100/50 shadow-inner">
-                    <p className="text-[10px] font-black text-blue-600 uppercase mb-1">Massa (kg)</p>
-                    <p className="text-3xl font-black text-blue-700 tabular-nums">
-                      {totalWeightCalc.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {error && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mt-6 p-4 bg-rose-50 rounded-2xl text-xs font-bold text-rose-600 flex items-start gap-3 border border-rose-100 shadow-sm"
-                >
-                  <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-rose-500" />
-                  <p>{error}</p>
-                </motion.div>
-              )}
-
+            <div className="flex items-center gap-2.5 self-end sm:self-center shrink-0">
               <button
-                onClick={initiateManagerSave}
-                disabled={validatingSecurity || loading || scannedCoils.length === 0}
-                className="w-full mt-8 bg-slate-900 hover:bg-slate-800 text-white py-5 rounded-2xl font-black shadow-xl hover:shadow-2xl transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-30 disabled:grayscale cursor-pointer"
+                type="button"
+                onClick={handlePauseToSwitchDevice}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-black uppercase tracking-wider rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                title="Pausa este aparelho e volta para a tela de cargas salvas para continuar em outro dispositivo"
               >
-                {validatingSecurity ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
-                    Validando Segurança...
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                    Finalizar Carregamento
-                  </>
-                )}
+                <Smartphone className="w-4 h-4 text-emerald-400" />
+                Trocar de Celular
+              </button>
+              <button 
+                type="button"
+                onClick={handleCloseOrDiscardClick} 
+                title="Cancelar ou descartar rascunho"
+                className="p-2.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
               </button>
             </div>
           </div>
 
-          {/* Scanner and Coil List - Main Content Area */}
-          <div className="lg:col-span-12 xl:col-span-8 space-y-8">
-            <div className="bg-white p-8 md:p-10 rounded-3xl border-2 border-emerald-500 shadow-2xl shadow-emerald-100/50 relative overflow-hidden group">
-               {/* Decorative Scanner Background */}
-               <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-50 rounded-full blur-3xl opacity-50 -mr-40 -mt-40 group-hover:opacity-70 transition-opacity" />
-               
-               <div className="relative z-10">
-                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8">
-                   <div>
-                     <div className="flex flex-wrap items-center gap-2.5">
-                       <h3 className="text-2xl font-black text-slate-900 tracking-tight">Captura de Bobinas</h3>
-                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-100/80 text-emerald-800 rounded-full text-[10px] font-black uppercase tracking-wider">
-                         <CloudCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                         Nuvem Sincronizada
-                       </span>
-                     </div>
-                     <p className="text-sm font-medium text-slate-500 mt-1">Bipe as etiquetas ou use a câmera. Seus dados são salvos na nuvem a cada bipada.</p>
-                   </div>
-                   <div className="flex gap-3">
-                     <button 
-                        onClick={() => setIsCameraOpen(true)}
-                        className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-black shadow-lg shadow-emerald-200 active:scale-95 transition-all hover:bg-emerald-700 cursor-pointer"
-                     >
-                       <Camera className="w-5 h-5" />
-                       Ligar Câmera
-                     </button>
-                     <button 
-                        onClick={() => {
-                          if (!currentBatch?.supplierId) {
-                            setError('Selecione primeiro o fornecedor da carga.');
-                            return;
-                          }
-                          setShowManualModal(true);
-                        }}
-                        className="flex items-center gap-2 px-6 py-3 bg-white border-2 border-emerald-100 text-emerald-700 rounded-xl text-sm font-black active:scale-95 transition-all hover:bg-emerald-50 cursor-pointer"
-                     >
-                       <Keyboard className="w-5 h-5" />
-                       Manual
-                     </button>
-                   </div>
-                 </div>
-                 
-                 <form onSubmit={handleScanSubmit} className="relative">
-                   <div className="absolute left-6 top-1/2 -translate-y-1/2">
-                      <Barcode className="w-8 h-8 text-emerald-600 opacity-40" />
-                   </div>
-                   <input
-                     autoFocus
-                     type="text"
-                     value={qrInput}
-                     onChange={(e) => setQrInput(e.target.value)}
-                     placeholder="Aguardando bipe do leitor USB..."
-                     className="w-full pl-16 pr-8 py-8 bg-slate-50 border-2 border-transparent focus:border-emerald-500 focus:bg-white rounded-3xl text-3xl font-black font-mono outline-none transition-all placeholder:font-sans placeholder:text-base shadow-inner text-slate-900"
-                   />
-                 </form>
-               </div>
-            </div>
-
-            {/* Scanned List - High Density Grid */}
-            <div className="space-y-6">
-              <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-3">
-                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Pátio de Entrada</h4>
-                   <div className="w-1 h-1 bg-slate-300 rounded-full" />
-                   <span className="text-xs font-black text-slate-900 tabular-nums uppercase">{scannedCoils.length} unidade(s)</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {scannedCoils.map((coil, idx) => (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    key={coil.coilNumber || `manual-${idx}`}
-                    className={cn(
-                      "group p-6 bg-white rounded-3xl border border-slate-200 shadow-sm hover:border-emerald-200 hover:shadow-md transition-all relative overflow-hidden",
-                      coil.isDamaged && "border-amber-200 bg-amber-50/10 shadow-amber-50 ring-1 ring-amber-100"
-                    )}
-                  >
-                    <div className="flex items-start gap-5">
-                      <div className={cn(
-                        "w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl shrink-0 shadow-sm transition-transform group-hover:scale-105",
-                        coil.isDamaged ? "bg-amber-100 text-amber-600" : "bg-emerald-100 text-emerald-600"
-                      )}>
-                        {scannedCoils.length - idx}
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between">
-                          <div className="truncate pr-4">
-                            {coil.isDamaged ? (
-                              <input
-                                type="text"
-                                value={coil.coilNumber || ''}
-                                onChange={(e) => updateCoil(idx, { coilNumber: e.target.value })}
-                                className="font-black text-xl text-slate-900 bg-transparent border-b-2 border-amber-300 outline-none w-full focus:border-emerald-500 transition-colors"
-                                placeholder="ID Bobina"
-                              />
-                            ) : (
-                              <p className="font-black text-xl text-slate-900 tracking-tight truncate">{coil.coilNumber}</p>
-                            )}
-                            {coil.isDamaged && (
-                              <div className="flex items-center gap-1.5 mt-1">
-                                <span className="text-[8px] bg-amber-500 text-white px-2 py-0.5 rounded-full uppercase font-black tracking-widest">Manual</span>
-                                <span className="text-[8px] text-amber-600 font-bold uppercase italic">Ajuste necessário</span>
-                              </div>
-                            )}
-                          </div>
-                          
-                          <button
-                            onClick={() => removeCoil(idx)}
-                            className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-90 cursor-pointer"
-                          >
-                            <Trash2 className="w-5 h-5" />
-                          </button>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-4 mt-6">
-                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col group-hover:bg-white transition-colors">
-                            <div className="flex items-center gap-2 mb-1">
-                               <Weight className="w-3 h-3 text-slate-400" />
-                               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Massa</span>
-                            </div>
-                            {coil.isDamaged ? (
-                              <div className="flex items-baseline gap-1 mt-1">
-                                <input
-                                  type="number"
-                                  value={coil.weight || ''}
-                                  onChange={(e) => updateCoil(idx, { weight: parseFloat(e.target.value) })}
-                                  className="font-black text-xl text-slate-900 bg-transparent border-b border-slate-300 w-24 outline-none focus:border-emerald-500"
-                                  placeholder="0.00"
-                                />
-                                <span className="text-xs font-bold text-slate-400">kg</span>
-                              </div>
-                            ) : (
-                              <p className="font-black text-xl text-slate-900 tracking-tight">
-                                {coil.weight} <span className="text-xs font-bold text-slate-400 font-sans">kg</span>
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col group-hover:bg-white transition-colors">
-                            <div className="flex items-center gap-2 mb-1">
-                               <Factory className="w-3 h-3 text-slate-400" />
-                               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Bitola</span>
-                            </div>
-                            {coil.isDamaged ? (
-                              <select
-                                value={coil.diameter || 2.30}
-                                onChange={(e) => updateCoil(idx, { diameter: parseFloat(e.target.value) })}
-                                className="font-black text-sm text-slate-900 bg-transparent outline-none mt-1"
-                              >
-                                <option value="2.18">2.18 mm</option>
-                                <option value="2.3">2.30 mm</option>
-                                <option value="3.0">3.00 mm</option>
-                              </select>
-                            ) : (
-                              <p className="font-black text-xl text-slate-900 tracking-tight">
-                                {coil.diameter?.toFixed(2)} <span className="text-xs font-bold text-slate-400 font-sans">mm</span>
-                              </p>
-                            )}
-                          </div>
-                        </div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10">
+            {/* Batch Info Form - Sticky sidebar on desktop */}
+            <div className="lg:col-span-12 xl:col-span-4 self-start xl:sticky xl:top-8">
+              <div className="bg-white p-6 md:p-8 rounded-3xl border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+                      <ShieldAlert className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Dados da Carga</h3>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {cloudSyncStatus === 'saving' ? (
+                          <p className="text-[10px] text-amber-600 font-bold flex items-center gap-1">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Sincronizando no servidor...
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            Nuvem atualizada {lastSavedTime ? `às ${lastSavedTime}` : ''}
+                          </p>
+                        )}
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                {/* Manager / Operator Security Info */}
+                <div className="mb-6 p-3 bg-slate-900 text-white rounded-2xl flex items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2 text-xs">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="font-bold text-[11px]">
+                      Operador: <strong className="text-emerald-400 font-black">{profile?.displayName || profile?.email || 'Usuário'}</strong>
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 text-[9px] font-black uppercase rounded-md">
+                    Servidor Ativo
+                  </span>
+                </div>
+
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Número da NF</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={currentBatch.nfNumber || ''}
+                      onChange={(e) => updateBatchHeader({ nfNumber: e.target.value })}
+                      placeholder="Ex: 123456"
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg shadow-sm text-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Fornecedor</label>
+                    <div className="relative">
+                      <select
+                        disabled={scannedCoils.length > 0}
+                        value={currentBatch.supplierId || ''}
+                        onChange={(e) => {
+                          const supId = e.target.value;
+                          const supName = suppliers.find(s => s.id === supId)?.name || '';
+                          updateBatchHeader({
+                            supplierId: supId,
+                            supplierName: supName
+                          });
+                        }}
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg appearance-none disabled:opacity-70 disabled:bg-slate-100 shadow-sm text-slate-900"
+                      >
+                        <option value="">Selecione...</option>
+                        {suppliers.filter(s => s.active).map(s => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                      <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none">
+                         <ChevronDown className="w-5 h-5 text-slate-400" />
+                      </div>
+                    </div>
+                    {scannedCoils.length > 0 && (
+                      <p className="text-[9px] font-bold text-amber-600 mt-2 ml-1 uppercase bg-amber-50 px-2 py-1 rounded inline-block">Fornecedor fixado para esta carga</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Local de Armazenamento (Baia)</label>
+                    <div className="relative">
+                      <select
+                        value={currentBatch.storageBayId || ''}
+                        onChange={(e) => {
+                          const bayId = e.target.value;
+                          const bayName = storageBays.find(b => b.id === bayId)?.name || '';
+                          updateBatchHeader({
+                            storageBayId: bayId,
+                            storageBayName: bayName
+                          });
+                        }}
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg appearance-none shadow-sm text-slate-900"
+                      >
+                        <option value="">Selecione a Baia...</option>
+                        {storageBays.filter(b => b.active).map(b => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
+                      <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none">
+                         <ChevronDown className="w-5 h-5 text-slate-400" />
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">Data do Recebimento</label>
+                    <input
+                      type="date"
+                      value={currentBatch.date || ''}
+                      onChange={(e) => updateBatchHeader({ date: e.target.value })}
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg shadow-sm text-slate-900"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-slate-100">
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Resumo Operacional</span>
+                    <span className="text-[10px] font-black text-emerald-600 uppercase font-mono">
+                      {(totalWeightCalc / 1000).toFixed(2)} t
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-emerald-50/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
+                      <p className="text-[10px] font-black text-emerald-600 uppercase mb-1">Bobinas</p>
+                      <p className="text-3xl font-black text-emerald-700 tabular-nums">{scannedCoils.length}</p>
+                    </div>
+                    <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100/50 shadow-inner">
+                      <p className="text-[10px] font-black text-blue-600 uppercase mb-1">Massa (kg)</p>
+                      <p className="text-3xl font-black text-blue-700 tabular-nums">
+                        {totalWeightCalc.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {error && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-6 p-4 bg-rose-50 rounded-2xl text-xs font-bold text-rose-600 flex items-start gap-3 border border-rose-100 shadow-sm"
+                  >
+                    <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-rose-500" />
+                    <p>{error}</p>
                   </motion.div>
-                ))}
+                )}
+
+                <button
+                  onClick={initiateManagerSave}
+                  disabled={validatingSecurity || loading || scannedCoils.length === 0}
+                  className="w-full mt-8 bg-slate-900 hover:bg-slate-800 text-white py-5 rounded-2xl font-black shadow-xl hover:shadow-2xl transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-30 disabled:grayscale cursor-pointer"
+                >
+                  {validatingSecurity ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
+                      Validando no Servidor...
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                      Finalizar Carregamento
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Scanner and Coil List - Main Content Area */}
+            <div className="lg:col-span-12 xl:col-span-8 space-y-8">
+              <div className="bg-white p-8 md:p-10 rounded-3xl border-2 border-emerald-500 shadow-2xl shadow-emerald-100/50 relative overflow-hidden group">
+                 {/* Decorative Scanner Background */}
+                 <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-50 rounded-full blur-3xl opacity-50 -mr-40 -mt-40 group-hover:opacity-70 transition-opacity" />
+                 
+                 <div className="relative z-10">
+                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8">
+                     <div>
+                       <div className="flex flex-wrap items-center gap-2.5">
+                         <h3 className="text-2xl font-black text-slate-900 tracking-tight">Captura de Bobinas</h3>
+                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-100/80 text-emerald-800 rounded-full text-[10px] font-black uppercase tracking-wider">
+                           <CloudCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                           Salvo no Servidor em Tempo Real
+                         </span>
+                       </div>
+                       <p className="text-sm font-medium text-slate-500 mt-1">Bipe as etiquetas ou use a câmera. Cada bobina registrada é imediatamente salva na nuvem.</p>
+                     </div>
+                     <div className="flex gap-3">
+                       <button 
+                          onClick={() => setIsCameraOpen(true)}
+                          className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-black shadow-lg shadow-emerald-200 active:scale-95 transition-all hover:bg-emerald-700 cursor-pointer"
+                       >
+                         <Camera className="w-5 h-5" />
+                         Ligar Câmera
+                       </button>
+                       <button 
+                          onClick={() => {
+                            if (!currentBatch?.supplierId) {
+                              setError('Selecione primeiro o fornecedor da carga.');
+                              return;
+                            }
+                            setShowManualModal(true);
+                          }}
+                          className="flex items-center gap-2 px-6 py-3 bg-white border-2 border-emerald-100 text-emerald-700 rounded-xl text-sm font-black active:scale-95 transition-all hover:bg-emerald-50 cursor-pointer"
+                       >
+                         <Keyboard className="w-5 h-5" />
+                         Manual
+                       </button>
+                     </div>
+                   </div>
+                   
+                   <form onSubmit={handleScanSubmit} className="relative">
+                     <div className="absolute left-6 top-1/2 -translate-y-1/2">
+                        <Barcode className="w-8 h-8 text-emerald-600 opacity-40" />
+                     </div>
+                     <input
+                       autoFocus
+                       type="text"
+                       value={qrInput}
+                       onChange={(e) => setQrInput(e.target.value)}
+                       placeholder="Aguardando bipe do leitor USB / laser..."
+                       className="w-full pl-16 pr-8 py-8 bg-slate-50 border-2 border-transparent focus:border-emerald-500 focus:bg-white rounded-3xl text-3xl font-black font-mono outline-none transition-all placeholder:font-sans placeholder:text-base shadow-inner text-slate-900"
+                     />
+                   </form>
+                 </div>
+              </div>
+
+              {/* Scanned List - High Density Grid */}
+              <div className="space-y-6">
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-3">
+                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Pátio de Entrada</h4>
+                     <div className="w-1 h-1 bg-slate-300 rounded-full" />
+                     <span className="text-xs font-black text-slate-900 tabular-nums uppercase">{scannedCoils.length} unidade(s) salvas no servidor</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {scannedCoils.map((coil, idx) => (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      key={coil.coilNumber || `manual-${idx}`}
+                      className={cn(
+                        "group p-6 bg-white rounded-3xl border border-slate-200 shadow-sm hover:border-emerald-200 hover:shadow-md transition-all relative overflow-hidden",
+                        coil.isDamaged && "border-amber-200 bg-amber-50/10 shadow-amber-50 ring-1 ring-amber-100"
+                      )}
+                    >
+                      <div className="flex items-start gap-5">
+                        <div className={cn(
+                          "w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl shrink-0 shadow-sm transition-transform group-hover:scale-105",
+                          coil.isDamaged ? "bg-amber-100 text-amber-600" : "bg-emerald-100 text-emerald-600"
+                        )}>
+                          {scannedCoils.length - idx}
+                        </div>
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between">
+                            <div className="truncate pr-4">
+                              {coil.isDamaged ? (
+                                <input
+                                  type="text"
+                                  value={coil.coilNumber || ''}
+                                  onChange={(e) => updateCoil(idx, { coilNumber: e.target.value })}
+                                  className="font-black text-xl text-slate-900 bg-transparent border-b-2 border-amber-300 outline-none w-full focus:border-emerald-500 transition-colors"
+                                  placeholder="ID Bobina"
+                                />
+                              ) : (
+                                <p className="font-black text-xl text-slate-900 tracking-tight truncate">{coil.coilNumber}</p>
+                              )}
+                              {coil.isDamaged && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  <span className="text-[8px] bg-amber-500 text-white px-2 py-0.5 rounded-full uppercase font-black tracking-widest">Manual</span>
+                                  <span className="text-[8px] text-amber-600 font-bold uppercase italic">Ajuste necessário</span>
+                                </div>
+                              )}
+                            </div>
+                            
+                            <button
+                              onClick={() => removeCoil(idx)}
+                              className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-90 cursor-pointer"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-4 mt-6">
+                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col group-hover:bg-white transition-colors">
+                              <div className="flex items-center gap-2 mb-1">
+                                 <Weight className="w-3 h-3 text-slate-400" />
+                                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Massa</span>
+                              </div>
+                              {coil.isDamaged ? (
+                                <div className="flex items-baseline gap-1 mt-1">
+                                  <input
+                                    type="number"
+                                    value={coil.weight || ''}
+                                    onChange={(e) => updateCoil(idx, { weight: parseFloat(e.target.value) })}
+                                    className="font-black text-xl text-slate-900 bg-transparent border-b border-slate-300 w-24 outline-none focus:border-emerald-500"
+                                    placeholder="0.00"
+                                  />
+                                  <span className="text-xs font-bold text-slate-400">kg</span>
+                                </div>
+                              ) : (
+                                <p className="font-black text-xl text-slate-900 tracking-tight">
+                                  {coil.weight} <span className="text-xs font-bold text-slate-400 font-sans">kg</span>
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col group-hover:bg-white transition-colors">
+                              <div className="flex items-center gap-2 mb-1">
+                                 <Factory className="w-3 h-3 text-slate-400" />
+                                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Bitola</span>
+                              </div>
+                              {coil.isDamaged ? (
+                                <select
+                                  value={coil.diameter || 2.30}
+                                  onChange={(e) => updateCoil(idx, { diameter: parseFloat(e.target.value) })}
+                                  className="font-black text-sm text-slate-900 bg-transparent outline-none mt-1"
+                                >
+                                  <option value="2.18">2.18 mm</option>
+                                  <option value="2.3">2.30 mm</option>
+                                  <option value="3.0">3.00 mm</option>
+                                </select>
+                              ) : (
+                                <p className="font-black text-xl text-slate-900 tracking-tight">
+                                  {coil.diameter?.toFixed(2)} <span className="text-xs font-bold text-slate-400 font-sans">mm</span>
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
