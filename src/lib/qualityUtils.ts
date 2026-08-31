@@ -77,6 +77,18 @@ export function isDefectOrNegativeQuestion(label: string | undefined): boolean {
 }
 
 /**
+ * Checks whether an item's label or definition is specifically related to Bale Cover inspection
+ * (e.g. "Capa Rasgada?", "Integridade da Capa", "Aplicação de Capa", "Formato Capa").
+ */
+export function isCoverRelatedChecklistItem(item: any): boolean {
+  if (!item) return false;
+  if (item.requiresCover) return true;
+  if (item.includeCoverFormatRef) return true;
+  const label = (item.label || item.name || '').toLowerCase().trim();
+  return /capa|rasgad|cover/i.test(label);
+}
+
+/**
  * Centralized function to determine if a checklist answer response is compliant according to norm.
  */
 export function isResponseCompliant(
@@ -85,6 +97,14 @@ export function isResponseCompliant(
   template?: QualityChecklistTemplate | any,
   optionSets: QualityChecklistOptionSet[] = []
 ): boolean {
+  if (value === undefined || value === null || value === '') return true;
+
+  // N/A or Dispensado values are always compliant / not a failure
+  const stringified = String(value).trim().toUpperCase();
+  if (stringified === 'N/A' || stringified.startsWith('N/A') || stringified === 'DISPENSADO' || stringified === 'N.A.') {
+    return true;
+  }
+
   if (!template || !template.items) return true;
   const item = template.items.find((i: any) => i.id === itemId);
   if (!item) return true;

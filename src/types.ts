@@ -215,6 +215,7 @@ export interface ChecklistItemDefinition {
   allowObservation?: boolean; // Se o usuário pode colocar uma observação com texto livre
   radiatorCount?: number; // Quantidade de radiadores para inspeção do secador
   showPreviousValue?: boolean; // Habilitar exibição do valor da última medição como referência histórica
+  requiresCover?: boolean; // Se o item é exclusivo para produtos com aplicação de capa (ex: capa rasgada, integridade da capa)
   includeCoverFormatRef?: boolean; // Opcional: incluir parâmetro de referência para Formato Capa
   coverFormatRefValue?: number | string; // Valor ou especificação de referência para Formato Capa
   includeBaleFormatRef?: boolean; // Opcional: incluir parâmetro de referência para Formato Fardo

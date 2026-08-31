@@ -36,7 +36,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { getCurrentShift, getGroupForShift, Shift } from '../lib/scaleUtils';
-import { isResponseCompliant } from '../lib/qualityUtils';
+import { isResponseCompliant, isCoverRelatedChecklistItem } from '../lib/qualityUtils';
 import { 
   ClipboardCheck, 
   Settings, 
@@ -195,9 +195,43 @@ const isTemplateDueOnDate = (template: QualityChecklistTemplate, dateObj: Date):
 // Tabs
 type QualityTab = 'perform' | 'templates' | 'sectors' | 'options' | 'omissions' | 'dashboard' | 'products';
 
+// Helper to determine active product for an inspection
+export const getActiveProductForInspection = (
+  template: QualityChecklistTemplate | null | undefined,
+  selectedProductId: string,
+  responses: Record<string, any>,
+  products: SecagemProduct[]
+): SecagemProduct | undefined => {
+  if (selectedProductId) {
+    const p = products.find(prod => prod.id === selectedProductId || prod.code === selectedProductId);
+    if (p) return p;
+  }
+  if (template?.items) {
+    const prodItem = template.items.find(i => i.type === 'product');
+    if (prodItem && responses[prodItem.id]) {
+      const codeOrId = responses[prodItem.id];
+      const p = products.find(prod => prod.code === codeOrId || prod.id === codeOrId);
+      if (p) return p;
+    }
+  }
+  if (template?.productId) {
+    const p = products.find(prod => prod.id === template.productId || prod.code === template.productId);
+    if (p) return p;
+  }
+  return undefined;
+};
+
 // Helper to identify whether an item response or value is non-conforming
 const isQualityResponseNonConforming = (item: ChecklistItemDefinition | undefined, value: any): { isFailure: boolean; statusLabel?: string } => {
   if (value === undefined || value === null || value === '') return { isFailure: false };
+
+  const valStr = String(value).trim();
+  const valLower = valStr.toLowerCase();
+
+  // N/A or Dispensado values are always compliant / not a failure
+  if (valLower === 'n/a' || valLower.startsWith('n/a') || valLower === 'dispensado' || valLower === 'n.a.') {
+    return { isFailure: false };
+  }
 
   // Object values (radiators, multi-part items, etc.)
   if (typeof value === 'object' && value !== null) {
@@ -216,9 +250,6 @@ const isQualityResponseNonConforming = (item: ChecklistItemDefinition | undefine
 
     return { isFailure: false };
   }
-
-  const valStr = String(value).trim();
-  const valLower = valStr.toLowerCase();
 
   // If item has an expected compliance rule
   if (item?.expectedValue !== undefined && item.expectedValue !== null && item.expectedValue !== '') {
@@ -421,6 +452,13 @@ const getOverallStatusInfo = (value: any) => {
 const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
   if (value === undefined || value === null) return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-slate-500 text-white";
   
+  const valStr = String(value).toLowerCase().trim();
+
+  // N/A or Dispensado badge styling (Sem Capa / Dispensado)
+  if (valStr === 'n/a' || valStr.startsWith('n/a') || valStr === 'dispensado' || valStr === 'n.a.') {
+    return "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase inline-block bg-slate-100 text-slate-700 border border-slate-300";
+  }
+
   if (typeof value === 'object' && value !== null) {
     const statuses = Object.values(value);
     const hasTamponado = statuses.some(s => {
@@ -439,8 +477,6 @@ const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
     }
     return "px-4 py-2 rounded-xl text-sm font-black uppercase inline-block bg-emerald-500 text-white shadow-sm shadow-emerald-100";
   }
-
-  const valStr = String(value).toLowerCase();
   
   // Limpo / Pouco sujo / conforme
   if (valStr.includes('limp') || valStr.includes('pouco') || valStr === 'conforme' || valStr === 'ok') {
@@ -465,6 +501,11 @@ const getBadgeColorClasses = (value: any, isCompliant: boolean) => {
 
 const getIconColorClasses = (value: any, isCompliant: boolean) => {
   if (value === undefined || value === null) return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-slate-50 text-slate-600";
+
+  const valStr = String(value).toLowerCase().trim();
+  if (valStr === 'n/a' || valStr.startsWith('n/a') || valStr === 'dispensado' || valStr === 'n.a.') {
+    return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-slate-100 text-slate-600 border border-slate-200";
+  }
   
   if (typeof value === 'object' && value !== null) {
     const statuses = Object.values(value);
@@ -484,8 +525,6 @@ const getIconColorClasses = (value: any, isCompliant: boolean) => {
     }
     return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-emerald-50 text-emerald-600 border border-emerald-200";
   }
-
-  const valStr = String(value).toLowerCase();
   
   if (valStr.includes('pouco sujo') || valStr.includes('pouco suja') || valStr.includes('pouco') || valStr === 'limpo' || valStr === 'limpa' || valStr === 'conforme' || valStr === 'ok') {
     return "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm bg-emerald-50 text-emerald-600 border border-emerald-200";
@@ -1351,6 +1390,19 @@ const SortableChecklistItem: React.FC<SortableChecklistItemProps> = ({
               <label htmlFor={`show-prev-${item.id}`} className="text-xs font-bold text-slate-700 cursor-pointer flex items-center gap-1.5">
                 <History className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                 Exibir valor da última medição (Referência)
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={item.requiresCover ?? isCoverRelatedChecklistItem(item)}
+                onChange={(e) => updateItemInTemplate(item.id, { requiresCover: e.target.checked })}
+                id={`req-cover-${item.id}`}
+                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <label htmlFor={`req-cover-${item.id}`} className="text-xs font-bold text-slate-700 cursor-pointer flex items-center gap-1.5" title="Se o produto selecionado na inspeção não tiver aplicação de capa no fardo, este item será desabilitado automaticamente">
+                <Package className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                Exigir Aplicação de Capa (Desabilita se produto não tiver capa)
               </label>
             </div>
           </div>
@@ -2748,8 +2800,15 @@ const Quality: React.FC = () => {
       return;
     }
 
-    // Validate requirements
-    const missing = fillingTemplate.items.find(item => item.required && !isItemValueComplete(item, responses[item.id], fillingTemplate.name));
+    // Validate requirements (ignoring cover-related items if selected product has applyCover: false)
+    const activeInspectionProduct = getActiveProductForInspection(fillingTemplate, selectedProductId, responses, products);
+    const isProductWithoutCover = Boolean(activeInspectionProduct && activeInspectionProduct.applyCover === false);
+
+    const missing = fillingTemplate.items.find(item => {
+      const isCoverItem = isCoverRelatedChecklistItem(item);
+      if (isProductWithoutCover && isCoverItem) return false; // Item dispensado
+      return item.required && !isItemValueComplete(item, responses[item.id], fillingTemplate.name);
+    });
     if (missing) {
       setModalConfig({
         isOpen: true,
@@ -2843,7 +2902,19 @@ const Quality: React.FC = () => {
         try {
           const encName = await encryptValue(profile.displayName || user.email);
           const matchedProd = products.find(p => p.id === selectedProductId);
-          const sanitizedResponses = Object.entries(sanitizeResponses(responses)).map(([itemId, value]) => ({ 
+
+          const rawSanitized = sanitizeResponses(responses);
+          // Set N/A (Sem Capa) for cover items if the active product does not apply cover
+          (fillingTemplate.items || []).forEach(item => {
+            const isCoverItem = isCoverRelatedChecklistItem(item);
+            if (isProductWithoutCover && isCoverItem) {
+              if (!rawSanitized[item.id] || rawSanitized[item.id] === '') {
+                rawSanitized[item.id] = 'N/A (Sem Capa)';
+              }
+            }
+          });
+
+          const sanitizedResponses = Object.entries(rawSanitized).map(([itemId, value]) => ({ 
             itemId, 
             value,
             observation: observations[itemId] || ''
@@ -2881,6 +2952,9 @@ const Quality: React.FC = () => {
           const itemFailures: Array<{ name: string; value?: string; observation?: string }> = [];
 
           (fillingTemplate.items || []).forEach(item => {
+            const isCoverItem = isCoverRelatedChecklistItem(item);
+            if (isProductWithoutCover && isCoverItem) return; // Item dispensado não gera não conformidade
+
             const val = responses[item.id];
             const check = isQualityResponseNonConforming(item, val);
             if (check.isFailure) {
@@ -4393,7 +4467,13 @@ const Quality: React.FC = () => {
 
                   {/* PROGRESS BAR VISUAL INDICATOR */}
                   {(() => {
-                    const answeredCount = fillingTemplate.items.filter(item => isItemValueComplete(item, responses[item.id], fillingTemplate.name)).length;
+                    const activeProd = getActiveProductForInspection(fillingTemplate, selectedProductId, responses, products);
+                    const isProdWithoutCover = Boolean(activeProd && activeProd.applyCover === false);
+                    const answeredCount = fillingTemplate.items.filter(item => {
+                      const isCoverItem = isCoverRelatedChecklistItem(item);
+                      if (isProdWithoutCover && isCoverItem) return true;
+                      return isItemValueComplete(item, responses[item.id], fillingTemplate.name);
+                    }).length;
                     const totalQuestionsCount = fillingTemplate.items.length;
                     const progressPct = totalQuestionsCount > 0 ? (answeredCount / totalQuestionsCount) * 100 : 0;
                     return (
@@ -4422,9 +4502,14 @@ const Quality: React.FC = () => {
                   {/* ACCORDION ITEMS STREAM (Matches OperationalRoutes structure exactly) */}
                   <div className="space-y-3">
                     {fillingTemplate.items.map((item, idx) => {
+                      const activeProd = getActiveProductForInspection(fillingTemplate, selectedProductId, responses, products);
+                      const isProdWithoutCover = Boolean(activeProd && activeProd.applyCover === false);
+                      const isCoverItem = isCoverRelatedChecklistItem(item);
+                      const isCoverDisabled = isProdWithoutCover && isCoverItem;
+
                       const isExpanded = expandedItemId === item.id;
-                      const isAnswered = isItemValueComplete(item, responses[item.id], fillingTemplate.name);
-                      const currentValue = responses[item.id];
+                      const isAnswered = isCoverDisabled || isItemValueComplete(item, responses[item.id], fillingTemplate.name);
+                      const currentValue = isCoverDisabled ? (responses[item.id] || 'N/A (Sem Capa)') : responses[item.id];
 
                       // Helper to advance to the next item
                       const advanceToNext = () => {
@@ -4440,8 +4525,10 @@ const Quality: React.FC = () => {
                           id={`focus-item-${item.id}`}
                           className={cn(
                             "border rounded-[1.5rem] overflow-hidden transition-all bg-white",
-                            isAnswered ? "border-emerald-600/50 shadow-sm" : "border-slate-200",
-                            isExpanded ? "ring-2 ring-emerald-600/30 border-emerald-600 shadow-md" : ""
+                            isCoverDisabled 
+                              ? "border-slate-300 bg-slate-50/40 opacity-95" 
+                              : (isAnswered ? "border-emerald-600/50 shadow-sm" : "border-slate-200"),
+                            isExpanded ? (isCoverDisabled ? "ring-2 ring-slate-400/40 border-slate-400" : "ring-2 ring-emerald-600/30 border-emerald-600 shadow-md") : ""
                           )}
                         >
                           {/* Item Header */}
@@ -4453,11 +4540,13 @@ const Quality: React.FC = () => {
                               {/* Indicator badge circle style */}
                               <div className={cn(
                                 "w-7 h-7 rounded-lg flex items-center justify-center font-black text-xs shrink-0 transition-all",
-                                isAnswered 
-                                  ? "bg-emerald-100 text-emerald-800" 
-                                  : "bg-slate-100 text-slate-500"
+                                isCoverDisabled
+                                  ? "bg-slate-200 text-slate-700 border border-slate-300"
+                                  : (isAnswered ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500")
                               )}>
-                                {isAnswered ? (
+                                {isCoverDisabled ? (
+                                  <ShieldCheck className="w-4 h-4 text-slate-700" />
+                                ) : isAnswered ? (
                                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                                 ) : (
                                   idx + 1
@@ -4465,11 +4554,26 @@ const Quality: React.FC = () => {
                               </div>
 
                               <div className="flex-1 min-w-0">
-                                <h4 className="font-extrabold text-slate-800 text-xs md:text-sm leading-tight uppercase tracking-wide truncate max-w-[380px]">
-                                  {item.label}
-                                  {item.required && <span className="text-rose-500 ml-1 font-black">*</span>}
-                                </h4>
-                                {!isExpanded && isAnswered && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h4 className={cn(
+                                    "font-extrabold text-xs md:text-sm leading-tight uppercase tracking-wide truncate max-w-[380px]",
+                                    isCoverDisabled ? "text-slate-600" : "text-slate-800"
+                                  )}>
+                                    {item.label}
+                                    {item.required && !isCoverDisabled && <span className="text-rose-500 ml-1 font-black">*</span>}
+                                  </h4>
+                                  {isCoverDisabled && (
+                                    <span className="text-[9px] font-black text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 font-mono flex items-center gap-1">
+                                      <ShieldCheck className="w-3 h-3 text-slate-500" />
+                                      DISPENSADO • PRODUTO SEM CAPA
+                                    </span>
+                                  )}
+                                </div>
+                                {isCoverDisabled ? (
+                                  <p className="text-[10px] text-slate-500 font-medium mt-1">
+                                    Item dispensado automaticamente para {activeProd?.code || activeProd?.name || 'este produto'} (sem aplicação de capa)
+                                  </p>
+                                ) : (!isExpanded && isAnswered && (
                                   <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest mt-1 flex flex-wrap items-center gap-1.5 font-mono">
                                     <span>CONCLUÍDO</span>
                                     <span className="opacity-40">•</span>
@@ -4496,7 +4600,7 @@ const Quality: React.FC = () => {
                                       })()}
                                     </strong></span>
                                   </p>
-                                )}
+                                ))}
                               </div>
                             </div>
 
@@ -4509,7 +4613,9 @@ const Quality: React.FC = () => {
                               }}
                               className={cn(
                                 "w-8 h-8 rounded-lg flex items-center justify-center transition-all shrink-0 text-white",
-                                isExpanded ? "bg-emerald-800 rotate-180" : "bg-[#0d6e4f] hover:bg-emerald-800"
+                                isExpanded 
+                                  ? (isCoverDisabled ? "bg-slate-700 rotate-180" : "bg-emerald-800 rotate-180")
+                                  : (isCoverDisabled ? "bg-slate-500 hover:bg-slate-600" : "bg-[#0d6e4f] hover:bg-emerald-800")
                               )}
                             >
                               <ChevronRight className="w-4 h-4 rotate-90 stroke-[3]" />
@@ -4525,6 +4631,28 @@ const Quality: React.FC = () => {
                                 exit={{ opacity: 0, height: 0 }}
                                 className="border-t border-slate-100 bg-slate-50/50 p-4 space-y-4"
                               >
+                                {isCoverDisabled ? (
+                                  <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-3 shadow-xs">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center font-bold shrink-0">
+                                        <ShieldCheck className="w-5 h-5 text-slate-600" />
+                                      </div>
+                                      <div>
+                                        <h5 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                                          Item Dispensado desta Inspeção
+                                          <span className="bg-slate-100 text-slate-700 text-[9px] px-2 py-0.5 rounded-full font-mono border border-slate-200">N/A • SEM CAPA</span>
+                                        </h5>
+                                        <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                                          Produto Selecionado: <strong className="text-slate-700">{activeProd?.code ? `${activeProd.code} - ` : ''}{activeProd?.name || 'Produto Atual'}</strong>
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <p className="text-xs text-slate-600 leading-relaxed font-medium bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                      O produto selecionado está configurado como <strong className="text-slate-800">SEM aplicação de capa no fardo</strong>. Por este motivo, o item de checagem <strong className="text-slate-800">"{item.label}"</strong> não fica disponível para resposta e foi dispensado automaticamente da inspeção de qualidade.
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <>
                                 {item.showPreviousValue && (() => {
                                   if (!fillingTemplate) return null;
                                   const currentLineObj = lines.find(l => l.id === submissionLineId) || sectors.find(s => s.id === submissionLineId);
@@ -5424,8 +5552,10 @@ const Quality: React.FC = () => {
                                     />
                                   </div>
                                 )}
+                                </>
+                              )}
 
-                                {/* Inner Card Navigation Helpers */}
+                              {/* Inner Card Navigation Helpers */}
                                 <div className="flex justify-between items-center bg-slate-100/50 p-2.5 rounded-xl border border-slate-200/40 mt-3">
                                   <button
                                     type="button"
