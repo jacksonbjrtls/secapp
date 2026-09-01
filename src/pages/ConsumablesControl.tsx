@@ -38,6 +38,9 @@ import {
   ChevronDown,
   Calendar,
   Edit2,
+  Pencil,
+  Trash2,
+  Clock,
   TrendingUp,
   Sliders,
   FileText,
@@ -120,6 +123,19 @@ const ConsumablesControl: React.FC = () => {
   const [auditDateEnd, setAuditDateEnd] = useState('');
   const [auditItemFilter, setAuditItemFilter] = useState('all');
 
+  // Movement Edit / Delete Modal State
+  const [editingLog, setEditingLog] = useState<ConsumableLog | null>(null);
+  const [editLogItemId, setEditLogItemId] = useState('');
+  const [editLogType, setEditLogType] = useState<'entry' | 'consumption'>('consumption');
+  const [editLogQty, setEditLogQty] = useState('');
+  const [editLogLineId, setEditLogLineId] = useState('');
+  const [editLogShift, setEditLogShift] = useState<'Turno 1' | 'Turno 2' | 'Turno 3' | 'Geral'>('Turno 1');
+  const [editLogGroup, setEditLogGroup] = useState<string>('');
+  const [editLogOperator, setEditLogOperator] = useState('');
+  const [editLogNotes, setEditLogNotes] = useState('');
+
+  const [deletingLog, setDeletingLog] = useState<ConsumableLog | null>(null);
+
   // Load baseline values when current active user is resolved
   useEffect(() => {
     if (user) {
@@ -139,6 +155,18 @@ const ConsumablesControl: React.FC = () => {
       }
     }
   }, [consumeShift]);
+
+  // Sync group letter for editing modal
+  useEffect(() => {
+    if (editingLog && editLogShift) {
+      if (editLogShift === 'Geral') {
+        const defaultShift = getCurrentShift();
+        setEditLogGroup(getGroupForShift(new Date(), defaultShift));
+      } else {
+        setEditLogGroup(getGroupForShift(new Date(), editLogShift as any));
+      }
+    }
+  }, [editLogShift, editingLog]);
 
   // Auto-preselect first item and line when loaded (especially for common users)
   useEffect(() => {
@@ -394,10 +422,10 @@ const ConsumablesControl: React.FC = () => {
           type: adjustType,
           lineId: '', // Blank represents simple warehouse adjustment, not machine line consumption
           lineName: '',
-          usedByUid: '',
-          usedByName: adjustUser.trim() || 'Controle de Estoque',
+          usedByUid: user.uid,
+          usedByName: adjustUser.trim() || profile?.displayName || user.displayName || 'Controle de Estoque',
           processedByUid: user.uid,
-          processedByName: user.displayName || user.email || 'Almoxarifado',
+          processedByName: profile?.displayName || user.displayName || user.email || 'Almoxarifado',
           shift: 'Geral',
           notes: `Ajuste manual de estoque. ${(adjustNotes.trim() ? `Motivo: ${adjustNotes.trim()}` : 'Sem notas de justificativa fornecidas.')}`,
           timestamp: serverTimestamp()
@@ -478,10 +506,10 @@ const ConsumablesControl: React.FC = () => {
           type: 'consumption',
           lineId: consumeLineId,
           lineName: lineObj.name,
-          usedByUid: '',
+          usedByUid: user?.uid || '',
           usedByName: consumeOperator.trim(),
-          processedByUid: user?.uid || 'anonymous',
-          processedByName: user?.displayName || user?.email || consumeOperator.trim(),
+          processedByUid: user?.uid || '',
+          processedByName: profile?.displayName || user?.displayName || user?.email || consumeOperator.trim(),
           shift: consumeShift,
           group: consumeGroup || getGroupForShift(new Date(), getCurrentShift()),
           notes: `Consumido pelo Operador. ${(consumeNotes.trim() ? `Comentário: ${consumeNotes.trim()}` : '')}`,
@@ -494,6 +522,187 @@ const ConsumablesControl: React.FC = () => {
       setConsumeNotes('');
     } catch (err: any) {
       setErrMsg(err?.message || 'Falha ao processar consumo na linha de produção.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Permission checkers for editing & deleting logs
+  const canUserEditLog = (log: ConsumableLog) => {
+    if (isAdmin || isManager) return true;
+    if (!user) return false;
+    if (log.processedByUid === user.uid || log.usedByUid === user.uid) return true;
+    if (profile?.displayName && log.usedByName && log.usedByName.toLowerCase() === profile.displayName.toLowerCase()) return true;
+    if (user.displayName && log.usedByName && log.usedByName.toLowerCase() === user.displayName.toLowerCase()) return true;
+    if (user.email && log.processedByName && log.processedByName.toLowerCase().includes(user.email.toLowerCase())) return true;
+    return false;
+  };
+
+  const canUserDeleteLog = (log: ConsumableLog) => {
+    return isAdmin || isManager;
+  };
+
+  const handleStartEditLog = (log: ConsumableLog) => {
+    setEditingLog(log);
+    setEditLogItemId(log.itemId);
+    setEditLogType(log.type);
+    setEditLogQty(log.quantity.toString());
+    setEditLogLineId(log.lineId || '');
+    setEditLogShift(log.shift || getCurrentShift());
+    setEditLogGroup(log.group || getGroupForShift(new Date(), log.shift && log.shift !== 'Geral' ? (log.shift as any) : getCurrentShift()));
+    setEditLogOperator(log.usedByName || log.processedByName || '');
+    setEditLogNotes(log.notes || '');
+  };
+
+  const handleSaveEditLog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLog || !editLogItemId || !editLogQty || !user) {
+      setErrMsg('Por favor, preencha todos os campos obrigatórios.');
+      return;
+    }
+    setSubmitting(true);
+    setSuccessMsg('');
+    setErrMsg('');
+
+    try {
+      const newQty = parseFloat(editLogQty);
+      if (isNaN(newQty) || newQty <= 0) {
+        throw new Error('A quantidade informada precisa ser maior que zero.');
+      }
+
+      const oldItemId = editingLog.itemId;
+      const oldQty = editingLog.quantity;
+      const oldType = editingLog.type;
+
+      const newItemId = editLogItemId;
+      const newType = editLogType;
+      const newItem = items.find(i => i.id === newItemId);
+      const newLine = lines.find(l => l.id === editLogLineId);
+
+      const logRef = doc(db, 'consumable_logs', editingLog.id);
+      const oldItemRef = doc(db, 'consumable_items', oldItemId);
+      const newItemRef = doc(db, 'consumable_items', newItemId);
+
+      await runTransaction(db, async (trans) => {
+        const oldItemSnap = await trans.get(oldItemRef);
+        if (!oldItemSnap.exists()) {
+          throw new Error('Insumo original não localizado no banco de dados.');
+        }
+        const oldItemData = oldItemSnap.data() as ConsumableItem;
+
+        if (oldItemId === newItemId) {
+          const currentStock = oldItemData.currentStock || 0;
+          // Undo old effect:
+          // if old was consumption, undo adds oldQty
+          // if old was entry, undo subtracts oldQty
+          const adjustedStock = oldType === 'consumption' ? currentStock + oldQty : currentStock - oldQty;
+
+          // Apply new effect:
+          // if new is consumption, deduct newQty
+          // if new is entry, add newQty
+          const finalStock = newType === 'consumption' ? adjustedStock - newQty : adjustedStock + newQty;
+
+          if (finalStock < 0) {
+            throw new Error(`Estoque insuficiente! A alteração resultaria em saldo negativo (${finalStock.toFixed(2)} ${oldItemData.unit}).`);
+          }
+
+          trans.update(oldItemRef, {
+            currentStock: finalStock,
+            updatedAt: serverTimestamp()
+          });
+        } else {
+          // Changed to a different item
+          const newItemSnap = await trans.get(newItemRef);
+          if (!newItemSnap.exists()) {
+            throw new Error('Novo insumo selecionado não foi localizado.');
+          }
+          const newItemData = newItemSnap.data() as ConsumableItem;
+
+          // 1. Revert old item
+          const oldFinalStock = oldType === 'consumption' 
+            ? (oldItemData.currentStock || 0) + oldQty 
+            : (oldItemData.currentStock || 0) - oldQty;
+
+          trans.update(oldItemRef, {
+            currentStock: Math.max(0, oldFinalStock),
+            updatedAt: serverTimestamp()
+          });
+
+          // 2. Apply on new item
+          const newCurrentStock = newItemData.currentStock || 0;
+          const newFinalStock = newType === 'consumption' ? newCurrentStock - newQty : newCurrentStock + newQty;
+
+          if (newFinalStock < 0) {
+            throw new Error(`Estoque insuficiente de "${newItemData.name}"! Saldo disponível é ${newItemData.currentStock} ${newItemData.unit}.`);
+          }
+
+          trans.update(newItemRef, {
+            currentStock: newFinalStock,
+            updatedAt: serverTimestamp()
+          });
+        }
+
+        // 3. Update log document
+        trans.update(logRef, {
+          itemId: newItemId,
+          itemName: newItem?.name || editingLog.itemName,
+          quantity: newQty,
+          type: newType,
+          lineId: editLogLineId || '',
+          lineName: newLine?.name || (editLogLineId ? (lines.find(l => l.id === editLogLineId)?.name || editingLog.lineName || '') : ''),
+          usedByName: editLogOperator.trim() || editingLog.usedByName || profile?.displayName || user.displayName || 'Operador',
+          shift: editLogShift,
+          group: editLogGroup || '',
+          notes: editLogNotes.trim(),
+          updatedAt: serverTimestamp(),
+          updatedByUid: user.uid,
+          updatedByName: profile?.displayName || user.displayName || user.email || 'Usuário'
+        });
+      });
+
+      setSuccessMsg(`Lançamento de movimentação de "${newItem?.name || editingLog.itemName}" atualizado com sucesso! O estoque foi recalculado.`);
+      setEditingLog(null);
+    } catch (err: any) {
+      handleLocalError(err, 'update_log', 'consumable_logs');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteLog = async () => {
+    if (!deletingLog || !user) return;
+    setSubmitting(true);
+    setSuccessMsg('');
+    setErrMsg('');
+
+    try {
+      const logRef = doc(db, 'consumable_logs', deletingLog.id);
+      const itemRef = doc(db, 'consumable_items', deletingLog.itemId);
+
+      await runTransaction(db, async (trans) => {
+        const itemSnap = await trans.get(itemRef);
+        if (itemSnap.exists()) {
+          const itemData = itemSnap.data() as ConsumableItem;
+          const currentStock = itemData.currentStock || 0;
+          // If consumption (outflow), deleting returns quantity to stock (+ qty)
+          // If entry (inflow), deleting removes quantity from stock (- qty)
+          const newStock = deletingLog.type === 'consumption'
+            ? currentStock + deletingLog.quantity
+            : currentStock - deletingLog.quantity;
+
+          trans.update(itemRef, {
+            currentStock: Math.max(0, newStock),
+            updatedAt: serverTimestamp()
+          });
+        }
+
+        trans.delete(logRef);
+      });
+
+      setSuccessMsg(`Movimentação de "${deletingLog.itemName}" excluída com sucesso! O estoque foi estornado.`);
+      setDeletingLog(null);
+    } catch (err: any) {
+      handleLocalError(err, 'delete_log', 'consumable_logs');
     } finally {
       setSubmitting(false);
     }
@@ -622,6 +831,438 @@ const ConsumablesControl: React.FC = () => {
 
     return true;
   });
+
+  // Helper renderers for movement editing and deletion modals
+  const renderEditModal = () => (
+    <AnimatePresence>
+      {editingLog && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            className="bg-white rounded-3xl max-w-xl w-full p-6 md:p-8 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto"
+          >
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+              <div>
+                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+                  <Edit2 className="w-5 h-5 text-blue-600" />
+                  Editar Lançamento de Insumo
+                </h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">
+                  Ao modificar quantidade, insumo ou tipo, o saldo em estoque será recalculado atomicamente.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingLog(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditLog} className="space-y-4">
+              {/* Tipo de Operação */}
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                  Tipo de Operação *
+                </label>
+                <div className="grid grid-cols-2 gap-3 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setEditLogType('entry')}
+                    disabled={!isManager && !isAdmin && editingLog.type !== 'entry'}
+                    className={cn(
+                      "py-2.5 rounded-xl font-black uppercase text-xs tracking-wider border transition-all flex items-center justify-center gap-2",
+                      editLogType === 'entry'
+                        ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-600/10"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                    )}
+                  >
+                    <Plus className="w-4 h-4" />
+                    Entrada (+ Adicionar)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditLogType('consumption')}
+                    disabled={!isManager && !isAdmin && editingLog.type !== 'consumption'}
+                    className={cn(
+                      "py-2.5 rounded-xl font-black uppercase text-xs tracking-wider border transition-all flex items-center justify-center gap-2",
+                      editLogType === 'consumption'
+                        ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-600/10"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                    )}
+                  >
+                    <Minus className="w-4 h-4" />
+                    Saída / Consumo (- Baixa)
+                  </button>
+                </div>
+              </div>
+
+              {/* Insumo & Quantidade */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                    Insumo *
+                  </label>
+                  <select
+                    required
+                    value={editLogItemId}
+                    onChange={(e) => setEditLogItemId(e.target.value)}
+                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-750"
+                  >
+                    <option value="">Selecione o Insumo</option>
+                    {items.map(item => (
+                      <option key={item.id} value={item.id}>
+                        {item.name} ({item.currentStock.toFixed(1)} {item.unit})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                    Quantidade ({items.find(i => i.id === editLogItemId)?.unit || 'un'}) *
+                  </label>
+                  <input
+                    required
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="Ex: 5"
+                    value={editLogQty}
+                    onChange={(e) => setEditLogQty(e.target.value)}
+                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700"
+                  />
+                </div>
+              </div>
+
+              {/* Linha & Turno */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                    Linha de Destino (Opcional)
+                  </label>
+                  <select
+                    value={editLogLineId}
+                    onChange={(e) => setEditLogLineId(e.target.value)}
+                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-750"
+                  >
+                    <option value="">Sem linha (Almoxarifado / Geral)</option>
+                    {lines.map(line => (
+                      <option key={line.id} value={line.id}>{line.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                    Turno & Escala *
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      required
+                      value={editLogShift}
+                      onChange={(e: any) => setEditLogShift(e.target.value)}
+                      className="flex-1 px-3 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-750"
+                    >
+                      <option value="Turno 1">Turno 1 (00:00 - 08:00)</option>
+                      <option value="Turno 2">Turno 2 (08:00 - 16:00)</option>
+                      <option value="Turno 3">Turno 3 (16:00 - 00:00)</option>
+                      <option value="Geral">Turno Geral (Comercial)</option>
+                    </select>
+                    <div className="px-3 py-3 bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-center text-xs font-black text-slate-700 w-16">
+                      {editLogGroup || '-'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Responsável / Operador */}
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                  Responsável / Operador
+                </label>
+                <input
+                  type="text"
+                  value={editLogOperator}
+                  onChange={(e) => setEditLogOperator(e.target.value)}
+                  disabled={!isManager && !isAdmin}
+                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700 disabled:bg-slate-100 disabled:text-slate-500"
+                />
+              </div>
+
+              {/* Observações */}
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                  Observações / Justificativa da Alteração
+                </label>
+                <textarea
+                  rows={2.5}
+                  placeholder="Descreva detalhes ou a justificativa da alteração..."
+                  value={editLogNotes}
+                  onChange={(e) => setEditLogNotes(e.target.value)}
+                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-semibold text-slate-700 placeholder:text-slate-400"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingLog(null)}
+                  disabled={submitting}
+                  className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl transition-all shadow-md shadow-blue-600/10 text-xs uppercase tracking-wider flex items-center gap-2"
+                >
+                  {submitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      Salvar Alterações
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+
+  const renderDeleteModal = () => (
+    <AnimatePresence>
+      {deletingLog && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            className="bg-white rounded-3xl max-w-md w-full p-6 md:p-8 shadow-2xl border border-slate-100 text-center space-y-5"
+          >
+            <div className="w-14 h-14 bg-rose-50 border border-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
+              <Trash2 className="w-7 h-7" />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">
+                Excluir Movimentação de Insumo?
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">
+                Esta ação removerá o registro do histórico de auditoria e estornará o saldo do estoque.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-left space-y-1.5 text-xs">
+              <div className="flex justify-between text-slate-600">
+                <span className="font-bold text-slate-400">Insumo:</span>
+                <span className="font-extrabold text-slate-900">{deletingLog.itemName}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span className="font-bold text-slate-400">Quantidade:</span>
+                <span className="font-mono font-bold text-slate-900">
+                  {deletingLog.type === 'entry' ? '+' : '-'}{deletingLog.quantity}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span className="font-bold text-slate-400">Tipo:</span>
+                <span className="font-bold">
+                  {deletingLog.type === 'entry' ? 'Entrada (+) Adição' : 'Saída (-) Consumo'}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span className="font-bold text-slate-400">Responsável:</span>
+                <span className="font-bold text-slate-700">{deletingLog.usedByName || deletingLog.processedByName}</span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 text-left flex items-start gap-2.5 text-[11px] text-amber-900 font-semibold leading-relaxed">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                {deletingLog.type === 'consumption'
+                  ? `Ao excluir esta saída, +${deletingLog.quantity} unidade(s) retornarão automaticamente ao estoque do insumo.`
+                  : `Ao excluir esta entrada, -${deletingLog.quantity} unidade(s) serão debitadas do estoque do insumo.`}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingLog(null)}
+                disabled={submitting}
+                className="w-1/2 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteLog}
+                disabled={submitting}
+                className="w-1/2 py-3 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-xl transition-all shadow-md shadow-rose-600/10 text-xs uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                {submitting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Confirmar Exclusão
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+
+  const renderRecentMovementsList = (filterAuthorOnly = false) => {
+    const displayLogs = logs.filter(log => {
+      if (filterAuthorOnly && !isManager && !isAdmin) {
+        if (!user) return false;
+        return log.processedByUid === user.uid || 
+               log.usedByUid === user.uid ||
+               (profile?.displayName && log.usedByName && log.usedByName.toLowerCase() === profile.displayName.toLowerCase()) ||
+               (user.displayName && log.usedByName && log.usedByName.toLowerCase() === user.displayName.toLowerCase());
+      }
+      return true;
+    });
+
+    return (
+      <div className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h4 className="text-lg font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+              <History className="w-5 h-5 text-blue-600" />
+              {filterAuthorOnly && !isManager && !isAdmin ? 'Meus Lançamentos Recentes de Insumos' : 'Histórico Recente de Movimentações'}
+            </h4>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              {filterAuthorOnly && !isManager && !isAdmin 
+                ? 'Você pode editar seus lançamentos de consumo a qualquer momento.'
+                : 'Histórico recente de lançamentos com opções de edição para o autor e exclusão para gestores.'}
+            </p>
+          </div>
+          <span className="text-[11px] font-extrabold px-3 py-1 bg-slate-100 text-slate-600 rounded-full w-fit">
+            {displayLogs.length} registro(s)
+          </span>
+        </div>
+
+        {displayLogs.length === 0 ? (
+          <div className="text-center py-10 bg-slate-50 rounded-2xl border border-slate-100">
+            <Clock className="w-10 h-10 text-slate-350 mx-auto mb-2" />
+            <p className="text-slate-500 font-bold text-xs">Nenhum lançamento de insumo encontrado.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs whitespace-nowrap">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-150 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <th className="px-4 py-3 rounded-l-2xl">Data / Hora</th>
+                  <th className="px-4 py-3">Insumo</th>
+                  <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">Volume</th>
+                  <th className="px-4 py-3">Linha / Turno</th>
+                  <th className="px-4 py-3">Responsável</th>
+                  <th className="px-4 py-3">Observações</th>
+                  <th className="px-4 py-3 text-right rounded-r-2xl">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
+                {displayLogs.slice(0, 20).map(log => {
+                  const isEntry = log.type === 'entry';
+                  const isOp = log.type === 'consumption' && log.lineId;
+                  const canEdit = canUserEditLog(log);
+                  const canDelete = canUserDeleteLog(log);
+                  const itemDef = items.find(i => i.id === log.itemId);
+
+                  return (
+                    <tr key={log.id} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-4 py-3 text-slate-500 font-mono text-[10px]">
+                        {log.timestamp ? log.timestamp.toLocaleString('pt-BR', {
+                          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                        }) : '-'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-900 font-extrabold">{log.itemName}</td>
+                      <td className="px-4 py-3">
+                        {isEntry ? (
+                          <span className="bg-emerald-50 text-emerald-800 text-[9px] font-black px-2 py-0.5 rounded-md uppercase">
+                            + Entrada
+                          </span>
+                        ) : isOp ? (
+                          <span className="bg-blue-50 text-blue-800 text-[9px] font-black px-2 py-0.5 rounded-md uppercase">
+                            - Consumo
+                          </span>
+                        ) : (
+                          <span className="bg-slate-100 text-slate-700 text-[9px] font-black px-2 py-0.5 rounded-md uppercase">
+                            - Saída
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-mono font-black text-slate-900">
+                        {isEntry ? '+' : '-'}{log.quantity.toFixed(1)} <span className="text-[9px] text-slate-400 font-bold uppercase">{itemDef?.unit || ''}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-slate-800">{log.lineName || 'Almoxarifado'}</div>
+                        {log.shift && (
+                          <div className="text-[9px] text-slate-400 font-bold">{log.shift} {log.group ? `• Escala ${log.group}` : ''}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-slate-800 font-bold">{log.usedByName || log.processedByName}</div>
+                        {log.updatedByName && (
+                          <div className="text-[8.5px] text-amber-600 font-bold" title={`Editado por ${log.updatedByName}`}>
+                            (Editado)
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-normal text-slate-500 max-w-xs truncate text-[11px]" title={log.notes || ''}>
+                        {log.notes || <span className="italic text-slate-300">-</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditLog(log)}
+                              className="p-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 transition-colors"
+                              title="Editar este lançamento"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Editar</span>
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => setDeletingLog(log)}
+                              className="p-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 transition-colors"
+                              title="Excluir este lançamento e estornar estoque"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Excluir</span>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Authorization layout validation
   if (authLoading) {
@@ -841,6 +1482,13 @@ const ConsumablesControl: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* Section: Operator's Own Recent Logs */}
+        {renderRecentMovementsList(true)}
+
+        {/* Edit and Delete Modals */}
+        {renderEditModal()}
+        {renderDeleteModal()}
       </div>
     );
   }
@@ -1477,7 +2125,8 @@ const ConsumablesControl: React.FC = () => {
 
           {/* TAB 3: LOCAL ENTRY & WITHDRAWALS STOCK ADJUSTMENT (Point 2: Entrada e Saída de Insumos) */}
           {actualTabToShow === 'adjust_stock' && (isManager || isAdmin) && (
-            <div className="max-w-2xl mx-auto bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
+            <div className="space-y-6">
+              <div className="max-w-2xl mx-auto bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
               <div>
                 <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
                   <Sliders className="w-5.5 h-5.5 text-emerald-600" />
@@ -1616,11 +2265,16 @@ const ConsumablesControl: React.FC = () => {
                 </form>
               )}
             </div>
+            
+            {/* Recent movements under Tab 3 */}
+            {renderRecentMovementsList(false)}
+          </div>
           )}
 
           {/* TAB 4: OPERATOR DIRECT CONSUMPTION LOG (Point 3: Consumo de Insumo Prático pelo Operador) */}
           {actualTabToShow === 'operator_consumption' && (
-            <div className="max-w-2xl mx-auto bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
+            <div className="space-y-6">
+              <div className="max-w-2xl mx-auto bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
               
               <div>
                 <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
@@ -1766,6 +2420,10 @@ const ConsumablesControl: React.FC = () => {
                 </form>
               )}
             </div>
+            
+            {/* Recent movements under Tab 4 */}
+            {renderRecentMovementsList(false)}
+          </div>
           )}
 
           {/* TAB 5: COMPREHENSIVE AUDIT TRAIL LOG (Point 5: Aba de Auditoria de Insumo) */}
@@ -1857,7 +2515,8 @@ const ConsumablesControl: React.FC = () => {
                       <th className="px-4 py-3">Volume Ajuste</th>
                       <th className="px-4 py-3">Operador / Responsável</th>
                       <th className="px-4 py-3">Frente de Uso (Linha)</th>
-                      <th className="px-4 py-3 rounded-r-2xl">Auditoria / Observações</th>
+                      <th className="px-4 py-3">Auditoria / Observações</th>
+                      <th className="px-4 py-3 text-right rounded-r-2xl">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50 font-semibold text-slate-600">
@@ -1865,6 +2524,8 @@ const ConsumablesControl: React.FC = () => {
                       const isEntry = log.type === 'entry';
                       const isOperatorConsumption = log.type === 'consumption' && log.lineId;
                       const isAdjustmentOutflow = log.type === 'consumption' && !log.lineId;
+                      const canEdit = canUserEditLog(log);
+                      const canDelete = canUserDeleteLog(log);
                       
                       const itemDef = items.find(i => i.id === log.itemId);
 
@@ -1902,8 +2563,13 @@ const ConsumablesControl: React.FC = () => {
                           <td className="px-4 py-3.5">
                             <span className="text-slate-800 text-xs font-bold">{log.usedByName || log.processedByName}</span>
                             <span className="block text-[9px] text-slate-400 font-bold">Por: {log.processedByName}</span>
+                            {log.updatedByName && (
+                              <span className="inline-block text-[8.5px] font-bold text-amber-600">
+                                (Editado por {log.updatedByName})
+                              </span>
+                            )}
                             {log.shift && (
-                              <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-800 text-[8.5px] font-black px-1.5 py-0.5 rounded uppercase mt-0.5">
+                              <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-800 text-[8.5px] font-black px-1.5 py-0.5 rounded uppercase mt-0.5 ml-1">
                                 {log.shift} {log.group ? `• Escala ${log.group}` : ''}
                               </span>
                             )}
@@ -1915,12 +2581,38 @@ const ConsumablesControl: React.FC = () => {
                               <span className="text-slate-400 font-light">-</span>
                             )}
                           </td>
-                          <td className="px-4 py-3.5 font-normal text-slate-500 max-w-sm truncate text-[11px]" title={log.notes || 'Sem comentários registrados.'}>
+                          <td className="px-4 py-3.5 font-normal text-slate-500 max-w-xs truncate text-[11px]" title={log.notes || 'Sem comentários registrados.'}>
                             {log.notes ? (
                               <span className="font-semibold text-slate-600 block leading-tight">{log.notes}</span>
                             ) : (
                               <span className="italic text-slate-300 font-light">Sem justificativas.</span>
                             )}
+                          </td>
+                          <td className="px-4 py-3.5 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditLog(log)}
+                                  className="p-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 transition-colors"
+                                  title="Editar lançamento"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">Editar</span>
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDeletingLog(log)}
+                                  className="p-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 transition-colors"
+                                  title="Excluir lançamento e estornar estoque"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">Excluir</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1928,7 +2620,7 @@ const ConsumablesControl: React.FC = () => {
 
                     {processedAuditLogs.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="px-4 py-12 text-center text-slate-400 font-bold uppercase tracking-wider">
+                        <td colSpan={8} className="px-4 py-12 text-center text-slate-400 font-bold uppercase tracking-wider">
                           Nenhum log correspondente aos filtros de auditoria selecionados.
                         </td>
                       </tr>
@@ -1941,6 +2633,10 @@ const ConsumablesControl: React.FC = () => {
 
         </div>
       )}
+
+      {/* Edit and Delete Modals for Managers / Admins */}
+      {renderEditModal()}
+      {renderDeleteModal()}
     </div>
   );
 };

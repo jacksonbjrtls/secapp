@@ -182,6 +182,7 @@ const Forklifts: React.FC = () => {
     itemTitle: string;
   } | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -272,10 +273,11 @@ const Forklifts: React.FC = () => {
   // Live Camera Lifecycle Hook
   useEffect(() => {
     if (!activeCameraCapture) {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(t => t.stop());
-        setCameraStream(null);
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(t => t.stop());
+        cameraStreamRef.current = null;
       }
+      setCameraStream(null);
       setCameraError(null);
       return;
     }
@@ -284,45 +286,62 @@ const Forklifts: React.FC = () => {
     async function startCam() {
       try {
         setCameraError(null);
-        if (cameraStream) {
-          cameraStream.getTracks().forEach(t => t.stop());
+        // Explicitly release any currently open camera tracks first
+        if (cameraStreamRef.current) {
+          cameraStreamRef.current.getTracks().forEach(t => t.stop());
+          cameraStreamRef.current = null;
         }
-        let stream: MediaStream;
+
+        let stream: MediaStream | null = null;
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: { ideal: cameraFacing },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 }
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
             },
             audio: false
           });
         } catch {
-          // Fallback to default camera
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false
-          });
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: cameraFacing },
+              audio: false
+            });
+          } catch {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: false
+            });
+          }
+        }
+
+        if (!stream) {
+          throw new Error("Could not start video stream");
         }
 
         if (!isMounted) {
           stream.getTracks().forEach(t => t.stop());
           return;
         }
+
+        cameraStreamRef.current = stream;
         setCameraStream(stream);
+
         if (cameraVideoRef.current) {
           cameraVideoRef.current.srcObject = stream;
+          cameraVideoRef.current.play?.().catch(() => {});
         }
       } catch (err: any) {
-        console.error("Camera access error:", err);
+        console.warn("Camera stream initialization notice:", err?.message || err);
         if (isMounted) {
           const errStr = String(err?.message || err || '').toLowerCase();
           if (errStr.includes('notallowed') || errStr.includes('permission')) {
-            setCameraError("Acesso à câmera foi negado nas permissões do seu navegador. Por favor, libere a permissão de câmera ou selecione uma foto do dispositivo.");
+            setCameraError("Acesso à câmera foi negado nas permissões do seu navegador. Libere a permissão de câmera ou selecione uma foto do dispositivo.");
           } else if (errStr.includes('notfound') || errStr.includes('device not found') || errStr.includes('requested device')) {
-            setCameraError("Nenhuma câmera foi encontrada neste dispositivo. Você pode selecionar a foto diretamente da galeria.");
+            setCameraError("Nenhuma câmera física detectada neste dispositivo. Você pode tirar ou selecionar a foto pela galeria.");
           } else {
-            setCameraError("Não foi possível carregar a transmissão de vídeo da câmera. Você pode usar a câmera nativa do celular ou a galeria.");
+            setCameraError("A transmissão de vídeo ao vivo não pôde ser iniciada (câmera em uso ou indisponível). Use o botão abaixo para tirar ou selecionar a foto.");
           }
         }
       }
@@ -332,6 +351,16 @@ const Forklifts: React.FC = () => {
 
     return () => {
       isMounted = false;
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(t => t.stop());
+        cameraStreamRef.current = null;
+      }
+      if (cameraVideoRef.current) {
+        try {
+          cameraVideoRef.current.pause();
+          cameraVideoRef.current.srcObject = null;
+        } catch {}
+      }
     };
   }, [activeCameraCapture, cameraFacing]);
 

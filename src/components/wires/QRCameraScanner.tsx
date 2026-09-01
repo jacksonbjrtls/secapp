@@ -29,34 +29,46 @@ export const QRCameraScanner: React.FC<QRCameraScannerProps> = ({ onScan, onClos
           ]
         };
 
-        try {
-          await html5QrCode.start(
-            { facingMode: "environment" }, // Prefer back camera
-            config,
-            (decodedText) => {
-              if (isProcessingRef.current) return;
-              isProcessingRef.current = true;
-              
-              onScan(decodedText);
-              stopAndClose();
-            },
-            () => {}
-          );
-        } catch {
-          // Fallback to front camera or default camera
-          await html5QrCode.start(
-            { facingMode: "user" },
-            config,
-            (decodedText) => {
-              if (isProcessingRef.current) return;
-              isProcessingRef.current = true;
-              
-              onScan(decodedText);
-              stopAndClose();
-            },
-            () => {}
-          );
-        }
+          try {
+            await html5QrCode.start(
+              { facingMode: "environment" }, // Prefer back camera
+              config,
+              async (decodedText) => {
+                if (isProcessingRef.current) return;
+                isProcessingRef.current = true;
+                
+                try {
+                  if (html5QrCode.isScanning) {
+                    await html5QrCode.stop();
+                    html5QrCode.clear();
+                  }
+                } catch {}
+                onScan(decodedText);
+                onClose();
+              },
+              () => {}
+            );
+          } catch {
+            // Fallback to front camera or default camera
+            await html5QrCode.start(
+              { facingMode: "user" },
+              config,
+              async (decodedText) => {
+                if (isProcessingRef.current) return;
+                isProcessingRef.current = true;
+                
+                try {
+                  if (html5QrCode.isScanning) {
+                    await html5QrCode.stop();
+                    html5QrCode.clear();
+                  }
+                } catch {}
+                onScan(decodedText);
+                onClose();
+              },
+              () => {}
+            );
+          }
         setIsInitializing(false);
       } catch (err: any) {
         console.error("Error starting QR scanner:", err);

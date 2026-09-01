@@ -334,6 +334,9 @@ export interface ConsumableLog {
   group?: string;
   notes?: string;
   timestamp: any;
+  updatedAt?: any;
+  updatedByUid?: string;
+  updatedByName?: string;
 }
 
 export interface TrainingCourse {

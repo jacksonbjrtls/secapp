@@ -914,9 +914,14 @@ const OperationalRoutes: React.FC = () => {
             { facingMode: "environment" },
             { fps: 10, qrbox: { width: 250, height: 250 } },
             (decodedText) => {
+              const scanned = decodedText;
+              const scanId = activeScanner;
+              if (scanner && scanner.isScanning) {
+                scanner.stop().then(() => scanner?.clear()).catch(() => {});
+              }
               setRouteResponses(prev => ({
                 ...prev,
-                [activeScanner]: { ...prev[activeScanner], value: decodedText }
+                [scanId]: { ...prev[scanId], value: scanned }
               }));
               setActiveScanner(null);
             },
@@ -927,9 +932,14 @@ const OperationalRoutes: React.FC = () => {
             { facingMode: "user" },
             { fps: 10, qrbox: { width: 250, height: 250 } },
             (decodedText) => {
+              const scanned = decodedText;
+              const scanId = activeScanner;
+              if (scanner && scanner.isScanning) {
+                scanner.stop().then(() => scanner?.clear()).catch(() => {});
+              }
               setRouteResponses(prev => ({
                 ...prev,
-                [activeScanner]: { ...prev[activeScanner], value: decodedText }
+                [scanId]: { ...prev[scanId], value: scanned }
               }));
               setActiveScanner(null);
             },

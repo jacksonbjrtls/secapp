@@ -78,9 +78,11 @@ import {
   History,
   Settings2,
   Mail,
-  Bell
+  Bell,
+  Barcode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { QualityBarcodeScannerModal } from '../components/quality/QualityBarcodeScannerModal';
 import { cn, safeToDate } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import {
@@ -1502,16 +1504,18 @@ const Quality: React.FC = () => {
     label: string;
   } | null>(null);
   const cameraVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = React.useRef<MediaStream | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [unitCamError, setUnitCamError] = useState<string | null>(null);
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
 
   useEffect(() => {
     if (!activeCameraCapture) {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
-        setCameraStream(null);
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(track => track.stop());
+        cameraStreamRef.current = null;
       }
+      setCameraStream(null);
       setUnitCamError(null);
       return;
     }
@@ -1520,45 +1524,66 @@ const Quality: React.FC = () => {
     async function startCam() {
       try {
         setUnitCamError(null);
-        if (cameraStream) {
-          cameraStream.getTracks().forEach(track => track.stop());
+        // Explicitly release any currently open camera tracks first
+        if (cameraStreamRef.current) {
+          cameraStreamRef.current.getTracks().forEach(track => track.stop());
+          cameraStreamRef.current = null;
         }
-        let stream: MediaStream;
+
+        let stream: MediaStream | null = null;
+        
+        // Stage 1: Try with ideal facingMode
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: { ideal: cameraFacing },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 }
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
             },
             audio: false
           });
         } catch {
-          // Fallback to basic camera request
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false
-          });
+          // Stage 2: Try with direct facingMode string
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: cameraFacing },
+              audio: false
+            });
+          } catch {
+            // Stage 3: Fallback to basic generic video
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: false
+            });
+          }
+        }
+
+        if (!stream) {
+          throw new Error("Could not initialize video source");
         }
 
         if (!isMounted) {
           stream.getTracks().forEach(track => track.stop());
           return;
         }
+
+        cameraStreamRef.current = stream;
         setCameraStream(stream);
+
         if (cameraVideoRef.current) {
           cameraVideoRef.current.srcObject = stream;
+          cameraVideoRef.current.play?.().catch(() => {});
         }
       } catch (err: any) {
-        console.error("Camera access error:", err);
+        console.warn("Camera stream initialization notice:", err?.message || err);
         if (isMounted) {
           const errStr = String(err?.message || err || '').toLowerCase();
           if (errStr.includes('notallowed') || errStr.includes('permission')) {
-            setUnitCamError("Acesso à câmera foi negado nas permissões do seu navegador. Por favor, libere a permissão de câmera ou envie uma foto da galeria.");
+            setUnitCamError("Acesso à câmera foi negado nas permissões do navegador. Libere a permissão de câmera ou envie uma foto do dispositivo.");
           } else if (errStr.includes('notfound') || errStr.includes('device not found') || errStr.includes('requested device')) {
-            setUnitCamError("Nenhuma câmera foi encontrada no seu dispositivo. Você pode selecionar a foto diretamente da galeria.");
+            setUnitCamError("Nenhuma câmera física detectada no dispositivo. Você pode tirar ou selecionar a foto pela galeria.");
           } else {
-            setUnitCamError("Não foi possível carregar a transmissão de vídeo da câmera neste navegador/dispositivo. Você pode selecionar a foto direto da galeria.");
+            setUnitCamError("A transmissão de vídeo ao vivo não pôde ser iniciada (câmera em uso ou indisponível). Use o botão abaixo para tirar ou selecionar a foto.");
           }
         }
       }
@@ -1568,6 +1593,16 @@ const Quality: React.FC = () => {
 
     return () => {
       isMounted = false;
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(track => track.stop());
+        cameraStreamRef.current = null;
+      }
+      if (cameraVideoRef.current) {
+        try {
+          cameraVideoRef.current.pause();
+          cameraVideoRef.current.srcObject = null;
+        } catch {}
+      }
     };
   }, [activeCameraCapture, cameraFacing]);
 
@@ -2544,75 +2579,8 @@ const Quality: React.FC = () => {
   const [observations, setObservations] = useState<Record<string, string>>({});
   const [submissionLineId, setSubmissionLineId] = useState<string>('');
   const [activeScanner, setActiveScanner] = useState<string | null>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const [isDraftLoaded, setIsDraftLoaded] = useState<boolean>(false);
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
-
-  useEffect(() => {
-    let scanner: Html5Qrcode | null = null;
-
-    if (activeScanner) {
-      setCameraError(null);
-      // Small delay to ensure the DOM element is rendered
-      const timer = setTimeout(() => {
-        const element = document.getElementById("qr-reader");
-        if (!element) return;
-
-        scanner = new Html5Qrcode("qr-reader");
-        const startScanner = async () => {
-          try {
-            await scanner.start(
-              { facingMode: "environment" },
-              {
-                fps: 10,
-                qrbox: { width: 250, height: 250 },
-              },
-              (decodedText) => {
-                setResponses(prev => ({ ...prev, [activeScanner]: decodedText }));
-                setActiveScanner(null);
-              },
-              () => {}
-            );
-          } catch {
-            // Fallback to front/user camera or default
-            await scanner.start(
-              { facingMode: "user" },
-              {
-                fps: 10,
-                qrbox: { width: 250, height: 250 },
-              },
-              (decodedText) => {
-                setResponses(prev => ({ ...prev, [activeScanner]: decodedText }));
-                setActiveScanner(null);
-              },
-              () => {}
-            );
-          }
-        };
-
-        startScanner().catch(err => {
-          console.error("Scanner error:", err);
-          const errStr = String(err?.message || err || '').toLowerCase();
-          if (errStr.includes("notallowed") || errStr.includes("permission")) {
-            setCameraError("Acesso à câmera negado. Por favor, permita o acesso nas configurações do seu navegador.");
-          } else if (errStr.includes("notfound") || errStr.includes("device not found") || errStr.includes("requested device")) {
-            setCameraError("Nenhuma câmera foi encontrada no seu dispositivo. Digite o código manualmente no campo de texto.");
-          } else {
-            setCameraError("Erro ao iniciar a câmera. Verifique se outro aplicativo está usando a câmera ou digite o código.");
-          }
-        });
-      }, 500);
-
-      return () => {
-        clearTimeout(timer);
-        if (scanner && scanner.isScanning) {
-          scanner.stop().then(() => {
-            scanner?.clear();
-          }).catch(err => console.error("Stop scanner error:", err));
-        }
-      };
-    }
-  }, [activeScanner]);
 
   
   const sanitizeResponses = (rawResponses: Record<string, any>) => {
@@ -5465,62 +5433,71 @@ const Quality: React.FC = () => {
                                 )}
 
                                 {item.type === 'barcode' && (
-                                  <div className="space-y-3">
-                                    <div className="relative group">
-                                      <QrCode className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-                                      <input
-                                        type="text"
-                                        id={`barcode-${item.id}`}
-                                        value={responses[item.id] || ''}
-                                        onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') {
-                                            advanceToNext();
-                                          }
-                                        }}
-                                        placeholder="Escaneie ou digite o código de leitura..."
-                                        className="w-full pl-10 pr-10 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-bold text-xs"
-                                      />
+                                  <div className="space-y-2.5">
+                                    <div className="flex items-center gap-2">
+                                      <div className="relative flex-1 group">
+                                        <Barcode className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                                        <input
+                                          type="text"
+                                          id={`barcode-${item.id}`}
+                                          value={responses[item.id] || ''}
+                                          onChange={(e) => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              advanceToNext();
+                                            }
+                                          }}
+                                          placeholder="Escaneie com leitor USB ou digite o código..."
+                                          className="w-full pl-10 pr-10 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 outline-none font-mono font-bold text-xs text-slate-800"
+                                        />
+                                        {responses[item.id] && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setResponses(prev => ({ ...prev, [item.id]: '' }))}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-rose-500 p-1 transition-colors cursor-pointer"
+                                            title="Limpar código"
+                                          >
+                                            <X className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                      </div>
+
                                       <button
                                         type="button"
-                                        onClick={() => {
-                                          // Trigger scanner logic
-                                          setActiveScanner(item.id);
-                                        }}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-600 hover:text-emerald-700 p-1.5"
-                                        title="Abrir Scanner"
+                                        onClick={() => setActiveScanner(item.id)}
+                                        className="px-4 py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black rounded-xl text-xs flex items-center gap-2 transition-all shadow-md shadow-emerald-600/20 shrink-0 uppercase tracking-wider cursor-pointer"
+                                        title="Abrir Câmera HD com Zoom e Leitor"
                                       >
-                                        <QrCode className="w-5 h-5" />
+                                        <Camera className="w-4 h-4" />
+                                        <span className="hidden sm:inline">Câmera / Zoom</span>
                                       </button>
                                     </div>
 
-                                    {activeScanner === item.id && (
-                                      <div className="relative bg-black rounded-xl overflow-hidden aspect-video border border-slate-800">
-                                        {cameraError ? (
-                                          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center text-white bg-slate-900 font-mono">
-                                            <AlertCircle className="w-8 h-8 text-rose-500 mb-2 animate-pulse" />
-                                            <p className="text-[10px] font-black leading-tight mb-4">{cameraError}</p>
-                                            <button
-                                              type="button"
-                                              onClick={() => setActiveScanner(null)}
-                                              className="px-4 py-1.5 bg-white text-slate-900 rounded-lg font-black text-[10px]"
-                                            >
-                                              FECHAR
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <>
-                                            <div id="qr-reader" className="w-full h-full" />
-                                            <button 
-                                              type="button"
-                                              onClick={() => setActiveScanner(null)}
-                                              className="absolute top-2.5 right-2.5 bg-black/50 text-white p-1.5 rounded-full hover:bg-black"
-                                            >
-                                              <X className="w-3.5 h-3.5" />
-                                            </button>
-                                            <div className="absolute inset-0 border-2 border-emerald-500/40 pointer-events-none rounded-xl animate-pulse" />
-                                          </>
-                                        )}
+                                    {responses[item.id] ? (
+                                      <div className="bg-emerald-50 border border-emerald-200/80 p-2.5 rounded-xl flex items-center justify-between text-xs font-mono text-emerald-900">
+                                        <div className="flex items-center gap-2 truncate">
+                                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                          <span className="text-[10px] font-sans font-bold text-emerald-700 uppercase">Código Gravado:</span>
+                                          <span className="font-black truncate">{responses[item.id]}</span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setActiveScanner(item.id)}
+                                          className="text-[10px] font-sans font-black text-emerald-700 hover:text-emerald-900 underline ml-2 shrink-0 cursor-pointer"
+                                        >
+                                          Re-escanear
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium px-1">
+                                        <span>Compatível com leitores USB/Bluetooth ou Câmera do Celular/PC</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setActiveScanner(item.id)}
+                                          className="text-emerald-600 hover:text-emerald-700 font-bold flex items-center gap-1 cursor-pointer"
+                                        >
+                                          <QrCode className="w-3 h-3" /> Abrir Scanner
+                                        </button>
                                       </div>
                                     )}
                                   </div>
@@ -8845,6 +8822,32 @@ const Quality: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Barcode / QR Code Scanner Modal with Zoom & Hardware controls */}
+      {activeScanner && (
+        <QualityBarcodeScannerModal
+          isOpen={true}
+          onClose={() => setActiveScanner(null)}
+          onScan={(code) => {
+            const currentScannerId = activeScanner;
+            setResponses(prev => ({ ...prev, [currentScannerId]: code }));
+            if (fillingTemplate) {
+              const currentIdx = fillingTemplate.items.findIndex(i => i.id === currentScannerId);
+              if (currentIdx !== -1 && currentIdx + 1 < fillingTemplate.items.length) {
+                setExpandedItemId(fillingTemplate.items[currentIdx + 1].id);
+              }
+            }
+            setActiveScanner(null);
+          }}
+          title={
+            fillingTemplate?.items.find(i => i.id === activeScanner)?.label || 'Leitura de Código de Barras'
+          }
+          description={
+            fillingTemplate?.items.find(i => i.id === activeScanner)?.description ||
+            'Aponte a câmera para o código de barras ou QR Code do produto ou fardo'
+          }
+        />
+      )}
     </div>
   );
 };
