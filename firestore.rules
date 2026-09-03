@@ -323,14 +323,14 @@ service cloud.firestore {
     match /wire_batches/{batchId} {
       allow read: if isSignedIn();
       allow create, update: if isSignedIn() && isValidId(batchId);
-      allow delete: if isMaster() || (isAdmin() && isValidId(batchId));
+      allow delete: if isMaster() || ((isAdmin() || isManager()) && isValidId(batchId));
     }
 
     // Wire Coils
     match /wire_coils/{coilId} {
       allow read: if isSignedIn();
       allow create, update: if isSignedIn() && isValidId(coilId);
-      allow delete: if isMaster() || (isAdmin() && isValidId(coilId));
+      allow delete: if isMaster() || ((isAdmin() || isManager()) && isValidId(coilId));
     }
 
     // Wire Receiving Drafts (Sincronização em nuvem entre múltiplos celulares/dispositivos)

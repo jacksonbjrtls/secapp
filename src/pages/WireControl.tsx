@@ -376,6 +376,7 @@ const WireControl: React.FC = () => {
                 startDate={startDate}
                 endDate={endDate}
                 storageBays={storageBays}
+                coils={coils}
             />
           </motion.div>
         )}

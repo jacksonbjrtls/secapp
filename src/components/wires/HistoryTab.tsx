@@ -6,6 +6,7 @@ import {
   deleteDoc,
   query,
   where,
+  getDoc,
   getDocs,
   orderBy,
   limit,
@@ -58,6 +59,7 @@ interface HistoryTabProps {
   startDate: string;
   endDate: string;
   storageBays: WireStorageBay[];
+  coils?: WireCoil[];
 }
 
 export const HistoryTab: React.FC<HistoryTabProps> = ({ 
@@ -68,7 +70,8 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
   isManager,
   startDate,
   endDate,
-  storageBays
+  storageBays,
+  coils = []
 }) => {
   const [viewMode, setViewMode] = useState<'batches' | 'consumptions'>('batches');
   const [searchTerm, setSearchTerm] = useState('');
@@ -162,10 +165,16 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
   }, [viewMode, startDate, endDate]);
 
   const filteredBatches = batches.filter(batch => {
-    const matchesSearch = batch.nfNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      batch.supplierName.toLowerCase().includes(searchTerm.toLowerCase());
+    const term = searchTerm.trim().toLowerCase();
+    const matchesBatch = !term || 
+      batch.nfNumber.toLowerCase().includes(term) ||
+      batch.supplierName.toLowerCase().includes(term);
     
-    if (!matchesSearch) return false;
+    const matchesCoil = Boolean(
+      term && coils && coils.some(c => c.batchId === batch.id && c.coilNumber.toLowerCase().includes(term))
+    );
+
+    if (!matchesBatch && !matchesCoil) return false;
 
     if (startDate || endDate) {
       const batchDate = new Date(batch.date);
@@ -335,6 +344,109 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
         isOpen: true,
         title: 'Erro',
         message: 'Erro ao excluir lançamento.',
+        type: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteCoil = (coil: WireCoil) => {
+    const parentBatch = batches.find(b => b.id === coil.batchId);
+    const nfInfo = parentBatch?.nfNumber ? ` (NF #${parentBatch.nfNumber})` : '';
+    const isConsumed = coil.status === 'consumed';
+
+    setModalConfig({
+      isOpen: true,
+      title: 'Excluir Bobina do Lote',
+      message: isConsumed
+        ? `ATENÇÃO: A bobina "${coil.coilNumber}" (${coil.weight} kg) consta como CONSUMIDA na produção. Tem certeza que deseja excluí-la definitivamente do sistema? O lote${nfInfo} terá seus totais recalculados.`
+        : `Deseja realmente excluir a bobina "${coil.coilNumber}" (${coil.weight} kg) do lote${nfInfo}? Esta ação é irreversível e os totais do lote (quantidade de bobinas e peso total) serão recalculados automaticamente.`,
+      type: 'warning',
+      showConfirmButton: true,
+      onConfirm: () => executeDeleteCoil(coil, parentBatch)
+    });
+  };
+
+  const executeDeleteCoil = async (coil: WireCoil, batchInfo?: WireBatch) => {
+    setLoading(true);
+    try {
+      const batchRef = doc(db, 'wire_batches', coil.batchId);
+      const batchSnap = await getDoc(batchRef);
+      
+      const batchData = batchSnap.exists() ? batchSnap.data() : batchInfo;
+      const currentCount = Number(batchData?.coilsCount) || 0;
+      const currentWeight = Number(batchData?.totalWeight) || 0;
+      const coilWeight = Number(coil.weight) || 0;
+
+      const newCoilsCount = Math.max(0, currentCount - 1);
+      const newTotalWeight = Math.max(0, Math.round((currentWeight - coilWeight) * 100) / 100);
+
+      const managerName = profile?.name || user?.displayName || user?.email || 'Gestor/Admin';
+
+      // Atomic write batch
+      const writeOps = writeBatch(db);
+
+      // 1. Delete coil document
+      writeOps.delete(doc(db, 'wire_coils', coil.id));
+
+      // 2. Update parent batch doc
+      if (batchSnap.exists()) {
+        writeOps.update(batchRef, {
+          coilsCount: newCoilsCount,
+          totalWeight: newTotalWeight,
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      // 3. Register audit log
+      const auditDocRef = doc(collection(db, 'wire_audit_logs'));
+      writeOps.set(auditDocRef, {
+        action: 'WIRE_COIL_DELETED',
+        batchId: coil.batchId,
+        nfNumber: batchData?.nfNumber || '',
+        supplierName: batchData?.supplierName || '',
+        coilId: coil.id,
+        coilNumber: coil.coilNumber,
+        weight: coilWeight,
+        diameter: coil.diameter,
+        managerId: user?.uid || 'manager',
+        managerName: managerName,
+        managerEmail: user?.email || '',
+        details: {
+          reason: 'Exclusão de bobina cadastrada incorretamente no lote',
+          previousCount: currentCount,
+          newCount: newCoilsCount,
+          previousWeight: currentWeight,
+          newWeight: newTotalWeight
+        },
+        timestamp: serverTimestamp()
+      });
+
+      await writeOps.commit();
+
+      // Update local state for expanded view if open
+      if (selectedBatchDetails) {
+        setSelectedBatchDetails(prev => prev ? prev.filter(c => c.id !== coil.id) : null);
+      }
+
+      // Close editing modal if open
+      if (editingCoil?.id === coil.id) {
+        setEditingCoil(null);
+      }
+
+      setModalConfig({
+        isOpen: true,
+        title: 'Bobina Excluída!',
+        message: `A bobina "${coil.coilNumber}" foi excluída com sucesso. O lote agora possui ${newCoilsCount} bobinas (${newTotalWeight.toLocaleString()} kg).`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error('Erro ao excluir bobina:', err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro ao Excluir',
+        message: `Não foi possível excluir a bobina: ${err?.message || 'Erro inesperado.'}`,
         type: 'error'
       });
     } finally {
@@ -621,7 +733,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder={viewMode === 'batches' ? "Filtrar por NF, fornecedor ou material..." : "Filtrar por ID da bobina, operador ou observação..."}
+              placeholder={viewMode === 'batches' ? "Buscar por NF, fornecedor ou código da bobina..." : "Filtrar por ID da bobina, operador ou observação..."}
               className="w-full pl-14 pr-6 py-5 bg-slate-50 border-2 border-transparent focus:border-blue-500 focus:bg-white rounded-2xl text-lg font-bold placeholder:text-slate-300 transition-all shadow-inner outline-none"
             />
           </div>
@@ -746,6 +858,34 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                     </div>
                   </div>
 
+                  {/* Indicator if any coil inside this batch matches searchTerm */}
+                  {searchTerm.trim() && coils && (
+                    (() => {
+                      const term = searchTerm.trim().toLowerCase();
+                      const matchingCoils = coils.filter(c => c.batchId === batch.id && c.coilNumber.toLowerCase().includes(term));
+                      if (matchingCoils.length > 0) {
+                        return (
+                          <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <span className="text-xs font-bold text-emerald-900">
+                                Encontrada{matchingCoils.length > 1 ? 's' : ''} {matchingCoils.length} bobina{matchingCoils.length > 1 ? 's' : ''} correspondente{matchingCoils.length > 1 ? 's' : ''} à busca:
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {matchingCoils.map(mc => (
+                                <span key={mc.id} className="px-2.5 py-1 bg-white text-emerald-800 text-[11px] font-black rounded-lg border border-emerald-300 shadow-2xs font-mono">
+                                  {mc.coilNumber} ({mc.weight}kg)
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()
+                  )}
+
                   <div className="flex items-center justify-between pt-2">
                      <div className="flex items-center gap-2 text-slate-400">
                         <User className="w-3.5 h-3.5" />
@@ -792,41 +932,78 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5 gap-3">
-                        {selectedBatchDetails.map((coil, idx) => (
-                          <div key={`detail-${coil.id}-${idx}`} className={cn(
-                            "group bg-white p-4 rounded-2xl border border-slate-200 shadow-sm relative hover:border-blue-400 hover:shadow-md transition-all",
-                            coil.status === 'consumed' && "opacity-60 bg-slate-50"
-                          )}>
-                            {(isAdmin || isManager) && (
-                              <button
-                                onClick={() => setEditingCoil(coil)}
-                                className="absolute -top-2 -right-2 p-2 bg-amber-100 text-amber-600 rounded-xl shadow-lg z-10 transition-all active:scale-95 hover:bg-amber-200"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            <div className="flex items-center justify-between mb-3">
-                               <span className="text-[9px] font-black text-slate-300 uppercase"># {idx + 1}</span>
-                               <span className={cn(
-                                 "text-[8px] px-2 py-0.5 rounded-md font-black uppercase",
-                                 coil.status === 'consumed' ? "bg-rose-50 text-rose-500" : "bg-emerald-50 text-emerald-600"
-                               )}>
-                                 {coil.status === 'consumed' ? 'Baixado' : 'Patio'}
-                               </span>
+                        {selectedBatchDetails.map((coil, idx) => {
+                          const isSearchMatch = Boolean(
+                            searchTerm.trim() && coil.coilNumber.toLowerCase().includes(searchTerm.trim().toLowerCase())
+                          );
+
+                          return (
+                            <div 
+                              key={`detail-${coil.id}-${idx}`} 
+                              className={cn(
+                                "group bg-white p-4 rounded-2xl border shadow-sm relative transition-all",
+                                isSearchMatch 
+                                  ? "border-emerald-500 ring-2 ring-emerald-400 bg-emerald-50/25 shadow-md" 
+                                  : "border-slate-200 hover:border-blue-400 hover:shadow-md",
+                                coil.status === 'consumed' && "opacity-60 bg-slate-50"
+                              )}
+                            >
+                              {(isAdmin || isManager) && (
+                                <div className="absolute -top-2.5 -right-2.5 flex items-center gap-1 z-20">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingCoil(coil);
+                                    }}
+                                    title="Editar Bobina"
+                                    className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm transition-all active:scale-95"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteCoil(coil);
+                                    }}
+                                    title="Excluir Bobina do Lote"
+                                    className="p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg shadow-sm transition-all active:scale-95"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                              <div className="flex items-center justify-between mb-3">
+                                 <span className="text-[9px] font-black text-slate-300 uppercase"># {idx + 1}</span>
+                                 <div className="flex items-center gap-1">
+                                   {isSearchMatch && (
+                                     <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-black uppercase">
+                                       Encontrada
+                                     </span>
+                                   )}
+                                   <span className={cn(
+                                     "text-[8px] px-2 py-0.5 rounded-md font-black uppercase",
+                                     coil.status === 'consumed' ? "bg-rose-50 text-rose-500" : "bg-emerald-50 text-emerald-600"
+                                   )}>
+                                     {coil.status === 'consumed' ? 'Baixado' : 'Patio'}
+                                   </span>
+                                 </div>
+                              </div>
+                              <p className="font-black text-slate-900 text-sm tracking-tight truncate mb-4">{coil.coilNumber}</p>
+                              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                                 <div className="flex items-center gap-1.5">
+                                   <Weight className="w-3 h-3 text-slate-300" />
+                                   <span className="text-[10px] font-black text-slate-600">{coil.weight?.toLocaleString()}kg</span>
+                                 </div>
+                                 <div className="flex items-center gap-1.5">
+                                   <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                   <span className="text-[10px] font-black text-slate-600">{coil.diameter?.toFixed(2)}mm</span>
+                                 </div>
+                              </div>
                             </div>
-                            <p className="font-black text-slate-900 text-sm tracking-tight truncate mb-4">{coil.coilNumber}</p>
-                            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                               <div className="flex items-center gap-1.5">
-                                 <Weight className="w-3 h-3 text-slate-300" />
-                                 <span className="text-[10px] font-black text-slate-600">{coil.weight?.toLocaleString()}kg</span>
-                               </div>
-                               <div className="flex items-center gap-1.5">
-                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                                 <span className="text-[10px] font-black text-slate-600">{coil.diameter?.toFixed(2)}mm</span>
-                               </div>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
 
                         {(isAdmin || isManager) && (
                           <button
@@ -1040,26 +1217,42 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                   )}
                 </div>
 
-                <div className="p-8 bg-slate-50 flex gap-4">
-                  <button
-                    type="button"
-                    onClick={() => setEditingCoil(null)}
-                    className="flex-1 py-4 bg-white text-slate-600 rounded-2xl font-black border border-slate-200 hover:bg-slate-100 transition-all"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="flex-[2] py-4 bg-slate-900 text-white rounded-2xl font-black shadow-xl hover:bg-black transition-all flex items-center justify-center gap-3"
-                  >
-                    {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (
-                      <>
-                        <Save className="w-6 h-6" />
-                        Salvar Bobina
-                      </>
-                    )}
-                  </button>
+                <div className="p-8 bg-slate-50 flex flex-col sm:flex-row gap-3">
+                  {(isAdmin || isManager) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = editingCoil;
+                        setEditingCoil(null);
+                        handleDeleteCoil(target);
+                      }}
+                      className="px-5 py-4 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 active:scale-95"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Excluir Bobina</span>
+                    </button>
+                  )}
+                  <div className="flex-1 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setEditingCoil(null)}
+                      className="flex-1 py-4 bg-white text-slate-600 rounded-2xl font-black border border-slate-200 hover:bg-slate-100 transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="flex-[2] py-4 bg-slate-900 text-white rounded-2xl font-black shadow-xl hover:bg-black transition-all flex items-center justify-center gap-3"
+                    >
+                      {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (
+                        <>
+                          <Save className="w-6 h-6" />
+                          Salvar Bobina
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </form>
             </motion.div>
