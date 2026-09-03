@@ -97,7 +97,7 @@ interface StoredDraft {
 }
 
 export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager, storageBays }) => {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   
   // Active draft doc ID in Firestore
   const [activeDraftId, setActiveDraftId] = useState<string>(() => {
@@ -554,7 +554,8 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       return;
     }
 
-    if (!currentBatch?.storageBayId) {
+    const activeBays = storageBays.filter(b => b.active !== false);
+    if (activeBays.length > 0 && !currentBatch?.storageBayId) {
       setError('Selecione o local de armazenamento (baia) para estocar as bobinas.');
       return;
     }
@@ -570,16 +571,33 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       return;
     }
 
+    // Step 1.5: Internal duplicate check within the current scanned batch
+    const coilNumberCounts: { [num: string]: number } = {};
+    for (const c of scannedCoils) {
+      const num = (c.coilNumber || '').trim();
+      if (num) {
+        coilNumberCounts[num] = (coilNumberCounts[num] || 0) + 1;
+      }
+    }
+    const internalDuplicates = Object.keys(coilNumberCounts).filter(num => coilNumberCounts[num] > 1);
+    if (internalDuplicates.length > 0) {
+      setError(`Atenção: A lista de bobinas escaneadas contém números repetidos dentro desta mesma carga (${internalDuplicates.join(', ')}). Exclua as duplicatas antes de homologar.`);
+      return;
+    }
+
     // Step 2: Strict Duplicate Check against permanent stock in Firestore
     setValidatingSecurity(true);
     try {
-      const coilNumbersToCheck = scannedCoils.map(c => c.coilNumber).filter(Boolean) as string[];
+      const rawCoilNumbers = scannedCoils.map(c => (c.coilNumber || '').trim()).filter(Boolean) as string[];
+      // Firestore 'in' query strictly requires unique values in the array
+      const coilNumbersToCheck = Array.from(new Set(rawCoilNumbers));
       const duplicatesFound: string[] = [];
 
       // Query in chunks of 30 due to Firestore "in" filter limit
       const chunkSize = 30;
       for (let i = 0; i < coilNumbersToCheck.length; i += chunkSize) {
         const chunk = coilNumbersToCheck.slice(i, i + chunkSize);
+        if (chunk.length === 0) continue;
         const q = query(
           collection(db, 'wire_coils'),
           where('coilNumber', 'in', chunk)
@@ -603,9 +621,9 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       // Pre-validation approved, open manager modal
       setDuplicateCoilsFound([]);
       setShowManagerSecurityModal(true);
-    } catch (valErr) {
+    } catch (valErr: any) {
       console.error('Erro na validação de segurança:', valErr);
-      setError('Falha ao validar integridade com o servidor. Verifique sua conexão e tente novamente.');
+      setError(`Falha ao validar integridade com o servidor: ${valErr?.message || 'Verifique sua conexão e tente novamente.'}`);
     } finally {
       setValidatingSecurity(false);
     }
@@ -619,14 +637,16 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     setError('');
 
     try {
-      const batch = writeBatch(db);
       const supplierName = suppliers.find(s => s.id === currentBatch.supplierId)?.name || currentBatch.supplierName || 'Fornecedor';
       const totalWeight = scannedCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
-      const managerName = profile?.displayName || profile?.email || 'Gestor de Recebimento';
-      const managerId = profile?.id || 'manager';
-      const managerEmail = profile?.email || '';
+      const responsibleName = profile?.displayName || user?.displayName || profile?.email || user?.email || 'Operador de Recebimento';
+      const responsibleId = profile?.id || user?.uid || 'operator';
+      const responsibleEmail = profile?.email || user?.email || '';
 
-      // 1. Create Wire Batch Record
+      const bayId = currentBatch.storageBayId || 'geral';
+      const bayName = currentBatch.storageBayName || storageBays.find(b => b.id === currentBatch.storageBayId)?.name || 'Almoxarifado Geral';
+
+      // 1. Create Wire Batch Record Reference
       const batchDocRef = doc(collection(db, 'wire_batches'));
       const batchId = batchDocRef.id;
 
@@ -639,86 +659,75 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         status: 'closed',
         totalWeight: Number(totalWeight) || 0,
         coilsCount: scannedCoils.length,
-        responsibleName: managerName,
-        managerId: managerId,
-        managerEmail: managerEmail,
+        responsibleName: responsibleName,
+        managerId: responsibleId,
+        managerEmail: responsibleEmail,
+        storageBayId: bayId,
+        storageBayName: bayName,
         securityVerified: true,
         securityVerifiedAt: new Date().toISOString(),
         createdAt: serverTimestamp()
       };
 
-      if (currentBatch.storageBayId) {
-        batchPayload.storageBayId = currentBatch.storageBayId;
-      }
-      if (currentBatch.storageBayName) {
-        batchPayload.storageBayName = currentBatch.storageBayName;
-      }
       if (managerNotes && managerNotes.trim()) {
         batchPayload.notes = managerNotes.trim();
       }
 
-      batch.set(batchDocRef, batchPayload);
-
-      // 2. Add all Coils linked to this batch
-      for (const coil of scannedCoils) {
-        const coilDocRef = doc(collection(db, 'wire_coils'));
-        const coilPayload: Record<string, any> = {
-          id: coilDocRef.id,
-          coilNumber: coil.coilNumber || '',
-          diameter: Number(coil.diameter) || 2.30,
-          weight: Number(coil.weight) || 0,
-          supplierId: currentBatch.supplierId || '',
-          batchId: batchId,
-          status: 'received',
-          receivedAt: coil.receivedAt || new Date().toISOString(),
-          isDamaged: Boolean(coil.isDamaged),
-          receivedByManagerName: managerName,
-          createdAt: serverTimestamp()
-        };
-
-        if (currentBatch.storageBayId) {
-          coilPayload.storageBayId = currentBatch.storageBayId;
-        }
-        if (currentBatch.storageBayName) {
-          coilPayload.storageBayName = currentBatch.storageBayName;
-        }
-
-        batch.set(coilDocRef, coilPayload);
-      }
-
-      // 3. Create Immutable Audit Log for total traceability
+      // 2. Prepare Audit Log Reference
       const auditDocRef = doc(collection(db, 'wire_audit_logs'));
       const auditPayload: Record<string, any> = {
         id: auditDocRef.id,
         action: 'WIRE_BATCH_SAVED',
         batchId: batchId,
-        managerId: managerId,
-        managerName: managerName,
-        managerEmail: managerEmail,
+        managerId: responsibleId,
+        managerName: responsibleName,
+        managerEmail: responsibleEmail,
         nfNumber: (currentBatch.nfNumber || '').trim(),
         supplierName: supplierName || '',
+        storageBayName: bayName,
         coilsCount: scannedCoils.length,
         totalWeight: Number(totalWeight) || 0,
         notes: (managerNotes && managerNotes.trim()) || 'Recebimento de arames validado e gravado com segurança total.',
         timestamp: serverTimestamp()
       };
 
-      if (currentBatch.storageBayName) {
-        auditPayload.storageBayName = currentBatch.storageBayName;
-      }
-
+      // 3. Prepare Coils writes
+      // Firestore batch limit is 500 operations. We split if necessary.
+      const batch = writeBatch(db);
+      batch.set(batchDocRef, batchPayload);
       batch.set(auditDocRef, auditPayload);
 
-      // 4. Delete the cloud draft in the same atomic commit
-      if (activeDraftId) {
+      // Delete the cloud draft in the same commit
+      if (activeDraftId && /^[a-zA-Z0-9_@.-]+$/.test(activeDraftId)) {
         const draftDocRef = doc(db, 'wire_receiving_drafts', activeDraftId);
         batch.delete(draftDocRef);
       }
 
-      // Commit Atomic Batch with a safety timeout to avoid infinite UI hanging
+      // Add all coils
+      for (const coil of scannedCoils) {
+        const coilDocRef = doc(collection(db, 'wire_coils'));
+        const coilPayload: Record<string, any> = {
+          id: coilDocRef.id,
+          coilNumber: (coil.coilNumber || '').trim(),
+          diameter: Number(coil.diameter) || 2.30,
+          weight: Number(coil.weight) || 0,
+          supplierId: currentBatch.supplierId || '',
+          batchId: batchId,
+          storageBayId: bayId,
+          storageBayName: bayName,
+          status: 'received',
+          receivedAt: coil.receivedAt || new Date().toISOString(),
+          isDamaged: Boolean(coil.isDamaged),
+          receivedByManagerName: responsibleName,
+          createdAt: serverTimestamp()
+        };
+        batch.set(coilDocRef, coilPayload);
+      }
+
+      // Commit Batch with generous 60s timeout for industrial network stability
       const commitPromise = batch.commit();
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('A operação de salvamento expirou no servidor (Timeout de 15s). Verifique sua conexão e permissões.')), 15000)
+        setTimeout(() => reject(new Error('A operação de salvamento expirou no servidor (Timeout de 60s). Verifique sua conexão.')), 60000)
       );
 
       await Promise.race([commitPromise, timeoutPromise]);
@@ -741,7 +750,12 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       setShowSuccessModal(true);
     } catch (err: any) {
       console.error('Erro na gravação atômica do recebimento:', err);
-      const errorMessage = err?.message || 'Erro crítico ao salvar recebimento no banco de dados. Nenhuma alteração foi realizada. Tente novamente.';
+      let errorMessage = err?.message || 'Erro crítico ao salvar recebimento no banco de dados. Nenhuma alteração foi realizada. Tente novamente.';
+      if (err?.code === 'permission-denied') {
+        errorMessage = 'Permissão negada pelo servidor. Verifique se o seu usuário está ativo e aprovado no sistema.';
+      } else if (err?.code === 'unavailable') {
+        errorMessage = 'Servidor Firestore temporariamente indisponível. Verifique sua conexão de internet e tente novamente.';
+      }
       setError(`Falha ao salvar: ${errorMessage}`);
     } finally {
       setLoading(false);
@@ -1381,7 +1395,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                         className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg appearance-none disabled:opacity-70 disabled:bg-slate-100 shadow-sm text-slate-900"
                       >
                         <option value="">Selecione...</option>
-                        {suppliers.filter(s => s.active).map(s => (
+                        {suppliers.filter(s => s.active !== false).map(s => (
                           <option key={s.id} value={s.id}>{s.name}</option>
                         ))}
                       </select>
@@ -1400,7 +1414,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                         value={currentBatch.storageBayId || ''}
                         onChange={(e) => {
                           const bayId = e.target.value;
-                          const bayName = storageBays.find(b => b.id === bayId)?.name || '';
+                          const bayName = storageBays.find(b => b.id === bayId)?.name || (bayId === 'geral' ? 'Almoxarifado Geral' : '');
                           updateBatchHeader({
                             storageBayId: bayId,
                             storageBayName: bayName
@@ -1409,9 +1423,12 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                         className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg appearance-none shadow-sm text-slate-900"
                       >
                         <option value="">Selecione a Baia...</option>
-                        {storageBays.filter(b => b.active).map(b => (
+                        {storageBays.filter(b => b.active !== false).map(b => (
                           <option key={b.id} value={b.id}>{b.name}</option>
                         ))}
+                        {storageBays.length === 0 && (
+                          <option value="geral">Almoxarifado Geral (Padrão)</option>
+                        )}
                       </select>
                       <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none">
                          <ChevronDown className="w-5 h-5 text-slate-400" />

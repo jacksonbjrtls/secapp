@@ -322,15 +322,15 @@ service cloud.firestore {
     // Wire Batches
     match /wire_batches/{batchId} {
       allow get, list: if isApproved();
-      allow create: if isManager() && isValidId(batchId);
-      allow update: if isManager() && isValidId(batchId);
+      allow create: if isApproved() && isValidId(batchId);
+      allow update: if isApproved() && isValidId(batchId);
       allow delete: if isMaster() || (isAdmin() && isValidId(batchId));
     }
 
     // Wire Coils
     match /wire_coils/{coilId} {
       allow get, list: if isApproved();
-      allow create: if isManager() && isValidId(coilId);
+      allow create: if isApproved() && isValidId(coilId);
       allow update: if isApproved() && isValidId(coilId);
       allow delete: if isMaster() || (isAdmin() && isValidId(coilId));
     }
