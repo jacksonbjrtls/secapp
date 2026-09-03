@@ -8,10 +8,15 @@ import {
   where,
   getDocs,
   orderBy,
-  limit
+  limit,
+  writeBatch,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { WireBatch, WireCoil, WireSupplier, ProductionLine, WireStorageBay } from '../../types';
+import { useAuth } from '../../hooks/useAuth';
+import { QRCameraScanner } from './QRCameraScanner';
+import { parseWireQRCode } from '../../lib/wireUtils';
 import { 
   History, 
   Search, 
@@ -31,7 +36,14 @@ import {
   Barcode,
   Clock,
   Factory,
-  MapPin
+  MapPin,
+  Plus,
+  Camera,
+  AlertTriangle,
+  CheckCircle2,
+  PackagePlus,
+  AlertCircle,
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate, formatDateBR } from '../../lib/utils';
@@ -65,8 +77,33 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
   const [editingBatch, setEditingBatch] = useState<WireBatch | null>(null);
   const [editingCoil, setEditingCoil] = useState<WireCoil | null>(null);
   const [loading, setLoading] = useState(false);
+  const { profile, user } = useAuth();
   const [selectedBatchDetails, setSelectedBatchDetails] = useState<WireCoil[] | null>(null);
   const [isViewingDetails, setIsViewingDetails] = useState<string | null>(null);
+  
+  // State for adding coils to an existing batch
+  const [addCoilsTargetBatch, setAddCoilsTargetBatch] = useState<WireBatch | null>(null);
+  const [pendingNewCoils, setPendingNewCoils] = useState<Array<{
+    coilNumber: string;
+    diameter: number;
+    weight: number;
+    isDamaged: boolean;
+  }>>([]);
+  const [newCoilInput, setNewCoilInput] = useState<{
+    coilNumber: string;
+    diameter: number;
+    weight: string;
+    isDamaged: boolean;
+  }>({
+    coilNumber: '',
+    diameter: 2.30,
+    weight: '',
+    isDamaged: false
+  });
+  const [showScanner, setShowScanner] = useState(false);
+  const [addingCoilsLoading, setAddingCoilsLoading] = useState(false);
+  const [addCoilsError, setAddCoilsError] = useState('');
+
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -305,6 +342,239 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
     }
   };
 
+  const handleOpenAddCoils = async (batch: WireBatch) => {
+    setAddCoilsTargetBatch(batch);
+    setPendingNewCoils([]);
+    setAddCoilsError('');
+    setShowScanner(false);
+
+    // Intelligently infer default diameter from existing coils in batch
+    let defaultDiameter = 2.30;
+    if (selectedBatchDetails && selectedBatchDetails.length > 0 && isViewingDetails === batch.id) {
+      defaultDiameter = selectedBatchDetails[0].diameter || 2.30;
+    } else {
+      try {
+        const q = query(collection(db, 'wire_coils'), where('batchId', '==', batch.id), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          defaultDiameter = snap.docs[0].data().diameter || 2.30;
+        }
+      } catch (err) {
+        console.warn('Could not determine default diameter:', err);
+      }
+    }
+
+    setNewCoilInput({
+      coilNumber: '',
+      diameter: defaultDiameter,
+      weight: '',
+      isDamaged: false
+    });
+  };
+
+  const handleAddCoilToQueue = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setAddCoilsError('');
+
+    const cleanNumber = newCoilInput.coilNumber.trim().toUpperCase();
+    if (!cleanNumber) {
+      setAddCoilsError('Informe o número ou código de barras da bobina.');
+      return;
+    }
+
+    const weightNum = parseFloat(newCoilInput.weight);
+    if (!weightNum || isNaN(weightNum) || weightNum <= 0) {
+      setAddCoilsError('Informe um peso válido em kg (maior que 0).');
+      return;
+    }
+
+    // Check if duplicate in current pending queue
+    if (pendingNewCoils.some(c => c.coilNumber === cleanNumber)) {
+      setAddCoilsError(`A bobina "${cleanNumber}" já está na fila.`);
+      return;
+    }
+
+    // Check if duplicate in currently expanded batch
+    if (selectedBatchDetails && selectedBatchDetails.some(c => c.coilNumber.toUpperCase() === cleanNumber)) {
+      setAddCoilsError(`A bobina "${cleanNumber}" já está cadastrada neste lote.`);
+      return;
+    }
+
+    setPendingNewCoils(prev => [
+      ...prev,
+      {
+        coilNumber: cleanNumber,
+        diameter: Number(newCoilInput.diameter) || 2.30,
+        weight: weightNum,
+        isDamaged: Boolean(newCoilInput.isDamaged)
+      }
+    ]);
+
+    // Reset input fields but keep diameter
+    setNewCoilInput(prev => ({
+      ...prev,
+      coilNumber: '',
+      weight: '',
+      isDamaged: false
+    }));
+  };
+
+  const handleRemovePendingCoil = (index: number) => {
+    setPendingNewCoils(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleExecuteSaveAddedCoils = async () => {
+    if (!addCoilsTargetBatch) return;
+
+    // Auto-include current inputs if filled
+    let coilsToSave = [...pendingNewCoils];
+    const cleanNumber = newCoilInput.coilNumber.trim().toUpperCase();
+    const weightNum = parseFloat(newCoilInput.weight);
+
+    if (cleanNumber && weightNum > 0 && !coilsToSave.some(c => c.coilNumber === cleanNumber)) {
+      coilsToSave.push({
+        coilNumber: cleanNumber,
+        diameter: Number(newCoilInput.diameter) || 2.30,
+        weight: weightNum,
+        isDamaged: Boolean(newCoilInput.isDamaged)
+      });
+    }
+
+    if (coilsToSave.length === 0) {
+      setAddCoilsError('Adicione pelo menos uma bobina para gravar no lote.');
+      return;
+    }
+
+    setAddingCoilsLoading(true);
+    setAddCoilsError('');
+
+    try {
+      // Check for duplicates in Firestore
+      const duplicateChecks = await Promise.all(
+        coilsToSave.map(async (coil) => {
+          const q = query(
+            collection(db, 'wire_coils'),
+            where('coilNumber', '==', coil.coilNumber),
+            limit(1)
+          );
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            const data = snap.docs[0].data();
+            return {
+              coilNumber: coil.coilNumber,
+              batchId: data.batchId,
+              status: data.status
+            };
+          }
+          return null;
+        })
+      );
+
+      const duplicatesFound = duplicateChecks.filter(Boolean) as Array<{
+        coilNumber: string;
+        batchId?: string;
+        status?: string;
+      }>;
+
+      if (duplicatesFound.length > 0) {
+        const dupList = duplicatesFound.map(d => `${d.coilNumber} (${d.status === 'consumed' ? 'Baixada' : 'Em estoque'})`).join(', ');
+        setAddCoilsError(`Bloqueio de duplicidade: As seguintes bobinas já constam registradas no sistema: ${dupList}.`);
+        setAddingCoilsLoading(false);
+        return;
+      }
+
+      // Prepare atomic writeBatch
+      const batch = writeBatch(db);
+      const targetBatchRef = doc(db, 'wire_batches', addCoilsTargetBatch.id);
+      const auditDocRef = doc(collection(db, 'wire_audit_logs'));
+
+      const totalAddedWeight = coilsToSave.reduce((sum, c) => sum + c.weight, 0);
+      const newCoilsCount = (addCoilsTargetBatch.coilsCount || 0) + coilsToSave.length;
+      const newTotalWeight = (addCoilsTargetBatch.totalWeight || 0) + totalAddedWeight;
+      const managerName = profile?.name || user?.displayName || user?.email || 'Gestor/Admin';
+
+      // Insert all coils
+      for (const coil of coilsToSave) {
+        const coilDocRef = doc(collection(db, 'wire_coils'));
+        batch.set(coilDocRef, {
+          coilNumber: coil.coilNumber,
+          diameter: Number(coil.diameter) || 2.30,
+          weight: Number(coil.weight) || 0,
+          supplierId: addCoilsTargetBatch.supplierId || '',
+          supplierName: addCoilsTargetBatch.supplierName || '',
+          batchId: addCoilsTargetBatch.id,
+          storageBayId: addCoilsTargetBatch.storageBayId || '',
+          storageBayName: addCoilsTargetBatch.storageBayName || '',
+          status: 'received',
+          isDamaged: !!coil.isDamaged,
+          receivedAt: new Date().toISOString(),
+          receivedByManagerName: managerName,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      // Update target batch document
+      batch.update(targetBatchRef, {
+        coilsCount: newCoilsCount,
+        totalWeight: newTotalWeight,
+        updatedAt: serverTimestamp()
+      });
+
+      // Add audit log
+      batch.set(auditDocRef, {
+        action: 'WIRE_BATCH_EDITED',
+        batchId: addCoilsTargetBatch.id,
+        managerId: user?.uid || 'manager',
+        managerName: managerName,
+        managerEmail: user?.email || '',
+        nfNumber: addCoilsTargetBatch.nfNumber,
+        supplierName: addCoilsTargetBatch.supplierName,
+        coilsCount: newCoilsCount,
+        totalWeight: newTotalWeight,
+        details: {
+          reason: 'Adição de bobinas complementares a lote já existente',
+          addedCoilsCount: coilsToSave.length,
+          addedWeight: totalAddedWeight,
+          addedCoilNumbers: coilsToSave.map(c => c.coilNumber)
+        },
+        timestamp: serverTimestamp()
+      });
+
+      await batch.commit();
+
+      // Refresh expanded batch details if currently active
+      if (isViewingDetails === addCoilsTargetBatch.id) {
+        const qUpdated = query(collection(db, 'wire_coils'), where('batchId', '==', addCoilsTargetBatch.id));
+        const snapUpdated = await getDocs(qUpdated);
+        setSelectedBatchDetails(snapUpdated.docs.map(d => ({ id: d.id, ...d.data() } as WireCoil)));
+      }
+
+      const savedCount = coilsToSave.length;
+      const nfNum = addCoilsTargetBatch.nfNumber;
+
+      setAddCoilsTargetBatch(null);
+      setPendingNewCoils([]);
+      setNewCoilInput({
+        coilNumber: '',
+        diameter: 2.30,
+        weight: '',
+        isDamaged: false
+      });
+
+      setModalConfig({
+        isOpen: true,
+        title: 'Bobinas Gravadas com Sucesso!',
+        message: `${savedCount} bobina(s) (${totalAddedWeight.toLocaleString()} kg) foram integradas ao lote da NF #${nfNum}. Os totais foram recalculados e o estoque de fábrica atualizado.`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error('Erro ao adicionar bobinas:', err);
+      setAddCoilsError(`Erro ao gravar no banco de dados: ${err?.message || 'Falha de comunicação.'}`);
+    } finally {
+      setAddingCoilsLoading(false);
+    }
+  };
+
   return (
     <div className="max-w-[1600px] mx-auto space-y-8">
       {/* Header & Filter Controls - Persistent at top */}
@@ -409,14 +679,25 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                        {(isAdmin || isManager) && (
                          <div className="flex items-center gap-1.5 p-1 bg-slate-50 rounded-xl mr-2">
                            <button
+                             type="button"
+                             onClick={() => handleOpenAddCoils(batch)}
+                             className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 rounded-lg font-black text-xs transition-all active:scale-95 border border-emerald-200/60 shadow-xs"
+                             title="Adicionar bobinas a este lote"
+                           >
+                             <Plus className="w-4 h-4" />
+                             <span className="hidden sm:inline">Add Bobina</span>
+                           </button>
+                           <button
                              onClick={() => setEditingBatch(batch)}
                              className="p-3 text-amber-500 hover:bg-white hover:text-amber-600 rounded-lg transition-all"
+                             title="Editar Lote"
                            >
                              <Edit2 className="w-5 h-5" />
                            </button>
                            <button
                              onClick={() => handleDeleteBatch(batch)}
                              className="p-3 text-rose-400 hover:bg-white hover:text-rose-600 rounded-lg transition-all"
+                             title="Excluir Lote e Bobinas"
                            >
                              <Trash2 className="w-5 h-5" />
                            </button>
@@ -481,8 +762,35 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
-                      className="bg-slate-50 border-t-2 border-blue-100 p-8"
+                      className="bg-slate-50 border-t-2 border-blue-100 p-6 lg:p-8 space-y-6"
                     >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200/80">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-blue-100/70 text-blue-700 flex items-center justify-center">
+                            <Package className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide flex items-center gap-2">
+                              Bobinas Registradas ({selectedBatchDetails.length})
+                            </h4>
+                            <p className="text-xs font-semibold text-slate-500">
+                              Peso acumulado: <span className="text-slate-800 font-bold">{selectedBatchDetails.reduce((sum, c) => sum + (Number(c.weight) || 0), 0).toLocaleString()} kg</span>
+                            </p>
+                          </div>
+                        </div>
+
+                        {(isAdmin || isManager) && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAddCoils(batch)}
+                            className="flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:shadow-lg transition-all active:scale-95 self-start sm:self-auto"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Adicionar Bobina ao Lote</span>
+                          </button>
+                        )}
+                      </div>
+
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5 gap-3">
                         {selectedBatchDetails.map((coil, idx) => (
                           <div key={`detail-${coil.id}-${idx}`} className={cn(
@@ -519,6 +827,20 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                             </div>
                           </div>
                         ))}
+
+                        {(isAdmin || isManager) && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAddCoils(batch)}
+                            className="p-4 rounded-2xl border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/40 hover:bg-emerald-50 text-emerald-700 flex flex-col items-center justify-center text-center transition-all min-h-[135px] group active:scale-95"
+                          >
+                            <div className="w-10 h-10 rounded-xl bg-emerald-100 group-hover:bg-emerald-200 flex items-center justify-center mb-2 transition-transform group-hover:scale-110">
+                              <Plus className="w-5 h-5 text-emerald-700" />
+                            </div>
+                            <span className="text-xs font-black uppercase tracking-tight">Adicionar Bobina</span>
+                            <span className="text-[10px] text-emerald-600 font-semibold mt-0.5">Complementar Lote</span>
+                          </button>
+                        )}
                       </div>
                     </motion.div>
                   )}
@@ -846,6 +1168,339 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal: Adicionar Bobinas ao Lote Existente */}
+      <AnimatePresence>
+        {addCoilsTargetBatch && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-100 my-8 flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="p-6 lg:p-8 bg-gradient-to-r from-emerald-600 to-teal-700 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20">
+                    <PackagePlus className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-white/20 text-white border border-white/20">
+                        NF #{addCoilsTargetBatch.nfNumber}
+                      </span>
+                      <span className="text-xs text-emerald-100 font-semibold">Complementar Lote</span>
+                    </div>
+                    <h3 className="text-2xl font-black tracking-tight text-white mt-1">Adicionar Bobinas ao Lote</h3>
+                  </div>
+                </div>
+
+                <button 
+                  type="button"
+                  onClick={() => {
+                    if (!addingCoilsLoading) {
+                      setAddCoilsTargetBatch(null);
+                      setShowScanner(false);
+                      setPendingNewCoils([]);
+                    }
+                  }}
+                  className="w-10 h-10 rounded-2xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Scrollable Content Body */}
+              <div className="p-6 lg:p-8 overflow-y-auto space-y-6 flex-1">
+                {/* Batch Context Card */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200/80">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-slate-400">Fornecedor</p>
+                    <p className="text-sm font-black text-slate-800 truncate">{addCoilsTargetBatch.supplierName}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-slate-400">Baia de Armazenamento</p>
+                    <p className="text-sm font-black text-slate-800 truncate">{addCoilsTargetBatch.storageBayName || 'Geral'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-slate-400">Bobinas Atuais</p>
+                    <p className="text-sm font-black text-slate-800">{addCoilsTargetBatch.coilsCount} un</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-slate-400">Peso Registrado</p>
+                    <p className="text-sm font-black text-slate-800">{addCoilsTargetBatch.totalWeight.toLocaleString()} kg</p>
+                  </div>
+                </div>
+
+                {/* QR Scanner Drawer if active */}
+                {showScanner && (
+                  <div className="p-4 bg-slate-900 rounded-3xl text-white space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Camera className="w-5 h-5 text-emerald-400" />
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-200">Leitor de Câmera Ativo</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowScanner(false)}
+                        className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800"
+                      >
+                        Fechar Câmera
+                      </button>
+                    </div>
+                    <div className="max-w-sm mx-auto overflow-hidden rounded-2xl">
+                      <QRCameraScanner
+                        onScan={(raw) => {
+                          const parsed = parseWireQRCode(raw);
+                          setNewCoilInput(prev => ({
+                            ...prev,
+                            coilNumber: parsed.coilNumber || raw.trim().toUpperCase(),
+                            diameter: parsed.diameter || prev.diameter,
+                            weight: parsed.weight ? String(parsed.weight) : prev.weight
+                          }));
+                          setShowScanner(false);
+                        }}
+                        onClose={() => setShowScanner(false)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Fast Input Form */}
+                <form onSubmit={handleAddCoilToQueue} className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                      <Barcode className="w-4 h-4 text-emerald-600" />
+                      Dados da Nova Bobina
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setShowScanner(!showScanner)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black uppercase transition-all",
+                        showScanner ? "bg-rose-50 text-rose-600 border border-rose-200" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200"
+                      )}
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>{showScanner ? "Fechar Scanner" : "Escanear QR / Barcode"}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                    {/* Coil Identification */}
+                    <div className="sm:col-span-5 space-y-1">
+                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                        Código / Etiqueta da Bobina *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={newCoilInput.coilNumber}
+                          onChange={(e) => setNewCoilInput(prev => ({ ...prev, coilNumber: e.target.value.toUpperCase() }))}
+                          placeholder="Ex: GD030400000000000001"
+                          className="w-full pl-4 pr-10 py-3.5 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-xl text-sm font-black uppercase outline-none transition-all placeholder:text-slate-300"
+                        />
+                        {newCoilInput.coilNumber && (
+                          <button
+                            type="button"
+                            onClick={() => setNewCoilInput(prev => ({ ...prev, coilNumber: '' }))}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Diameter */}
+                    <div className="sm:col-span-3 space-y-1">
+                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                        Bitola (mm) *
+                      </label>
+                      <select
+                        value={newCoilInput.diameter}
+                        onChange={(e) => setNewCoilInput(prev => ({ ...prev, diameter: parseFloat(e.target.value) || 2.30 }))}
+                        className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-xl text-sm font-black outline-none transition-all"
+                      >
+                        {[2.18, 2.30, 2.50, 2.70, 3.00, 3.20, 3.50, 4.00].map(dia => (
+                          <option key={dia} value={dia}>{dia.toFixed(2)} mm</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Weight */}
+                    <div className="sm:col-span-4 space-y-1">
+                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                        Peso Real (kg) *
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="1"
+                          value={newCoilInput.weight}
+                          onChange={(e) => setNewCoilInput(prev => ({ ...prev, weight: e.target.value }))}
+                          placeholder="Ex: 1045.5"
+                          className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-xl text-sm font-black outline-none transition-all placeholder:text-slate-300"
+                        />
+                        <button
+                          type="submit"
+                          className="px-4 py-3.5 bg-slate-900 hover:bg-black text-white rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center shrink-0 shadow-sm active:scale-95"
+                          title="Inserir bobina na fila"
+                        >
+                          <Plus className="w-4 h-4 mr-1" />
+                          <span>Fila</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Damaged flag */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={newCoilInput.isDamaged}
+                        onChange={(e) => setNewCoilInput(prev => ({ ...prev, isDamaged: e.target.checked }))}
+                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300"
+                      />
+                      <span>Bobina com avaria de transporte / deformada</span>
+                    </label>
+                  </div>
+                </form>
+
+                {/* Error Banner */}
+                {addCoilsError && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-3 text-rose-700"
+                  >
+                    <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                    <p className="text-xs font-bold leading-relaxed">{addCoilsError}</p>
+                  </motion.div>
+                )}
+
+                {/* Pending Coils Queue */}
+                {pendingNewCoils.length > 0 && (
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        Bobinas Prontas para Inclusão ({pendingNewCoils.length})
+                      </h4>
+                      <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                        +{pendingNewCoils.reduce((sum, c) => sum + c.weight, 0).toLocaleString()} kg adicionais
+                      </span>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                      {pendingNewCoils.map((c, index) => (
+                        <div key={`pending-${c.coilNumber}-${index}`} className="p-3.5 bg-white flex items-center justify-between hover:bg-slate-50 transition-colors">
+                          <div className="flex items-center gap-3">
+                            <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-black flex items-center justify-center">
+                              {index + 1}
+                            </span>
+                            <div>
+                              <p className="text-xs font-black text-slate-800 tracking-tight font-mono">{c.coilNumber}</p>
+                              <div className="flex items-center gap-3 text-[10px] text-slate-500 font-semibold">
+                                <span>Bitola: <b>{c.diameter.toFixed(2)} mm</b></span>
+                                <span>Peso: <b>{c.weight.toLocaleString()} kg</b></span>
+                                {c.isDamaged && (
+                                  <span className="text-rose-600 font-bold bg-rose-50 px-1.5 py-0.2 rounded">Avariada</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePendingCoil(index)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                            title="Remover da fila"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recalculation Impact Box */}
+                <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-emerald-800 mb-2">
+                    Impacto Projetado no Lote #{addCoilsTargetBatch.nfNumber}
+                  </p>
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <span className="text-slate-500">Total de Bobinas:</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="font-bold text-slate-600">{addCoilsTargetBatch.coilsCount} un</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="font-black text-emerald-700 text-sm">
+                          {addCoilsTargetBatch.coilsCount + pendingNewCoils.length + (newCoilInput.coilNumber && parseFloat(newCoilInput.weight) > 0 ? 1 : 0)} un
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-500">Massa Total do Lote:</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="font-bold text-slate-600">{addCoilsTargetBatch.totalWeight.toLocaleString()} kg</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="font-black text-emerald-700 text-sm">
+                          {(
+                            addCoilsTargetBatch.totalWeight + 
+                            pendingNewCoils.reduce((sum, c) => sum + c.weight, 0) + 
+                            (parseFloat(newCoilInput.weight) || 0)
+                          ).toLocaleString()} kg
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-6 lg:p-8 bg-slate-50 border-t border-slate-100 flex items-center gap-3 shrink-0">
+                <button
+                  type="button"
+                  disabled={addingCoilsLoading}
+                  onClick={() => {
+                    setAddCoilsTargetBatch(null);
+                    setShowScanner(false);
+                    setPendingNewCoils([]);
+                  }}
+                  className="flex-1 py-4 bg-white text-slate-700 rounded-2xl font-black text-sm border border-slate-200 hover:bg-slate-100 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="button"
+                  disabled={addingCoilsLoading}
+                  onClick={handleExecuteSaveAddedCoils}
+                  className="flex-[2] py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black text-sm shadow-xl hover:shadow-emerald-200/50 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                >
+                  {addingCoilsLoading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Salvando no Estoque...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-5 h-5" />
+                      <span>Gravar Bobinas no Lote</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
