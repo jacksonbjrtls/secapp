@@ -17,9 +17,10 @@ import {
   Hash,
   MapPin,
   ChevronDown,
-  Trash
+  Trash,
+  RotateCcw
 } from 'lucide-react';
-import { updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { updateDoc, doc, serverTimestamp, collection, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { WireCoil, WireSupplier, WireStorageBay } from '../../types';
@@ -101,7 +102,27 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
     customNote: ''
   });
 
-  // Bulk selection state for pending coils
+  // Reactivate modal states
+  const [reactivateModal, setReactivateModal] = useState<{
+    isOpen: boolean;
+    coils: WireCoil[];
+    customNote: string;
+  }>({
+    isOpen: false,
+    coils: [],
+    customNote: 'Baixa indevida desfeita via Auditoria'
+  });
+  const [isReactivating, setIsReactivating] = useState(false);
+
+  const openReactivateModal = (targetCoils: WireCoil[]) => {
+    setReactivateModal({
+      isOpen: true,
+      coils: targetCoils,
+      customNote: 'Baixa indevida desfeita via Auditoria'
+    });
+  };
+
+  // Bulk selection state for pending and written-off coils
   const [selectedCoilIds, setSelectedCoilIds] = useState<string[]>([]);
   
   // Action status/notifications
@@ -287,9 +308,10 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
       // Check if it belongs to consumed
       const isConsumed = coils.find(c => c.status === 'consumed' && isCoilMatch(c.coilNumber, trimmedInput));
       if (isConsumed) {
-        triggerNotification('error', `Atenção: A bobina #${isConsumed.coilNumber} consta no sistema como CONSUMIDA.`);
+        openReactivateModal([isConsumed]);
+        triggerNotification('info', `A bobina #${isConsumed.coilNumber} consta como BAIXADA. Verifique e confirme a reativação abaixo para devolvê-la ao estoque.`);
       } else {
-        triggerNotification('error', `Bobina "${trimmedInput}" não localizada na lista de estoque disponível.`);
+        triggerNotification('error', `Bobina "${trimmedInput}" não localizada na lista de estoque.`);
       }
     }
   };
@@ -372,6 +394,89 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
     } catch (err) {
       console.error("Error executing audit write-off:", err);
       triggerNotification('error', "Erro operacional ao dar baixa nos registros do Firestore.");
+    }
+  };
+
+  // Complete Firestore Reactivation action
+  const handleExecuteReactivation = async () => {
+    const { coils: targetCoils, customNote } = reactivateModal;
+    if (targetCoils.length === 0) return;
+
+    setIsReactivating(true);
+    try {
+      const coilIds = targetCoils.map(c => c.id);
+      const noteStr = customNote.trim() 
+        ? `Reativação via Auditoria: ${customNote.trim()}`
+        : `Reativação via Auditoria: Baixa desfeita por ${profile?.displayName || 'Operador'}`;
+
+      const promises = targetCoils.map(async (coil) => {
+        const coilRef = doc(db, 'wire_coils', coil.id);
+
+        await updateDoc(coilRef, {
+          status: 'received',
+          consumedAt: null,
+          consumedBy: null,
+          consumedShift: null,
+          consumedIn: null,
+          consumedByGroup: null,
+          currentLineId: null,
+          isAuditWriteOff: false,
+          auditReason: null,
+          notes: noteStr,
+          updatedBy: profile?.displayName || 'Operador',
+          updatedAt: serverTimestamp()
+        });
+
+        // Register in wire_audit_logs
+        try {
+          const logRef = doc(collection(db, 'wire_audit_logs'));
+          await setDoc(logRef, {
+            action: 'WIRE_COIL_STATUS_CHANGED',
+            batchId: coil.batchId || '',
+            coilId: coil.id,
+            coilNumber: coil.coilNumber,
+            previousStatus: 'consumed',
+            newStatus: 'received',
+            weight: coil.weight,
+            diameter: coil.diameter,
+            supplierId: coil.supplierId || '',
+            managerId: profile?.id || 'user',
+            managerName: profile?.displayName || 'Operador',
+            managerEmail: profile?.email || '',
+            details: {
+              reason: noteStr,
+              origin: 'Auditoria de Arame'
+            },
+            timestamp: serverTimestamp()
+          });
+        } catch (logErr) {
+          console.warn("Could not write audit log entry:", logErr);
+        }
+      });
+
+      await Promise.all(promises);
+
+      // Successfully processed: update local session state
+      setSession(prev => {
+        const filteredWrittenOff = prev.writtenOffIds.filter(id => !coilIds.includes(id));
+        // Add reactivated coils to confirmed so they immediately show as verified in this session
+        const nextConfirmed = Array.from(new Set([...prev.confirmedIds, ...coilIds]));
+        return {
+          ...prev,
+          writtenOffIds: filteredWrittenOff,
+          confirmedIds: nextConfirmed
+        };
+      });
+
+      // Clear selection
+      setSelectedCoilIds(prev => prev.filter(id => !coilIds.includes(id)));
+      setReactivateModal({ isOpen: false, coils: [], customNote: '' });
+      triggerNotification('success', `${targetCoils.length} ${targetCoils.length === 1 ? 'bobina reativada' : 'bobinas reativadas'} com sucesso! O item retornou ao estoque disponível e foi confirmado como presente.`);
+    } catch (err) {
+      console.error("Error executing reactivation:", err);
+      triggerNotification('error', "Erro operacional ao reativar bobina(s) no Firestore.");
+    } finally {
+      setIsReactivating(false);
     }
   };
 
@@ -649,6 +754,22 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
                                 Confirmada no Local
                               </span>
                             )}
+
+                            {coil.status === 'consumed' && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openReactivateModal([coil]);
+                                  setShowSuggestions(false);
+                                }}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center gap-1 cursor-pointer"
+                                title="Reativar bobina e devolver ao estoque"
+                              >
+                                <RotateCcw className="w-3 h-3 stroke-[2.5]" />
+                                Reativar
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -846,13 +967,47 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
           </div>
         )}
 
+        {/* Selected / Bulk Actions Panel for Written Off Coils */}
+        {subTab === 'written_off' && selectedCoilIds.length > 0 && (
+          <div className="bg-emerald-50 p-4 border border-emerald-200 rounded-2xl flex flex-col md:flex-row md:items-center md:items-stretch justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-emerald-100 rounded-xl p-2 font-black text-xs text-emerald-800 font-mono">
+                {selectedCoilIds.length}
+              </div>
+              <div>
+                <p className="text-xs font-bold text-emerald-950 leading-none">Bobinas baixadas selecionadas para reativação</p>
+                <p className="text-[10px] text-emerald-700 font-bold mt-1">Estes itens retornarão ao estoque disponível e poderão ser consumidos normalmente.</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSelectedCoilIds([])}
+                className="px-4 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100/60 rounded-xl transition-all cursor-pointer"
+              >
+                Cancelar Seleção
+              </button>
+              <button
+                onClick={() => {
+                  const targetCoils = coils.filter(c => selectedCoilIds.includes(c.id));
+                  openReactivateModal(targetCoils);
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5 stroke-[2.5]" />
+                Reativar em Lote ({selectedCoilIds.length})
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Coils Data Work Grid */}
         <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-slate-200 text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/70">
-                  {subTab === 'pending' && (
+                  {(subTab === 'pending' || subTab === 'written_off') && (
                     <th className="py-4 pl-6 w-12">
                       <input
                         type="checkbox"
@@ -874,7 +1029,7 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
               <tbody className="divide-y divide-slate-100">
                 {filteredList.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-16 text-center">
+                    <td colSpan={subTab === 'pending' || subTab === 'written_off' ? 8 : 7} className="py-16 text-center">
                       <div className="max-w-xs mx-auto space-y-3">
                         <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 mx-auto">
                           <Barcode className="w-6 h-6" />
@@ -895,9 +1050,11 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
                   filteredList.map(coil => (
                     <tr key={coil.id} className={cn(
                       "hover:bg-slate-50/50 transition-all text-xs",
-                      selectedCoilIds.includes(coil.id) && "bg-amber-50/30 hover:bg-amber-50/45"
+                      selectedCoilIds.includes(coil.id) && (
+                        subTab === 'written_off' ? "bg-emerald-50/40 hover:bg-emerald-50/60" : "bg-amber-50/30 hover:bg-amber-50/45"
+                      )
                     )}>
-                      {subTab === 'pending' && (
+                      {(subTab === 'pending' || subTab === 'written_off') && (
                         <td className="py-4 pl-6">
                           <input
                             type="checkbox"
@@ -986,9 +1143,14 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
                           )}
 
                           {subTab === 'written_off' && (
-                            <span className="text-[10px] text-slate-400 font-black font-sans uppercase">
-                              Concluído
-                            </span>
+                            <button
+                              onClick={() => openReactivateModal([coil])}
+                              className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-700 font-black tracking-wider text-[10px] uppercase rounded-xl border border-emerald-200/80 transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                              title="Reativar bobina e devolver ao estoque ativo"
+                            >
+                              <RotateCcw className="w-3 h-3 stroke-[2.5]" />
+                              Reativar Bobina
+                            </button>
                           )}
                         </div>
                       </td>
@@ -1085,6 +1247,113 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
                   className="px-5 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md shadow-rose-600/10 flex items-center gap-1.5"
                 >
                   Confirmar Baixa
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* High Polish - Reactivate Modal / Revert Write-Off */}
+      {reactivateModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[90]">
+          <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden w-full max-w-xl shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-950 p-6 text-white border-b border-emerald-900/40 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                  <RotateCcw className="w-5 h-5 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black tracking-tight">Reativar Bobina no Estoque</h3>
+                  <p className="text-xs text-emerald-200/80 mt-0.5">Retornar item baixado por engano para o estoque ativo disponível</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReactivateModal(prev => ({ ...prev, isOpen: false }))}
+                className="p-1 text-slate-400 hover:text-white transition-all rounded-full cursor-pointer"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-5">
+              <div>
+                <p className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                  Bobina(s) Selecionada(s) para Reativação ({reactivateModal.coils.length})
+                </p>
+                <div className="max-h-36 overflow-y-auto mt-2 p-3 bg-slate-50 border border-slate-200/60 rounded-xl space-y-2">
+                  {reactivateModal.coils.map(c => {
+                    const sup = supplierMap.get(c.supplierId) || 'Indefinido';
+                    const bay = bayMap.get(c.storageBayId) || 'Sem baia';
+                    return (
+                      <div key={c.id} className="flex items-center justify-between text-xs font-bold text-slate-700 bg-white p-2.5 rounded-lg border border-slate-100 shadow-sm">
+                        <div className="space-y-0.5">
+                          <span className="font-mono font-black text-emerald-900 text-sm">#{c.coilNumber}</span>
+                          <p className="text-[11px] text-slate-500 font-medium">
+                            {sup} • {c.diameter.toFixed(2)}mm • {c.weight}kg • {bay}
+                          </p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[9px] font-black uppercase">
+                          Status: Baixada
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="p-4 bg-emerald-50/70 border border-emerald-200/60 rounded-2xl text-emerald-900 text-xs space-y-1.5">
+                <p className="font-bold flex items-center gap-1.5 text-emerald-950">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  O que acontece ao confirmar a reativação:
+                </p>
+                <p className="text-[11px] text-emerald-800 leading-relaxed">
+                  A bobina voltará ao status <strong>"Recebida" (em estoque ativo)</strong>, as informações de baixa/consumo serão desfeitas e ela voltará a estar disponível para auditoria, consumo na enfardadeira e rastreamento normal do sistema.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                  Justificativa / Motivo da Reativação
+                </label>
+                <input
+                  type="text"
+                  value={reactivateModal.customNote}
+                  onChange={(e) => setReactivateModal(prev => ({ ...prev, customNote: e.target.value }))}
+                  placeholder="Ex: Baixa efetuada por engano na auditoria"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                />
+              </div>
+
+              <div className="border-t border-slate-100 flex items-center justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  disabled={isReactivating}
+                  onClick={() => setReactivateModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-4 py-2.5 text-xs font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={isReactivating}
+                  onClick={handleExecuteReactivation}
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md shadow-emerald-600/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isReactivating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Reativando...
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="w-4 h-4 stroke-[2.5]" />
+                      Confirmar Reativação
+                    </>
+                  )}
                 </button>
               </div>
             </div>
