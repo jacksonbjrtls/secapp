@@ -620,6 +620,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
 
       // Pre-validation approved, open manager modal
       setDuplicateCoilsFound([]);
+      setError('');
       setShowManagerSecurityModal(true);
     } catch (valErr: any) {
       console.error('Erro na validação de segurança:', valErr);
@@ -631,7 +632,10 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
 
   // Step 3: Final Atomic Save Execution (All-or-nothing Firestore writeBatch)
   const executeAtomicSave = async () => {
-    if (!currentBatch || scannedCoils.length === 0) return;
+    if (!currentBatch || scannedCoils.length === 0) {
+      setError('Nenhuma carga ou bobina disponível para gravação.');
+      return;
+    }
 
     setLoading(true);
     setError('');
@@ -691,19 +695,8 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         timestamp: serverTimestamp()
       };
 
-      // 3. Prepare Coils writes
-      // Firestore batch limit is 500 operations. We split if necessary.
-      const batch = writeBatch(db);
-      batch.set(batchDocRef, batchPayload);
-      batch.set(auditDocRef, auditPayload);
-
-      // Delete the cloud draft in the same commit
-      if (activeDraftId && /^[a-zA-Z0-9_@.-]+$/.test(activeDraftId)) {
-        const draftDocRef = doc(db, 'wire_receiving_drafts', activeDraftId);
-        batch.delete(draftDocRef);
-      }
-
-      // Add all coils
+      // 3. Prepare All Coil Payloads
+      const coilOperations: { ref: any; payload: Record<string, any> }[] = [];
       for (const coil of scannedCoils) {
         const coilDocRef = doc(collection(db, 'wire_coils'));
         const coilPayload: Record<string, any> = {
@@ -712,6 +705,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
           diameter: Number(coil.diameter) || 2.30,
           weight: Number(coil.weight) || 0,
           supplierId: currentBatch.supplierId || '',
+          supplierName: supplierName || '',
           batchId: batchId,
           storageBayId: bayId,
           storageBayName: bayName,
@@ -721,25 +715,50 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
           receivedByManagerName: responsibleName,
           createdAt: serverTimestamp()
         };
-        batch.set(coilDocRef, coilPayload);
+        coilOperations.push({ ref: coilDocRef, payload: coilPayload });
       }
 
-      // Commit Batch with generous 60s timeout for industrial network stability
-      const commitPromise = batch.commit();
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('A operação de salvamento expirou no servidor (Timeout de 60s). Verifique sua conexão.')), 60000)
-      );
+      // 4. Chunk operations into batches of at most 400 writes (Firestore hard limit is 500)
+      // First batch contains BatchDoc + AuditDoc + first slice of coils
+      const firstBatchCoilsLimit = 398;
+      const firstSlice = coilOperations.slice(0, firstBatchCoilsLimit);
+      const remainingCoils = coilOperations.slice(firstBatchCoilsLimit);
 
-      await Promise.race([commitPromise, timeoutPromise]);
+      const batch1 = writeBatch(db);
+      batch1.set(batchDocRef, batchPayload);
+      batch1.set(auditDocRef, auditPayload);
+      for (const op of firstSlice) {
+        batch1.set(op.ref, op.payload);
+      }
+      await batch1.commit();
 
-      // Clear local storage
+      // Commit any additional chunks if > 398 coils
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < remainingCoils.length; i += CHUNK_SIZE) {
+        const chunk = remainingCoils.slice(i, i + CHUNK_SIZE);
+        const subBatch = writeBatch(db);
+        for (const op of chunk) {
+          subBatch.set(op.ref, op.payload);
+        }
+        await subBatch.commit();
+      }
+
+      // 5. Asynchronously clean up the cloud draft (decoupled so failure never blocks real stock)
+      if (activeDraftId && /^[a-zA-Z0-9_@.-]+$/.test(activeDraftId)) {
+        deleteDoc(doc(db, 'wire_receiving_drafts', activeDraftId)).catch((err) => {
+          console.warn('Rascunho na nuvem não precisou ser excluído:', err);
+        });
+      }
+
+      // 6. Clear local storage
       try {
         localStorage.removeItem(WIRE_RECEIVING_DRAFT_KEY);
         localStorage.removeItem(WIRE_RECEIVING_ACTIVE_ID_KEY);
       } catch (e) {
-        console.warn(e);
+        console.warn('Erro ao limpar rascunho local:', e);
       }
 
+      // 7. Update UI to success state
       setLastSavedBatchId(batchId);
       setShowManagerSecurityModal(false);
       setCurrentBatch(null);
@@ -750,11 +769,11 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       setShowSuccessModal(true);
     } catch (err: any) {
       console.error('Erro na gravação atômica do recebimento:', err);
-      let errorMessage = err?.message || 'Erro crítico ao salvar recebimento no banco de dados. Nenhuma alteração foi realizada. Tente novamente.';
+      let errorMessage = err?.message || 'Erro crítico ao salvar recebimento no banco de dados. Tente novamente.';
       if (err?.code === 'permission-denied') {
-        errorMessage = 'Permissão negada pelo servidor. Verifique se o seu usuário está ativo e aprovado no sistema.';
+        errorMessage = 'Permissão de gravação negada pelo servidor. Verifique suas credenciais e tente novamente.';
       } else if (err?.code === 'unavailable') {
-        errorMessage = 'Servidor Firestore temporariamente indisponível. Verifique sua conexão de internet e tente novamente.';
+        errorMessage = 'Servidor Firestore temporariamente indisponível. Verifique sua conexão com a internet e tente novamente.';
       }
       setError(`Falha ao salvar: ${errorMessage}`);
     } finally {
@@ -1014,6 +1033,17 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                     className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium text-xs text-slate-900"
                   />
                 </div>
+
+                {/* Save Error Alert inside Modal */}
+                {error && (
+                  <div className="p-4 bg-rose-50 border-2 border-rose-200 rounded-2xl flex items-start gap-3 text-rose-900">
+                    <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-black uppercase tracking-wider text-rose-800">Falha ao Gravar no Banco de Dados</p>
+                      <p className="text-xs font-bold text-rose-700">{error}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Footer */}

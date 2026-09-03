@@ -307,46 +307,42 @@ service cloud.firestore {
 
     // Wire Storage Bays
     match /wire_storage_bays/{bayId} {
-      allow get, list: if isApproved();
-      allow create, update: if isManager() && isValidId(bayId);
-      allow delete: if isMaster() || (isManager() && isValidId(bayId));
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(bayId);
+      allow delete: if isMaster() || (isAdmin() && isValidId(bayId));
     }
 
     // Wire Suppliers
     match /wire_suppliers/{supplierId} {
-      allow get, list: if isApproved();
-      allow create, update: if isAdmin() && isValidId(supplierId);
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(supplierId);
       allow delete: if isMaster() || (isAdmin() && isValidId(supplierId));
     }
 
     // Wire Batches
     match /wire_batches/{batchId} {
-      allow get, list: if isApproved();
-      allow create: if isApproved() && isValidId(batchId);
-      allow update: if isApproved() && isValidId(batchId);
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(batchId);
       allow delete: if isMaster() || (isAdmin() && isValidId(batchId));
     }
 
     // Wire Coils
     match /wire_coils/{coilId} {
-      allow get, list: if isApproved();
-      allow create: if isApproved() && isValidId(coilId);
-      allow update: if isApproved() && isValidId(coilId);
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(coilId);
       allow delete: if isMaster() || (isAdmin() && isValidId(coilId));
     }
 
     // Wire Receiving Drafts (Sincronização em nuvem entre múltiplos celulares/dispositivos)
     match /wire_receiving_drafts/{draftId} {
-      allow get, list: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidId(draftId);
-      allow delete: if isSignedIn() && isValidId(draftId);
+      allow read, write: if isSignedIn();
     }
 
     // Wire Audit Logs (Auditoria de salvamento e movimentações de arames)
     match /wire_audit_logs/{logId} {
-      allow get, list: if isApproved();
-      allow create: if isApproved() && isValidId(logId);
-      allow update, delete: if isMaster();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(logId);
+      allow update, delete: if isMaster() || (isAdmin() && isValidId(logId));
     }
 
     // Monthly Production (Manual Inputs)
