@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query, where, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
@@ -30,14 +30,25 @@ import {
   Package,
   Factory,
   ShieldCheck,
-  User as UserIcon
+  User as UserIcon,
+  Edit2,
+  CheckCircle2,
+  UserCheck
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeToDate, formatDateBR } from '../lib/utils';
+import { 
+  cn, 
+  safeToDate, 
+  formatDateBR, 
+  formatLocalDateBR, 
+  formatLocalTimeBR, 
+  formatLocalDateTimeBR, 
+  getLocalDateStrBR 
+} from '../lib/utils';
 
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 
@@ -93,6 +104,16 @@ const Reports: React.FC = () => {
     type: 'success'
   });
 
+  // DDS Executor editing states
+  const [editingExecutorModal, setEditingExecutorModal] = useState<{
+    sessionId: string;
+    sessionTitle: string;
+    currentExecutor: string;
+  } | null>(null);
+  const [newExecutorValue, setNewExecutorValue] = useState('');
+  const [isSavingExecutor, setIsSavingExecutor] = useState(false);
+  const [executorUpdateSuccess, setExecutorUpdateSuccess] = useState<string | null>(null);
+
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
   // Filters State
@@ -113,6 +134,14 @@ const Reports: React.FC = () => {
   }, [reportType]);
 
   useEffect(() => {
+    // Populate cached users early for quick selection in modal
+    const cached = getLocalCachedUsers()
+      .filter(u => u.displayName && u.displayName !== 'Sem nome')
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    if (cached.length > 0) {
+      setAllUsers(cached.map(u => ({ id: u.uid, ...u })));
+    }
+
     if (!isManager) {
       setLoading(false);
       return;
@@ -125,9 +154,19 @@ const Reports: React.FC = () => {
         const sessionsSnap = await getDocs(collection(db, 'dds_sessions'));
         
         const sessions: Record<string, any> = {};
-        sessionsSnap.docs.forEach(doc => {
-          sessions[doc.id] = doc.data();
-        });
+        for (const sDoc of sessionsSnap.docs) {
+          const sData = sDoc.data();
+          const decTitle = await decryptValue(sData.title);
+          const rawExec = sData.executor || sData.executante || sData.responsavel || sData.facilitador || sData.instrutor || '';
+          const decExec = await decryptValue(rawExec);
+          const decCreatedByName = await decryptValue(sData.createdByName || sData.creatorName || '');
+          sessions[sDoc.id] = {
+            ...sData,
+            title: decTitle || sData.title,
+            executor: decExec || rawExec || '',
+            createdByName: decCreatedByName || sData.createdByName || ''
+          };
+        }
 
         const currentOrphans: string[] = [];
         const ddsResults = await Promise.all(signaturesSnap.docs.map(async (doc) => {
@@ -139,6 +178,11 @@ const Reports: React.FC = () => {
           }
 
           const decName = await decryptValue(sig.userName);
+          const rawSigExec = sig.executor || '';
+          const decSigExec = await decryptValue(rawSigExec);
+          const sessionExec = session?.executor || '';
+          const finalExecutor = sessionExec || decSigExec || '-';
+
           return {
             id: doc.id,
             sessionId: sig.sessionId,
@@ -146,7 +190,8 @@ const Reports: React.FC = () => {
             sessionTitle: sig.sessionTitle || session?.title || 'Sessão Removida (Órfão)',
             shift: session?.shift || '-',
             group: session?.group || '-',
-            executor: session?.executor || '-',
+            executor: finalExecutor,
+            createdByName: session?.createdByName || '-',
             mood: sig.mood || '-',
             timestamp: safeToDate(sig.timestamp) || new Date(),
             isOrphan: !session
@@ -304,7 +349,7 @@ const Reports: React.FC = () => {
     fetchData();
 
     let unsubUsers = () => {};
-    if (isAdmin || isMaster) {
+    if (isAdmin || isMaster || isManager) {
       unsubUsers = subscribeToUsers((liveUsers) => {
         const usersList = liveUsers
           .filter(user => {
@@ -321,6 +366,35 @@ const Reports: React.FC = () => {
       unsubUsers();
     };
   }, [isManager, isAdmin, isMaster]);
+
+  const handleSaveExecutor = async () => {
+    if (!editingExecutorModal) return;
+    try {
+      setIsSavingExecutor(true);
+      const sessionRef = doc(db, 'dds_sessions', editingExecutorModal.sessionId);
+      await updateDoc(sessionRef, {
+        executor: newExecutorValue.trim(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Update data in local state so report updates immediately
+      setData(prev => prev.map(item => {
+        if (item.sessionId === editingExecutorModal.sessionId) {
+          return { ...item, executor: newExecutorValue.trim() || '-' };
+        }
+        return item;
+      }));
+
+      setExecutorUpdateSuccess(`Executante atualizado para "${newExecutorValue.trim()}" com sucesso!`);
+      setTimeout(() => setExecutorUpdateSuccess(null), 4000);
+      setEditingExecutorModal(null);
+    } catch (err: any) {
+      console.error('Erro ao atualizar executante:', err);
+      alert('Erro ao atualizar executante: ' + (err.message || 'Falha na gravação.'));
+    } finally {
+      setIsSavingExecutor(false);
+    }
+  };
 
   const handleCleanupOrphans = async (confirmed = false) => {
     if (orphanIds.length === 0) return;
@@ -474,15 +548,14 @@ const Reports: React.FC = () => {
       
       const itemDate = item.timestamp;
       let matchDate = true;
-      if (filterDateStart) {
-        const start = new Date(filterDateStart);
-        start.setHours(0, 0, 0, 0);
-        matchDate = matchDate && itemDate >= start;
-      }
-      if (filterDateEnd) {
-        const end = new Date(filterDateEnd);
-        end.setHours(23, 59, 59, 999);
-        matchDate = matchDate && itemDate <= end;
+      if (filterDateStart || filterDateEnd) {
+        const itemLocalDate = getLocalDateStrBR(itemDate);
+        if (filterDateStart && itemLocalDate < filterDateStart) {
+          matchDate = false;
+        }
+        if (filterDateEnd && itemLocalDate > filterDateEnd) {
+          matchDate = false;
+        }
       }
 
       return matchUser && matchThemeOrStatus && matchShift && matchGroup && matchLine && matchMood && matchDate;
@@ -608,7 +681,7 @@ const Reports: React.FC = () => {
         item.group,
         item.executor,
         item.mood === 'happy' ? 'FELIZ' : item.mood === 'neutral' ? 'NEUTRO' : item.mood === 'sad' ? 'TRISTE' : '-',
-        item.timestamp.toLocaleString('pt-BR')
+        formatLocalDateTimeBR(item.timestamp)
       ]);
     } else if (reportType === 'forklift') {
       head = [['Equipamento', 'Condutor', 'Turno', 'Letra', 'Status', 'Data/Hora']];
@@ -618,7 +691,7 @@ const Reports: React.FC = () => {
         item.shift,
         item.group,
         item.status === 'normal' ? 'CONFORME' : 'NÃO CONFORME',
-        item.timestamp.toLocaleString('pt-BR')
+        formatLocalDateTimeBR(item.timestamp)
       ]);
     } else if (reportType === 'wire_receiving') {
       head = [['NF', 'Fornecedor', 'Bobinas', 'Peso Total (kg)', 'Responsável', 'Data']];
@@ -628,7 +701,7 @@ const Reports: React.FC = () => {
         item.coilsCount,
         item.totalWeight.toLocaleString('pt-BR'),
         item.responsibleName,
-        formatDateBR(item.timestamp)
+        formatLocalDateBR(item.timestamp)
       ]);
     } else if (reportType === 'quality') {
       head = [['Colaborador', 'Checklist', 'Setor/Linha', 'Escala', 'Itens', 'Data/Hora']];
@@ -638,7 +711,7 @@ const Reports: React.FC = () => {
         lines.find(l => l.id === item.lineId)?.name || qualitySectors.find(s => s.id === item.sectorId)?.name || 'Todos',
         item.shift,
         item.responses.length,
-        item.timestamp.toLocaleString('pt-BR')
+        formatLocalDateTimeBR(item.timestamp)
       ]);
     } else if (reportType === 'pending_equipments') {
       head = [['Tag', 'Equipamento', 'Linha', 'Motivo da Pendência', 'Operador', 'Programação', 'Nº SAP', 'Data Identificação']];
@@ -650,7 +723,7 @@ const Reports: React.FC = () => {
         item.operator,
         item.schedule || '-',
         item.sapNote || '-',
-        item.timestamp.toLocaleString('pt-BR')
+        formatLocalDateTimeBR(item.timestamp)
       ]);
     } else {
       head = [['Bobina (ID)', 'Bitola (mm)', 'Peso (kg)', 'Linha', 'Turno', 'Letra', 'Usuário', 'Data/Hora']];
@@ -662,7 +735,7 @@ const Reports: React.FC = () => {
         item.consumedShift || '-',
         item.consumedByGroup || '-',
         item.consumedBy || 'Sistema',
-        item.timestamp.toLocaleString('pt-BR')
+        formatLocalDateTimeBR(item.timestamp)
       ]);
     }
 
@@ -727,7 +800,7 @@ const Reports: React.FC = () => {
           `"${item.group}"`,
           `"${item.executor}"`,
           `"${item.mood === 'happy' ? 'FELIZ' : item.mood === 'neutral' ? 'NEUTRO' : item.mood === 'sad' ? 'TRISTE' : item.mood || '-'}"`,
-          `"${item.timestamp.toISOString()}"`
+          `"${formatLocalDateTimeBR(item.timestamp)}"`
         ]);
       } else if (reportType === 'forklift') {
         headers = ['Equipamento', 'Condutor', 'Turno', 'Letra', 'Status', 'Data/Hora'];
@@ -737,7 +810,7 @@ const Reports: React.FC = () => {
           `"${item.shift}"`,
           `"${item.group}"`,
           `"${item.status}"`,
-          `"${item.timestamp.toISOString()}"`
+          `"${formatLocalDateTimeBR(item.timestamp)}"`
         ]);
       } else if (reportType === 'wire_receiving') {
         headers = ['NF', 'Fornecedor', 'Bobinas', 'Peso Total (kg)', 'Responsável', 'Data'];
@@ -747,7 +820,7 @@ const Reports: React.FC = () => {
           `"${item.coilsCount}"`,
           `"${item.totalWeight}"`,
           `"${item.responsibleName}"`,
-          `"${item.timestamp.toISOString()}"`
+          `"${formatLocalDateBR(item.timestamp)}"`
         ]);
       } else if (reportType === 'quality') {
         headers = ['Colaborador', 'Checklist', 'Linha', 'Setor', 'Escala', 'Itens', 'Data/Hora'];
@@ -758,7 +831,7 @@ const Reports: React.FC = () => {
           `"${qualitySectors.find(s => s.id === item.sectorId)?.name || 'Todos'}"`,
           `"${item.shift}"`,
           `"${item.responses.length}"`,
-          `"${item.timestamp.toISOString()}"`
+          `"${formatLocalDateTimeBR(item.timestamp)}"`
         ]);
       } else if (reportType === 'pending_equipments') {
         headers = ['Tag', 'Equipamento', 'Linha', 'Setor', 'Area', 'Motivo', 'Observacao', 'Operador', 'Programacao', 'Nota SAP', 'Acao Realizada', 'Centro Responsavel', 'Data Identificacao'];
@@ -775,7 +848,7 @@ const Reports: React.FC = () => {
           `"${item.sapNote || ''}"`,
           `"${item.actionTaken || ''}"`,
           `"${item.responsibleCenter || ''}"`,
-          `"${item.timestamp.toISOString()}"`
+          `"${formatLocalDateTimeBR(item.timestamp)}"`
         ]);
       } else {
         headers = ['Bobina (ID)', 'Bitola (mm)', 'Peso (kg)', 'Linha', 'Turno', 'Letra', 'Usuário', 'Data/Hora'];
@@ -787,7 +860,7 @@ const Reports: React.FC = () => {
           `"${item.consumedShift}"`,
           `"${item.consumedByGroup || '-'}"`,
           `"${item.consumedBy}"`,
-          `"${item.timestamp.toISOString()}"`
+          `"${formatLocalDateTimeBR(item.timestamp)}"`
         ]);
       }
 
@@ -1860,7 +1933,7 @@ const Reports: React.FC = () => {
                     </>
                   )}
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Data/Hora</th>
-                  {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments') && (
+                  {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments' || (reportType === 'dds' && (isAdmin || isMaster || isManager))) && (
                     <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Ações</th>
                   )}
                 </tr>
@@ -1880,8 +1953,32 @@ const Reports: React.FC = () => {
                       {reportType === 'dds' ? (
                         <>
                           <td className="px-6 py-4">
-                            <p className="font-bold text-slate-900 leading-none mb-1">{item.userName}</p>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest italic">Executante: {item.executor}</p>
+                            <p className="font-bold text-slate-900 leading-none mb-1.5">{item.userName}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                Executante:
+                              </span>
+                              <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                                {item.executor && item.executor !== '-' ? item.executor : 'Não informado'}
+                              </span>
+                              {(isAdmin || isMaster || isManager) && item.sessionId && !item.isOrphan && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingExecutorModal({
+                                      sessionId: item.sessionId,
+                                      sessionTitle: item.sessionTitle,
+                                      currentExecutor: item.executor !== '-' ? item.executor : ''
+                                    });
+                                    setNewExecutorValue(item.executor !== '-' ? item.executor : '');
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                                  title="Editar Executante deste DDS"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex flex-col gap-1">
@@ -2134,12 +2231,33 @@ const Reports: React.FC = () => {
                       </>
                     )}
                     <td className="px-6 py-4 text-right tabular-nums">
-                      <p className="text-sm font-bold text-slate-900">{formatDateBR(item.timestamp)}</p>
-                      <p className="text-[10px] text-slate-400 font-medium">{item.timestamp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
+                      <p className="text-sm font-bold text-slate-900">{formatLocalDateBR(item.timestamp)}</p>
+                      <p className="text-[10px] text-slate-500 font-semibold">{formatLocalTimeBR(item.timestamp)}</p>
                     </td>
-                    {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments') && (
+                    {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments' || (reportType === 'dds' && (isAdmin || isMaster || isManager))) && (
                       <td className="px-6 py-4 text-right">
-                        {reportType === 'forklift' ? (
+                        {reportType === 'dds' ? (
+                          item.sessionId && !item.isOrphan ? (
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                setEditingExecutorModal({
+                                  sessionId: item.sessionId,
+                                  sessionTitle: item.sessionTitle,
+                                  currentExecutor: item.executor !== '-' ? item.executor : ''
+                                });
+                                setNewExecutorValue(item.executor !== '-' ? item.executor : '');
+                              }}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors border border-slate-200"
+                              title="Alterar Executante deste DDS"
+                            >
+                              <Edit2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Executante</span>
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400 italic">-</span>
+                          )
+                        ) : reportType === 'forklift' ? (
                           <button 
                             onClick={() => setSelectedForkliftCheck(item)}
                             className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
@@ -2643,6 +2761,126 @@ const Reports: React.FC = () => {
           showConfirmButton={true}
           onConfirm={() => handleCleanupOrphans(true)}
         />
+
+        {/* Modal to Edit DDS Executor */}
+        {editingExecutorModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-2xl">
+                    <UserCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">Definir Executante do DDS</h3>
+                    <p className="text-xs text-slate-500 truncate max-w-[240px]">
+                      {editingExecutorModal.sessionTitle}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingExecutorModal(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Nome do Executante (Responsável pelo DDS)
+                  </label>
+                  <input
+                    type="text"
+                    value={newExecutorValue}
+                    onChange={(e) => setNewExecutorValue(e.target.value)}
+                    placeholder="Digite ou selecione o nome do executante"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                    autoFocus
+                  />
+                </div>
+
+                {/* Suggestions from allUsers */}
+                {allUsers.length > 0 && (
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                      Sugestões de colaboradores:
+                    </span>
+                    <div className="max-h-36 overflow-y-auto space-y-1 p-1 bg-slate-50 rounded-xl border border-slate-100">
+                      {allUsers
+                        .filter(u => !newExecutorValue || (u.displayName || '').toLowerCase().includes(newExecutorValue.toLowerCase()))
+                        .slice(0, 8)
+                        .map(u => (
+                          <button
+                            key={u.id || u.uid}
+                            type="button"
+                            onClick={() => setNewExecutorValue(u.displayName)}
+                            className="w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-emerald-100 hover:text-emerald-800 transition-colors flex items-center justify-between"
+                          >
+                            <span>{u.displayName}</span>
+                            {u.role && (
+                              <span className="text-[10px] text-slate-400 font-normal">{u.role}</span>
+                            )}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingExecutorModal(null)}
+                    className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSavingExecutor || !newExecutorValue.trim()}
+                    onClick={handleSaveExecutor}
+                    className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-600/20 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    {isSavingExecutor ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Salvar</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Executor update success toast */}
+        {executorUpdateSuccess && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-6 right-6 z-50 bg-emerald-600 text-white px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3 font-semibold text-sm border border-emerald-500"
+          >
+            <CheckCircle2 className="w-5 h-5 shrink-0" />
+            <span>{executorUpdateSuccess}</span>
+            <button
+              onClick={() => setExecutorUpdateSuccess(null)}
+              className="p-1 hover:bg-emerald-700 rounded-lg transition-colors ml-2"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
