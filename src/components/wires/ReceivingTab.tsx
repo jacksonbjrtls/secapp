@@ -897,27 +897,27 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       {/* Manager High-Security Confirmation Modal */}
       <AnimatePresence>
         {showManagerSecurityModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md">
+          <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center p-3 sm:p-4 pt-4 sm:pt-6 bg-slate-900/70 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.95, opacity: 0, y: 15 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 15 }}
-              className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200"
+              className="bg-white w-full max-w-xl rounded-3xl sm:rounded-[2.25rem] shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh] sm:max-h-[86vh] my-auto"
             >
               {/* Header */}
-              <div className="p-7 bg-slate-900 text-white flex items-center justify-between">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-emerald-900/50">
-                    <ShieldCheck className="w-7 h-7" />
+              <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-emerald-900/50">
+                    <ShieldCheck className="w-5 h-5" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <h3 className="text-xl font-black tracking-tight">Homologação de Recebimento</h3>
+                      <h3 className="text-lg font-black tracking-tight">Homologação de Recebimento</h3>
                       <span className="px-2 py-0.5 bg-emerald-400 text-slate-950 font-black text-[9px] uppercase rounded-full tracking-wider">
                         Segurança Total
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 font-medium mt-0.5">
+                    <p className="text-xs text-slate-400 font-medium">
                       Confirmação expressa do Gestor responsável para entrada no estoque.
                     </p>
                   </div>
@@ -926,103 +926,103 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                   type="button"
                   onClick={() => setShowManagerSecurityModal(false)}
                   disabled={loading}
-                  className="p-2.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
                 >
-                  <X className="w-6 h-6" />
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
               {/* Body */}
-              <div className="p-7 space-y-6 max-h-[75vh] overflow-y-auto">
+              <div className="p-5 sm:p-6 space-y-3.5 overflow-y-auto flex-1">
                 {/* Security Checklist */}
-                <div className="p-4 bg-emerald-50/80 border border-emerald-200 rounded-2xl space-y-2.5">
+                <div className="p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-2xl space-y-2">
                   <h4 className="text-xs font-black text-emerald-950 uppercase tracking-wider flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-emerald-600" />
+                    <Lock className="w-3.5 h-3.5 text-emerald-600" />
                     Checagens de Integridade Aprovadas
                   </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-bold text-emerald-900">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-2 text-[11px] font-bold text-emerald-900">
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       <span>Zero duplicidades no estoque</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       <span>Pesos e bitolas auditados</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       <span>Transação atômica protegida</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       <span>Log de auditoria gerado</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Cargo Overview Card */}
-                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/80 space-y-3">
+                <div className="bg-slate-50 p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 space-y-2.5">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
                     Resumo Operacional da Carga
                   </span>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 bg-white rounded-xl border border-slate-200">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Nota Fiscal (NF)</span>
-                      <span className="text-base font-black text-slate-900 font-mono">{currentBatch?.nfNumber || 'Sem NF'}</span>
+                  <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+                    <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                      <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase block">Nota Fiscal (NF)</span>
+                      <span className="text-sm sm:text-base font-black text-slate-900 font-mono truncate block">{currentBatch?.nfNumber || 'Sem NF'}</span>
                     </div>
-                    <div className="p-3 bg-white rounded-xl border border-slate-200">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Fornecedor</span>
-                      <span className="text-sm font-black text-slate-900 truncate block">{selectedSupplierName}</span>
+                    <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                      <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase block">Fornecedor</span>
+                      <span className="text-xs sm:text-sm font-black text-slate-900 truncate block">{selectedSupplierName}</span>
                     </div>
-                    <div className="p-3 bg-white rounded-xl border border-slate-200">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Local de Estocagem</span>
-                      <span className="text-sm font-black text-slate-900 truncate block">{selectedBayName}</span>
+                    <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                      <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase block">Local de Estocagem</span>
+                      <span className="text-xs sm:text-sm font-black text-slate-900 truncate block">{selectedBayName}</span>
                     </div>
-                    <div className="p-3 bg-white rounded-xl border border-slate-200">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Data de Entrada</span>
-                      <span className="text-sm font-black text-slate-900 block">{currentBatch?.date || 'Hoje'}</span>
+                    <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                      <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase block">Data de Entrada</span>
+                      <span className="text-xs sm:text-sm font-black text-slate-900 block">{currentBatch?.date || 'Hoje'}</span>
                     </div>
                   </div>
 
                   <div className="pt-2 flex items-center justify-between border-t border-slate-200">
                     <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Total de Bobinas</span>
-                      <span className="text-2xl font-black text-emerald-600">{scannedCoils.length} un</span>
+                      <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase block">Total de Bobinas</span>
+                      <span className="text-xl sm:text-2xl font-black text-emerald-600">{scannedCoils.length} un</span>
                     </div>
                     <div className="text-right">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Peso Líquido Total</span>
-                      <span className="text-2xl font-black text-blue-600 font-mono">
-                        {totalWeightCalc.toLocaleString()} kg <span className="text-xs text-slate-400 font-bold">({(totalWeightCalc / 1000).toFixed(2)} t)</span>
+                      <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase block">Peso Líquido Total</span>
+                      <span className="text-xl sm:text-2xl font-black text-blue-600 font-mono">
+                        {totalWeightCalc.toLocaleString()} kg <span className="text-[11px] sm:text-xs text-slate-400 font-bold">({(totalWeightCalc / 1000).toFixed(2)} t)</span>
                       </span>
                     </div>
                   </div>
                 </div>
 
                 {/* Manager Signature Card */}
-                <div className="p-4 bg-slate-900 text-white rounded-2xl space-y-2">
+                <div className="p-3 sm:p-3.5 bg-slate-900 text-white rounded-2xl space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
                       Assinatura Digital do Gestor
                     </span>
-                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase rounded-md">
+                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 text-[9px] font-black uppercase rounded-md">
                       Manager Autorizado
                     </span>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-emerald-400 font-black text-base border border-slate-700">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-emerald-400 font-black text-xs border border-slate-700">
                       {profile?.displayName?.charAt(0) || 'M'}
                     </div>
                     <div>
-                      <p className="text-sm font-black text-white">{profile?.displayName || 'Gestor Responsável'}</p>
-                      <p className="text-xs text-slate-400">{profile?.email || 'usuario@eldorado.com.br'}</p>
+                      <p className="text-xs font-black text-white">{profile?.displayName || 'Gestor Responsável'}</p>
+                      <p className="text-[11px] text-slate-400">{profile?.email || 'usuario@eldorado.com.br'}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Optional Manager Observation */}
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 tracking-widest">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 ml-1 tracking-widest">
                     Observações de Auditoria (Opcional)
                   </label>
                   <textarea
@@ -1030,15 +1030,15 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                     value={managerNotes}
                     onChange={(e) => setManagerNotes(e.target.value)}
                     placeholder="Ex: Carga conferida fisicamente, caminhão lacrado, sem avarias visíveis..."
-                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium text-xs text-slate-900"
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium text-xs text-slate-900 resize-none"
                   />
                 </div>
 
                 {/* Save Error Alert inside Modal */}
                 {error && (
-                  <div className="p-4 bg-rose-50 border-2 border-rose-200 rounded-2xl flex items-start gap-3 text-rose-900">
-                    <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
+                  <div className="p-3 bg-rose-50 border-2 border-rose-200 rounded-xl flex items-start gap-2.5 text-rose-900">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
                       <p className="text-xs font-black uppercase tracking-wider text-rose-800">Falha ao Gravar no Banco de Dados</p>
                       <p className="text-xs font-bold text-rose-700">{error}</p>
                     </div>
@@ -1047,12 +1047,12 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
               </div>
 
               {/* Footer */}
-              <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row gap-3">
+              <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row gap-2.5 shrink-0">
                 <button
                   type="button"
                   disabled={loading}
                   onClick={() => setShowManagerSecurityModal(false)}
-                  className="flex-1 py-4 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-2xl font-black uppercase tracking-wider text-xs transition-all cursor-pointer"
+                  className="flex-1 py-3 sm:py-3.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl font-black uppercase tracking-wider text-xs transition-all cursor-pointer"
                 >
                   Voltar e Revisar
                 </button>
@@ -1060,7 +1060,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                   type="button"
                   disabled={loading}
                   onClick={executeAtomicSave}
-                  className="flex-[2] py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-2xl font-black uppercase tracking-wider text-xs transition-all shadow-xl shadow-emerald-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="flex-[2] py-3 sm:py-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl font-black uppercase tracking-wider text-xs transition-all shadow-xl shadow-emerald-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {loading ? (
                     <>

@@ -49,8 +49,11 @@ import {
   Printer,
   LayoutGrid,
   MapPin,
-  Factory
+  Factory,
+  UploadCloud,
+  FileSpreadsheet
 } from 'lucide-react';
+import { MaintenanceBulkImportModal } from '../components/maintenance/MaintenanceBulkImportModal';
 import { 
   MaintenanceIssue, 
   MaintenanceEquipment, 
@@ -156,6 +159,9 @@ export default function Maintenance() {
   const [newLineNameInput, setNewLineNameInput] = useState('');
   const [newLineSectorInput, setNewLineSectorInput] = useState('');
   const [editingLine, setEditingLine] = useState<{ id: string; name: string; sector?: string } | null>(null);
+
+  // Bulk Import Modal for Maintenance Issues
+  const [isBulkImportModalOpen, setIsBulkImportModalOpen] = useState(false);
 
   // Tag Import Modal
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -1197,6 +1203,15 @@ export default function Maintenance() {
 
           <div className="flex items-center gap-3">
             <button
+              onClick={() => setIsBulkImportModalOpen(true)}
+              className="px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30"
+              title="Importar Pendências em Massa (Excel / CSV)"
+            >
+              <UploadCloud className="w-4 h-4 text-emerald-400" />
+              Importar em Massa
+            </button>
+
+            <button
               onClick={() => setActiveTab('pendencies')}
               className={cn(
                 "px-5 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all",
@@ -1272,13 +1287,23 @@ export default function Maintenance() {
                 <h2 className="text-lg font-bold text-slate-900">Filtrar e Buscar Pendências</h2>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={handleExportPDF}
                   className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center gap-2 border border-slate-200"
                 >
                   <FileDown className="w-4 h-4 text-emerald-600" />
                   Imprimir / Exportar PDF
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsBulkImportModalOpen(true)}
+                  className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 border border-emerald-200 shadow-sm"
+                  title="Importar Pendências em Massa via Excel (.xlsx) ou CSV"
+                >
+                  <UploadCloud className="w-4 h-4 text-emerald-600" />
+                  Importar em Massa
                 </button>
 
                 <button
@@ -3014,6 +3039,15 @@ export default function Maintenance() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* BULK IMPORT MODAL FOR MAINTENANCE ISSUES */}
+      <MaintenanceBulkImportModal
+        isOpen={isBulkImportModalOpen}
+        onClose={() => setIsBulkImportModalOpen(false)}
+        existingEquipments={equipments}
+        existingLines={lines}
+        existingSectors={sectors}
+      />
     </div>
   );
 }
