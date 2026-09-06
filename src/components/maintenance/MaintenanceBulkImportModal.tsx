@@ -9,7 +9,7 @@ import {
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { MaintenanceEquipment, ProductionLine, WorkSector } from '../../types';
-import { getLocalDateStrBR, safeToDate } from '../../lib/utils';
+import { getLocalDateStrBR, formatLocalDateBR, safeToDate } from '../../lib/utils';
 import * as XLSX from 'xlsx';
 import { 
   FileSpreadsheet, 
@@ -109,41 +109,13 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
     return map;
   }, [existingEquipments]);
 
-  // Convert Excel serial date or textual date to YYYY-MM-DD
+  // Convert Excel serial date, Date object or textual date (DD-MM-AAAA, DD/MM/AAAA, AAAA-MM-DD, etc.) to YYYY-MM-DD
   const normalizeDate = (val: any): string => {
-    if (!val) return getLocalDateStrBR(new Date());
+    if (!val && val !== 0) return getLocalDateStrBR(new Date());
 
-    // If numeric (Excel serial date)
-    if (typeof val === 'number') {
-      try {
-        const parsed = XLSX.SSF.parse_date_code(val);
-        if (parsed) {
-          const y = parsed.y;
-          const m = String(parsed.m).padStart(2, '0');
-          const d = String(parsed.d).padStart(2, '0');
-          return `${y}-${m}-${d}`;
-        }
-      } catch {}
-    }
-
-    const str = String(val).trim();
-    if (!str) return getLocalDateStrBR(new Date());
-
-    // DD/MM/YYYY
-    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
-      const [d, m, y] = str.split('/');
-      return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-    }
-
-    // YYYY-MM-DD
-    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-      return str;
-    }
-
-    // Safe fallback via safeToDate
-    const d = safeToDate(str);
-    if (d && !isNaN(d.getTime())) {
-      return getLocalDateStrBR(d);
+    const res = getLocalDateStrBR(val);
+    if (res && /^\d{4}-\d{2}-\d{2}$/.test(res)) {
+      return res;
     }
 
     return getLocalDateStrBR(new Date());
@@ -392,11 +364,12 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
       'DESCRICAO'
     ];
 
-    const todayStr = getLocalDateStrBR(new Date());
+    const todayBR = formatLocalDateBR(new Date());
+    const todayISO = getLocalDateStrBR(new Date());
 
     const exampleRows = [
       [
-        todayStr,
+        todayBR,
         'Laminação',
         'Linha 1',
         '1º Turno',
@@ -412,7 +385,7 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
         'Ruído anormal e vibração acima da tolerância detectados no mancal. Necessário alinhamento e troca de rolamento.'
       ],
       [
-        todayStr,
+        todayBR,
         'Trefila',
         'Trefila 02',
         '2º Turno',
@@ -428,7 +401,7 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
         'Gotejamento contínuo de fluido refrigerante na base da bomba.'
       ],
       [
-        todayStr,
+        todayISO,
         'Galvanização',
         'Linha Contínua',
         '3º Turno',
@@ -449,7 +422,7 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
       ['INSTRUÇÕES DE PREENCHIMENTO - IMPORTAÇÃO DE PENDÊNCIAS'],
       [''],
       ['Coluna', 'Obrigatória?', 'Descrição', 'Exemplos / Valores Aceitos'],
-      ['DATA', 'Não', 'Data de registro da ocorrência (DD/MM/AAAA ou AAAA-MM-DD)', `${todayStr}, 15/09/2026 (Se vazio, assume hoje)`],
+      ['DATA', 'Não', 'Data de registro da ocorrência (Aceita DD/MM/AAAA, DD-MM-AAAA ou AAAA-MM-DD)', `${todayBR} ou ${todayISO} (Se vazio, assume hoje)`],
       ['SETOR', 'Não', 'Área ou setor produtivo', 'Laminação, Trefila, Galvanização, Manutenção, Utilidades'],
       ['LINHA', 'Não', 'Linha de produção ou equipamento geral', 'Linha 1, Linha 2, Trefila 03, Geral'],
       ['TURNO', 'Não', 'Turno de trabalho', '1º Turno, 2º Turno, 3º Turno, Central'],
@@ -484,9 +457,9 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
   // Download CSV template
   const handleDownloadCsvTemplate = () => {
     const headers = 'DATA;SETOR;LINHA;TURNO;TURMA;TAG;EQUIPAMENTO;TIPO_INSPECAO;ANOMALIA;CENTRO_RESPONSAVEL;TIPO_PROGRAMACAO;STATUS;NOTA_SAP;DESCRICAO\n';
-    const todayStr = getLocalDateStrBR(new Date());
-    const row1 = `${todayStr};Laminação;Linha 1;1º Turno;A;MOT-101;Motor Principal;Mecânica;Vibração Excessiva no Rolamento;PCM / Manutenção Mecânica;Parada Programada;Pendente;10045231;Ruído anormal detectado durante rota operacional.\n`;
-    const row2 = `${todayStr};Trefila;Trefila 02;2º Turno;B;BOM-04;Bomba de Água;Mecânica;Vazamento no Selo Mecânico;PCM / Manutenção Mecânica;Oportunidade de Operação;Pendente;10045232;Gotejamento contínuo na base da bomba.\n`;
+    const todayBR = formatLocalDateBR(new Date());
+    const row1 = `${todayBR};Laminação;Linha 1;1º Turno;A;MOT-101;Motor Principal;Mecânica;Vibração Excessiva no Rolamento;PCM / Manutenção Mecânica;Parada Programada;Pendente;10045231;Ruído anormal detectado durante rota operacional.\n`;
+    const row2 = `${todayBR};Trefila;Trefila 02;2º Turno;B;BOM-04;Bomba de Água;Mecânica;Vazamento no Selo Mecânico;PCM / Manutenção Mecânica;Oportunidade de Operação;Pendente;10045232;Gotejamento contínuo na base da bomba.\n`;
 
     const blob = new Blob(['\uFEFF' + headers + row1 + row2], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -724,7 +697,7 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
                     </span>
                   </div>
                   <p className="text-xs text-emerald-800 font-medium max-w-xl">
-                    Para garantir que todas as colunas correspondam perfeitamente, utilize o nosso modelo pré-formatado com exemplos reais.
+                    Para garantir que todas as colunas correspondam perfeitamente, utilize o nosso modelo pré-formatado. Aceita datas nos formatos <strong>DD/MM/AAAA</strong>, <strong>DD-MM-AAAA</strong> ou <strong>AAAA-MM-DD</strong>.
                   </p>
                 </div>
 
@@ -989,7 +962,7 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
                                   )}
                                 </td>
                                 <td className="py-2 px-3 whitespace-nowrap font-mono text-slate-600">
-                                  {r.date}
+                                  {formatLocalDateBR(r.date) || r.date}
                                 </td>
                                 <td className="py-2 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
                                   {r.equipmentTag || <span className="text-slate-400 italic">S/ TAG</span>}

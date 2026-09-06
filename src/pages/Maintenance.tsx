@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   collection, 
   onSnapshot, 
@@ -15,7 +15,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { getCurrentShift, getGroupForShift, Shift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../lib/utils';
+import { cn, formatLocalDateBR, getLocalDateStrBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -198,7 +198,15 @@ export default function Maintenance() {
       (snap) => {
         const list: MaintenanceIssue[] = [];
         snap.forEach(docSnap => {
-          list.push({ id: docSnap.id, ...docSnap.data() } as MaintenanceIssue);
+          const raw = docSnap.data();
+          const cleanDate = getLocalDateStrBR(raw.date) || raw.date || '';
+
+          // Auto-heal: If stored as Excel serial (e.g. 46230), DD-MM-YYYY, or corrupted format in Firestore, migrate to standard YYYY-MM-DD
+          if (isMaster && cleanDate && cleanDate !== raw.date) {
+            updateDoc(doc(db, 'maintenance_issues', docSnap.id), { date: cleanDate }).catch(() => {});
+          }
+
+          list.push({ id: docSnap.id, ...raw, date: cleanDate } as MaintenanceIssue);
         });
         setIssues(list);
         setLoading(false);
@@ -358,6 +366,77 @@ export default function Maintenance() {
   // Sorted lines in alphabetical order
   const sortedLines = [...lines].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
 
+  // Unique sorted sectors for the pendency list filter dropdown
+  const uniqueFilterSectors = useMemo(() => {
+    const set = new Set<string>();
+    sectors.forEach(s => {
+      const name = (s.name || '').trim();
+      if (name) set.add(name);
+    });
+    issues.forEach(i => {
+      const name = (i.sector || i.area || '').trim();
+      if (name) set.add(name);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  }, [sectors, issues]);
+
+  // Unique sorted line names for the pendency list filter dropdown
+  const uniqueFilterLines = useMemo(() => {
+    const set = new Set<string>();
+
+    // 1. Lines from maintenance_lines
+    lines.forEach(l => {
+      const name = (l.name || '').trim();
+      if (!name) return;
+      if (filterSector !== 'all') {
+        const lSec = (l.sector || l.sectorName || '').trim();
+        if (lSec && lSec.toLowerCase() === filterSector.toLowerCase()) {
+          set.add(name);
+        } else if (!lSec) {
+          // If line has no bound sector, show it
+          set.add(name);
+        }
+      } else {
+        set.add(name);
+      }
+    });
+
+    // 2. Lines from actual issues
+    issues.forEach(i => {
+      const name = (i.line || '').trim();
+      if (!name) return;
+      if (filterSector !== 'all') {
+        const iSec = (i.sector || i.area || '').trim();
+        if (iSec.toLowerCase() === filterSector.toLowerCase()) {
+          set.add(name);
+        }
+      } else {
+        set.add(name);
+      }
+    });
+
+    // Fallback: If sector was selected but has no registered lines, show all available unique lines
+    if (set.size === 0) {
+      lines.forEach(l => {
+        const name = (l.name || '').trim();
+        if (name) set.add(name);
+      });
+      issues.forEach(i => {
+        const name = (i.line || '').trim();
+        if (name) set.add(name);
+      });
+    }
+
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  }, [lines, issues, filterSector]);
+
+  // Reset line filter if selected line is no longer present in uniqueFilterLines
+  useEffect(() => {
+    if (filterLine !== 'all' && uniqueFilterLines.length > 0 && !uniqueFilterLines.includes(filterLine)) {
+      setFilterLine('all');
+    }
+  }, [uniqueFilterLines, filterLine]);
+
   // Filter inspection names based on current form Inspection Type
   const filteredInspectionNames = inspectionNames
     .filter(n => !formInspectionType || n.inspectionTypeName === formInspectionType)
@@ -381,11 +460,12 @@ export default function Maintenance() {
     const matchesOrigin = filterOrigin === 'all' || (issue.origin || 'Manual') === filterOrigin;
 
     let matchesDate = true;
+    const normalizedIssueDate = getLocalDateStrBR(issue.date) || issue.date;
     if (filterStartDate) {
-      matchesDate = matchesDate && issue.date >= filterStartDate;
+      matchesDate = matchesDate && normalizedIssueDate >= filterStartDate;
     }
     if (filterEndDate) {
-      matchesDate = matchesDate && issue.date <= filterEndDate;
+      matchesDate = matchesDate && normalizedIssueDate <= filterEndDate;
     }
 
     return matchesSearch && matchesLine && matchesSector && matchesStatus && matchesCenter && matchesOrigin && matchesDate;
@@ -399,7 +479,7 @@ export default function Maintenance() {
   // Reset Issue Form
   const handleOpenNewIssueModal = () => {
     setEditingIssue(null);
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateStrBR(new Date());
     setFormDate(todayStr);
     setFormSector(sectors[0]?.name || '');
     setFormLine(lines[0]?.name || '');
@@ -427,7 +507,7 @@ export default function Maintenance() {
 
   const handleOpenEditIssueModal = (issue: MaintenanceIssue) => {
     setEditingIssue(issue);
-    setFormDate(issue.date || new Date().toISOString().split('T')[0]);
+    setFormDate(getLocalDateStrBR(issue.date) || issue.date || getLocalDateStrBR(new Date()));
     setFormSector(issue.sector || '');
     setFormLine(issue.line || '');
     setFormShift(issue.shift || '1º Turno');
@@ -533,7 +613,7 @@ export default function Maintenance() {
     setSubmittingIssue(true);
     try {
       const issueData = {
-        date: formDate,
+        date: getLocalDateStrBR(formDate) || formDate,
         sector: formSector,
         line: formLine,
         shift: formShift,
@@ -1113,8 +1193,8 @@ export default function Maintenance() {
     // Table mapping
     const tableData = filteredIssues.map((issue, idx) => [
       (idx + 1).toString(),
-      issue.date ? issue.date.split('-').reverse().join('/') : '-',
-      issue.area || '-',
+      issue.date ? formatLocalDateBR(issue.date) : '-',
+      issue.sector || issue.area || '-',
       issue.line || '-',
       issue.equipmentTag || '-',
       issue.equipmentName || '-',
@@ -1122,13 +1202,12 @@ export default function Maintenance() {
       issue.responsibleCenter || '-',
       issue.status || 'Pendente',
       issue.sapNote || '-',
-      issue.description || '-',
-      issue.origin || 'Manual'
+      issue.description || '-'
     ]);
 
     autoTable(docPdf, {
       startY: 28,
-      head: [['#', 'Data', 'Área', 'Linha', 'TAG', 'Equipamento', 'Tipo Insp.', 'Centro Resp.', 'Status', 'Nota SAP', 'Descrição', 'Origem']],
+      head: [['#', 'Data', 'Área / Setor', 'Linha', 'TAG', 'Equipamento', 'Tipo Insp.', 'Centro Resp.', 'Status', 'Nota SAP', 'Descrição']],
       body: tableData,
       theme: 'grid',
       headStyles: {
@@ -1145,17 +1224,16 @@ export default function Maintenance() {
       },
       columnStyles: {
         0: { halign: 'center', cellWidth: 8 },
-        1: { halign: 'center', cellWidth: 18 },
-        2: { cellWidth: 18 },
-        3: { cellWidth: 16 },
-        4: { fontStyle: 'bold', cellWidth: 22 },
-        5: { cellWidth: 32 },
-        6: { cellWidth: 22 },
-        7: { cellWidth: 28 },
-        8: { halign: 'center', fontStyle: 'bold', cellWidth: 20 },
-        9: { cellWidth: 18 },
-        10: { cellWidth: 50 },
-        11: { halign: 'center', cellWidth: 18 }
+        1: { halign: 'center', cellWidth: 20 },
+        2: { cellWidth: 24 },
+        3: { cellWidth: 18 },
+        4: { fontStyle: 'bold', cellWidth: 24 },
+        5: { cellWidth: 36 },
+        6: { cellWidth: 24 },
+        7: { cellWidth: 30 },
+        8: { halign: 'center', fontStyle: 'bold', cellWidth: 22 },
+        9: { cellWidth: 20 },
+        10: { cellWidth: 50 }
       }
     });
 
@@ -1352,8 +1430,8 @@ export default function Maintenance() {
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="all">Todos os Setores</option>
-                  {sectors.map(s => (
-                    <option key={s.id} value={s.name}>{s.name}</option>
+                  {uniqueFilterSectors.map(s => (
+                    <option key={`maint-filter-sec-${s}`} value={s}>{s}</option>
                   ))}
                 </select>
               </div>
@@ -1365,8 +1443,8 @@ export default function Maintenance() {
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="all">Todas as Linhas</option>
-                  {sortedLines.map(l => (
-                    <option key={l.id} value={l.name}>{l.name}</option>
+                  {uniqueFilterLines.map(l => (
+                    <option key={`maint-filter-line-${l}`} value={l}>{l}</option>
                   ))}
                 </select>
               </div>
@@ -1449,7 +1527,7 @@ export default function Maintenance() {
                           </td>
 
                           <td className="p-4 whitespace-nowrap font-bold text-slate-800">
-                            {issue.date ? issue.date.split('-').reverse().join('/') : '-'}
+                            {issue.date ? formatLocalDateBR(issue.date) : '-'}
                           </td>
 
                           <td className="p-4">
@@ -1695,11 +1773,15 @@ export default function Maintenance() {
                         className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                       >
                         <option value="">Selecione a Linha...</option>
-                        {sortedLines
-                          .filter(l => !newEquipmentSectorInput || l.sector === newEquipmentSectorInput)
-                          .map(l => (
-                            <option key={l.id} value={l.name}>{l.name}</option>
-                          ))}
+                        {Array.from(
+                          new Map(
+                            sortedLines
+                              .filter(l => !newEquipmentSectorInput || l.sector === newEquipmentSectorInput)
+                              .map(l => [l.name.toLowerCase().trim(), l])
+                          ).values()
+                        ).map(l => (
+                          <option key={l.id} value={l.name}>{l.name}</option>
+                        ))}
                       </select>
                     </div>
 
@@ -2332,11 +2414,15 @@ export default function Maintenance() {
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="">Selecione a Linha...</option>
-                      {sortedLines
-                        .filter(l => !formSector || !l.sector || l.sector === formSector)
-                        .map(l => (
-                          <option key={l.id} value={l.name}>{l.name}{l.sector ? ` (${l.sector})` : ''}</option>
-                        ))}
+                      {Array.from(
+                        new Map(
+                          sortedLines
+                            .filter(l => !formSector || !l.sector || l.sector === formSector)
+                            .map(l => [`${l.name.toLowerCase().trim()}_${(l.sector || '').toLowerCase().trim()}`, l])
+                        ).values()
+                      ).map(l => (
+                        <option key={l.id} value={l.name}>{l.name}{l.sector ? ` (${l.sector})` : ''}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -2820,7 +2906,11 @@ export default function Maintenance() {
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="">Selecione a Linha...</option>
-                      {sortedLines.map(l => (
+                      {Array.from(
+                        new Map(
+                          sortedLines.map(l => [l.name.toLowerCase().trim(), l])
+                        ).values()
+                      ).map(l => (
                         <option key={l.id} value={l.name}>{l.name}</option>
                       ))}
                     </select>

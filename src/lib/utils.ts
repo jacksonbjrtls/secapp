@@ -5,28 +5,77 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Converts Excel serial date code (e.g. 46230 -> 2026-07-27) to a JavaScript Date.
+ * Excel day 1 is 1900-01-01, Unix epoch is 1970-01-01 (serial 25569).
+ */
+export function excelSerialToDate(serial: number): Date {
+  const utc_days = Math.floor(serial - 25569);
+  const d = new Date(utc_days * 86400 * 1000);
+  d.setHours(12, 0, 0, 0);
+  return d;
+}
+
 export function safeToDate(timestamp: any): Date | null {
-  if (!timestamp) return null;
-  if (timestamp instanceof Date) return timestamp;
+  if (!timestamp && timestamp !== 0) return null;
+  if (timestamp instanceof Date) {
+    if (isNaN(timestamp.getTime())) return null;
+    const y = timestamp.getFullYear();
+    if (y >= 20000 && y <= 80000) {
+      return excelSerialToDate(y);
+    }
+    return timestamp;
+  }
   if (typeof timestamp.toDate === 'function') return timestamp.toDate();
   if (typeof timestamp.seconds === 'number') {
     return new Date(timestamp.seconds * 1000 + (timestamp.nanoseconds || 0) / 1000000);
   }
+  // Number that could be an Excel serial date (e.g. 46230)
+  if (typeof timestamp === 'number') {
+    if (timestamp >= 20000 && timestamp <= 80000) {
+      return excelSerialToDate(timestamp);
+    }
+    return new Date(timestamp);
+  }
   if (typeof timestamp === 'string') {
     const trimmed = timestamp.trim();
-    // YYYY-MM-DD format (fix timezone shift)
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-      const [y, m, d] = trimmed.split('-').map(Number);
-      return new Date(y, m - 1, d, 12, 0, 0);
+    if (!trimmed) return null;
+
+    // Numeric string representing Excel serial (e.g. "46230")
+    if (/^\d{5}$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (num >= 20000 && num <= 80000) {
+        return excelSerialToDate(num);
+      }
     }
-    // DD/MM/YYYY format
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
-      const [d, m, y] = trimmed.split('/').map(Number);
-      return new Date(y, m - 1, d, 12, 0, 0);
+
+    // YYYY-MM-DD or YYYY/MM/DD (check if year is an Excel serial code like 46230-01-01)
+    if (/^(\d{4,6})[-\/](\d{1,2})[-\/](\d{1,2})$/.test(trimmed)) {
+      const match = trimmed.match(/^(\d{4,6})[-\/](\d{1,2})[-\/](\d{1,2})$/)!;
+      const yNum = Number(match[1]);
+      if (yNum >= 20000 && yNum <= 80000) {
+        return excelSerialToDate(yNum);
+      }
+      return new Date(yNum, Number(match[2]) - 1, Number(match[3]), 12, 0, 0);
+    }
+
+    // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY (check if year is an Excel serial code like 01/01/46230)
+    if (/^(\d{1,2})[-\/\.](\d{1,2})[-\/\.](\d{4,6})$/.test(trimmed)) {
+      const match = trimmed.match(/^(\d{1,2})[-\/\.](\d{1,2})[-\/\.](\d{4,6})$/)!;
+      const yNum = Number(match[3]);
+      if (yNum >= 20000 && yNum <= 80000) {
+        return excelSerialToDate(yNum);
+      }
+      return new Date(yNum, Number(match[2]) - 1, Number(match[1]), 12, 0, 0);
     }
   }
   const d = new Date(timestamp);
-  return isNaN(d.getTime()) ? null : d;
+  if (isNaN(d.getTime())) return null;
+  const yr = d.getFullYear();
+  if (yr >= 20000 && yr <= 80000) {
+    return excelSerialToDate(yr);
+  }
+  return d;
 }
 
 /**
@@ -51,6 +100,62 @@ export function getLocalTimeZone(): string {
  * Returns YYYY-MM-DD string in local Brazilian timezone (America/Sao_Paulo)
  */
 export function getLocalDateStrBR(dateInput: any): string {
+  if (!dateInput && dateInput !== 0) return '';
+
+  // Handle direct numeric Excel serial (e.g. 46230)
+  if (typeof dateInput === 'number' && dateInput >= 20000 && dateInput <= 80000) {
+    const d = excelSerialToDate(dateInput);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  if (typeof dateInput === 'string') {
+    const trimmed = dateInput.trim();
+    if (!trimmed) return '';
+
+    // Handle numeric string Excel serial (e.g. "46230")
+    if (/^\d{5}$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (num >= 20000 && num <= 80000) {
+        const d = excelSerialToDate(num);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+    }
+
+    // If YYYY-M-D or YYYY/M/D (with possible Excel serial year)
+    if (/^(\d{4,6})[-\/](\d{1,2})[-\/](\d{1,2})$/.test(trimmed)) {
+      const match = trimmed.match(/^(\d{4,6})[-\/](\d{1,2})[-\/](\d{1,2})$/)!;
+      const yNum = Number(match[1]);
+      if (yNum >= 20000 && yNum <= 80000) {
+        const d = excelSerialToDate(yNum);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+      return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+    }
+
+    // If DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY (with possible Excel serial year, e.g. 01/01/46230)
+    if (/^(\d{1,2})[-\/\.](\d{1,2})[-\/\.](\d{4,6})$/.test(trimmed)) {
+      const match = trimmed.match(/^(\d{1,2})[-\/\.](\d{1,2})[-\/\.](\d{4,6})$/)!;
+      const yNum = Number(match[3]);
+      if (yNum >= 20000 && yNum <= 80000) {
+        const d = excelSerialToDate(yNum);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+      return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+    }
+  }
+
   const d = safeToDate(dateInput);
   if (!d || isNaN(d.getTime())) return '';
   try {
@@ -73,20 +178,15 @@ export function getLocalDateStrBR(dateInput: any): string {
  * Formats a date to Brazilian local date string: DD/MM/AAAA in local timezone
  */
 export function formatLocalDateBR(dateInput: any): string {
-  if (!dateInput) return '';
-  if (typeof dateInput === 'string') {
-    const trimmed = dateInput.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-      const [year, month, day] = trimmed.split('-');
-      return `${day}/${month}/${year}`;
-    }
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
-      return trimmed;
-    }
+  if (!dateInput && dateInput !== 0) return '';
+  const dateStr = getLocalDateStrBR(dateInput);
+  if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [y, m, d] = dateStr.split('-');
+    return `${d}/${m}/${y}`;
   }
 
   const d = safeToDate(dateInput);
-  if (!d || isNaN(d.getTime())) return '';
+  if (!d || isNaN(d.getTime())) return typeof dateInput === 'string' ? dateInput : '';
   try {
     return new Intl.DateTimeFormat('pt-BR', {
       timeZone: getLocalTimeZone(),
@@ -98,7 +198,7 @@ export function formatLocalDateBR(dateInput: any): string {
     const day = String(d.getDate()).padStart(2, '0');
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const year = d.getFullYear();
-    return `${day}/${month}/${year}`;
+    return `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`;
   }
 }
 
