@@ -1202,14 +1202,16 @@ export default function Maintenance() {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsBulkImportModalOpen(true)}
-              className="px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30"
-              title="Importar Pendências em Massa (Excel / CSV)"
-            >
-              <UploadCloud className="w-4 h-4 text-emerald-400" />
-              Importar em Massa
-            </button>
+            {isMaster && (
+              <button
+                onClick={() => setIsBulkImportModalOpen(true)}
+                className="px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30"
+                title="Importar Pendências em Massa (Excel / CSV)"
+              >
+                <UploadCloud className="w-4 h-4 text-emerald-400" />
+                Importar em Massa
+              </button>
+            )}
 
             <button
               onClick={() => setActiveTab('pendencies')}
@@ -1296,15 +1298,17 @@ export default function Maintenance() {
                   Imprimir / Exportar PDF
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => setIsBulkImportModalOpen(true)}
-                  className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 border border-emerald-200 shadow-sm"
-                  title="Importar Pendências em Massa via Excel (.xlsx) ou CSV"
-                >
-                  <UploadCloud className="w-4 h-4 text-emerald-600" />
-                  Importar em Massa
-                </button>
+                {isMaster && (
+                  <button
+                    type="button"
+                    onClick={() => setIsBulkImportModalOpen(true)}
+                    className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 border border-emerald-200 shadow-sm"
+                    title="Importar Pendências em Massa via Excel (.xlsx) ou CSV"
+                  >
+                    <UploadCloud className="w-4 h-4 text-emerald-600" />
+                    Importar em Massa
+                  </button>
+                )}
 
                 <button
                   onClick={handleOpenNewIssueModal}
@@ -3040,14 +3044,16 @@ export default function Maintenance() {
         )}
       </AnimatePresence>
 
-      {/* BULK IMPORT MODAL FOR MAINTENANCE ISSUES */}
-      <MaintenanceBulkImportModal
-        isOpen={isBulkImportModalOpen}
-        onClose={() => setIsBulkImportModalOpen(false)}
-        existingEquipments={equipments}
-        existingLines={lines}
-        existingSectors={sectors}
-      />
+      {/* BULK IMPORT MODAL FOR MAINTENANCE ISSUES - MASTER ONLY */}
+      {isMaster && (
+        <MaintenanceBulkImportModal
+          isOpen={isBulkImportModalOpen}
+          onClose={() => setIsBulkImportModalOpen(false)}
+          existingEquipments={equipments}
+          existingLines={lines}
+          existingSectors={sectors}
+        />
+      )}
     </div>
   );
 }

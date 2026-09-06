@@ -75,7 +75,7 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
   existingLines,
   existingSectors
 }) => {
-  const { user, profile } = useAuth();
+  const { user, profile, isMaster } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Input modes: 'file' | 'paste'
@@ -497,6 +497,11 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
 
   // Execution: Batch insert into Firestore
   const handleExecuteImport = async () => {
+    if (!isMaster) {
+      alert("Acesso restrito: Apenas o perfil Master pode realizar a importação em massa de pendências.");
+      return;
+    }
+
     const validRows = parsedRows.filter(r => r.isValid);
     if (validRows.length === 0) {
       alert("Nenhuma linha válida para importar.");
@@ -623,7 +628,7 @@ export const MaintenanceBulkImportModal: React.FC<MaintenanceBulkImportModalProp
   const warningCount = useMemo(() => parsedRows.filter(r => r.warnings.length > 0).length, [parsedRows]);
   const errorCount = useMemo(() => parsedRows.filter(r => !r.isValid).length, [parsedRows]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !isMaster) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
