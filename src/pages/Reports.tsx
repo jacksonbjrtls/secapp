@@ -3860,7 +3860,7 @@ const Reports: React.FC = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Letra (Grupo)</label>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Letra (Escala)</label>
                     <div className="relative">
                       <select 
                         value={editForm.group}

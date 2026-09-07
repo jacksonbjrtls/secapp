@@ -32,10 +32,11 @@ import {
   Save,
   Users,
   Filter,
-  Weight
+  Weight,
+  CalendarDays
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../../lib/utils';
+import { cn, safeToDate } from '../../lib/utils';
 import { parseWireQRCode, isCoilMatch } from '../../lib/wireUtils';
 import { QRCameraScanner } from './QRCameraScanner';
 import { getCurrentShift, getGroupForShift, Shift } from '../../lib/scaleUtils';
@@ -86,6 +87,15 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
     if (hour >= 0 && hour < 8) return '1';
     if (hour >= 8 && hour < 16) return '2';
     return '3';
+  };
+
+  const getScheduledLetter = (shiftNumber: '1' | '2' | '3' | string, date: Date = new Date()) => {
+    try {
+      const shiftName = `Turno ${shiftNumber}` as Shift;
+      return getGroupForShift(date, shiftName);
+    } catch {
+      return 'C';
+    }
   };
 
   useEffect(() => {
@@ -175,7 +185,6 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
   const [newSelectedShift, setNewSelectedShift] = useState<'1' | '2' | '3' | ''>('');
   const [newSelectedEquipment, setNewSelectedEquipment] = useState('');
   const [newSelectedGroup, setNewSelectedGroup] = useState<string>('');
-  const [showGroupWarning, setShowGroupWarning] = useState(false);
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -244,23 +253,20 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
   const equipmentOptions = useMemo(() => {
     if (!foundCoil || !selectedLine) return [];
     
+    const dia = Number(foundCoil.diameter) || 0;
+
     // 2.18mm e 2.30mm -> Amarradeira 1 e 2
-    if (foundCoil.diameter < 3.0) {
+    if (dia > 0 && dia < 2.9) {
       return ['Amarradeira 1', 'Amarradeira 2'];
     }
     
-    // 3.00mm -> Unitizadora e Big Balé (apenas Linhas A e B)
-    if (foundCoil.diameter === 3.0) {
-      const lineName = lines.find(l => l.id === selectedLine)?.name || '';
-      const isLineAOrB = lineName.toLowerCase().includes('linha a') || lineName.toLowerCase().includes('linha b');
-      
-      const options = ['Unitizadora'];
-      if (isLineAOrB) options.push('Big Balé');
-      return options;
+    // 3.00mm -> Unitizadora e Big Bale
+    if (dia >= 2.9) {
+      return ['Unitizadora', 'Big Bale'];
     }
     
-    return [];
-  }, [foundCoil, selectedLine, lines]);
+    return ['Amarradeira 1', 'Amarradeira 2', 'Unitizadora', 'Big Bale'];
+  }, [foundCoil, selectedLine]);
 
   const searchCoil = async (term: string) => {
     setLoading(true);
@@ -402,17 +408,12 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
     setQrInput('');
   };
 
-  const handleConsume = async (bypassWarning = false) => {
+  const handleConsume = async () => {
     if (!foundCoil || !selectedLine || !selectedShift || !selectedEquipment) return;
 
-    // Validate Group
-    const expectedShiftName = `Turno ${selectedShift}` as Shift;
-    const expectedGroup = getGroupForShift(new Date(), expectedShiftName);
-    
-    if (profile?.group && profile.group !== expectedGroup && !showGroupWarning && !bypassWarning) {
-      setShowGroupWarning(true);
-      return;
-    }
+    // A Letra vem da escala de trabalho conforme o turno e horário de lançamento
+    const activeShift = selectedShift || getShiftByTime();
+    const letterFromScale = getScheduledLetter(activeShift, new Date());
 
     setLoading(true);
     try {
@@ -426,19 +427,18 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
       await updateDoc(doc(db, 'wire_coils', foundCoil.id), {
         status: 'consumed',
         currentLineId: selectedLine,
-        consumedShift: selectedShift,
+        consumedShift: activeShift,
         consumedIn: selectedEquipment,
         consumedAt: serverTimestamp(),
         consumedBy: profile?.displayName || profile?.email || 'Sistema',
-        consumedByGroup: profile?.group || '-'
+        consumedByGroup: letterFromScale
       });
 
-      setSuccess(`Bobina ${foundCoil.coilNumber} registrada com sucesso na ${selectedEquipment} (${lines.find(l => l.id === selectedLine)?.name}).`);
+      setSuccess(`Bobina ${foundCoil.coilNumber} registrada com sucesso na ${selectedEquipment} (${lines.find(l => l.id === selectedLine)?.name}) • Turno ${activeShift} • Letra ${letterFromScale}.`);
       setFoundCoil(null);
       setSelectedLine('');
-      setSelectedShift('');
+      setSelectedShift(getShiftByTime());
       setSelectedEquipment('');
-      setShowGroupWarning(false);
     } catch (err) {
       console.error(err);
       setError('Erro ao registrar consumo.');
@@ -735,25 +735,43 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                   {/* Right part: Production Selection Form */}
                   <div className="p-8 md:p-12 space-y-10">
                     <div>
-                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                         Configuração de Turno
-                      </h4>
+                      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                           Turno & Letra (Escala de Trabalho)
+                        </h4>
+                        <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm">
+                          <CalendarDays className="w-3.5 h-3.5 text-emerald-600" />
+                          Escala no Horário: <strong>Letra {getScheduledLetter(selectedShift || getShiftByTime())}</strong>
+                        </span>
+                      </div>
                       <div className="grid grid-cols-3 gap-4">
-                        {['1', '2', '3'].map((shift, sIdx) => (
-                          <button
-                            key={`cons-shift-${shift}-${sIdx}`}
-                            onClick={() => setSelectedShift(shift as any)}
-                            className={cn(
-                              "py-6 rounded-2xl font-black font-mono text-3xl border-2 transition-all active:scale-95",
-                              selectedShift === shift 
-                                ? "bg-slate-900 border-slate-900 text-white shadow-xl shadow-slate-200" 
-                                : "bg-slate-50 border-transparent text-slate-400 hover:border-slate-200"
-                            )}
-                          >
-                            T{shift}
-                          </button>
-                        ))}
+                        {(['1', '2', '3'] as const).map((shift, sIdx) => {
+                          const shiftLetter = getScheduledLetter(shift);
+                          const isSelected = selectedShift === shift;
+                          return (
+                            <button
+                              key={`cons-shift-${shift}-${sIdx}`}
+                              onClick={() => setSelectedShift(shift)}
+                              className={cn(
+                                "py-4 px-3 rounded-2xl font-black border-2 transition-all active:scale-95 flex flex-col items-center justify-center gap-1.5",
+                                isSelected 
+                                  ? "bg-slate-900 border-slate-900 text-white shadow-xl shadow-slate-200" 
+                                  : "bg-slate-50 border-transparent text-slate-400 hover:border-slate-200 hover:bg-slate-100"
+                              )}
+                            >
+                              <span className="font-mono text-2xl leading-none">T{shift}</span>
+                              <span className={cn(
+                                "text-[11px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md",
+                                isSelected 
+                                  ? "bg-emerald-500 text-white shadow-sm" 
+                                  : "bg-slate-200/80 text-slate-600"
+                              )}>
+                                Letra {shiftLetter}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -912,7 +930,9 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                               coil.consumedShift === '2' ? "bg-blue-400" :
                               "bg-indigo-400"
                             )} />
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Turno {coil.consumedShift} • Grupo {coil.consumedByGroup}</span>
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                              Turno {coil.consumedShift} • Letra {coil.consumedByGroup && coil.consumedByGroup !== '-' ? coil.consumedByGroup : getScheduledLetter(coil.consumedShift || '1', safeToDate(coil.consumedAt) || new Date())}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -971,43 +991,6 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
       </div>
 
       <AnimatePresence>
-        {showGroupWarning && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white w-full max-w-md rounded-[2rem] shadow-2xl overflow-hidden p-8 text-center"
-            >
-              <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                <AlertTriangle className="w-8 h-8" />
-              </div>
-              <h3 className="text-xl font-black text-slate-900 mb-2 uppercase tracking-tight">Aviso de Escala</h3>
-              <p className="text-slate-500 font-medium mb-8">
-                Sua letra (<span className="font-black text-slate-900">{profile?.group}</span>) não é a letra escalada para o <span className="font-black text-slate-900">Turno {selectedShift}</span> agora.
-              </p>
-              
-              <div className="flex flex-col gap-3">
-                <button
-                  onClick={() => setShowGroupWarning(false)}
-                  className="w-full py-4 bg-slate-100 text-slate-600 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-slate-200 transition-all"
-                >
-                  Corrigir perfil/turno
-                </button>
-                <button
-                  onClick={() => {
-                    setShowGroupWarning(false);
-                    handleConsume(true);
-                  }}
-                  className="w-full py-4 bg-emerald-600 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
-                >
-                  Confirmar mesmo assim
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
         {editingCoil && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div
@@ -1034,23 +1017,37 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
 
               <div className="p-8 space-y-6">
                 <div>
-                  <label className="block text-xs font-black text-slate-400 uppercase mb-4 ml-1 tracking-widest">Turno & Letra</label>
+                  <label className="block text-xs font-black text-slate-400 uppercase mb-4 ml-1 tracking-widest">2. Turno & Letra (Escala)</label>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="grid grid-cols-3 gap-2">
-                      {['1', '2', '3'].map((shift, sIdx) => (
-                        <button
-                          key={`modal-shift-${shift}-${sIdx}`}
-                          onClick={() => setNewSelectedShift(shift as any)}
-                          className={cn(
-                            "py-3 rounded-xl font-black text-lg border-2 transition-all active:scale-95",
-                            newSelectedShift === shift 
-                              ? "bg-blue-600 border-blue-600 text-white shadow-lg" 
-                              : "bg-white border-slate-200 text-slate-600 hover:border-blue-200"
-                          )}
-                        >
-                          T{shift}
-                        </button>
-                      ))}
+                      {['1', '2', '3'].map((shift, sIdx) => {
+                        const shiftLetter = editingCoil 
+                          ? getScheduledLetter(shift, safeToDate(editingCoil.consumedAt) || new Date())
+                          : getScheduledLetter(shift);
+                        return (
+                          <button
+                            key={`modal-shift-${shift}-${sIdx}`}
+                            onClick={() => {
+                              setNewSelectedShift(shift as any);
+                              if (shiftLetter) setNewSelectedGroup(shiftLetter);
+                            }}
+                            className={cn(
+                              "py-2 px-1 rounded-xl font-black border-2 transition-all active:scale-95 flex flex-col items-center justify-center",
+                              newSelectedShift === shift 
+                                ? "bg-blue-600 border-blue-600 text-white shadow-lg" 
+                                : "bg-white border-slate-200 text-slate-600 hover:border-blue-200"
+                            )}
+                          >
+                            <span className="text-base font-mono leading-none">T{shift}</span>
+                            <span className={cn(
+                              "text-[9px] font-black uppercase mt-0.5",
+                              newSelectedShift === shift ? "text-blue-100" : "text-slate-400"
+                            )}>
+                              {shiftLetter}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                     <div className="relative">
                        <Users className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -1059,7 +1056,7 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                         onChange={(e) => setNewSelectedGroup(e.target.value)}
                         className="w-full pl-9 pr-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl text-sm font-black focus:border-blue-500 outline-none appearance-none transition-all shadow-sm"
                        >
-                         <option value="-">Letra -</option>
+                         <option value="-">Sem Letra</option>
                          <option value="A">Letra A</option>
                          <option value="B">Letra B</option>
                          <option value="C">Letra C</option>
@@ -1094,18 +1091,16 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                   <div className="mt-6">
                   <label className="block text-xs font-black text-slate-400 uppercase mb-4 ml-1 tracking-widest">3. Corrigir Equipamento</label>
                     <div className="grid grid-cols-2 gap-3">
-                      {(editingCoil.diameter < 3.0 
+                      {(((Number(editingCoil.diameter) || 0) < 2.9 && (Number(editingCoil.diameter) || 0) > 0)
                         ? ['Amarradeira 1', 'Amarradeira 2'] 
-                        : (lines.find(l => l.id === newSelectedLine)?.name?.toLowerCase().includes('linha a') || lines.find(l => l.id === newSelectedLine)?.name?.toLowerCase().includes('linha b')
-                          ? ['Unitizadora', 'Big Balé']
-                          : ['Unitizadora'])
+                        : ['Unitizadora', 'Big Bale']
                       ).map(equip => (
                         <button
                           key={equip}
                           onClick={() => setNewSelectedEquipment(equip)}
                           className={cn(
                             "py-4 rounded-xl font-black text-sm border-2 transition-all active:scale-95",
-                            newSelectedEquipment === equip 
+                            (newSelectedEquipment === equip || (equip === 'Big Bale' && (newSelectedEquipment === 'Big Balé' || newSelectedEquipment === 'Big Bale')))
                               ? "bg-blue-600 border-blue-600 text-white shadow-lg" 
                               : "bg-white border-slate-200 text-slate-600 hover:border-blue-200"
                           )}

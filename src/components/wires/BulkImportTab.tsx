@@ -1605,7 +1605,7 @@ ID	Operador	Data Entrada	Data Consumo	Linha	Turma / Letra	Turno	Máquina	Fornece
                       <td className="px-4 py-3.5 font-mono text-slate-600">{row.diameter.toFixed(2)} mm</td>
                       <td className="px-4 py-3.5 font-semibold text-slate-800">{row.weight.toLocaleString('pt-BR')} kg</td>
                       <td className="px-4 py-3.5 font-medium text-slate-600">
-                        {row.lineName ? `${row.lineName}${row.consumedByGroup ? ` (${row.consumedByGroup})` : ''}` : '—'}
+                        {row.lineName ? `${row.lineName}${row.consumedByGroup ? ` (Letra ${row.consumedByGroup})` : ''}` : '—'}
                       </td>
                       <td className="px-4 py-3.5 font-mono text-slate-600">
                         {row.consumedDate ? row.consumedDate.split('-').reverse().join('/') : '—'}

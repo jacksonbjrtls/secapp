@@ -1425,7 +1425,7 @@ export const Overview: React.FC = () => {
                   </p>
                 </div>
                 <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Grupo Ativo</p>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Letra Ativa</p>
                   <p className="text-2xl font-black text-right leading-tight text-sky-600">
                     Letra {activeShiftGroup}
                   </p>

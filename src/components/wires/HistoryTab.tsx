@@ -50,6 +50,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate, formatDateBR } from '../../lib/utils';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
+import { getGroupForShift, Shift } from '../../lib/scaleUtils';
 
 interface HistoryTabProps {
   batches: WireBatch[];
@@ -84,6 +85,14 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
   const { profile, user } = useAuth();
   const [selectedBatchDetails, setSelectedBatchDetails] = useState<WireCoil[] | null>(null);
   const [isViewingDetails, setIsViewingDetails] = useState<string | null>(null);
+
+  const getScheduledLetter = (shiftNumber: string, date: Date = new Date()) => {
+    try {
+      return getGroupForShift(date, `Turno ${shiftNumber}` as Shift);
+    } catch {
+      return '';
+    }
+  };
   
   // State for adding coils to an existing batch
   const [addCoilsTargetBatch, setAddCoilsTargetBatch] = useState<WireBatch | null>(null);
@@ -1096,7 +1105,9 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                            coil.consumedShift === '2' ? "bg-blue-500" :
                            "bg-indigo-500"
                          )} />
-                         <span className="text-xs font-black text-slate-600 truncate uppercase">Turno {coil.consumedShift} • {coil.consumedBy?.split(' ')[0]}</span>
+                         <span className="text-xs font-black text-slate-600 truncate uppercase">
+                           Turno {coil.consumedShift} • Letra {coil.consumedByGroup && coil.consumedByGroup !== '-' ? coil.consumedByGroup : getScheduledLetter(coil.consumedShift || '1', safeToDate(coil.consumedAt) || new Date())} • {coil.consumedBy?.split(' ')[0]}
+                         </span>
                        </div>
                     </div>
                     <div className="flex flex-col items-end text-right">
@@ -1195,11 +1206,9 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                     <div>
                       <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">3. Equipamento (Consumo)</label>
                       <div className="grid grid-cols-2 gap-3">
-                        {(editingCoil.diameter < 3.0 
+                        {(((Number(editingCoil.diameter) || 0) < 2.9 && (Number(editingCoil.diameter) || 0) > 0)
                           ? ['Amarradeira 1', 'Amarradeira 2'] 
-                          : (lines.find(l => l.id === editingCoil.currentLineId)?.name?.toLowerCase().includes('linha a') || lines.find(l => l.id === editingCoil.currentLineId)?.name?.toLowerCase().includes('linha b')
-                            ? ['Unitizadora', 'Big Balé']
-                            : ['Unitizadora'])
+                          : ['Unitizadora', 'Big Bale']
                         ).map(equip => (
                           <button
                             key={equip}
@@ -1207,7 +1216,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                             onClick={() => setEditingCoil({...editingCoil, consumedIn: equip})}
                             className={cn(
                               "py-3 rounded-xl font-black text-xs border-2 transition-all active:scale-95",
-                              editingCoil.consumedIn === equip 
+                              (editingCoil.consumedIn === equip || (equip === 'Big Bale' && (editingCoil.consumedIn === 'Big Balé' || editingCoil.consumedIn === 'Big Bale')))
                                 ? "bg-amber-500 border-amber-500 text-white shadow-md shadow-amber-100" 
                                 : "bg-white border-slate-200 text-slate-600 hover:border-amber-200"
                             )}
