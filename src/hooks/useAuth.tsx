@@ -13,6 +13,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   isManager: boolean;
+  isViewer: boolean;
   isApproved: boolean;
   isPending: boolean;
   isBlocked: boolean;
@@ -33,6 +34,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   isAdmin: false,
   isManager: false,
+  isViewer: false,
   isApproved: false,
   isPending: false,
   isBlocked: false,
@@ -295,6 +297,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isAdmin = profile?.role === 'admin' || isMaster;
   const isManager = profile?.role === 'manager' || isAdmin;
+  const isViewer = (profile?.role === 'viewer' || (!profile?.role && !isAdmin && !isManager)) && !isMaster;
   const isApproved = profile?.status === 'approved' || isMaster;
   const isPending = profile?.status === 'pending' && !isMaster;
   const isBlocked = profile?.status === 'blocked' && !isMaster;
@@ -309,6 +312,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loading, 
       isAdmin, 
       isManager, 
+      isViewer,
       isApproved, 
       isPending, 
       isBlocked, 

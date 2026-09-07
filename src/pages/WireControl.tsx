@@ -65,20 +65,28 @@ import { BulkImportTab } from '../components/wires/BulkImportTab';
 import { AuditTab } from '../components/wires/AuditTab';
 
 const WireControl: React.FC = () => {
-  const { user, isApproved, isManager, isAdmin, isMaster } = useAuth();
+  const { user, profile, isApproved, isManager, isAdmin, isMaster, isViewer } = useAuth();
   const isElevated = isManager || isAdmin || isMaster;
-  const [activeTab, setActiveTab ] = useState<'dashboard' | 'receiving' | 'consumption' | 'history' | 'config' | 'bulk_import' | 'audit'>(() =>
-    (isManager || isAdmin || isMaster) ? 'dashboard' : 'receiving'
-  );
+  
+  // Viewers do not have access to wire receiving ("Recebimento de arames")
+  const canReceiveWires = !isViewer || profile?.canReceiveWires === true;
+
+  const [activeTab, setActiveTab ] = useState<'dashboard' | 'receiving' | 'consumption' | 'history' | 'config' | 'bulk_import' | 'audit'>(() => {
+    if (isElevated) return 'dashboard';
+    if (canReceiveWires) return 'receiving';
+    return 'consumption';
+  });
   const [showTabMenu, setShowTabMenu] = useState(false);
 
   useEffect(() => {
     if (!isMaster && activeTab === 'bulk_import') {
-      setActiveTab(isElevated ? 'dashboard' : 'receiving');
+      setActiveTab(isElevated ? 'dashboard' : (canReceiveWires ? 'receiving' : 'consumption'));
     } else if (!isElevated && (activeTab === 'dashboard' || activeTab === 'audit' || activeTab === 'history' || activeTab === 'config')) {
-      setActiveTab('receiving');
+      setActiveTab(canReceiveWires ? 'receiving' : 'consumption');
+    } else if (!canReceiveWires && activeTab === 'receiving') {
+      setActiveTab('consumption');
     }
-  }, [isElevated, isMaster, activeTab]);
+  }, [isElevated, isMaster, canReceiveWires, activeTab]);
   
   // Filtering State
   const [startDate, setStartDate] = useState('');
@@ -226,7 +234,7 @@ const WireControl: React.FC = () => {
                     </div>
                     {[
                       { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard, roles: [isManager, isAdmin, isMaster] },
-                      { id: 'receiving', label: 'Recebimento', icon: PackagePlus },
+                      { id: 'receiving', label: 'Recebimento', icon: PackagePlus, roles: [canReceiveWires] },
                       { id: 'consumption', label: 'Registrar Consumo', icon: Barcode },
                       { id: 'audit', label: 'Auditoria de Arames', icon: ClipboardList, roles: [isManager, isAdmin, isMaster] },
                       { id: 'history', label: 'Histórico de Lotes', icon: History, roles: [isManager, isAdmin, isMaster] },
@@ -349,8 +357,8 @@ const WireControl: React.FC = () => {
           </motion.div>
         )}
         
-          {activeTab === 'receiving' && (
-           <motion.div
+        {activeTab === 'receiving' && canReceiveWires && (
+          <motion.div
             key="receiving"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}

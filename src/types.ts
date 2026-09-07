@@ -23,6 +23,7 @@ export interface UserProfile {
   cargoName?: string;
   sectorId?: string;
   sectorName?: string;
+  canReceiveWires?: boolean;
 }
 
 export interface WorkSector {
