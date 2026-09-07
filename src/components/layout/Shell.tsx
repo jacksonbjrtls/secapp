@@ -39,6 +39,7 @@ import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from '../ui/Logo';
 import { PrivacyPolicyModal } from '../ui/PrivacyPolicyModal';
+import { AppFeedbackModal } from '../feedback/AppFeedbackModal';
 import { QuotaBanner } from './QuotaBanner';
 import { fetchUsersSafely, getLocalCachedUsers } from '../../lib/usersCache';
 import {
@@ -959,6 +960,9 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* App Feedback Survey Popout (Only for users who accessed at least 10 times) */}
+      <AppFeedbackModal />
 
       {/* Privacy Policy Modal */}
       <PrivacyPolicyModal isOpen={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />

@@ -775,6 +775,28 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "active", "createdAt"]
+    },
+    "AppFeedbackSurvey": {
+      "title": "App Feedback Survey",
+      "description": "Feedback and satisfaction survey evaluated by app users who accessed at least 10 times.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "userGroup": { "type": "string" },
+        "cargoName": { "type": "string" },
+        "sectorName": { "type": "string" },
+        "rating": { "type": "number", "minimum": 1, "maximum": 5 },
+        "ratingLabel": { "type": "string" },
+        "easeOfUse": { "type": "string" },
+        "highlights": { "type": "array", "items": { "type": "string" } },
+        "observation": { "type": "string" },
+        "accessCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "rating", "createdAt"]
     }
   },
   "firestore": {
@@ -961,6 +983,10 @@
     "/maintenance_lines/{lineId}": {
       "schema": "MaintenanceLine",
       "description": "Production lines registered specifically for Maintenance."
+    },
+    "/app_feedback_surveys/{surveyId}": {
+      "schema": "AppFeedbackSurvey",
+      "description": "Feedback surveys evaluated by users who accessed at least 10 times."
     }
   }
 }

@@ -630,5 +630,11 @@ service cloud.firestore {
     match /maintenance_lines/{lineId} {
       allow read, write: if true;
     }
+
+    // App Feedback Surveys - Strictly Master access for viewing
+    match /app_feedback_surveys/{surveyId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if isMaster();
+    }
   }
 }

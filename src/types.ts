@@ -24,6 +24,27 @@ export interface UserProfile {
   sectorId?: string;
   sectorName?: string;
   canReceiveWires?: boolean;
+  accessCount?: number;
+  appFeedbackSubmitted?: boolean;
+  appFeedbackSubmittedAt?: any;
+}
+
+export interface AppFeedbackSurvey {
+  id?: string;
+  userId: string;
+  userEmail: string;
+  userName: string;
+  userRole?: string;
+  userGroup?: string;
+  cargoName?: string;
+  sectorName?: string;
+  rating: number; // 1 to 5
+  ratingLabel?: string;
+  easeOfUse?: string;
+  highlights?: string[];
+  observation?: string;
+  accessCount?: number;
+  createdAt: any;
 }
 
 export interface WorkSector {

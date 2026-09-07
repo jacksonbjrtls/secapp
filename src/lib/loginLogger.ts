@@ -1,4 +1,4 @@
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, updateDoc, increment } from 'firebase/firestore';
 import { db } from './firebase';
 import { User } from 'firebase/auth';
 import { decryptValue } from './crypto';
@@ -30,6 +30,18 @@ export async function recordUserLogin(user: User, customDisplayName?: string) {
 
     console.log('[LoginLogger] Recording successful login: ', logData.email);
     await addDoc(collection(db, 'user_login_logs'), logData);
+
+    // Increment user access count in Firestore
+    try {
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        accessCount: increment(1),
+        lastLoginAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    } catch {
+      // Ignore if user document is being created
+    }
   } catch (err) {
     console.error('[LoginLogger] Error logging user sign-in: ', err);
     // Silent fail to ensure user is not blocked from utilizing the app in case log writing fails

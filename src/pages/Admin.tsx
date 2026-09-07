@@ -51,9 +51,11 @@ import {
   Info,
   Check,
   Key,
-  Briefcase
+  Briefcase,
+  MessageSquareHeart
 } from 'lucide-react';
 import Assignments from './Assignments';
+import { MasterFeedbackView } from '../components/feedback/MasterFeedbackView';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification, sendPasswordResetEmail } from 'firebase/auth';
 import { jsPDF } from 'jspdf';
@@ -93,7 +95,7 @@ const Admin: React.FC = () => {
   const [userToDelete, setUserToDelete] = useState<{ id: string; email: string } | null>(null);
   const [newDomain, setNewDomain] = useState('');
   const [domainLoading, setDomainLoading] = useState(false);
-  const [activeTab, setActiveTab ] = useState<'users' | 'assignments' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding' | 'import'>('users');
+  const [activeTab, setActiveTab ] = useState<'users' | 'assignments' | 'domains' | 'logs' | 'modules' | 'reset' | 'branding' | 'import' | 'feedback'>('users');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -2020,6 +2022,9 @@ const Admin: React.FC = () => {
       { id: 'modules' as const, label: 'Módulos', icon: Sliders, color: 'text-amber-500' },
       { id: 'branding' as const, label: 'Identidade Visual', icon: Palette, color: 'text-blue-500' },
       ...(isMaster ? [
+        { id: 'feedback' as const, label: 'Pesquisa de Avaliação', icon: MessageSquareHeart, color: 'text-pink-600' }
+      ] : []),
+      ...(isMaster ? [
         { id: 'import' as const, label: 'Importação de Dados (CSV)', icon: Upload, color: 'text-teal-500' }
       ] : []),
       ...(isMaster ? [
@@ -3418,6 +3423,8 @@ const Admin: React.FC = () => {
           </div>
         </motion.div>
         )
+      ) : activeTab === 'feedback' ? (
+        <MasterFeedbackView isMaster={isMaster} />
       ) : (
         <motion.div
            initial={{ opacity: 0, y: 10 }}
