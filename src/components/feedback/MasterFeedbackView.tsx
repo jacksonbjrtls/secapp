@@ -12,8 +12,11 @@ import {
   Eye,
   CheckCircle2,
   AlertCircle,
-  Filter
+  Filter,
+  FileText
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { db } from '../../lib/firebase';
 import { 
   collection, 
@@ -38,6 +41,7 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
   const [ratingFilter, setRatingFilter] = useState<'all' | '5' | '4' | '3' | '2' | '1' | 'with_obs'>('all');
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const fetchSurveys = async () => {
     if (!isMaster) return;
@@ -123,6 +127,216 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
     });
   }, [surveys, searchTerm, ratingFilter]);
 
+  const sanitizePdfText = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return String(text)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x00-\x7F]/g, '');
+  };
+
+  // Export to PDF
+  const handleExportPDF = () => {
+    if (surveys.length === 0) {
+      alert('Nenhuma avaliação encontrada para gerar o relatório PDF.');
+      return;
+    }
+
+    setExportingPdf(true);
+    try {
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+
+      // Top Emerald Header Bar
+      doc.setFillColor(5, 150, 105); // emerald-600
+      doc.rect(0, 0, pageWidth, 28, 'F');
+
+      // Accent Sub-bar
+      doc.setFillColor(4, 120, 87); // emerald-700
+      doc.rect(0, 28, pageWidth, 2, 'F');
+
+      // Header Title
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.text('PESQUISA DE AVALIACAO DO APLICATIVO - SecApp', 14, 13);
+
+      // Subtitle
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(209, 250, 229); // emerald-100
+      doc.text('Relatorio Gerencial de Satisfacao e Feedback dos Colaboradores', 14, 20);
+
+      // Header Right Metadata
+      const nowStr = new Date().toLocaleString('pt-BR');
+      doc.setFontSize(8.5);
+      doc.text(sanitizePdfText(`Gerado em: ${nowStr}`), pageWidth - 14, 13, { align: 'right' });
+      doc.setFont('helvetica', 'bold');
+      doc.text('Acesso: Perfil Master', pageWidth - 14, 20, { align: 'right' });
+
+      // KPI Summary Banner Box (StartY: 34)
+      doc.setFillColor(248, 250, 252); // slate-50
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.roundedRect(14, 34, pageWidth - 28, 18, 2, 2, 'FD');
+
+      // KPI 1: Media Geral
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text('MEDIA GERAL', 20, 39.5);
+      doc.setFontSize(12);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text(`${avgRating > 0 ? avgRating.toFixed(1) : '0.0'} / 5.0`, 20, 47);
+
+      // KPI 2: Total Avaliacoes
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text('TOTAL AVALIACOES', 68, 39.5);
+      doc.setFontSize(12);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${totalCount} colaboradores`, 68, 47);
+
+      // KPI 3: Satisfacao
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text('INDICE SATISFACAO', 124, 39.5);
+      doc.setFontSize(12);
+      doc.setTextColor(5, 150, 105); // emerald-600
+      doc.text(`${satisfactionRate}% (Notas 4 e 5)`, 124, 47);
+
+      // KPI 4: Comentarios
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text('COM COMENTARIOS', 182, 39.5);
+      doc.setFontSize(12);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${countWithObs} (${totalCount > 0 ? Math.round((countWithObs / totalCount) * 100) : 0}%)`, 182, 47);
+
+      // KPI 5: Distribuicao das Notas
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text('DISTRIBUICAO:', 236, 39.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`5*: ${count5} | 4*: ${count4} | 3*: ${count3}`, 236, 44);
+      doc.text(`2*: ${count2} | 1*: ${count1}`, 236, 48.5);
+
+      // Determine items to export based on current view
+      const dataToExport = filteredSurveys;
+
+      // Table Header & Rows
+      const head = [[
+        'Colaborador', 
+        'Cargo / Setor / Turno', 
+        'Nota', 
+        'Destaques Apontados', 
+        'Comentario / Sugestao de Melhoria', 
+        'Acessos',
+        'Data / Hora'
+      ]];
+
+      const tableData = dataToExport.map(s => {
+        const userLine = [s.userName || 'Colaborador', s.userEmail].filter(Boolean).join('\n');
+        
+        const details = [
+          s.cargoName ? `Cargo: ${s.cargoName}` : '',
+          s.sectorName ? `Setor: ${s.sectorName}` : '',
+          s.userGroup ? `Turno: ${s.userGroup}` : ''
+        ].filter(Boolean).join('\n') || '-';
+
+        const notaLabel = `${s.rating || 0}/5\n${s.ratingLabel || ''}`;
+        const highlightsStr = (s.highlights && s.highlights.length > 0) 
+          ? s.highlights.join('; ') 
+          : '-';
+        
+        const obsStr = s.observation?.trim() ? `"${s.observation.trim()}"` : '(Sem comentarios adicionais)';
+        const accessesStr = s.accessCount ? `${s.accessCount}` : '10+';
+        const dateStr = formatLocalDateTimeBR(s.createdAt);
+
+        return [
+          sanitizePdfText(userLine),
+          sanitizePdfText(details),
+          sanitizePdfText(notaLabel),
+          sanitizePdfText(highlightsStr),
+          sanitizePdfText(obsStr),
+          sanitizePdfText(accessesStr),
+          sanitizePdfText(dateStr)
+        ];
+      });
+
+      autoTable(doc, {
+        startY: 55,
+        head: head.map(r => r.map(c => sanitizePdfText(c))),
+        body: tableData,
+        theme: 'grid',
+        styles: {
+          fontSize: 7.5,
+          cellPadding: 2.2,
+          lineColor: [226, 232, 240],
+          lineWidth: 0.15,
+          overflow: 'linebreak'
+        },
+        headStyles: {
+          fillColor: [5, 150, 105], // emerald-600
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 7.5,
+          halign: 'left'
+        },
+        alternateRowStyles: {
+          fillColor: [248, 250, 252] // slate-50
+        },
+        columnStyles: {
+          0: { cellWidth: 44, fontStyle: 'bold' }, // Colaborador
+          1: { cellWidth: 40 },                   // Cargo/Setor/Turno
+          2: { cellWidth: 26, fontStyle: 'bold' }, // Nota
+          3: { cellWidth: 46 },                   // Destaques
+          4: { cellWidth: 70 },                   // Comentario / Sugestao
+          5: { cellWidth: 17, halign: 'center' }, // Acessos
+          6: { cellWidth: 26, halign: 'center' }  // Data/Hora
+        },
+        didDrawPage: () => {
+          const totalPages = (doc as any).internal.getNumberOfPages();
+          const currentPage = (doc as any).internal.getCurrentPageInfo().pageNumber;
+
+          doc.setFontSize(7.5);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(148, 163, 184); // slate-400
+
+          // Footer separator line
+          doc.setDrawColor(226, 232, 240);
+          doc.line(14, pageHeight - 8, pageWidth - 14, pageHeight - 8);
+
+          doc.text(
+            'SecApp - Sistema de Gestao Operacional | Relatorio de Pesquisa de Avaliacao',
+            14,
+            pageHeight - 4.5
+          );
+          doc.text(
+            `Pagina ${currentPage} de ${totalPages}`,
+            pageWidth - 14,
+            pageHeight - 4.5,
+            { align: 'right' }
+          );
+        }
+      });
+
+      doc.save(`relatorio_avaliacao_secapp_${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (err) {
+      console.error('Error generating feedback survey PDF:', err);
+      alert('Erro ao gerar o relatório em PDF.');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   // Export to CSV
   const handleExportCSV = () => {
     if (surveys.length === 0) {
@@ -195,9 +409,19 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
               Testar Popout
             </button>
             <button
+              onClick={handleExportPDF}
+              disabled={surveys.length === 0 || exportingPdf}
+              className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-md transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+              title="Gerar e baixar relatório em PDF formatado"
+            >
+              <FileText className="w-4 h-4" />
+              {exportingPdf ? 'Gerando PDF...' : 'Exportar PDF'}
+            </button>
+            <button
               onClick={handleExportCSV}
               disabled={surveys.length === 0}
               className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-md transition-all active:scale-95 cursor-pointer"
+              title="Baixar planilha CSV com os dados brutos"
             >
               <Download className="w-4 h-4" />
               Exportar CSV
