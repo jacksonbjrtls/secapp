@@ -388,6 +388,7 @@ export interface SecagemProduct {
   id: string;
   code: string;
   name: string;
+  printerCode?: string; // Código da impressora para o Produto
   applyCover: boolean; // sim ou não
   wireGauge: '2.18' | '2.30' | 'sem arame'; // 2,18 ou 2,30 ou sem arame
   tieWireQty1: number;

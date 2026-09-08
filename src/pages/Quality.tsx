@@ -1446,6 +1446,7 @@ const Quality: React.FC = () => {
   const [newProduct, setNewProduct] = useState<Partial<SecagemProduct>>({
     code: '',
     name: '',
+    printerCode: '',
     applyCover: false,
     wireGauge: '2.18',
     tieWireQty1: 0,
@@ -1454,6 +1455,8 @@ const Quality: React.FC = () => {
     unitWireQty: 0,
     sealType: '',
     specialSeal: '',
+    coverFormat: '',
+    baleFormat: '',
     photoUrl: '',
     active: true
   });
@@ -2458,6 +2461,7 @@ const Quality: React.FC = () => {
       setNewProduct({
         code: '',
         name: '',
+        printerCode: '',
         applyCover: false,
         wireGauge: '2.18',
         tieWireQty1: 0,
@@ -2466,6 +2470,8 @@ const Quality: React.FC = () => {
         unitWireQty: 0,
         sealType: '',
         specialSeal: '',
+        coverFormat: '',
+        baleFormat: '',
         photoUrl: '',
         active: true
       });
@@ -4414,6 +4420,17 @@ const Quality: React.FC = () => {
                           <div className="mt-3 p-3 bg-white border border-slate-100 rounded-xl space-y-2 text-xs text-slate-600">
                             <p className="font-bold text-slate-800">Especificações do Produto:</p>
                             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-medium">
+                              {selectedProdObj.printerCode && (
+                                <div className="col-span-2 pb-1 border-b border-slate-50 flex items-center justify-between">
+                                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] flex items-center gap-1">
+                                    <Printer className="w-3 h-3 text-blue-500" />
+                                    Código da Impressora
+                                  </span>
+                                  <span className="font-mono font-black text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded text-[11px]">
+                                    {selectedProdObj.printerCode}
+                                  </span>
+                                </div>
+                              )}
                               <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Aplicar Capa</span> {selectedProdObj.applyCover ? 'Sim' : 'Não'}</div>
                               <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Bitola do Arame</span> {selectedProdObj.wireGauge === 'sem arame' ? 'Sem arame' : `${selectedProdObj.wireGauge.replace('.', ',')} mm`}</div>
                               <div><span className="text-slate-400 font-bold uppercase tracking-wider text-[9px] block">Amarradeira 1 / 2</span> {selectedProdObj.tieWireQty1} / {selectedProdObj.tieWireQty2}</div>
@@ -5401,12 +5418,31 @@ const Quality: React.FC = () => {
                                               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Especificações do Produto</p>
                                               <h4 className="text-sm font-black text-slate-900 mt-0.5">{selectedProd.name}</h4>
                                             </div>
-                                            <span className="text-[10px] font-mono font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                                              Cód: {selectedProd.code}
-                                            </span>
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              {selectedProd.printerCode && (
+                                                <span className="text-[10px] font-mono font-black text-blue-700 bg-blue-50 border border-blue-100/80 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
+                                                  <Printer className="w-3 h-3 text-blue-500" />
+                                                  IMP: {selectedProd.printerCode}
+                                                </span>
+                                              )}
+                                              <span className="text-[10px] font-mono font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                                Cód: {selectedProd.code}
+                                              </span>
+                                            </div>
                                           </div>
 
                                           <div className="grid grid-cols-2 gap-3 pt-1 text-[11px]">
+                                            {selectedProd.printerCode && (
+                                              <div className="bg-white p-2.5 rounded-xl border border-slate-100 col-span-2 flex items-center justify-between">
+                                                <span className="text-slate-400 font-bold flex items-center gap-1">
+                                                  <Printer className="w-3 h-3 text-blue-500" />
+                                                  Código da Impressora
+                                                </span>
+                                                <span className="font-mono font-black text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded text-[11px]">
+                                                  {selectedProd.printerCode}
+                                                </span>
+                                              </div>
+                                            )}
                                             <div className="bg-white p-2.5 rounded-xl border border-slate-100">
                                               <span className="text-slate-400 font-bold block mb-0.5">Bitola do Arame</span>
                                               <span className="font-extrabold text-slate-700">
@@ -7496,6 +7532,7 @@ const Quality: React.FC = () => {
                     setNewProduct({
                       code: '',
                       name: '',
+                      printerCode: '',
                       applyCover: false,
                       wireGauge: '2.18',
                       tieWireQty1: 0,
@@ -7504,6 +7541,8 @@ const Quality: React.FC = () => {
                       unitWireQty: 0,
                       sealType: '',
                       specialSeal: '',
+                      coverFormat: '',
+                      baleFormat: '',
                       photoUrl: '',
                       active: true
                     });
@@ -7522,9 +7561,17 @@ const Quality: React.FC = () => {
                   <div className="space-y-4">
                     <div className="flex justify-between items-start">
                       <div className="space-y-1">
-                        <span className="text-[10px] font-black text-[#0d6e4f] bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
-                          CÓD: {prod.code}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-black text-[#0d6e4f] bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
+                            CÓD: {prod.code}
+                          </span>
+                          {prod.printerCode && (
+                            <span className="text-[10px] font-black text-blue-700 bg-blue-50 border border-blue-100/80 px-2.5 py-1 rounded-full uppercase tracking-wider font-mono flex items-center gap-1">
+                              <Printer className="w-3 h-3 text-blue-500" />
+                              IMP: {prod.printerCode}
+                            </span>
+                          )}
+                        </div>
                         <h3 className="text-lg font-black text-slate-900 leading-snug pt-1">{prod.name}</h3>
                       </div>
                       <span className={cn(
@@ -7540,6 +7587,15 @@ const Quality: React.FC = () => {
                     )}
 
                     <div className="grid grid-cols-2 gap-4 border-t border-b border-slate-100 py-4 text-xs font-semibold text-slate-600">
+                      <div>
+                        <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5 flex items-center gap-1">
+                          <Printer className="w-2.5 h-2.5 text-slate-400" />
+                          Cód. Impressora
+                        </span>
+                        <span className="text-slate-900 font-black font-mono">
+                          {prod.printerCode || 'N/A'}
+                        </span>
+                      </div>
                       <div>
                         <span className="text-slate-400 font-bold uppercase tracking-widest text-[9px] block mb-0.5">Aplicar Capa</span>
                         <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold uppercase", prod.applyCover ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-600")}>
@@ -7659,17 +7715,32 @@ const Quality: React.FC = () => {
               </div>
 
               <div className="space-y-6">
-                {/* Product Code & Name */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Código do Produto</label>
-                    <input
-                      type="text"
-                      value={newProduct.code}
-                      onChange={(e) => setNewProduct(prev => ({ ...prev, code: e.target.value }))}
-                      placeholder="Ex: P1002"
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
-                    />
+                {/* Product Code, Printer Code & Name */}
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Código do Produto</label>
+                      <input
+                        type="text"
+                        value={newProduct.code}
+                        onChange={(e) => setNewProduct(prev => ({ ...prev, code: e.target.value }))}
+                        placeholder="Ex: P1002"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1.5">
+                        <Printer className="w-3.5 h-3.5 text-slate-400" />
+                        Código da Impressora
+                      </label>
+                      <input
+                        type="text"
+                        value={newProduct.printerCode || ''}
+                        onChange={(e) => setNewProduct(prev => ({ ...prev, printerCode: e.target.value }))}
+                        placeholder="Ex: IMP-01, 204..."
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#0d6e4f] outline-none font-bold font-mono"
+                      />
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Produto</label>
