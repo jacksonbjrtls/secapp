@@ -698,38 +698,17 @@ const Reports: React.FC = () => {
     const ddsCreatedCount = userDdsCreated.length;
     const ddsTotalSignaturesReceived = userDdsCreated.reduce((acc: number, s: any) => acc + (s.signaturesCount || 0), 0);
 
-    // Filter forklift checklists where conductor fits
-    const userForklift = forkliftData.filter(chk => 
-      chk.conductorName && chk.conductorName.toLowerCase().trim() === uName.toLowerCase().trim()
-    );
-
-    // Filter wire batches received where responsibleName fits
-    const userWireReceiving = wireReceivingData.filter(bat => 
-      bat.responsibleName && bat.responsibleName.toLowerCase().trim() === uName.toLowerCase().trim()
-    );
-
-    // Filter wire consumption where consumedBy fits
-    const userWireConsumption = wireConsumptionData.filter(coi => 
-      coi.consumedBy && coi.consumedBy.toLowerCase().trim() === uName.toLowerCase().trim()
-    );
-
-    // Filter quality submissions where userName fits
+    // Filter quality submissions where user fits
     const userQuality = qualityData.filter(qlt => 
-      qlt.userName && qlt.userName.toLowerCase().trim() === uName.toLowerCase().trim()
-    );
+      (qlt.userId && qlt.userId === uId) ||
+      (qlt.userName && qlt.userName.toLowerCase().trim() === uName.toLowerCase().trim())
+    ).sort((a, b) => {
+      const tA = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+      const tB = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+      return tB - tA;
+    });
 
-    // Filter route submissions where operator fits
-    const userRoutes = routeSubmissionsData.filter(rut => 
-      (rut.operatorName && rut.operatorName.toLowerCase().trim() === uName.toLowerCase().trim()) ||
-      rut.operatorId === uId
-    );
-
-    // Filter safety hazard observations where reportedBy fits
-    const userSafetyObs = safetyObservationsData.filter(obs => 
-      (obs.reportedById && obs.reportedById === uId) ||
-      (obs.reportedBy && obs.reportedBy.toLowerCase().trim() === uName.toLowerCase().trim()) ||
-      (obs.observerName && obs.observerName.toLowerCase().trim() === uName.toLowerCase().trim())
-    );
+    const qualityCount = userQuality.length;
 
     // Login logs for this user
     const userLogs = userLoginLogsData
@@ -766,13 +745,8 @@ const Reports: React.FC = () => {
       return acc;
     }, {});
 
-    // Forklift conformity rate
-    const forkliftTotal = userForklift.length;
-    const forkliftConforme = userForklift.filter(c => c.status === 'conforme').length;
-    const forkliftCompliancePercent = forkliftTotal > 0 ? Math.round((forkliftConforme / forkliftTotal) * 100) : 100;
-
-    // Total metric points for score
-    const totalActions = ddsSignaturesCount + ddsCreatedCount + userForklift.length + userWireReceiving.length + userWireConsumption.length + userQuality.length + userRoutes.length + userSafetyObs.length;
+    // Total operations: strictly DDS created + DDS signed + inspections performed
+    const totalActions = ddsSignaturesCount + ddsCreatedCount + qualityCount;
 
     return {
       profile: matchedUser,
@@ -786,25 +760,12 @@ const Reports: React.FC = () => {
       ddsCreatedCount,
       ddsCreatedList: userDdsCreated,
       ddsTotalSignaturesReceived,
-      ddsCount: ddsSignaturesCount,
-      ddsList: userDdsSignatures,
       ddsMoods,
-      forkliftCount: forkliftTotal,
-      forkliftCompliancePercent,
-      forkliftList: userForklift,
-      wireReceivingCount: userWireReceiving.length,
-      wireReceivingList: userWireReceiving,
-      wireConsumptionCount: userWireConsumption.length,
-      wireConsumptionList: userWireConsumption,
-      qualityCount: userQuality.length,
+      qualityCount,
       qualityList: userQuality,
-      routesCount: userRoutes.length,
-      routesList: userRoutes,
-      safetyObsCount: userSafetyObs.length,
-      safetyObsList: userSafetyObs,
       totalActions
     };
-  }, [selectedRayXUser, allUsers, data, ddsSessionsData, forkliftData, wireReceivingData, wireConsumptionData, qualityData, routeSubmissionsData, safetyObservationsData, userLoginLogsData, feedbackSurveysData]);
+  }, [selectedRayXUser, allUsers, data, ddsSessionsData, qualityData, userLoginLogsData, feedbackSurveysData]);
 
   // Aggregated Team Ray-X Summary for All Collaborators
   const teamRayXSummary = useMemo(() => {
@@ -825,33 +786,9 @@ const Reports: React.FC = () => {
         (s.executor && s.executor.toLowerCase().trim() === uName.toLowerCase())
       ).length;
 
-      const ddsTotal = ddsSignaturesCount + ddsCreatedCount;
-
-      const forkliftCount = forkliftData.filter(chk => 
-        chk.conductorName && chk.conductorName.toLowerCase().trim() === uName.toLowerCase()
-      ).length;
-
-      const wireReceivingCount = wireReceivingData.filter(bat => 
-        bat.responsibleName && bat.responsibleName.toLowerCase().trim() === uName.toLowerCase()
-      ).length;
-
-      const wireConsumptionCount = wireConsumptionData.filter(coi => 
-        coi.consumedBy && coi.consumedBy.toLowerCase().trim() === uName.toLowerCase()
-      ).length;
-
       const qualityCount = qualityData.filter(qlt => 
-        qlt.userName && qlt.userName.toLowerCase().trim() === uName.toLowerCase()
-      ).length;
-
-      const routesCount = routeSubmissionsData.filter(rut => 
-        (rut.operatorName && rut.operatorName.toLowerCase().trim() === uName.toLowerCase()) ||
-        rut.operatorId === uId
-      ).length;
-
-      const safetyObsCount = safetyObservationsData.filter(obs => 
-        (obs.reportedById && obs.reportedById === uId) ||
-        (obs.reportedBy && obs.reportedBy.toLowerCase().trim() === uName.toLowerCase()) ||
-        (obs.observerName && obs.observerName.toLowerCase().trim() === uName.toLowerCase())
+        (qlt.userId && qlt.userId === uId) ||
+        (qlt.userName && qlt.userName.toLowerCase().trim() === uName.toLowerCase())
       ).length;
 
       const userLogs = userLoginLogsData.filter(log =>
@@ -868,7 +805,8 @@ const Reports: React.FC = () => {
         lastLoginRaw = userLogs[0].timestamp || userLogs[0].createdAt;
       }
 
-      const totalActions = ddsTotal + forkliftCount + wireReceivingCount + wireConsumptionCount + qualityCount + routesCount + safetyObsCount;
+      // Total operations: strictly DDS created + DDS signed + inspections performed
+      const totalActions = ddsSignaturesCount + ddsCreatedCount + qualityCount;
 
       return {
         user: u,
@@ -886,16 +824,10 @@ const Reports: React.FC = () => {
         totalActions,
         ddsSignaturesCount,
         ddsCreatedCount,
-        ddsCount: ddsTotal,
-        forkliftCount,
-        wireReceivingCount,
-        wireConsumptionCount,
-        qualityCount,
-        routesCount,
-        safetyObsCount
+        qualityCount
       };
     });
-  }, [allUsers, data, ddsSessionsData, forkliftData, wireReceivingData, wireConsumptionData, qualityData, routeSubmissionsData, safetyObservationsData, userLoginLogsData]);
+  }, [allUsers, data, ddsSessionsData, qualityData, userLoginLogsData]);
 
   // Filtered list for Team Ray-X Report table
   const filteredTeamRayX = useMemo(() => {
@@ -1036,13 +968,9 @@ const Reports: React.FC = () => {
 
       // Section 2: Diagnostico de Usabilidade por Modulo (Table)
       const usabilityRows = [
-        ['Dialogos Diarios de Seguranca (DDS)', `${selectedUserData.ddsSignaturesCount} presencas / ${selectedUserData.ddsCreatedCount} criadas`, `Assinaturas de presenca (${selectedUserData.ddsSignaturesCount}) e sessoes facilitadas (${selectedUserData.ddsCreatedCount})`],
-        ['Inspecao de Empilhadeiras', `${selectedUserData.forkliftCount} checklists`, `Conformidade operacional de ${selectedUserData.forkliftCompliancePercent}%`],
-        ['Recebimento de Arames', `${selectedUserData.wireReceivingCount} lotes`, 'Conferencia e lancamento de NFs de bobina'],
-        ['Consumo e Pesagem de Arame', `${selectedUserData.wireConsumptionCount} bobinas`, 'Apontamento de pesagem e consumo em maquina'],
-        ['Auditorias e Checklists de Qualidade', `${selectedUserData.qualityCount} auditorias`, 'Verificacao tecnica de padrao e conformidade'],
-        ['Rondas Operacionais em Campo', `${selectedUserData.routesCount} rondas`, 'Inspecao preventiva de rotas e equipamentos'],
-        ['Relato de Desvios de Seguranca', `${selectedUserData.safetyObsCount} relatos`, 'Apontamentos proativos de condicao e quase-acidente'],
+        ['DDS Assinados (Presencas)', `${selectedUserData.ddsSignaturesCount} presencas`, 'Participacoes confirmadas em Dialogos Diarios de Seguranca'],
+        ['DDS Criados (Sessoes Facilitadas)', `${selectedUserData.ddsCreatedCount} sessoes`, `Sessoes de DDS ministradas pelo colaborador (Total de ${selectedUserData.ddsTotalSignaturesReceived} assinaturas coletadas)`],
+        ['Inspecoes de Qualidade Realizadas', `${selectedUserData.qualityCount} inspecoes`, 'Checklists tecnicos e auditorias de qualidade concluidas'],
         ['Avaliacao do Aplicativo SecApp', selectedUserData.userFeedback ? `${selectedUserData.userFeedback.rating || 0}/5 estrelas` : 'Pendente', selectedUserData.userFeedback?.observation ? `"${sanitizePdfText(selectedUserData.userFeedback.observation.slice(0, 65))}"` : 'Sem observacoes adicionais']
       ];
 
@@ -1140,12 +1068,12 @@ const Reports: React.FC = () => {
       let evalText = '';
       if (!selectedUserData.hasAccessed) {
         evalText = 'Atencao: Este colaborador ainda nao acessou o aplicativo SecApp. Recomenda-se alinhamento junto a lideranca de turno para orientacao de primeiro acesso e entrega de credenciais.';
-      } else if (selectedUserData.totalActions > 25) {
-        evalText = `Excepcional: Colaborador com alto engajamento digital (${selectedUserData.accessCount} acessos e ${selectedUserData.totalActions} operacoes registradas). Utiliza ativamente as rotinas operacionais e demonstra lideranca de seguranca.`;
-      } else if (selectedUserData.totalActions >= 8) {
-        evalText = `Bom desempenho: Colaborador consistente no sistema (${selectedUserData.accessCount} acessos e ${selectedUserData.totalActions} operacoes). Participa ativamente das obrigacoes cotidianas de seguranca e conformidade.`;
+      } else if (selectedUserData.totalActions > 20) {
+        evalText = `Excepcional: Colaborador com alto engajamento digital (${selectedUserData.accessCount} acessos e ${selectedUserData.totalActions} operacoes registradas: ${selectedUserData.ddsSignaturesCount} DDS assinados, ${selectedUserData.ddsCreatedCount} DDS criados e ${selectedUserData.qualityCount} inspecoes de qualidade).`;
+      } else if (selectedUserData.totalActions >= 5) {
+        evalText = `Bom desempenho: Colaborador consistente no sistema (${selectedUserData.accessCount} acessos e ${selectedUserData.totalActions} operacoes: ${selectedUserData.ddsSignaturesCount} DDS assinados, ${selectedUserData.ddsCreatedCount} DDS criados e ${selectedUserData.qualityCount} inspecoes de qualidade).`;
       } else {
-        evalText = `Uso inicial: O colaborador ja acessou o sistema ${selectedUserData.accessCount} vez(es) com ${selectedUserData.totalActions} operacao(oes). Sugere-se estimular participacao mais ativa nos DDS e rondas.`;
+        evalText = `Uso inicial: O colaborador ja acessou o sistema ${selectedUserData.accessCount} vez(es) com ${selectedUserData.totalActions} operacao(oes) no sistema. Recomenda-se incentivar a participacao em DDS e inspecoes de qualidade.`;
       }
 
       doc.text(sanitizePdfText(evalText), 18, currentY + 12, { maxWidth: pageWidth - 36 });
@@ -1262,19 +1190,13 @@ const Reports: React.FC = () => {
       doc.setTextColor(5, 150, 105);
       doc.text(`${totalOps} acoes`, 242, 47);
 
-      const head = [['Colaborador', 'Cargo / Setor', 'Turno', 'Acessa?', 'Qtd Acessos', 'Ultimo Acesso', 'Operacoes', 'Nivel de Usabilidade']];
+      const head = [['Colaborador', 'Cargo / Setor', 'Turno', 'Acessa?', 'Logins', 'Ultimo Acesso', 'Total Ops', 'DDS Assin.', 'DDS Criado', 'Inspecoes']];
 
       const tableData = filteredTeamRayX.map(item => {
         const userCell = `${item.name}\n${item.email}`;
         const cargoSector = `${item.cargo}\n${item.sector}`;
         const accessStatus = item.hasAccessed ? 'SIM (Ativo)' : 'NAO ACESSOU';
         const lastLoginStr = item.lastLoginRaw ? formatLocalDateTimeBR(item.lastLoginRaw) : 'Nunca';
-        
-        let adoptionLevel = 'Sem Uso';
-        if (item.totalActions > 25) adoptionLevel = 'Alta Adocao';
-        else if (item.totalActions >= 8) adoptionLevel = 'Consistente';
-        else if (item.totalActions > 0) adoptionLevel = 'Inicial';
-        else if (item.hasAccessed) adoptionLevel = 'Consulta (0 acoes)';
 
         return [
           sanitizePdfText(userCell),
@@ -1284,7 +1206,9 @@ const Reports: React.FC = () => {
           `${item.accessCount}`,
           sanitizePdfText(lastLoginStr),
           `${item.totalActions}`,
-          sanitizePdfText(adoptionLevel)
+          `${item.ddsSignaturesCount}`,
+          `${item.ddsCreatedCount}`,
+          `${item.qualityCount}`
         ];
       });
 
@@ -1311,14 +1235,16 @@ const Reports: React.FC = () => {
           fillColor: [248, 250, 252]
         },
         columnStyles: {
-          0: { cellWidth: 55, fontStyle: 'bold' },
-          1: { cellWidth: 48 },
-          2: { cellWidth: 20, halign: 'center' },
-          3: { cellWidth: 26, halign: 'center', fontStyle: 'bold' },
-          4: { cellWidth: 22, halign: 'center' },
-          5: { cellWidth: 36, halign: 'center' },
-          6: { cellWidth: 24, halign: 'center', fontStyle: 'bold' },
-          7: { cellWidth: 38 }
+          0: { cellWidth: 54, fontStyle: 'bold' },
+          1: { cellWidth: 44 },
+          2: { cellWidth: 18, halign: 'center' },
+          3: { cellWidth: 24, halign: 'center', fontStyle: 'bold' },
+          4: { cellWidth: 18, halign: 'center' },
+          5: { cellWidth: 32, halign: 'center' },
+          6: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
+          7: { cellWidth: 20, halign: 'center' },
+          8: { cellWidth: 20, halign: 'center' },
+          9: { cellWidth: 20, halign: 'center' }
         },
         didDrawPage: () => {
           const totalPages = (doc as any).internal.getNumberOfPages();
@@ -1360,7 +1286,7 @@ const Reports: React.FC = () => {
       alert('Nenhum colaborador encontrado com os filtros atuais.');
       return;
     }
-    const headers = ['Nome', 'Email', 'Cargo', 'Setor', 'Turno/Escala', 'Perfil', 'Status Conta', 'Acessa Sistema?', 'Qtd Acessos', 'Ultimo Acesso', 'Total Operacoes', 'DDS Presencas', 'DDS Sessoes Criadas', 'Empilhadeiras', 'Recebimento Arame', 'Consumo Arame', 'Qualidade', 'Rondas', 'Desvios Seguranca'];
+    const headers = ['Nome', 'Email', 'Cargo', 'Setor', 'Turno/Escala', 'Perfil', 'Status Conta', 'Acessa Sistema?', 'Qtd Acessos', 'Ultimo Acesso', 'Total Operacoes', 'DDS Assinados', 'DDS Criados', 'Inspecoes Realizadas'];
     const rows = filteredTeamRayX.map(item => [
       `"${(item.name || '').replace(/"/g, '""')}"`,
       `"${(item.email || '').replace(/"/g, '""')}"`,
@@ -1375,12 +1301,7 @@ const Reports: React.FC = () => {
       item.totalActions,
       item.ddsSignaturesCount,
       item.ddsCreatedCount,
-      item.forkliftCount,
-      item.wireReceivingCount,
-      item.wireConsumptionCount,
-      item.qualityCount,
-      item.routesCount,
-      item.safetyObsCount
+      item.qualityCount
     ]);
 
     const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
@@ -2483,12 +2404,12 @@ const Reports: React.FC = () => {
 
                 {/* Total de Operações e Usabilidade */}
                 <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 flex flex-col justify-between">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total de Ações</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total de Operações</span>
                   <div className="mt-2 flex items-baseline gap-1.5">
                     <span className="text-2xl font-black text-emerald-600">{totalSystemActions}</span>
-                    <span className="text-[11px] font-bold text-slate-400">rotinas</span>
+                    <span className="text-[11px] font-bold text-slate-400">operações</span>
                   </div>
-                  <span className="text-[10px] font-bold text-slate-500 mt-1">DDS, checklists, rondas</span>
+                  <span className="text-[10px] font-bold text-slate-500 mt-1">DDS e Inspeções</span>
                 </div>
               </div>
 
@@ -2671,15 +2592,10 @@ const Reports: React.FC = () => {
                                     </span>
                                   </div>
                                   <div className="flex flex-wrap gap-1 mt-1 text-[9px] font-bold text-slate-500">
-                                    {item.ddsSignaturesCount > 0 && <span className="bg-emerald-50 text-emerald-700 px-1 rounded border border-emerald-100">DDS Pres: {item.ddsSignaturesCount}</span>}
-                                    {item.ddsCreatedCount > 0 && <span className="bg-teal-50 text-teal-700 px-1 rounded border border-teal-100">DDS Criado: {item.ddsCreatedCount}</span>}
-                                    {item.forkliftCount > 0 && <span className="bg-slate-100 px-1 rounded">Emp: {item.forkliftCount}</span>}
-                                    {item.wireReceivingCount > 0 && <span className="bg-slate-100 px-1 rounded">Rec: {item.wireReceivingCount}</span>}
-                                    {item.wireConsumptionCount > 0 && <span className="bg-slate-100 px-1 rounded">Cons: {item.wireConsumptionCount}</span>}
-                                    {item.qualityCount > 0 && <span className="bg-slate-100 px-1 rounded">Qual: {item.qualityCount}</span>}
-                                    {item.routesCount > 0 && <span className="bg-slate-100 px-1 rounded">Rond: {item.routesCount}</span>}
-                                    {item.safetyObsCount > 0 && <span className="bg-slate-100 px-1 rounded">Desv: {item.safetyObsCount}</span>}
-                                    {item.totalActions === 0 && <span className="text-slate-300">Sem registros</span>}
+                                    {item.ddsSignaturesCount > 0 && <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-100">DDS Assinados: {item.ddsSignaturesCount}</span>}
+                                    {item.ddsCreatedCount > 0 && <span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded border border-teal-100">DDS Criados: {item.ddsCreatedCount}</span>}
+                                    {item.qualityCount > 0 && <span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-100">Inspeções: {item.qualityCount}</span>}
+                                    {item.totalActions === 0 && <span className="text-slate-300">Sem operações</span>}
                                   </div>
                                 </div>
                               </td>
@@ -2781,7 +2697,7 @@ const Reports: React.FC = () => {
                     <div className="md:col-span-7 flex flex-col justify-between p-4 bg-white rounded-xl border border-slate-100 shadow-sm">
                       <div>
                         <div className="flex items-center justify-between">
-                          <span className="text-slate-400 uppercase font-black tracking-widest text-[8px] block">Score de Engajamento e Segurança</span>
+                          <span className="text-slate-400 uppercase font-black tracking-widest text-[8px] block">Índice de Usabilidade & Operações</span>
                           <button
                             onClick={exportRayXIndividualPDF}
                             disabled={exportingRayXPdf}
@@ -2792,36 +2708,30 @@ const Reports: React.FC = () => {
                           </button>
                         </div>
                         <div className="flex items-baseline gap-2 mt-1">
-                          <span className="text-3xl font-black text-emerald-600 tracking-tight">{selectedUserData.totalActions * 10}</span>
-                          <span className="text-xs font-bold text-slate-400">pontos acumulados</span>
+                          <span className="text-3xl font-black text-emerald-600 tracking-tight">{selectedUserData.totalActions}</span>
+                          <span className="text-xs font-bold text-slate-400">operações registradas</span>
                         </div>
                         <p className="text-[11px] text-slate-400 mt-1 leading-normal">
-                          Métrica de segurança ativa que cruza sua frequência de acessos, presenças em DDS, rondas, apontamentos de desvios e checklists operacionais.
+                          Métrica direta e simplificada baseada exclusivamente em: acessos ao sistema, DDS assinados, DDS criados e inspeções de qualidade realizadas.
                         </p>
                       </div>
 
-                      <div className="mt-3 pt-3 border-t border-slate-50 flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold">
-                        <div className="flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                          <span className="text-slate-600">DDS Presenças: {selectedUserData.ddsSignaturesCount}</span>
+                      <div className="mt-3 pt-3 border-t border-slate-50 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-bold">
+                        <div className="bg-slate-50 p-2 rounded-lg border border-slate-100/80">
+                          <span className="text-[9px] text-slate-400 uppercase font-black block">Acessos</span>
+                          <span className="text-slate-800 text-xs font-black">{selectedUserData.accessCount} logins</span>
                         </div>
-                        {selectedUserData.ddsCreatedCount > 0 && (
-                          <div className="flex items-center gap-1">
-                            <span className="w-2 h-2 rounded-full bg-teal-500" />
-                            <span className="text-slate-600">DDS Criados: {selectedUserData.ddsCreatedCount}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-blue-500" />
-                          <span className="text-slate-600">Rondas: {selectedUserData.routesCount}</span>
+                        <div className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-100/60">
+                          <span className="text-[9px] text-emerald-700 uppercase font-black block">DDS Assinados</span>
+                          <span className="text-emerald-900 text-xs font-black">{selectedUserData.ddsSignaturesCount} presenças</span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-amber-500" />
-                          <span className="text-slate-600">Desvios: {selectedUserData.safetyObsCount}</span>
+                        <div className="bg-teal-50/60 p-2 rounded-lg border border-teal-100/60">
+                          <span className="text-[9px] text-teal-700 uppercase font-black block">DDS Criados</span>
+                          <span className="text-teal-900 text-xs font-black">{selectedUserData.ddsCreatedCount} sessões</span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-slate-400" />
-                          <span className="text-slate-600">Ações: {selectedUserData.totalActions}</span>
+                        <div className="bg-purple-50/60 p-2 rounded-lg border border-purple-100/60">
+                          <span className="text-[9px] text-purple-700 uppercase font-black block">Inspeções</span>
+                          <span className="text-purple-900 text-xs font-black">{selectedUserData.qualityCount} feitas</span>
                         </div>
                       </div>
                     </div>
@@ -3114,86 +3024,53 @@ const Reports: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Safety Obs Card */}
+                    {/* Quality Inspections Card */}
                     <div className="bg-slate-50/30 p-5 rounded-2xl border border-slate-100 space-y-3">
                       <div className="flex items-center justify-between">
                         <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                          <AlertTriangle className="w-4 h-4 text-amber-500" /> Desvios de Segurança Relatados
+                          <ClipboardCheck className="w-4 h-4 text-purple-600" /> Inspeções de Qualidade de Processo
                         </h5>
-                        <span className="px-2 py-0.5 bg-white text-amber-700 text-[10px] font-black rounded-lg border border-amber-50">
-                          {selectedUserData.safetyObsCount} Casos
+                        <span className="px-2.5 py-0.5 bg-purple-50 text-purple-700 text-[10px] font-black rounded-lg border border-purple-100 flex items-center gap-1">
+                          <ClipboardCheck className="w-3 h-3" />
+                          {selectedUserData.qualityCount} {selectedUserData.qualityCount === 1 ? 'Inspeção' : 'Inspeções'}
                         </span>
                       </div>
-                      {selectedUserData.safetyObsCount === 0 ? (
-                        <p className="text-[11px] text-slate-400 italic">Nenhum desvio relatado por este colaborador.</p>
+
+                      {selectedUserData.qualityCount === 0 ? (
+                        <div className="p-6 bg-white rounded-xl border border-slate-100 text-center text-slate-400 text-xs italic">
+                          Nenhuma inspeção de qualidade realizada por este colaborador.
+                        </div>
                       ) : (
-                        <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                          {selectedUserData.safetyObsList.slice(0, 3).map((o: any, idx: number) => (
-                            <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-100 text-[11px] space-y-1">
-                              <div className="flex items-center justify-between">
-                                <span className={cn(
-                                  "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
-                                  o.severity === 'high' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
-                                )}>
-                                  {o.severity || 'médio'}
-                                </span>
-                                <span className="text-[9px] text-slate-400">{o.createdAt ? formatDateBR(o.createdAt) : '-'}</span>
+                        <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                          {selectedUserData.qualityList.map((q: any, idx: number) => {
+                            const isConforme = !q.responses || q.responses.every((r: any) => r.conformity !== 'nc' && r.conformity !== false);
+                            return (
+                              <div key={`qlt-usr-${q.id || idx}`} className="bg-white p-3 rounded-xl border border-slate-100 hover:border-slate-200 transition-all flex items-start justify-between gap-3 text-[11px]">
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-bold text-slate-900 truncate" title={q.templateName}>
+                                    {q.templateName || 'Inspeção de Linha'}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400 font-medium">
+                                    <span>📅 {formatLocalDateTimeBR(q.timestamp)}</span>
+                                    <span>•</span>
+                                    <span>Turno: {q.shift || '-'}</span>
+                                  </div>
+                                </div>
+                                <div className="shrink-0 text-right">
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1",
+                                    isConforme 
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" 
+                                      : "bg-rose-50 text-rose-700 border border-rose-200/60"
+                                  )}>
+                                    {isConforme ? 'Conforme' : 'Com Apontamentos'}
+                                  </span>
+                                </div>
                               </div>
-                              <p className="text-slate-600 font-medium line-clamp-1">{o.description}</p>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
-                    </div>
-
-                    {/* Routes Card */}
-                    <div className="bg-slate-50/30 p-5 rounded-2xl border border-slate-100 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                          <ClipboardCheck className="w-4 h-4 text-blue-500" /> Rondas Operacionais Realizadas
-                        </h5>
-                        <span className="px-2 py-0.5 bg-white text-blue-700 text-[10px] font-black rounded-lg border border-blue-50">
-                          {selectedUserData.routesCount} Rondas
-                        </span>
-                      </div>
-                      {selectedUserData.routesCount === 0 ? (
-                        <p className="text-[11px] text-slate-400 italic">Sem registros de rondas.</p>
-                      ) : (
-                        <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                          {selectedUserData.routesList.slice(0, 3).map((r: any, idx: number) => (
-                            <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-100 flex items-center justify-between text-[11px]">
-                              <span className="font-bold text-slate-800 truncate max-w-[180px]">{r.templateName}</span>
-                              <span className="text-[9px] text-slate-400 shrink-0">{r.createdAt ? formatDateBR(r.createdAt) : '-'}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Forklift & Wire Operations Card */}
-                    <div className="bg-slate-50/30 p-5 rounded-2xl border border-slate-100 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                          <Truck className="w-4 h-4 text-emerald-600" /> Checklists e Bobinas de Arame
-                        </h5>
-                        <span className="px-2 py-0.5 bg-white text-emerald-700 text-[10px] font-black rounded-lg border border-emerald-50">
-                          {selectedUserData.forkliftCount + selectedUserData.wireReceivingCount + selectedUserData.wireConsumptionCount} Itens
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 pb-2 text-center text-xs font-bold text-slate-700">
-                        <div className="bg-white p-2 rounded-xl border border-slate-100">
-                          <p className="text-[8px] text-slate-400 font-extrabold uppercase">Empilhadeiras</p>
-                          <p className="text-sm font-black text-slate-800 mt-1">{selectedUserData.forkliftCount}</p>
-                        </div>
-                        <div className="bg-white p-2 rounded-xl border border-slate-100">
-                          <p className="text-[8px] text-slate-400 font-extrabold uppercase">Recebimento</p>
-                          <p className="text-sm font-black text-slate-800 mt-1">{selectedUserData.wireReceivingCount}</p>
-                        </div>
-                        <div className="bg-white p-2 rounded-xl border border-slate-100">
-                          <p className="text-[8px] text-slate-400 font-extrabold uppercase">Consumo</p>
-                          <p className="text-sm font-black text-slate-800 mt-1">{selectedUserData.wireConsumptionCount}</p>
-                        </div>
-                      </div>
                     </div>
                   </div>
 
@@ -3203,13 +3080,13 @@ const Reports: React.FC = () => {
                       <Smile className="w-4 h-4" />
                     </div>
                     <div>
-                      <h6 className="text-[11px] font-black text-emerald-950 uppercase tracking-widest mb-1">AVALIAÇÃO DE COMPROMETIMENTO E DESEMPENHO</h6>
+                      <h6 className="text-[11px] font-black text-emerald-950 uppercase tracking-widest mb-1">PARECER DE USABILIDADE E ENGAJAMENTO</h6>
                       <p className="text-[11px] text-emerald-800 leading-normal">
-                        Este colaborador possui <strong>{selectedUserData.accessCount} acessos ao sistema</strong> e <strong>{selectedUserData.totalActions} operações ativas registradas</strong>. 
+                        Este colaborador possui <strong>{selectedUserData.accessCount} acessos ao sistema</strong> e <strong>{selectedUserData.totalActions} operações ativas registradas</strong> (DDS assinados: {selectedUserData.ddsSignaturesCount}, DDS criados: {selectedUserData.ddsCreatedCount}, Inspeções: {selectedUserData.qualityCount}).
                         {!selectedUserData.hasAccessed && ' Atenção: O colaborador ainda não realizou logins no aplicativo. Recomenda-se orientação de acesso junto à liderança de turno.'}
-                        {selectedUserData.hasAccessed && selectedUserData.totalActions > 25 && ' Seu altíssimo volume de interações indica engajamento exemplar, liderança ativa e conformidade excepcional de dados, tornando-o altamente elegível para futuras promoções e posições de liderança.'}
-                        {selectedUserData.hasAccessed && selectedUserData.totalActions <= 25 && selectedUserData.totalActions > 8 && ' Perfil dinâmico e participativo com boa consistência de registros cotidianos na fábrica. Ótimo desempenho global.'}
-                        {selectedUserData.hasAccessed && selectedUserData.totalActions <= 8 && ' Volume inicial ou moderado de interações operacionais no sistema. Recomenda-se incentivar maior participação ativa nos Diálogos de Segurança e Rondas.'}
+                        {selectedUserData.hasAccessed && selectedUserData.totalActions > 25 && ' Seu altíssimo volume de interações indica engajamento exemplar, liderança ativa e conformidade excepcional no uso das rotinas digitais.'}
+                        {selectedUserData.hasAccessed && selectedUserData.totalActions <= 25 && selectedUserData.totalActions >= 8 && ' Perfil dinâmico e participativo com boa consistência de registros cotidianos no sistema.'}
+                        {selectedUserData.hasAccessed && selectedUserData.totalActions < 8 && ' Volume inicial ou moderado de interações no sistema. Recomenda-se incentivar maior participação ativa nos Diálogos de Segurança e preenchimento de inspeções.'}
                       </p>
                     </div>
                   </div>
@@ -3219,66 +3096,58 @@ const Reports: React.FC = () => {
                     <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
                       <ShieldCheck className="w-5 h-5 text-emerald-600" />
                       <div>
-                        <h6 className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Como Funciona a Pontuação de Comprometimento?</h6>
-                        <p className="text-[10px] text-slate-400 font-bold">Entenda como os pontos de engajamento são computados</p>
+                        <h6 className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Como Funciona a Avaliação de Usabilidade?</h6>
+                        <p className="text-[10px] text-slate-400 font-bold">Métricas objetivas consideradas no cálculo</p>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Regras de Pontuação */}
+                      {/* 4 Pilares Objetivos */}
                       <div className="space-y-2">
-                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Distribuição de Pontos (+10 Pontos cada)</span>
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Métricas Computadas</span>
                         <ul className="space-y-2 text-xs font-semibold text-slate-600">
                           <li className="flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                            <span><strong>Presença em DDS:</strong> Assinatura de Diálogo de Segurança</span>
+                            <span className="w-2 h-2 rounded-full bg-slate-800 shrink-0" />
+                            <span><strong>Acessos ao Sistema:</strong> Logins efetuados e sessões autenticadas</span>
                           </li>
                           <li className="flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                            <span><strong>Rondas Operacionais:</strong> Rondas de ativos finalizadas</span>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                            <span><strong>DDS Assinados:</strong> Presenças registradas em Diálogos Diários</span>
                           </li>
                           <li className="flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-                            <span><strong>Relato de Desvios:</strong> Observações de segurança coletadas</span>
+                            <span className="w-2 h-2 rounded-full bg-teal-500 shrink-0" />
+                            <span><strong>DDS Criados:</strong> Sessões de diálogo elaboradas ou facilitadas</span>
                           </li>
                           <li className="flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
-                            <span><strong>Checklist de Frota:</strong> Inspeções pré-operacionais</span>
-                          </li>
-                          <li className="flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                            <span><strong>Recebimento / Consumo:</strong> Lançamentos de bobina/peso</span>
-                          </li>
-                          <li className="flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shrink-0" />
-                            <span><strong>Auditoria de Qualidade:</strong> Checklists de linha realizados</span>
+                            <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0" />
+                            <span><strong>Inspeções Realizadas:</strong> Vistorias de qualidade de processo</span>
                           </li>
                         </ul>
                       </div>
 
                       {/* Níveis de Classificação */}
                       <div className="space-y-2">
-                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Níveis de Desempenho</span>
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Classificação de Uso</span>
                         <div className="space-y-2">
                           <div className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-start gap-2">
                             <span className="text-emerald-600 shrink-0 font-black">★</span>
                             <div>
-                              <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Destaque Excepcional (&gt; 250 pontos)</p>
-                              <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Altíssimo engajamento, consistência e exemplaridade na segurança e operação.</p>
+                              <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Alta Adoção (&gt; 25 operações)</p>
+                              <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Altíssimo engajamento e consistência no uso diário do sistema.</p>
                             </div>
                           </div>
                           <div className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-start gap-2">
                             <span className="text-blue-500 shrink-0 font-black">✔</span>
                             <div>
-                              <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Consistente e Ativo (90 - 250 pontos)</p>
-                              <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Participação regular e ativa nos processos rotineiros de conformidade.</p>
+                              <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Consistente (8 a 25 operações)</p>
+                              <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Participação regular e contínua nos processos e registros.</p>
                             </div>
                           </div>
                           <div className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-start gap-2">
                             <span className="text-orange-400 shrink-0 font-black">▲</span>
                             <div>
-                              <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Inserção / Moderado (&lt; 90 pontos)</p>
-                              <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Volume inicial de interações. Sugere-se maior envolvimento nos DDS e rondas.</p>
+                              <p className="font-black text-slate-800 text-[10px] leading-tight block uppercase">Inicial (&lt; 8 operações)</p>
+                              <p className="text-slate-400 text-[9px] font-bold leading-normal mt-0.5">Volume inicial de interações. Requer incentivo ao preenchimento.</p>
                             </div>
                           </div>
                         </div>
