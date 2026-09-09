@@ -153,8 +153,12 @@ export interface WireBatch {
   coilsCount: number;
   status: 'open' | 'closed';
   createdAt: any;
+  updatedAt?: any;
   storageBayId?: string;
   storageBayName?: string;
+  notes?: string;
+  securityVerified?: boolean;
+  transactionId?: string;
 }
 
 export interface WireCoil {
@@ -162,6 +166,8 @@ export interface WireCoil {
   coilNumber: string;
   batchId: string;
   supplierId: string;
+  supplierName?: string;
+  nfNumber?: string;
   diameter: number;
   weight: number;
   status: 'received' | 'in_use' | 'consumed';

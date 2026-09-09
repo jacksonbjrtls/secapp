@@ -45,12 +45,14 @@ import {
   CheckCircle2,
   PackagePlus,
   AlertCircle,
-  ArrowRight
+  ArrowRight,
+  FileDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate, formatDateBR } from '../../lib/utils';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { getGroupForShift, Shift } from '../../lib/scaleUtils';
+import { exportWireBatchPdf } from '../../lib/wireBatchPdfGenerator';
 
 interface HistoryTabProps {
   batches: WireBatch[];
@@ -85,6 +87,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
   const { profile, user } = useAuth();
   const [selectedBatchDetails, setSelectedBatchDetails] = useState<WireCoil[] | null>(null);
   const [isViewingDetails, setIsViewingDetails] = useState<string | null>(null);
+  const [generatingPdfBatchId, setGeneratingPdfBatchId] = useState<string | null>(null);
 
   const getScheduledLetter = (shiftNumber: string, date: Date = new Date()) => {
     try {
@@ -316,6 +319,37 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGenerateBatchPdf = async (batch: WireBatch, preloadedCoils?: WireCoil[] | null) => {
+    setGeneratingPdfBatchId(batch.id);
+    try {
+      let coilsToExport: WireCoil[] = [];
+
+      if (preloadedCoils && preloadedCoils.length > 0) {
+        coilsToExport = preloadedCoils;
+      } else if (selectedBatchDetails && isViewingDetails === batch.id && selectedBatchDetails.length > 0) {
+        coilsToExport = selectedBatchDetails;
+      } else {
+        const q = query(collection(db, 'wire_coils'), where('batchId', '==', batch.id));
+        const snap = await getDocs(q);
+        coilsToExport = snap.docs.map(d => ({ id: d.id, ...d.data() } as WireCoil));
+      }
+
+      await exportWireBatchPdf(batch, coilsToExport, {
+        supervisorName: profile?.displayName || user?.displayName || undefined
+      });
+    } catch (err: any) {
+      console.error('Erro ao gerar PDF do lote:', err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro na Geração do PDF',
+        message: 'Não foi possível gerar o arquivo PDF deste lote de arames. Verifique sua conexão e tente novamente.',
+        type: 'error'
+      });
+    } finally {
+      setGeneratingPdfBatchId(null);
     }
   };
 
@@ -798,6 +832,23 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                     </div>
                     
                     <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-between sm:justify-end w-full sm:w-auto">
+                       <button
+                         type="button"
+                         disabled={generatingPdfBatchId === batch.id}
+                         onClick={() => handleGenerateBatchPdf(batch)}
+                         className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 rounded-xl font-black text-xs transition-all active:scale-95 border border-blue-200/70 shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                         title="Gerar e baixar PDF completo deste Lote de Arames"
+                       >
+                         {generatingPdfBatchId === batch.id ? (
+                           <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin shrink-0" />
+                         ) : (
+                           <FileDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-blue-600" />
+                         )}
+                         <span className="text-[11px] sm:text-xs">
+                           {generatingPdfBatchId === batch.id ? 'Gerando...' : 'PDF do Lote'}
+                         </span>
+                       </button>
+
                        {(isAdmin || isManager) && (
                          <div className="flex items-center gap-1 p-1 bg-slate-50 border border-slate-200/60 rounded-xl shrink-0">
                            <button
@@ -931,16 +982,33 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                           </div>
                         </div>
 
-                        {(isAdmin || isManager) && (
+                        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
                           <button
                             type="button"
-                            onClick={() => handleOpenAddCoils(batch)}
-                            className="flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer w-full sm:w-auto"
+                            disabled={generatingPdfBatchId === batch.id}
+                            onClick={() => handleGenerateBatchPdf(batch, selectedBatchDetails)}
+                            className="flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
+                            title="Gerar e baixar documento PDF oficial com todas as bobinas deste lote"
                           >
-                            <Plus className="w-4 h-4" />
-                            <span>Adicionar Bobina ao Lote</span>
+                            {generatingPdfBatchId === batch.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                            ) : (
+                              <FileDown className="w-4 h-4 shrink-0" />
+                            )}
+                            <span>{generatingPdfBatchId === batch.id ? 'Gerando PDF...' : 'Gerar PDF do Lote'}</span>
                           </button>
-                        )}
+
+                          {(isAdmin || isManager) && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddCoils(batch)}
+                              className="flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer w-full sm:w-auto"
+                            >
+                              <Plus className="w-4 h-4" />
+                              <span>Adicionar Bobina ao Lote</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5 gap-3">

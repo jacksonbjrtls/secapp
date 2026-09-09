@@ -47,7 +47,8 @@ import {
   Radio,
   Check,
   RefreshCw,
-  LogOut
+  LogOut,
+  FileDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
@@ -55,6 +56,7 @@ import { parseWireQRCode } from '../../lib/wireUtils';
 import { QRCameraScanner } from './QRCameraScanner';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { useAuth } from '../../hooks/useAuth';
+import { exportWireBatchPdf } from '../../lib/wireBatchPdfGenerator';
 
 interface ReceivingTabProps {
   suppliers: WireSupplier[];
@@ -184,6 +186,11 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
   const [manualData, setManualData] = useState({ coilNumber: '', weight: '', diameter: 2.30 });
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastSavedBatchId, setLastSavedBatchId] = useState<string | null>(null);
+  const [lastSavedBatchForPdf, setLastSavedBatchForPdf] = useState<{
+    batch: WireBatch;
+    coils: WireCoil[];
+  } | null>(null);
+  const [isGeneratingSavedBatchPdf, setIsGeneratingSavedBatchPdf] = useState(false);
 
   // Manager Security Save Modal State
   const [showManagerSecurityModal, setShowManagerSecurityModal] = useState(false);
@@ -758,7 +765,45 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         console.warn('Erro ao limpar rascunho local:', e);
       }
 
-      // 7. Update UI to success state
+      // 7. Store saved batch and coils snapshot for PDF generation
+      const createdBatchRecord: WireBatch = {
+        id: batchId,
+        nfNumber: (currentBatch.nfNumber || '').trim(),
+        supplierId: currentBatch.supplierId || '',
+        supplierName: supplierName || '',
+        date: currentBatch.date || new Date().toISOString().split('T')[0],
+        storageBayId: bayId,
+        storageBayName: bayName,
+        coilsCount: scannedCoils.length,
+        totalWeight: Number(totalWeight) || 0,
+        status: 'open',
+        notes: (managerNotes && managerNotes.trim()) || '',
+        responsibleId: responsibleId,
+        responsibleName: responsibleName,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        securityVerified: true
+      };
+
+      const createdCoilsList: WireCoil[] = scannedCoils.map((c, i) => ({
+        id: `COIL_${batchId}_${i + 1}`,
+        batchId,
+        supplierId: currentBatch.supplierId || '',
+        supplierName: supplierName || '',
+        nfNumber: (currentBatch.nfNumber || '').trim(),
+        coilNumber: (c.coilNumber || '').trim(),
+        diameter: Number(c.diameter) || 2.30,
+        weight: Number(c.weight) || 0,
+        status: 'received',
+        storageBayName: bayName,
+        isDamaged: Boolean(c.isDamaged),
+        receivedAt: new Date(),
+        updatedAt: new Date()
+      }));
+
+      setLastSavedBatchForPdf({ batch: createdBatchRecord, coils: createdCoilsList });
+
+      // 8. Update UI to success state
       setLastSavedBatchId(batchId);
       setShowManagerSecurityModal(false);
       setCurrentBatch(null);
@@ -778,6 +823,21 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       setError(`Falha ao salvar: ${errorMessage}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDownloadSavedBatchPdf = async () => {
+    if (!lastSavedBatchForPdf) return;
+    setIsGeneratingSavedBatchPdf(true);
+    try {
+      await exportWireBatchPdf(lastSavedBatchForPdf.batch, lastSavedBatchForPdf.coils, {
+        supervisorName: profile?.displayName || profile?.email || undefined,
+        customNotes: lastSavedBatchForPdf.batch.notes
+      });
+    } catch (e) {
+      console.error('Erro ao gerar PDF do lote criado:', e);
+    } finally {
+      setIsGeneratingSavedBatchPdf(false);
     }
   };
 
@@ -865,6 +925,21 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                     </span>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  disabled={isGeneratingSavedBatchPdf || !lastSavedBatchForPdf}
+                  onClick={handleDownloadSavedBatchPdf}
+                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-2xl font-black uppercase tracking-wider text-xs transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Baixar comprovante e relatório em PDF deste lote"
+                >
+                  {isGeneratingSavedBatchPdf ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <FileDown className="w-4 h-4" />
+                  )}
+                  <span>{isGeneratingSavedBatchPdf ? 'Gerando Documento PDF...' : 'Baixar PDF do Lote Criado'}</span>
+                </button>
 
                 <button
                   type="button"
