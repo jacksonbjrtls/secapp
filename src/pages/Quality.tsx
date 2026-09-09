@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { 
   collection, 
@@ -1821,15 +1821,19 @@ const Quality: React.FC = () => {
     title: string;
     message: string;
     type: 'success' | 'error' | 'warning' | 'info';
-    onConfirm?: () => void;
+    onConfirm?: () => void | Promise<void>;
     showConfirmButton?: boolean;
     confirmText?: string;
+    isLoading?: boolean;
   }>({
     isOpen: false,
     title: '',
     message: '',
     type: 'success'
   });
+
+  const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
+  const isSubmittingChecklistRef = useRef(false);
 
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
@@ -2762,6 +2766,7 @@ const Quality: React.FC = () => {
   };
 
   const handleSubmitChecklist = async () => {
+    if (isSubmittingChecklistRef.current || isSubmittingChecklist) return;
     if (!fillingTemplate || !user || !profile) return;
 
     if (!submissionLineId && (fillingTemplate.sectorId === 'all' || sectors.some(s => s.id === fillingTemplate.sectorId))) {
@@ -2871,9 +2876,30 @@ const Quality: React.FC = () => {
       type: 'info',
       showConfirmButton: true,
       confirmText: isEditing ? 'Sim, Salvar' : 'Sim, Enviar',
+      isLoading: isSubmittingChecklist,
       onConfirm: async () => {
+        if (isSubmittingChecklistRef.current) return;
+        isSubmittingChecklistRef.current = true;
+        setIsSubmittingChecklist(true);
         closeModal();
+
         try {
+          // Prevenção contra salvamento em duplicidade por múltiplos cliques ou latência
+          if (!editingSubmissionId) {
+            const now = Date.now();
+            const recentDuplicate = submissions.find(s => 
+              s.templateId === fillingTemplate.id && 
+              s.userId === user.uid && 
+              (s.lineId === targetLineId || s.sectorId === targetLineId) &&
+              safeToDate(s.createdAt) && 
+              (now - safeToDate(s.createdAt)!.getTime() < 15000)
+            );
+            if (recentDuplicate) {
+              console.warn("Submissão duplicada bloqueada pelo sistema de prevenção.");
+              return;
+            }
+          }
+
           const encName = await encryptValue(profile.displayName || user.email);
           const matchedProd = products.find(p => p.id === selectedProductId);
 
@@ -3118,6 +3144,9 @@ const Quality: React.FC = () => {
           });
         } catch (err) {
           handleFirestoreError(err, isEditing ? OperationType.UPDATE : OperationType.CREATE, 'quality_checklist_submissions');
+        } finally {
+          isSubmittingChecklistRef.current = false;
+          setIsSubmittingChecklist(false);
         }
       }
     });
@@ -5854,7 +5883,9 @@ const Quality: React.FC = () => {
                 <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row justify-end gap-3 rounded-b-[2.5rem]">
                   <button
                     type="button"
+                    disabled={isSubmittingChecklist}
                     onClick={() => {
+                      if (isSubmittingChecklist) return;
                       setModalConfig({
                         isOpen: true,
                         title: 'Descartar Check-list?',
@@ -5882,17 +5913,27 @@ const Quality: React.FC = () => {
                         }
                       });
                     }}
-                    className="px-5 py-3 font-extrabold text-slate-500 hover:bg-slate-100 rounded-xl text-xs uppercase tracking-wider transition-all"
+                    className="px-5 py-3 font-extrabold text-slate-500 hover:bg-slate-100 rounded-xl text-xs uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
                     Descartar
                   </button>
                   <button
                     type="button"
+                    disabled={isSubmittingChecklist}
                     onClick={handleSubmitChecklist}
-                    className="px-8 py-3 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-700 shadow-md shadow-emerald-100 text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                    className="px-8 py-3 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-700 shadow-md shadow-emerald-100 text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed cursor-pointer"
                   >
-                    <Save className="w-4 h-4 shrink-0" />
-                    {editingSubmissionId ? 'Salvar Alterações' : 'Finalizar Inspeção'}
+                    {isSubmittingChecklist ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        <span>Transmitindo...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4 shrink-0" />
+                        <span>{editingSubmissionId ? 'Salvar Alterações' : 'Finalizar Inspeção'}</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -8242,6 +8283,7 @@ const Quality: React.FC = () => {
         showConfirmButton={modalConfig.showConfirmButton}
         onConfirm={modalConfig.onConfirm}
         confirmText={modalConfig.confirmText}
+        isLoading={modalConfig.isLoading || isSubmittingChecklist}
       />
 
       <AnimatePresence>

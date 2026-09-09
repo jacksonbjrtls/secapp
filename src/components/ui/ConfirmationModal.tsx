@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, AlertCircle, X, Info } from 'lucide-react';
+import { CheckCircle2, AlertCircle, X, Info, Loader2 } from 'lucide-react';
 
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -9,8 +9,9 @@ interface ConfirmationModalProps {
   message: string;
   type?: 'success' | 'error' | 'info' | 'warning';
   confirmText?: string;
-  onConfirm?: () => void;
+  onConfirm?: () => void | Promise<void>;
   showConfirmButton?: boolean;
+  isLoading?: boolean;
 }
 
 export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
@@ -21,8 +22,43 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   type = 'success',
   confirmText = 'Entendido',
   onConfirm,
-  showConfirmButton = false
+  showConfirmButton = false,
+  isLoading = false
 }) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const isExecutingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsProcessing(false);
+      isExecutingRef.current = false;
+    }
+  }, [isOpen]);
+
+  const busy = isProcessing || isLoading;
+
+  const handleConfirm = async () => {
+    if (busy || isExecutingRef.current) return;
+    isExecutingRef.current = true;
+    setIsProcessing(true);
+    try {
+      if (onConfirm) {
+        await Promise.resolve(onConfirm());
+      }
+      onClose();
+    } catch (err) {
+      console.error("Erro na confirmação da ação:", err);
+    } finally {
+      setIsProcessing(false);
+      isExecutingRef.current = false;
+    }
+  };
+
+  const handleClose = () => {
+    if (busy) return;
+    onClose();
+  };
+
   const getIcon = () => {
     switch (type) {
       case 'success':
@@ -57,7 +93,7 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={onClose}
+            onClick={handleClose}
             className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
           />
           
@@ -84,31 +120,34 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             <div className="p-6 pt-0 flex gap-3">
               {showConfirmButton && (
                 <button
-                  onClick={onClose}
-                  className="flex-1 py-4 rounded-2xl text-slate-500 font-black uppercase tracking-widest text-sm transition-all active:scale-95 bg-slate-100 hover:bg-slate-200"
+                  type="button"
+                  disabled={busy}
+                  onClick={handleClose}
+                  className="flex-1 py-4 rounded-2xl text-slate-500 font-black uppercase tracking-widest text-sm transition-all active:scale-95 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   Cancelar
                 </button>
               )}
               <button
-                onClick={() => {
-                  if (onConfirm) {
-                    onConfirm();
-                  }
-                  onClose();
-                }}
-                className={`${showConfirmButton ? 'flex-1' : 'w-full'} py-4 rounded-2xl text-white font-black uppercase tracking-widest text-sm transition-all active:scale-95 shadow-lg ${getButtonClass()}`}
+                type="button"
+                disabled={busy}
+                onClick={handleConfirm}
+                className={`${showConfirmButton ? 'flex-1' : 'w-full'} py-4 rounded-2xl text-white font-black uppercase tracking-widest text-sm transition-all active:scale-95 shadow-lg ${getButtonClass()} disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer`}
               >
-                {confirmText}
+                {busy && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
+                <span>{busy ? 'Processando...' : confirmText}</span>
               </button>
             </div>
             
-            <button 
-              onClick={onClose}
-              className="absolute top-4 right-4 p-2 text-slate-300 hover:text-slate-600 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {!busy && (
+              <button 
+                type="button"
+                onClick={handleClose}
+                className="absolute top-4 right-4 p-2 text-slate-300 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </motion.div>
         </div>
       )}
