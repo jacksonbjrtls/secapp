@@ -45,7 +45,9 @@ import {
   Building,
   BarChart3,
   Award,
-  FilterX
+  FilterX,
+  Eye,
+  MessageSquare
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -135,6 +137,7 @@ export default function Overtime() {
   // Modals / Alerts
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [justSaved, setJustSaved] = useState<any>(null);
+  const [selectedJustificationDetail, setSelectedJustificationDetail] = useState<OvertimeJustification | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -1643,6 +1646,7 @@ export default function Overtime() {
                           <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider">Função / Área</th>
                           <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider">Horário</th>
                           <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center">Horas</th>
+                          <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider">Motivo da HE</th>
                           <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right pr-6">Ações</th>
                         </tr>
                       </thead>
@@ -1687,9 +1691,38 @@ export default function Overtime() {
                               </span>
                             </td>
 
+                            {/* Motivo da HE */}
+                            <td className="p-4 min-w-[200px] max-w-xs">
+                              {item.justification ? (
+                                <div 
+                                  onClick={() => setSelectedJustificationDetail(item)}
+                                  className="group cursor-pointer"
+                                  title="Clique para ler o motivo completo"
+                                >
+                                  <p className="text-xs text-slate-600 font-medium leading-relaxed line-clamp-2 bg-slate-50 group-hover:bg-emerald-50/70 p-2.5 rounded-xl border border-slate-200/70 group-hover:border-emerald-200 transition-all">
+                                    {item.justification}
+                                  </p>
+                                  {item.justification.length > 55 && (
+                                    <span className="text-[10px] text-emerald-600 group-hover:text-emerald-700 font-bold mt-1 inline-flex items-center gap-1">
+                                      Ver motivo completo
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-400 italic">Não informado</span>
+                              )}
+                            </td>
+
                             {/* Actions */}
                             <td className="p-4 pr-6 text-right whitespace-nowrap">
                               <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => setSelectedJustificationDetail(item)}
+                                  title="Visualizar Motivo e Detalhes"
+                                  className="p-1.5 hover:bg-emerald-50 rounded-lg text-slate-400 hover:text-emerald-600 transition-all cursor-pointer"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
                                 <button
                                   onClick={() => handleExportReceiptPDF(item)}
                                   title="Exportar Comprovante PDF"
@@ -1952,6 +1985,14 @@ export default function Overtime() {
                   <span className="text-emerald-600">Total de Horas:</span>
                   <span className="text-emerald-700 font-black">{justSaved.totalHours} Horas</span>
                 </div>
+                {justSaved.justification && (
+                  <div className="border-t border-slate-200/60 pt-2 mt-2">
+                    <span className="text-slate-400 block mb-1">Motivo / Justificativa:</span>
+                    <span className="text-slate-700 font-medium leading-relaxed text-xs block bg-white p-2.5 rounded-xl border border-slate-200/80 max-h-24 overflow-y-auto">
+                      {justSaved.justification}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Action buttons inside Modal */}
@@ -1971,6 +2012,104 @@ export default function Overtime() {
                   className="w-full py-3 hover:bg-slate-50 text-slate-500 font-bold rounded-2xl text-xs transition-all cursor-pointer"
                 >
                   Fechar Janela
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* VIEW JUSTIFICATION DETAIL MODAL */}
+      <AnimatePresence>
+        {selectedJustificationDetail && (
+          <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2.5rem] border border-slate-200 max-w-lg w-full p-6 sm:p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 shadow-sm border border-emerald-100">
+                    <FileText className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 tracking-tight">Detalhes do Lançamento de HE</h3>
+                    <p className="text-xs text-slate-400 font-bold">Data: {formatDateToBR(selectedJustificationDetail.date)}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedJustificationDetail(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="py-5 space-y-4 text-xs font-bold text-slate-600">
+                {/* Meta details grid */}
+                <div className="grid grid-cols-2 gap-3 bg-slate-50/80 p-4 rounded-2xl border border-slate-100">
+                  <div>
+                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider mb-0.5">Colaborador</span>
+                    <span className="text-slate-900 font-black text-sm block truncate">{selectedJustificationDetail.userName}</span>
+                    <span className="text-slate-400 text-[11px] font-medium block truncate">{selectedJustificationDetail.roleName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider mb-0.5">Letra / Área</span>
+                    <span className="text-slate-900 font-bold text-xs block">Letra {selectedJustificationDetail.group || '-'}</span>
+                    <span className="text-slate-500 text-[11px] font-medium block truncate">{selectedJustificationDetail.area || '-'}</span>
+                  </div>
+                  <div className="pt-2.5 border-t border-slate-200/60">
+                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider mb-0.5">Horário da HE</span>
+                    <span className="text-slate-800 text-xs block">{selectedJustificationDetail.startTime} às {selectedJustificationDetail.endTime}</span>
+                  </div>
+                  <div className="pt-2.5 border-t border-slate-200/60">
+                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider mb-0.5">Carga Horária</span>
+                    <span className="inline-block px-2.5 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 font-black text-xs">
+                      {selectedJustificationDetail.totalHours} hrs
+                    </span>
+                  </div>
+                </div>
+
+                {/* Motivo em destaque */}
+                <div className="space-y-1.5">
+                  <span className="text-slate-500 font-black uppercase text-[10px] tracking-wider flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                    Motivo / Justificativa da Hora Extra:
+                  </span>
+                  <div className="p-4 bg-emerald-50/40 rounded-2xl border border-emerald-100/80 text-slate-800 font-medium text-xs leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto">
+                    {selectedJustificationDetail.justification || (
+                      <span className="italic text-slate-400">Nenhum motivo detalhado foi informado no momento do lançamento.</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Audit metadata */}
+                <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium px-1 pt-1">
+                  <span>Lançado por: <strong className="text-slate-600 font-bold">{selectedJustificationDetail.createdByName || 'Sistema'}</strong></span>
+                  {selectedJustificationDetail.createdAt && (
+                    <span>Registrado em: {new Date(selectedJustificationDetail.createdAt.seconds ? selectedJustificationDetail.createdAt.seconds * 1000 : selectedJustificationDetail.createdAt).toLocaleDateString('pt-BR')}</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleExportReceiptPDF(selectedJustificationDetail)}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-95"
+                >
+                  <Download className="w-4 h-4" />
+                  Baixar Comprovante PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedJustificationDetail(null)}
+                  className="py-3 px-5 hover:bg-slate-100 text-slate-600 font-bold rounded-2xl text-xs transition-all cursor-pointer"
+                >
+                  Fechar
                 </button>
               </div>
             </motion.div>
