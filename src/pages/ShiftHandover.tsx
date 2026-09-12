@@ -204,7 +204,24 @@ export const ShiftHandover: React.FC = () => {
   useEffect(() => {
     setLoadingMetrics(true);
 
-    const unsubForklifts = onSnapshot(collection(db, 'forklift_checklists'), async (snapshot) => {
+    const targetDay = new Date(selectedDate + 'T12:00:00');
+    const windowStart = new Date(targetDay);
+    windowStart.setDate(windowStart.getDate() - 1);
+    windowStart.setHours(0, 0, 0, 0);
+
+    const windowEnd = new Date(targetDay);
+    windowEnd.setDate(windowEnd.getDate() + 1);
+    windowEnd.setHours(23, 59, 59, 999);
+
+    const tsStart = Timestamp.fromDate(windowStart);
+    const tsEnd = Timestamp.fromDate(windowEnd);
+
+    const qForklifts = query(
+      collection(db, 'forklift_checklists'), 
+      where('timestamp', '>=', tsStart), 
+      where('timestamp', '<=', tsEnd)
+    );
+    const unsubForklifts = onSnapshot(qForklifts, async (snapshot) => {
       const list = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.conductorName);
@@ -215,7 +232,12 @@ export const ShiftHandover: React.FC = () => {
       console.warn('Erro ao carregar checklists de empilhadeiras:', error);
     });
 
-    const unsubQuality = onSnapshot(collection(db, 'quality_checklist_submissions'), async (snapshot) => {
+    const qQuality = query(
+      collection(db, 'quality_checklist_submissions'), 
+      where('createdAt', '>=', tsStart), 
+      where('createdAt', '<=', tsEnd)
+    );
+    const unsubQuality = onSnapshot(qQuality, async (snapshot) => {
       const list = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -226,7 +248,12 @@ export const ShiftHandover: React.FC = () => {
       console.warn('Erro ao carregar submissões de qualidade:', error);
     });
 
-    const unsubRoutes = onSnapshot(collection(db, 'route_submissions'), async (snapshot) => {
+    const qRoutes = query(
+      collection(db, 'route_submissions'), 
+      where('createdAt', '>=', tsStart), 
+      where('createdAt', '<=', tsEnd)
+    );
+    const unsubRoutes = onSnapshot(qRoutes, async (snapshot) => {
       const list = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -237,7 +264,12 @@ export const ShiftHandover: React.FC = () => {
       console.warn('Erro ao carregar rotas operacionais:', error);
     });
 
-    const unsubSafety = onSnapshot(collection(db, 'safety_observations'), async (snapshot) => {
+    const qSafety = query(
+      collection(db, 'safety_observations'), 
+      where('createdAt', '>=', tsStart), 
+      where('createdAt', '<=', tsEnd)
+    );
+    const unsubSafety = onSnapshot(qSafety, async (snapshot) => {
       const list = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -248,7 +280,12 @@ export const ShiftHandover: React.FC = () => {
       console.warn('Erro ao carregar observações de segurança:', error);
     });
 
-    const unsubDds = onSnapshot(collection(db, 'dds_sessions'), async (snapshot) => {
+    const qDds = query(
+      collection(db, 'dds_sessions'), 
+      where('createdAt', '>=', tsStart), 
+      where('createdAt', '<=', tsEnd)
+    );
+    const unsubDds = onSnapshot(qDds, async (snapshot) => {
       const list = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -259,7 +296,12 @@ export const ShiftHandover: React.FC = () => {
       console.warn('Erro ao carregar sessões dds:', error);
     });
 
-    const unsubSignatures = onSnapshot(collection(db, 'dds_signatures'), async (snapshot) => {
+    const qSignatures = query(
+      collection(db, 'dds_signatures'), 
+      where('timestamp', '>=', tsStart), 
+      where('timestamp', '<=', tsEnd)
+    );
+    const unsubSignatures = onSnapshot(qSignatures, async (snapshot) => {
       const list = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -270,7 +312,12 @@ export const ShiftHandover: React.FC = () => {
       console.warn('Erro ao carregar assinaturas dds:', error);
     });
 
-    const unsubHandovers = onSnapshot(collection(db, 'shift_handovers'), async (snapshot) => {
+    const qHandovers = query(
+      collection(db, 'shift_handovers'), 
+      orderBy('createdAt', 'desc'), 
+      limit(150)
+    );
+    const unsubHandovers = onSnapshot(qHandovers, async (snapshot) => {
       const list = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decIn = await decryptValue(data.operatorIn);
@@ -291,7 +338,12 @@ export const ShiftHandover: React.FC = () => {
       setLoadingMetrics(false);
     });
 
-    const unsubConsumables = onSnapshot(collection(db, 'consumable_logs'), async (snapshot) => {
+    const qConsumables = query(
+      collection(db, 'consumable_logs'), 
+      where('createdAt', '>=', tsStart), 
+      where('createdAt', '<=', tsEnd)
+    );
+    const unsubConsumables = onSnapshot(qConsumables, async (snapshot) => {
       const list = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -312,7 +364,7 @@ export const ShiftHandover: React.FC = () => {
       unsubHandovers();
       unsubConsumables();
     };
-  }, []);
+  }, [selectedDate]);
 
   // Helper properties to convert Firestore timestamps to comparable locale YYYY-MM-DD & Shift values
   const parseIncidentTime = (ts: any): { dateStr: string; shiftName: Shift } | null => {

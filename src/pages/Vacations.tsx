@@ -37,12 +37,14 @@ import {
   orderBy, 
   where, 
   serverTimestamp, 
-  getDoc 
+  getDoc,
+  limit
 } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { cn, formatDateBR } from '../lib/utils';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { decryptValue } from '../lib/crypto';
 import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { VacationRequest, VacationQueueItem, WorkSector, WorkFunction, UserProfile } from '../types';
@@ -493,28 +495,26 @@ export default function Vacations() {
   useEffect(() => {
     fetchData();
 
-    // 1. Live sectors
-    const unsubSectors = onSnapshot(collection(db, 'work_sectors'), (snapshot) => {
-      const sectorList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as WorkSector));
-      const combinedSectors = [...sectorList];
+    // 1. Live sectors with shared cache
+    const unsubSectors = subscribeSharedCollection('work_sectors', (sectorList) => {
+      const combinedSectors = [...(sectorList as WorkSector[])];
       defaultSectors.forEach(ds => {
         if (!combinedSectors.some(s => s.id === ds.id)) combinedSectors.push(ds as any);
       });
       setSectors(combinedSectors.filter(s => s.active !== false));
-    });
+    }, 'name');
 
-    // 2. Live functions
-    const unsubFunctions = onSnapshot(collection(db, 'work_functions'), (snapshot) => {
-      const functionList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as WorkFunction));
-      const combinedFunctions = [...functionList];
+    // 2. Live functions with shared cache
+    const unsubFunctions = subscribeSharedCollection('work_functions', (functionList) => {
+      const combinedFunctions = [...(functionList as WorkFunction[])];
       defaultFunctions.forEach(df => {
         if (!combinedFunctions.some(f => f.id === df.id)) combinedFunctions.push(df as any);
       });
       setFunctions(combinedFunctions.filter(f => f.active !== false));
-    });
+    }, 'name');
 
-    // 3. Live vacation requests
-    const unsubReqs = onSnapshot(query(collection(db, 'vacation_requests'), orderBy('createdAt', 'desc')), (snapshot) => {
+    // 3. Live vacation requests (limited to 200)
+    const unsubReqs = onSnapshot(query(collection(db, 'vacation_requests'), orderBy('createdAt', 'desc'), limit(200)), (snapshot) => {
       const reqList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VacationRequest));
       setRequests(reqList);
       if (user) {
@@ -522,8 +522,8 @@ export default function Vacations() {
       }
     });
 
-    // 4. Live priority queue
-    const unsubQueue = onSnapshot(query(collection(db, 'vacation_queue'), orderBy('position', 'asc')), (snapshot) => {
+    // 4. Live priority queue (limited to 200)
+    const unsubQueue = onSnapshot(query(collection(db, 'vacation_queue'), orderBy('position', 'asc'), limit(200)), (snapshot) => {
       const qList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VacationQueueItem));
       setQueueItems(qList);
     });

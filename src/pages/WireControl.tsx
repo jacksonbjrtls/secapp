@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { 
   ProductionLine, 
   WireSupplier, 
@@ -135,29 +136,29 @@ const WireControl: React.FC = () => {
   useEffect(() => {
     if (!isApproved) return;
 
-    const unsubLines = onSnapshot(query(collection(db, 'production_lines'), orderBy('name')), (snap) => {
-      setLines(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductionLine)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'production_lines'));
+    const unsubLines = subscribeSharedCollection('production_lines', (list) => {
+      setLines(list as ProductionLine[]);
+    }, 'name');
 
-    const unsubSuppliers = onSnapshot(query(collection(db, 'wire_suppliers'), orderBy('name')), (snap) => {
-      setSuppliers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireSupplier)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_suppliers'));
+    const unsubSuppliers = subscribeSharedCollection('wire_suppliers', (list) => {
+      setSuppliers(list as WireSupplier[]);
+    }, 'name');
 
-    const unsubStorageBays = onSnapshot(query(collection(db, 'wire_storage_bays'), orderBy('name')), (snap) => {
-      setStorageBays(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireStorageBay)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_storage_bays'));
+    const unsubStorageBays = subscribeSharedCollection('wire_storage_bays', (list) => {
+      setStorageBays(list as WireStorageBay[]);
+    }, 'name');
 
-    const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc')), (snap) => {
+    const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(150)), (snap) => {
       setBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireBatch)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_batches'));
 
-    const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), orderBy('receivedAt', 'desc')), (snap) => {
+    const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), orderBy('receivedAt', 'desc'), limit(200)), (snap) => {
       setCoils(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireCoil)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_coils'));
     
-    const unsubProd = onSnapshot(collection(db, 'monthly_production'), (snap) => {
-      setProductionData(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'monthly_production'));
+    const unsubProd = subscribeSharedCollection('monthly_production', (list) => {
+      setProductionData(list);
+    });
 
     setLoading(false);
     return () => {

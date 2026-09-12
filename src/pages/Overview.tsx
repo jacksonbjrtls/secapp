@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, onSnapshot, query, where, Timestamp, doc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, Timestamp, doc, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
 import { safeToDate, cn } from '../lib/utils';
-import { getLocalCachedUsers, setLocalCachedUsers } from '../lib/usersCache';
+import { getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { decryptValue } from '../lib/crypto';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
@@ -126,6 +127,8 @@ export const Overview: React.FC = () => {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
+    const startOfMonth = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+
     // Immediate cached render
     const cachedUsers = getLocalCachedUsers().filter(user => {
       const userEmail = user.email?.toLowerCase().trim() || '';
@@ -136,25 +139,20 @@ export const Overview: React.FC = () => {
       setUsers(cachedUsers.map(u => ({ id: u.uid, ...u })));
     }
 
-    const unsubUsers = onSnapshot(collection(db, 'users'), async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.displayName);
-        const decEmail = await decryptValue(data.email);
-        return { id: doc.id, ...data, displayName: decName, email: decEmail };
-      }));
-      const filtered = mapped.filter(user => {
-        const userEmail = user.email?.toLowerCase().trim() || '';
+    // 1. Users from shared cache
+    const unsubUsers = subscribeToUsers((updatedUsers) => {
+      const filtered = updatedUsers.filter(u => {
+        const userEmail = u.email?.toLowerCase().trim() || '';
         if (userEmail === 'jacksonbjr@gmail.com') return false;
         return !MASTER_EMAILS.includes(userEmail) || isMaster;
       });
-      setUsers(filtered);
+      setUsers(filtered.map(u => ({ id: u.uid, ...u })));
       setLastUpdated(new Date());
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'users');
     });
 
-    const unsubSessions = onSnapshot(collection(db, 'dds_sessions'), async (snap) => {
+    // 2. DDS Today
+    const qSessions = query(collection(db, 'dds_sessions'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
+    const unsubSessions = onSnapshot(qSessions, async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -166,7 +164,8 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
     });
 
-    const unsubSignatures = onSnapshot(collection(db, 'dds_signatures'), async (snap) => {
+    const qSignatures = query(collection(db, 'dds_signatures'), where('timestamp', '>=', Timestamp.fromDate(todayStart)));
+    const unsubSignatures = onSnapshot(qSignatures, async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -178,13 +177,12 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
     });
 
-    const unsubForklifts = onSnapshot(collection(db, 'forklifts'), (snap) => {
-      setForklifts(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'forklifts');
-    });
+    // 3. Forklifts & Checklists
+    const unsubForklifts = subscribeSharedCollection('forklifts', setForklifts, 'number');
+    const unsubForkCheckItems = subscribeSharedCollection('forklift_check_items', setForkliftCheckItems, 'order');
 
-    const unsubForkChecklists = onSnapshot(collection(db, 'forklift_checklists'), async (snap) => {
+    const qForkChecklists = query(collection(db, 'forklift_checklists'), where('timestamp', '>=', Timestamp.fromDate(todayStart)));
+    const unsubForkChecklists = onSnapshot(qForkChecklists, async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.conductorName);
@@ -195,13 +193,9 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'forklift_checklists');
     });
 
-    const unsubForkCheckItems = onSnapshot(collection(db, 'forklift_check_items'), (snap) => {
-      setForkliftCheckItems(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'forklift_check_items');
-    });
-
-    const unsubQualSub = onSnapshot(collection(db, 'quality_checklist_submissions'), async (snap) => {
+    // 4. Quality Checklists Today & Configs
+    const qQualSub = query(collection(db, 'quality_checklist_submissions'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
+    const unsubQualSub = onSnapshot(qQualSub, async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -212,7 +206,8 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'quality_checklist_submissions');
     });
 
-    const unsubOm = onSnapshot(collection(db, 'quality_checklist_omissions'), async (snap) => {
+    const qOm = query(collection(db, 'quality_checklist_omissions'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
+    const unsubOm = onSnapshot(qOm, async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -223,43 +218,48 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'quality_checklist_omissions');
     });
 
-    const unsubQualTemplates = onSnapshot(collection(db, 'quality_checklist_templates'), (snap) => {
-      setQualityTemplates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'quality_checklist_templates');
-    });
+    const unsubQualTemplates = subscribeSharedCollection('quality_checklist_templates', setQualityTemplates);
+    const unsubQualSecs = subscribeSharedCollection('quality_sectors', setQualitySectors);
+    const unsubOptionSets = subscribeSharedCollection('quality_checklist_options', setQualityOptionSets);
+    const unsubLines = subscribeSharedCollection('production_lines', setLines);
 
-    const unsubQualSecs = onSnapshot(collection(db, 'quality_sectors'), (snap) => {
-      setQualitySectors(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'quality_sectors');
-    });
-
-    const unsubOptionSets = onSnapshot(collection(db, 'quality_checklist_options'), (snap) => {
-      setQualityOptionSets(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'quality_checklist_options');
-    });
-
-    const unsubBatches = onSnapshot(collection(db, 'wire_batches'), (snap) => {
+    // 5. Wires: recent batches and in-stock/consumed-today coils
+    const qBatches = query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(30));
+    const unsubBatches = onSnapshot(qBatches, (snap) => {
       setWireBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'wire_batches');
     });
 
-    const unsubCoils = onSnapshot(collection(db, 'wire_coils'), (snap) => {
-      setWireCoils(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    // In-stock coils
+    let stockCoilsList: any[] = [];
+    let todayConsumedCoilsList: any[] = [];
+    const updateMergedCoils = () => {
+      const coilMap = new Map<string, any>();
+      stockCoilsList.forEach(c => coilMap.set(c.id, c));
+      todayConsumedCoilsList.forEach(c => coilMap.set(c.id, c));
+      setWireCoils(Array.from(coilMap.values()));
+    };
+
+    const qCoilsStock = query(collection(db, 'wire_coils'), where('status', 'in', ['received', 'in_use']));
+    const unsubCoilsStock = onSnapshot(qCoilsStock, (snap) => {
+      stockCoilsList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      updateMergedCoils();
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'wire_coils');
     });
 
-    const unsubLines = onSnapshot(collection(db, 'production_lines'), (snap) => {
-      setLines(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const qCoilsConsumedToday = query(collection(db, 'wire_coils'), where('consumedAt', '>=', Timestamp.fromDate(todayStart)));
+    const unsubCoilsConsumedToday = onSnapshot(qCoilsConsumedToday, (snap) => {
+      todayConsumedCoilsList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      updateMergedCoils();
     }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'production_lines');
+      handleFirestoreError(err, OperationType.LIST, 'wire_coils');
     });
 
-    const unsubRoutes = onSnapshot(collection(db, 'route_submissions'), async (snap) => {
+    // 6. Routes Today
+    const qRoutes = query(collection(db, 'route_submissions'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
+    const unsubRoutes = onSnapshot(qRoutes, async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -270,7 +270,9 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'route_submissions');
     });
 
-    const unsubSafetyObs = onSnapshot(collection(db, 'safety_observations'), async (snap) => {
+    // 7. Safety Observations (Current Month)
+    const qSafetyObs = query(collection(db, 'safety_observations'), where('createdAt', '>=', Timestamp.fromDate(startOfMonth)));
+    const unsubSafetyObs = onSnapshot(qSafetyObs, async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -281,13 +283,11 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'safety_observations');
     });
 
-    const unsubConsumableItems = onSnapshot(collection(db, 'consumable_items'), (snap) => {
-      setConsumableItems(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'consumable_items');
-    });
+    // 8. Consumables
+    const unsubConsumableItems = subscribeSharedCollection('consumable_items', setConsumableItems);
 
-    const unsubConsumableLogs = onSnapshot(collection(db, 'consumable_logs'), async (snap) => {
+    const qConsumableLogs = query(collection(db, 'consumable_logs'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
+    const unsubConsumableLogs = onSnapshot(qConsumableLogs, async (snap) => {
       const mapped = await Promise.all(snap.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -299,21 +299,21 @@ export const Overview: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'consumable_logs');
     });
 
-    const unsubCourses = onSnapshot(collection(db, 'training_courses'), (snap) => {
-      setCourses(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      setLastUpdated(new Date());
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'training_courses');
-    });
+    // 9. Training Courses
+    const unsubCourses = subscribeSharedCollection('training_courses', setCourses);
 
-    const unsubStops = onSnapshot(collection(db, 'stops_reports'), (snap) => {
+    // 10. Stops Reports Today / Recent
+    const qStops = query(collection(db, 'stops_reports'), limit(50));
+    const unsubStops = onSnapshot(qStops, (snap) => {
       setStopsReports(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setLastUpdated(new Date());
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'stops_reports');
     });
 
-    const unsubMaint = onSnapshot(collection(db, 'maintenance_issues'), (snap) => {
+    // 11. Maintenance Issues
+    const qMaint = query(collection(db, 'maintenance_issues'), limit(80));
+    const unsubMaint = onSnapshot(qMaint, (snap) => {
       setMaintenanceIssues(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setLastUpdated(new Date());
     }, (err) => {
@@ -336,7 +336,8 @@ export const Overview: React.FC = () => {
       unsubQualSecs();
       unsubOptionSets();
       unsubBatches();
-      unsubCoils();
+      unsubCoilsStock();
+      unsubCoilsConsumedToday();
       unsubLines();
       unsubRoutes();
       unsubSafetyObs();

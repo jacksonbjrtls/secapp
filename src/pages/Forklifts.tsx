@@ -59,10 +59,12 @@ import {
   getDocs,
   setDoc,
   Timestamp,
-  writeBatch
+  writeBatch,
+  limit
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { Link } from 'react-router-dom';
 import { cn, safeToDate } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -530,23 +532,17 @@ const Forklifts: React.FC = () => {
   };
 
   useEffect(() => {
-    const qF = query(collection(db, 'forklifts'), orderBy('number'));
-    const unsubscribeF = onSnapshot(qF, (snapshot) => {
-      setForklifts(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Forklift)));
+    const unsubscribeF = subscribeSharedCollection('forklifts', (list) => {
+      setForklifts(list as Forklift[]);
       setLoading(false);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'forklifts');
-      setLoading(false);
-    });
+    }, 'number');
 
-    const qI = query(collection(db, 'forklift_check_items'), orderBy('order'));
-    const unsubscribeI = onSnapshot(qI, (snapshot) => {
-      setCheckItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CheckItem)));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'forklift_check_items');
-    });
+    const unsubscribeI = subscribeSharedCollection('forklift_check_items', (list) => {
+      const sorted = [...(list as CheckItem[])].sort((a, b) => a.order - b.order);
+      setCheckItems(sorted);
+    }, 'order');
 
-    const qC = query(collection(db, 'forklift_checklists'), orderBy('timestamp', 'desc'));
+    const qC = query(collection(db, 'forklift_checklists'), orderBy('timestamp', 'desc'), limit(150));
     const unsubscribeC = onSnapshot(qC, (snapshot) => {
       setChecklists(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Checklist)));
     }, (err) => {

@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { getCurrentShift, getGroupForShift } from '../lib/scaleUtils';
 import { 
   ConsumableItem, 
@@ -225,13 +226,9 @@ const ConsumablesControl: React.FC = () => {
 
     setLoading(true);
 
-    const unsubItems = onSnapshot(
-      query(collection(db, 'consumable_items'), orderBy('name')),
-      (snap) => {
-        setItems(snap.docs.map(d => ({ id: d.id, ...d.data() } as ConsumableItem)));
-      },
-      (err) => handleLocalError(err, 'listen', 'consumable_items')
-    );
+    const unsubItems = subscribeSharedCollection('consumable_items', (list) => {
+      setItems(list as ConsumableItem[]);
+    }, 'name');
 
     const unsubLogs = onSnapshot(
       query(collection(db, 'consumable_logs'), orderBy('timestamp', 'desc'), limit(150)),
@@ -245,17 +242,12 @@ const ConsumablesControl: React.FC = () => {
       (err) => handleLocalError(err, 'listen', 'consumable_logs')
     );
 
-    const unsubLines = onSnapshot(
-      collection(db, 'production_lines'),
-      (snap) => {
-        const mapped = snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionLine));
-        const filteredAndSorted = mapped
-          .filter(d => d.active === true)
-          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        setLines(filteredAndSorted);
-      },
-      (err) => handleLocalError(err, 'listen', 'production_lines')
-    );
+    const unsubLines = subscribeSharedCollection('production_lines', (linesList) => {
+      const filteredAndSorted = (linesList as ProductionLine[])
+        .filter(d => d.active === true)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      setLines(filteredAndSorted);
+    }, 'name');
 
     setLoading(false);
 

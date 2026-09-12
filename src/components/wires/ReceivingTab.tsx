@@ -8,6 +8,7 @@ import {
   query,
   getDocs,
   where,
+  limit,
   writeBatch,
   serverTimestamp 
 } from 'firebase/firestore';
@@ -272,13 +273,16 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
 
   // Real-time listener for all open cloud drafts across the company
   useEffect(() => {
-    const q = query(collection(db, 'wire_receiving_drafts'));
+    const q = query(
+      collection(db, 'wire_receiving_drafts'),
+      where('status', '==', 'in_progress'),
+      limit(30)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const drafts: WireReceivingDraft[] = [];
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        if (data.status !== 'completed' && data.status !== 'discarded') {
-          drafts.push({
+        drafts.push({
             id: docSnap.id,
             userId: data.userId || '',
             userName: data.userName || 'Operador',
@@ -289,7 +293,6 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
             status: data.status || 'in_progress',
             updatedAt: data.updatedAt
           });
-        }
       });
       // Sort newest first
       drafts.sort((a, b) => new Date(b.lastSavedAt || 0).getTime() - new Date(a.lastSavedAt || 0).getTime());

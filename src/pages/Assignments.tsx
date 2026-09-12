@@ -31,7 +31,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { cn } from '../lib/utils';
-import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { decryptValue } from '../lib/crypto';
 import { WorkSector, WorkFunction, UserProfile } from '../types';
 
@@ -156,63 +157,30 @@ export default function Assignments() {
   useEffect(() => {
     fetchData();
 
-    // 1. Listen in real-time to sectors
-    const unsubSectors = onSnapshot(collection(db, 'work_sectors'), (snapshot) => {
-      const sectorList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as WorkSector));
-      const combinedSectors = [...sectorList];
+    // 1. Listen in real-time to sectors with shared cache
+    const unsubSectors = subscribeSharedCollection('work_sectors', (sectorList) => {
+      const combinedSectors = [...(sectorList as WorkSector[])];
       defaultSectors.forEach(ds => {
         if (!combinedSectors.some(s => s.id === ds.id)) combinedSectors.push(ds as any);
       });
       const activeSectors = combinedSectors.filter(s => s.active !== false);
       setSectors(activeSectors);
-    });
+    }, 'name');
 
-    // 2. Listen in real-time to functions
-    const unsubFunctions = onSnapshot(collection(db, 'work_functions'), (snapshot) => {
-      const functionList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as WorkFunction));
-      const combinedFunctions = [...functionList];
+    // 2. Listen in real-time to functions with shared cache
+    const unsubFunctions = subscribeSharedCollection('work_functions', (functionList) => {
+      const combinedFunctions = [...(functionList as WorkFunction[])];
       defaultFunctions.forEach(df => {
         if (!combinedFunctions.some(f => f.id === df.id)) combinedFunctions.push(df as any);
       });
       const activeFunctions = combinedFunctions.filter(f => f.active !== false);
       setFunctions(activeFunctions);
-    });
+    }, 'name');
 
-    // 3. Listen in real-time to user updates
-    const unsubUsers = onSnapshot(collection(db, 'users'), async (snapshot) => {
-      try {
-        const decryptedList = await Promise.all(
-          snapshot.docs.map(async (d) => {
-            const data = d.data();
-            const decName = await decryptValue(data.displayName);
-            const decEmail = await decryptValue(data.email);
-            return {
-              uid: d.id,
-              displayName: decName || 'Sem nome',
-              email: (decEmail || '').toLowerCase().trim(),
-              role: data.role || 'viewer',
-              status: data.status || 'approved',
-              group: data.group || '',
-              sectorId: data.sectorId || '',
-              sectorName: data.sectorName || '',
-              cargoId: data.cargoId || '',
-              cargoName: data.cargoName || '',
-              birthDate: data.birthDate || '',
-              tshirtSize: data.tshirtSize || '',
-              registration: data.registration || '',
-              isMaster: !!data.isMaster,
-              mustChangePassword: !!data.mustChangePassword,
-            };
-          })
-        );
-        const validList = decryptedList.filter(u => u.displayName !== 'Sem nome' && u.email !== 'jacksonbjr@gmail.com');
-        setAllUsers(validList as any[]);
-        setLocalCachedUsers(validList);
-      } catch (err) {
-        console.warn('Real-time users update failed in Assignments:', err);
-      }
-    }, (err) => {
-      console.warn('Users listener snapshot error:', err);
+    // 3. Listen in real-time to user updates from shared decrypted cache
+    const unsubUsers = subscribeToUsers((cachedUsers) => {
+      const validList = cachedUsers.filter(u => u.displayName !== 'Sem nome' && u.email !== 'jacksonbjr@gmail.com');
+      setAllUsers(validList as any[]);
     });
 
     return () => {

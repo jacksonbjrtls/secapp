@@ -12,7 +12,8 @@ import {
   getDocs,
   query,
   orderBy,
-  Timestamp
+  Timestamp,
+  limit
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -20,6 +21,7 @@ import { getCurrentShift, getGroupForShift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate, formatDateBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { Html5Qrcode } from 'html5-qrcode';
 import { 
   Activity, 
@@ -712,20 +714,18 @@ const OperationalRoutes: React.FC = () => {
   }, [csvText, isCsvImportModalOpen, lines, sectors]);
 
   useEffect(() => {
-    const unsubTemplates = onSnapshot(collection(db, 'route_templates'), (snap) => {
-      setTemplates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RouteTemplate)));
+    const unsubTemplates = subscribeSharedCollection('route_templates', (list) => {
+      setTemplates(list as RouteTemplate[]);
       setLoading(false);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'route_templates');
-    });
+    }, 'title');
 
     return () => unsubTemplates();
   }, []);
 
-  // Subscribe to Route Submissions
+  // Subscribe to Route Submissions (limited to 150 recent)
   useEffect(() => {
     const unsubSubs = onSnapshot(
-      query(collection(db, 'route_submissions'), orderBy('createdAt', 'desc')), 
+      query(collection(db, 'route_submissions'), orderBy('createdAt', 'desc'), limit(150)), 
       (snap) => {
         setSubmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RouteSubmission)));
       }, (err) => {
@@ -738,9 +738,9 @@ const OperationalRoutes: React.FC = () => {
 
   // Subscribe to Production Lines
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'production_lines'), (snap) => {
-      setLines(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductionLine)));
-    });
+    const unsub = subscribeSharedCollection('production_lines', (list) => {
+      setLines(list as ProductionLine[]);
+    }, 'name');
     return () => unsub();
   }, []);
 
@@ -884,19 +884,19 @@ const OperationalRoutes: React.FC = () => {
     });
   };
 
-  // Subscribe to Sectors
+  // Subscribe to Sectors with shared cache
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'quality_sectors'), (snap) => {
-      setSectors(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualitySector)));
-    });
+    const unsub = subscribeSharedCollection('quality_sectors', (list) => {
+      setSectors(list as QualitySector[]);
+    }, 'name');
     return () => unsub();
   }, []);
 
-  // Subscribe to customizable response parameter Option Sets
+  // Subscribe to customizable response parameter Option Sets with shared cache
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'quality_checklist_options'), (snap) => {
-      setOptionSets(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualityChecklistOptionSet)));
-    });
+    const unsub = subscribeSharedCollection('quality_checklist_options', (list) => {
+      setOptionSets(list as QualityChecklistOptionSet[]);
+    }, 'name');
     return () => unsub();
   }, []);
 

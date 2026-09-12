@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import { decryptValue } from '../lib/crypto';
 import { MASTER_EMAILS } from '../constants';
 import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { isResponseCompliant } from '../lib/qualityUtils';
 import { Metric } from '../types';
@@ -212,7 +213,7 @@ const Dashboard: React.FC = () => {
         }
 
         const [signaturesSnap, domainsSnap, sessionsSnap] = await Promise.all([
-          getDocs(collection(db, 'dds_signatures')).catch(err => {
+          getDocs(query(collection(db, 'dds_signatures'), where('timestamp', '>=', Timestamp.fromDate(currentYearStart)), limit(500))).catch(err => {
             handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
             return null;
           }),
@@ -220,7 +221,7 @@ const Dashboard: React.FC = () => {
             handleFirestoreError(err, OperationType.LIST, 'allowed_domains');
             return null;
           }),
-          getDocs(collection(db, 'dds_sessions')).catch(err => {
+          getDocs(query(collection(db, 'dds_sessions'), where('createdAt', '>=', Timestamp.fromDate(currentYearStart)), limit(500))).catch(err => {
             handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
             return null;
           })
@@ -260,20 +261,28 @@ const Dashboard: React.FC = () => {
       }));
     });
 
+    // Date boundaries for selected month/year
+    const monthStart = new Date(filterYear, filterMonth, 1, 0, 0, 0);
+    const monthEnd = new Date(filterYear, filterMonth + 1, 0, 23, 59, 59);
+    const monthStartStr = `${filterYear}-${String(filterMonth + 1).padStart(2, '0')}-01`;
+    const monthEndStr = `${filterYear}-${String(filterMonth + 1).padStart(2, '0')}-31`;
+
     // Forklift Real-time Listeners
-    const unsubForklifts = onSnapshot(collection(db, 'forklifts'), (snapshot) => {
-      const docs = snapshot.docs.map(d => d.data());
+    const unsubForklifts = subscribeSharedCollection('forklifts', (docs) => {
       setForkliftStats(prev => ({
         ...prev,
         total: docs.length,
         blocked: docs.filter(d => d.status === 'bloqueada').length,
         liberated: docs.filter(d => d.status === 'liberada').length
       }));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'forklifts');
-    });
+    }, 'number');
 
-    const unsubChecklists = onSnapshot(collection(db, 'forklift_checklists'), async (snapshot) => {
+    const qChecklists = query(
+      collection(db, 'forklift_checklists'),
+      where('timestamp', '>=', Timestamp.fromDate(monthStart)),
+      where('timestamp', '<=', Timestamp.fromDate(monthEnd))
+    );
+    const unsubChecklists = onSnapshot(qChecklists, async (snapshot) => {
       const docs = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.conductorName);
@@ -284,14 +293,17 @@ const Dashboard: React.FC = () => {
       handleFirestoreError(err, OperationType.LIST, 'forklift_checklists');
     });
 
-    const unsubCheckItems = onSnapshot(collection(db, 'forklift_check_items'), (snapshot) => {
-      setCheckItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'forklift_check_items');
-    });
+    const unsubCheckItems = subscribeSharedCollection('forklift_check_items', (docs) => {
+      setCheckItems(docs);
+    }, 'order');
 
     // Quality Listeners
-    const unsubQualSubmissions = onSnapshot(collection(db, 'quality_checklist_submissions'), async (snapshot) => {
+    const qQualSubmissions = query(
+      collection(db, 'quality_checklist_submissions'),
+      where('createdAt', '>=', Timestamp.fromDate(monthStart)),
+      where('createdAt', '<=', Timestamp.fromDate(monthEnd))
+    );
+    const unsubQualSubmissions = onSnapshot(qQualSubmissions, async (snapshot) => {
       const docs = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -300,28 +312,28 @@ const Dashboard: React.FC = () => {
       setQualitySubmissions(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'quality_checklist_submissions'));
 
-    const unsubQualTemplates = onSnapshot(collection(db, 'quality_checklist_templates'), (snapshot) => {
-      setQualityTemplates(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'quality_checklist_templates'));
-
-    const unsubQualOptions = onSnapshot(collection(db, 'quality_checklist_options'), (snapshot) => {
-      setQualityOptionSets(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'quality_checklist_options'));
+    const unsubQualTemplates = subscribeSharedCollection('quality_checklist_templates', setQualityTemplates);
+    const unsubQualOptions = subscribeSharedCollection('quality_checklist_options', setQualityOptionSets);
+    const unsubLines = subscribeSharedCollection('production_lines', setLines);
 
     // Wire Listeners
-    const unsubWireBatches = onSnapshot(collection(db, 'wire_batches'), (snapshot) => {
+    const qWireBatches = query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(50));
+    const unsubWireBatches = onSnapshot(qWireBatches, (snapshot) => {
       setWireBatches(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'wire_batches'));
 
-    const unsubWireCoils = onSnapshot(collection(db, 'wire_coils'), (snapshot) => {
+    const qWireCoils = query(collection(db, 'wire_coils'), limit(150));
+    const unsubWireCoils = onSnapshot(qWireCoils, (snapshot) => {
       setWireCoils(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'wire_coils'));
 
-    const unsubLines = onSnapshot(collection(db, 'production_lines'), (snapshot) => {
-      setLines(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'production_lines'));
-
-    const unsubRoutesSub = onSnapshot(collection(db, 'route_submissions'), async (snapshot) => {
+    // Routes Listeners
+    const qRoutesSub = query(
+      collection(db, 'route_submissions'),
+      where('createdAt', '>=', Timestamp.fromDate(monthStart)),
+      where('createdAt', '<=', Timestamp.fromDate(monthEnd))
+    );
+    const unsubRoutesSub = onSnapshot(qRoutesSub, async (snapshot) => {
       const docs = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -330,11 +342,15 @@ const Dashboard: React.FC = () => {
       setRoutesSubmissions(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'route_submissions'));
 
-    const unsubRoutesTmpl = onSnapshot(collection(db, 'route_templates'), (snapshot) => {
-      setRoutesTemplates(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'route_templates'));
+    const unsubRoutesTmpl = subscribeSharedCollection('route_templates', setRoutesTemplates);
 
-    const unsubSafetyObs = onSnapshot(collection(db, 'safety_observations'), async (snapshot) => {
+    // Safety Observations Listeners
+    const qSafetyObs = query(
+      collection(db, 'safety_observations'),
+      where('createdAt', '>=', Timestamp.fromDate(monthStart)),
+      where('createdAt', '<=', Timestamp.fromDate(monthEnd))
+    );
+    const unsubSafetyObs = onSnapshot(qSafetyObs, async (snapshot) => {
       const docs = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -343,11 +359,15 @@ const Dashboard: React.FC = () => {
       setSafetyObservations(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'safety_observations'));
 
-    const unsubConsumableItems = onSnapshot(collection(db, 'consumable_items'), (snapshot) => {
-      setConsumableItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_items'));
+    // Consumables Listeners
+    const unsubConsumableItems = subscribeSharedCollection('consumable_items', setConsumableItems);
 
-    const unsubConsumableLogs = onSnapshot(collection(db, 'consumable_logs'), async (snapshot) => {
+    const qConsumableLogs = query(
+      collection(db, 'consumable_logs'),
+      where('createdAt', '>=', Timestamp.fromDate(monthStart)),
+      where('createdAt', '<=', Timestamp.fromDate(monthEnd))
+    );
+    const unsubConsumableLogs = onSnapshot(qConsumableLogs, async (snapshot) => {
       const docs = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
@@ -356,7 +376,13 @@ const Dashboard: React.FC = () => {
       setConsumableLogs(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_logs'));
 
-    const unsubOvertime = onSnapshot(collection(db, 'overtime_justifications'), async (snapshot) => {
+    // Overtime Listeners
+    const qOvertime = query(
+      collection(db, 'overtime_justifications'),
+      where('date', '>=', monthStartStr),
+      where('date', '<=', monthEndStr)
+    );
+    const unsubOvertime = onSnapshot(qOvertime, async (snapshot) => {
       const docs = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot, collection, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { UserProfile } from '../types';
 import { MASTER_EMAILS } from '../constants';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -74,14 +75,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
 
-    // Monitor allowed domains in real-time
-    const unsubDomains = onSnapshot(collection(db, 'allowed_domains'), (snap) => {
-      setAllowedDomains(snap.docs.map(doc => doc.id.toLowerCase().trim()));
+    // Monitor allowed domains in real-time with shared cache
+    const unsubDomains = subscribeSharedCollection('allowed_domains', (list) => {
+      setAllowedDomains(list.map((item: any) => (item.id || item.domain || '').toLowerCase().trim()).filter(Boolean));
       setDomainsLoading(false);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'allowed_domains');
-      setDomainsLoading(false);
-    });
+    }, 'domain');
 
     // Monitor company branding in real-time
     const unsubBranding = onSnapshot(doc(db, 'system_config', 'branding'), (snapshot) => {

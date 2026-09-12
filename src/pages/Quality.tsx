@@ -13,11 +13,13 @@ import {
   getDocs,
   getDoc,
   deleteDoc,
-  setDoc
+  setDoc,
+  limit
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { encryptValue, decryptValue } from '../lib/crypto';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { 
   QualityChecklistTemplate, 
   QualityChecklistSubmission, 
@@ -1970,13 +1972,11 @@ const Quality: React.FC = () => {
       }
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_templates'));
 
-    const unsubLines = onSnapshot(collection(db, 'production_lines'), (snapshot) => {
-      const activeLines = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as ProductionLine))
-        .filter(l => l.active);
+    const unsubLines = subscribeSharedCollection('production_lines', (linesList) => {
+      const activeLines = (linesList as ProductionLine[]).filter(l => l.active);
       activeLines.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       setLines(activeLines);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'production_lines'));
+    }, 'name');
 
     const unsubSectors = onSnapshot(collection(db, 'quality_sectors'), async (snapshot) => {
       const activeSectors = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QualitySector));
@@ -2031,7 +2031,7 @@ const Quality: React.FC = () => {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_options'));
 
     const baseSubQuery = collection(db, 'quality_checklist_submissions');
-    const subQuery = query(baseSubQuery, orderBy('createdAt', 'desc'));
+    const subQuery = query(baseSubQuery, orderBy('createdAt', 'desc'), limit(150));
 
     const unsubSubmissions = onSnapshot(subQuery, async (snapshot) => {
       const mapped = await Promise.all(snapshot.docs.map(async (doc) => {
@@ -2047,7 +2047,7 @@ const Quality: React.FC = () => {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_submissions'));
 
     const baseOmQuery = collection(db, 'quality_checklist_omissions');
-    const omQuery = query(baseOmQuery, orderBy('createdAt', 'desc'));
+    const omQuery = query(baseOmQuery, orderBy('createdAt', 'desc'), limit(150));
 
     const unsubOmissions = onSnapshot(omQuery, async (snapshot) => {
       const mapped = await Promise.all(snapshot.docs.map(async (doc) => {
@@ -2062,12 +2062,11 @@ const Quality: React.FC = () => {
       setOmissions(mapped);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_omissions'));
 
-    const unsubProducts = onSnapshot(collection(db, 'quality_products'), (snapshot) => {
-      const fetchedProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SecagemProduct));
-      // Sort products by product code in ascending order (using numeric and case-insensitive natural sorting)
+    const unsubProducts = subscribeSharedCollection('quality_products', (productsList) => {
+      const fetchedProducts = [...(productsList as SecagemProduct[])];
       fetchedProducts.sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' }));
       setProducts(fetchedProducts);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_products'));
+    }, 'name');
 
     const unsubSettings = onSnapshot(doc(db, 'quality_settings', 'modules'), (snapshot) => {
       if (snapshot.exists()) {
@@ -2078,18 +2077,15 @@ const Quality: React.FC = () => {
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, 'quality_settings/modules'));
 
-    const unsubUnits = onSnapshot(collection(db, 'quality_measurement_units'), (snapshot) => {
-      if (snapshot.empty) {
+    const unsubUnits = subscribeSharedCollection('quality_measurement_units', (unitsList) => {
+      if (unitsList.length === 0) {
         setMeasurementUnits(DEFAULT_MEASUREMENT_UNITS);
       } else {
-        const list = snapshot.docs.map(doc => doc.data().symbol || doc.id);
+        const list = (unitsList as any[]).map(doc => doc.symbol || doc.id);
         const combined = Array.from(new Set([...DEFAULT_MEASUREMENT_UNITS, ...list]));
         combined.sort((a, b) => a.localeCompare(b, 'pt-BR'));
         setMeasurementUnits(combined);
       }
-    }, (error) => {
-      console.warn("Note in quality_measurement_units listener:", error);
-      setMeasurementUnits(DEFAULT_MEASUREMENT_UNITS);
     });
 
     const unsubGlobalSettings = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {

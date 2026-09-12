@@ -10,14 +10,16 @@ import {
   serverTimestamp,
   query,
   orderBy,
-  where
+  where,
+  limit
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { decryptValue } from '../lib/crypto';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
-import { getLocalCachedUsers } from '../lib/usersCache';
+import { getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { 
   Clock, 
@@ -155,38 +157,24 @@ export default function Overtime() {
   // Load baseline data (functions, areas, and users)
   useEffect(() => {
     // 1. Listen for Functions
-    const unsubFuncs = onSnapshot(query(collection(db, 'overtime_functions'), orderBy('name', 'asc')), (snap) => {
-      const list: OvertimeFunction[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as OvertimeFunction);
-      });
-      setFunctions(list);
-      // Auto-select first active function if none selected
-      const firstActive = list.find(f => f.active);
+    const unsubFuncs = subscribeSharedCollection('overtime_functions', (list) => {
+      setFunctions(list as OvertimeFunction[]);
+      const firstActive = (list as OvertimeFunction[]).find(f => f.active);
       if (firstActive && !formRoleName) {
         setFormRoleName(firstActive.name);
       }
-    }, (err) => {
-      console.error('Error fetching overtime functions:', err);
-    });
+    }, 'name');
 
     // 2. Listen for Areas
-    const unsubAreas = onSnapshot(query(collection(db, 'overtime_areas'), orderBy('name', 'asc')), (snap) => {
-      const list: OvertimeArea[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as OvertimeArea);
-      });
-      setAreas(list);
-      // Auto-select first active area if none selected
-      const firstActive = list.find(a => a.active);
+    const unsubAreas = subscribeSharedCollection('overtime_areas', (list) => {
+      setAreas(list as OvertimeArea[]);
+      const firstActive = (list as OvertimeArea[]).find(a => a.active);
       if (firstActive && !formArea) {
         setFormArea(firstActive.name);
       }
-    }, (err) => {
-      console.error('Error fetching overtime areas:', err);
-    });
+    }, 'name');
 
-    // 3. Listen for users if admin/master/manager
+    // 3. Listen for users if admin/master/manager from shared decrypted cache
     let unsubUsers = () => {};
     if (isAdmin || isMaster || isManager) {
       // Immediate cached render
@@ -198,26 +186,11 @@ export default function Overtime() {
         setUsersList(approvedList as any[]);
       }
 
-      unsubUsers = onSnapshot(collection(db, 'users'), async (snap) => {
-        const listPromises = snap.docs.map(async (docSnap) => {
-          const data = docSnap.data();
-          const decName = await decryptValue(data.displayName);
-          const decEmail = await decryptValue(data.email);
-          return {
-            uid: docSnap.id,
-            ...data,
-            displayName: decName,
-            email: decEmail,
-          } as UserProfile;
-        });
-        const fullList = await Promise.all(listPromises);
-        const approvedList = fullList.filter(u => u.status === 'approved' && u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com');
-        
-        // Sort users alphabetically
-        approvedList.sort((a, b) => a.displayName.localeCompare(b.displayName));
-        setUsersList(approvedList);
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'users');
+      unsubUsers = subscribeToUsers((cachedUsers) => {
+        const approvedList = cachedUsers
+          .filter(u => u.status === 'approved' && u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
+          .sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+        setUsersList(approvedList as any[]);
       });
     }
 
@@ -232,14 +205,15 @@ export default function Overtime() {
   useEffect(() => {
     if (!user) return;
 
-    let q = query(collection(db, 'overtime_justifications'), orderBy('date', 'desc'));
+    let q = query(collection(db, 'overtime_justifications'), orderBy('date', 'desc'), limit(200));
     
     // Non-managers/admins can only see their own justifications
     if (!isManager && !isAdmin && !isMaster) {
       q = query(
         collection(db, 'overtime_justifications'), 
         where('userId', '==', user.uid),
-        orderBy('date', 'desc')
+        orderBy('date', 'desc'),
+        limit(100)
       );
     }
 

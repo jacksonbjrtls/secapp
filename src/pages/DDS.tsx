@@ -432,7 +432,7 @@ const DDS: React.FC = () => {
     const q = query(
       collection(db, 'dds_sessions'),
       orderBy('createdAt', 'desc'),
-      limit(400)
+      limit(150)
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {

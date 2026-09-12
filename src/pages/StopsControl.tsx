@@ -9,13 +9,15 @@ import {
   doc, 
   serverTimestamp,
   query,
-  orderBy
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { 
   Clock, 
   Calendar, 
@@ -332,22 +334,21 @@ export default function StopsControl() {
     });
   }, [formStartTime, formEndTime, workFrontOptions]);
 
-  // Load production lines
+  // Load production lines with shared cache
   useEffect(() => {
-    const unsubLines = onSnapshot(collection(db, 'production_lines'), (snap) => {
-      const linesData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductionLine));
-      const sortedLines = [...linesData].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    const unsubLines = subscribeSharedCollection('production_lines', (linesData) => {
+      const sortedLines = [...(linesData as ProductionLine[])].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
       setLines(sortedLines);
       if (sortedLines.length > 0 && !formLineId) {
         setFormLineId(sortedLines[0].id);
       }
-    });
+    }, 'name');
     return () => unsubLines();
   }, []);
 
-  // Subscribe to stops reports
+  // Subscribe to stops reports (limited to 150 recent)
   useEffect(() => {
-    const q = query(collection(db, 'stops_reports'), orderBy('date', 'desc'));
+    const q = query(collection(db, 'stops_reports'), orderBy('date', 'desc'), limit(150));
     const unsubReports = onSnapshot(q, (snap) => {
       const reportsData = snap.docs.map(doc => {
         const data = doc.data();

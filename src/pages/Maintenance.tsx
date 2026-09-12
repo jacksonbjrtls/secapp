@@ -9,7 +9,8 @@ import {
   serverTimestamp, 
   query, 
   orderBy,
-  getDocs
+  getDocs,
+  limit
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -17,6 +18,7 @@ import { getCurrentShift, getGroupForShift, Shift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatLocalDateBR, getLocalDateStrBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -194,7 +196,7 @@ export default function Maintenance() {
     setLoading(true);
 
     const unsubIssues = onSnapshot(
-      query(collection(db, 'maintenance_issues'), orderBy('createdAt', 'desc')),
+      query(collection(db, 'maintenance_issues'), orderBy('createdAt', 'desc'), limit(300)),
       (snap) => {
         const list: MaintenanceIssue[] = [];
         snap.forEach(docSnap => {
@@ -217,23 +219,14 @@ export default function Maintenance() {
       }
     );
 
-    const unsubEquipments = onSnapshot(collection(db, 'maintenance_equipments'), (snap) => {
-      const list: MaintenanceEquipment[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as MaintenanceEquipment);
-      });
-      list.sort((a, b) => a.tag.localeCompare(b.tag));
-      setEquipments(list);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_equipments'));
+    const unsubEquipments = subscribeSharedCollection('maintenance_equipments', (list) => {
+      const sorted = [...(list as MaintenanceEquipment[])].sort((a, b) => a.tag.localeCompare(b.tag));
+      setEquipments(sorted);
+    }, 'tag');
 
-    const unsubInspTypes = onSnapshot(collection(db, 'maintenance_inspection_types'), (snap) => {
-      const list: MaintenanceInspectionType[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as MaintenanceInspectionType);
-      });
-      setInspectionTypes(list);
-
-      if (snap.empty && !localStorage.getItem('maint_seeded_insp_types_v2')) {
+    const unsubInspTypes = subscribeSharedCollection('maintenance_inspection_types', (list) => {
+      setInspectionTypes(list as MaintenanceInspectionType[]);
+      if (list.length === 0 && !localStorage.getItem('maint_seeded_insp_types_v2')) {
         localStorage.setItem('maint_seeded_insp_types_v2', 'true');
         DEFAULT_INSPECTION_TYPES.forEach(name => {
           addDoc(collection(db, 'maintenance_inspection_types'), {
@@ -243,24 +236,15 @@ export default function Maintenance() {
           }).catch(console.error);
         });
       }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_inspection_types'));
+    }, 'name');
 
-    const unsubInspNames = onSnapshot(collection(db, 'maintenance_inspection_names'), (snap) => {
-      const list: MaintenanceInspectionName[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as MaintenanceInspectionName);
-      });
-      setInspectionNames(list);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_inspection_names'));
+    const unsubInspNames = subscribeSharedCollection('maintenance_inspection_names', (list) => {
+      setInspectionNames(list as MaintenanceInspectionName[]);
+    }, 'name');
 
-    const unsubCenters = onSnapshot(collection(db, 'maintenance_responsible_centers'), (snap) => {
-      const list: MaintenanceResponsibleCenter[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as MaintenanceResponsibleCenter);
-      });
-      setResponsibleCenters(list);
-
-      if (snap.empty && !localStorage.getItem('maint_seeded_centers_v2')) {
+    const unsubCenters = subscribeSharedCollection('maintenance_responsible_centers', (list) => {
+      setResponsibleCenters(list as MaintenanceResponsibleCenter[]);
+      if (list.length === 0 && !localStorage.getItem('maint_seeded_centers_v2')) {
         localStorage.setItem('maint_seeded_centers_v2', 'true');
         DEFAULT_RESPONSIBLE_CENTERS.forEach(name => {
           addDoc(collection(db, 'maintenance_responsible_centers'), {
@@ -270,16 +254,11 @@ export default function Maintenance() {
           }).catch(console.error);
         });
       }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_responsible_centers'));
+    }, 'name');
 
-    const unsubProgTypes = onSnapshot(collection(db, 'maintenance_programming_types'), (snap) => {
-      const list: MaintenanceProgrammingType[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as MaintenanceProgrammingType);
-      });
-      setProgrammingTypes(list);
-
-      if (snap.empty && !localStorage.getItem('maint_seeded_prog_types_v2')) {
+    const unsubProgTypes = subscribeSharedCollection('maintenance_programming_types', (list) => {
+      setProgrammingTypes(list as MaintenanceProgrammingType[]);
+      if (list.length === 0 && !localStorage.getItem('maint_seeded_prog_types_v2')) {
         localStorage.setItem('maint_seeded_prog_types_v2', 'true');
         DEFAULT_PROGRAMMING_TYPES.forEach(name => {
           addDoc(collection(db, 'maintenance_programming_types'), {
@@ -289,16 +268,11 @@ export default function Maintenance() {
           }).catch(console.error);
         });
       }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_programming_types'));
+    }, 'name');
 
-    const unsubStatuses = onSnapshot(collection(db, 'maintenance_statuses'), (snap) => {
-      const list: MaintenanceStatus[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as MaintenanceStatus);
-      });
-      setStatuses(list);
-
-      if (snap.empty && !localStorage.getItem('maint_seeded_statuses_v2')) {
+    const unsubStatuses = subscribeSharedCollection('maintenance_statuses', (list) => {
+      setStatuses(list as MaintenanceStatus[]);
+      if (list.length === 0 && !localStorage.getItem('maint_seeded_statuses_v2')) {
         localStorage.setItem('maint_seeded_statuses_v2', 'true');
         DEFAULT_STATUSES.forEach(name => {
           addDoc(collection(db, 'maintenance_statuses'), {
@@ -308,29 +282,15 @@ export default function Maintenance() {
           }).catch(console.error);
         });
       }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_statuses'));
+    }, 'name');
 
-    const unsubLines = onSnapshot(collection(db, 'maintenance_lines'), (snap) => {
-      const list: ProductionLine[] = [];
-      snap.forEach(docSnap => {
-        const d = docSnap.data();
-        if (d.active !== false) {
-          list.push({ id: docSnap.id, ...d } as ProductionLine);
-        }
-      });
-      setLines(list);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'maintenance_lines'));
+    const unsubLines = subscribeSharedCollection('maintenance_lines', (list) => {
+      setLines((list as ProductionLine[]).filter(d => d.active !== false));
+    }, 'name');
 
-    const unsubSectors = onSnapshot(collection(db, 'work_sectors'), (snap) => {
-      const list: WorkSector[] = [];
-      snap.forEach(docSnap => {
-        const d = docSnap.data();
-        if (d.active !== false) {
-          list.push({ id: docSnap.id, ...d } as WorkSector);
-        }
-      });
-      setSectors(list);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'work_sectors'));
+    const unsubSectors = subscribeSharedCollection('work_sectors', (list) => {
+      setSectors((list as WorkSector[]).filter(d => d.active !== false));
+    }, 'name');
 
     return () => {
       unsubIssues();
@@ -343,7 +303,7 @@ export default function Maintenance() {
       unsubLines();
       unsubSectors();
     };
-  }, []);
+  }, [isMaster]);
 
   // Compute lists for UI with fallback options if collections are empty
   const availableInspectionTypes = inspectionTypes.length > 0 

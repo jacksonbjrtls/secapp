@@ -5,6 +5,7 @@ import { doc, updateDoc, serverTimestamp, collection, getDocs, onSnapshot, query
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { safeHtml2canvas } from '../lib/html2canvasShim';
 import { jsPDF } from 'jspdf';
 import { encryptValue, hashEmailForSearch } from '../lib/crypto';
@@ -104,27 +105,25 @@ const Profile: React.FC = () => {
       { id: 'aux_enfardamento', name: 'Auxiliar de Enfardamento', sectorId: 'enfardamento', active: true }
     ];
 
-    const unsubSectors = onSnapshot(collection(db, 'work_sectors'), (sectorSnap) => {
-      const sectorList: any[] = sectorSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const combinedSectors = [...sectorList];
+    const unsubSectors = subscribeSharedCollection('work_sectors', (sectorList) => {
+      const combinedSectors = [...(sectorList as any[])];
       defaultSectors.forEach(ds => {
         if (!combinedSectors.some(s => s.id === ds.id)) {
           combinedSectors.push(ds);
         }
       });
       setSectors(combinedSectors.filter(s => s.active !== false));
-    });
+    }, 'name');
 
-    const unsubFunctions = onSnapshot(collection(db, 'work_functions'), (functionSnap) => {
-      const functionList: any[] = functionSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const combinedFunctions = [...functionList];
+    const unsubFunctions = subscribeSharedCollection('work_functions', (functionList) => {
+      const combinedFunctions = [...(functionList as any[])];
       defaultFunctions.forEach(df => {
         if (!combinedFunctions.some(f => f.id === df.id)) {
           combinedFunctions.push(df);
         }
       });
       setFunctions(combinedFunctions.filter(f => f.active !== false));
-    });
+    }, 'name');
 
     return () => {
       unsubSectors();

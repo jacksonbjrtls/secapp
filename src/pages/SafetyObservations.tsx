@@ -8,7 +8,8 @@ import {
   doc, 
   serverTimestamp, 
   query,
-  orderBy
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -16,7 +17,7 @@ import { MASTER_EMAILS } from '../constants';
 import { decryptValue } from '../lib/crypto';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate, formatDateBR } from '../lib/utils';
-import { getLocalCachedUsers } from '../lib/usersCache';
+import { getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { 
   ShieldAlert, 
@@ -314,7 +315,7 @@ const SafetyObservations: React.FC = () => {
   // Subscribe to Safety Observations from Firestore
   useEffect(() => {
     const unsub = onSnapshot(
-      query(collection(db, 'safety_observations'), orderBy('createdAt', 'desc')),
+      query(collection(db, 'safety_observations'), orderBy('createdAt', 'desc'), limit(250)),
       (snap) => {
         setObservations(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SafetyObservation)));
         setLoading(false);
@@ -422,46 +423,20 @@ const SafetyObservations: React.FC = () => {
       setDbOperators(ops.map(o => o.name));
     }
 
-    const unsub = onSnapshot(collection(db, 'users'), async (snap) => {
-      try {
-        const decryptedUsers = await Promise.all(
-          snap.docs.map(async (doc) => {
-            const u = doc.data();
-            const decName = await decryptValue(u.displayName);
-            const decEmail = await decryptValue(u.email);
-            return {
-              id: doc.id,
-              name: (decName || 'Sem nome').trim(),
-              email: (decEmail || '').toLowerCase().trim()
-            };
-          })
-        );
-
-        const uniqueUsersMap = new Map<string, { id: string; name: string }>();
-        decryptedUsers.forEach(user => {
-          if (user.email === 'jacksonbjr@gmail.com') return;
-          if (MASTER_EMAILS.includes(user.email) && !isMaster) return;
-          if (user.name && user.name !== 'Sem nome' && !uniqueUsersMap.has(user.name)) {
-            uniqueUsersMap.set(user.name, {
-              id: user.id,
-              name: user.name
-            });
-          }
-        });
-
-        const ops = Array.from(uniqueUsersMap.values());
-        ops.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-
-        setOperatorsState(ops);
-        setDbOperators(ops.map(o => o.name));
-      } catch (err) {
-        console.warn("Could not decrypt users in SafetyObservations:", err);
-      }
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'users');
+    const unsub = subscribeToUsers((cachedUsers) => {
+      const ops = cachedUsers
+        .filter(u => {
+          if (u.email === 'jacksonbjr@gmail.com') return false;
+          if (MASTER_EMAILS.includes(u.email) && !isMaster) return false;
+          return u.displayName && u.displayName !== 'Sem nome';
+        })
+        .map(u => ({ id: u.uid, name: u.displayName.trim() }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      setOperatorsState(ops);
+      setDbOperators(ops.map(o => o.name));
     });
     return () => unsub();
-  }, []);
+  }, [isMaster]);
 
   // Unified Handler for Configuration Save (Categories, Areas, Operators)
   const handleSaveOptionSetting = async () => {

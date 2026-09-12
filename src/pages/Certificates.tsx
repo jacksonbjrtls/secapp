@@ -7,6 +7,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../hooks/useAuth';
 import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { db } from '../lib/firebase';
 import { 
   collection, 
@@ -218,22 +219,11 @@ const Certificates: React.FC = () => {
   useEffect(() => {
     if (authLoading || !isApproved) return;
 
-    // Real-time listener for training courses
-    const unsubCourses = onSnapshot(
-      query(collection(db, 'training_courses'), orderBy('createdAt', 'desc')),
-      (coursesSnap) => {
-        const coursesList = coursesSnap.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as TrainingCourse[];
-        setCourses(coursesList);
-        setLoading(false);
-      },
-      (err) => {
-        console.warn('Error in training_courses onSnapshot:', err);
-        setLoading(false);
-      }
-    );
+    // Real-time listener for training courses with shared cache
+    const unsubCourses = subscribeSharedCollection('training_courses', (list) => {
+      setCourses(list as TrainingCourse[]);
+      setLoading(false);
+    }, 'title');
 
     // Real-time listener for registered users
     let unsubUsers = () => {};

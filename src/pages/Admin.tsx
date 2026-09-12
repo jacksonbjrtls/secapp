@@ -19,6 +19,7 @@ import { db, auth } from '../lib/firebase';
 import { UserProfile, AllowedDomain, UserRole, UserStatus } from '../types';
 import { MASTER_EMAILS } from '../constants';
 import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers, CachedUserItem, subscribeToUsers } from '../lib/usersCache';
+import { subscribeSharedCollection } from '../lib/referenceCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { encryptValue, decryptValue, hashEmailForSearch } from '../lib/crypto';
 import { useAuth } from '../hooks/useAuth';
@@ -769,56 +770,18 @@ const Admin: React.FC = () => {
       setLoading(true);
     }
 
-    // 2. Real-time users listener
-    const unsubUsers = onSnapshot(collection(db, 'users'), async (snapshot) => {
-      try {
-        const decryptedUsersList: CachedUserItem[] = await Promise.all(
-          snapshot.docs.map(async (d) => {
-            const data = d.data();
-            const decName = await decryptValue(data.displayName);
-            const decEmail = await decryptValue(data.email);
-            return {
-              uid: d.id,
-              displayName: decName || 'Sem nome',
-              email: (decEmail || '').toLowerCase().trim(),
-              role: data.role || 'viewer',
-              status: data.status || 'approved',
-              group: data.group || '',
-              sectorId: data.sectorId || '',
-              sectorName: data.sectorName || '',
-              cargoId: data.cargoId || '',
-              cargoName: data.cargoName || '',
-              birthDate: data.birthDate || '',
-              tshirtSize: data.tshirtSize || '',
-              registration: data.registration || '',
-              isMaster: !!data.isMaster,
-              mustChangePassword: !!data.mustChangePassword,
-              createdAt: data.createdAt,
-              updatedAt: data.updatedAt,
-            };
-          })
-        );
-
-        const validList = decryptedUsersList.filter(u => u.displayName !== 'Sem nome');
-        setLocalCachedUsers(validList);
-        const processed = processUsersList(validList);
-        setUsers(processed);
-      } catch (err: any) {
-        console.warn('Real-time decryption of users in Admin failed:', err);
-      } finally {
-        setLoading(false);
-      }
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'users');
+    // 2. Real-time users listener using centralized shared cache
+    const unsubUsers = subscribeToUsers((liveUsers) => {
+      const validList = liveUsers.filter(u => u.displayName !== 'Sem nome');
+      const processed = processUsersList(validList);
+      setUsers(processed);
       setLoading(false);
     });
 
-    // 3. Real-time allowed domains listener
-    const unsubDomains = onSnapshot(query(collection(db, 'allowed_domains'), orderBy('createdAt', 'desc')), (snapshot) => {
-      setDomains(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AllowedDomain)));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'allowed_domains');
-    });
+    // 3. Real-time allowed domains listener with shared cache
+    const unsubDomains = subscribeSharedCollection('allowed_domains', (domainsList) => {
+      setDomains(domainsList as AllowedDomain[]);
+    }, 'domain');
 
     return () => {
       unsubUsers();
