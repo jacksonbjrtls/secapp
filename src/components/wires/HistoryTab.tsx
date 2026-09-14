@@ -262,10 +262,18 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
 
     setLoading(true);
     try {
+      const parsedDia = typeof editingCoil.diameter === 'number'
+        ? editingCoil.diameter
+        : (parseFloat(String(editingCoil.diameter)) || 3.00);
+      const parsedWeight = typeof editingCoil.weight === 'number'
+        ? editingCoil.weight
+        : (parseFloat(String(editingCoil.weight).replace(',', '.')) || 0);
+
       const updateData: any = {
-        diameter: editingCoil.diameter,
-        weight: editingCoil.weight,
-        coilNumber: editingCoil.coilNumber
+        diameter: parsedDia,
+        weight: parsedWeight,
+        coilNumber: (editingCoil.coilNumber || '').trim().toUpperCase(),
+        updatedAt: serverTimestamp()
       };
 
       if (editingCoil.consumedIn) {
@@ -274,10 +282,15 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
 
       await updateDoc(doc(db, 'wire_coils', editingCoil.id), updateData);
       
+      const updatedCoilObj: WireCoil = {
+        ...editingCoil,
+        ...updateData
+      };
+
       // Update local state for the details view if it's open
       if (selectedBatchDetails) {
         setSelectedBatchDetails(prev => 
-          prev ? prev.map(c => c.id === editingCoil.id ? editingCoil : c) : null
+          prev ? prev.map(c => c.id === editingCoil.id ? updatedCoilObj : c) : null
         );
       }
 
@@ -285,15 +298,15 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
       setModalConfig({
         isOpen: true,
         title: 'Sucesso!',
-        message: 'Bobina atualizada com sucesso!',
+        message: `Bobina #${updateData.coilNumber} atualizada com sucesso para bitola ${parsedDia.toFixed(2).replace('.', ',')} mm!`,
         type: 'success'
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setModalConfig({
         isOpen: true,
         title: 'Erro',
-        message: 'Erro ao atualizar bobina.',
+        message: 'Erro ao atualizar bobina: ' + (err.message || 'Tente novamente.'),
         type: 'error'
       });
     } finally {
@@ -1245,17 +1258,65 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Bitola (mm)</label>
+                      <div className="flex items-center justify-between mb-2 ml-1">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase">Bitola</label>
+                        <span className="text-[11px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                          {Number(editingCoil.diameter || 3.00).toFixed(2).replace('.', ',')} mm
+                        </span>
+                      </div>
                       <select
                         required
-                        value={editingCoil.diameter}
-                        onChange={(e) => setEditingCoil({...editingCoil, diameter: parseFloat(e.target.value)})}
-                        className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-amber-500 outline-none font-bold text-lg appearance-none"
+                        value={Number(editingCoil.diameter || 3.00).toFixed(2)}
+                        onChange={(e) => {
+                          const newDia = parseFloat(e.target.value);
+                          const update: any = { ...editingCoil, diameter: newDia };
+                          if (editingCoil.consumedIn) {
+                            if (newDia >= 2.9 && ['Amarradeira 1', 'Amarradeira 2'].includes(editingCoil.consumedIn)) {
+                              update.consumedIn = 'Unitizadora';
+                            } else if (newDia < 2.9 && ['Unitizadora', 'Big Bale', 'Big Balé'].includes(editingCoil.consumedIn)) {
+                              update.consumedIn = 'Amarradeira 1';
+                            }
+                          }
+                          setEditingCoil(update);
+                        }}
+                        className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-amber-500 outline-none font-black text-lg cursor-pointer"
                       >
-                        <option value="2.18">2.18 mm</option>
-                        <option value="2.3">2.30 mm</option>
-                        <option value="3.0">3.00 mm</option>
+                        <option value="2.18">2,18 mm (Padrão Fino)</option>
+                        <option value="2.30">2,30 mm (Intermediário)</option>
+                        <option value="3.00">3,00 mm (Padrão Grosso)</option>
                       </select>
+
+                      {/* Quick selection pills for the 3 official diameters */}
+                      <div className="flex gap-1.5 mt-2.5">
+                        {[2.18, 2.30, 3.00].map((d) => {
+                          const isSelected = Math.abs((Number(editingCoil.diameter) || 0) - d) < 0.01;
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => {
+                                const update: any = { ...editingCoil, diameter: d };
+                                if (editingCoil.consumedIn) {
+                                  if (d >= 2.9 && ['Amarradeira 1', 'Amarradeira 2'].includes(editingCoil.consumedIn)) {
+                                    update.consumedIn = 'Unitizadora';
+                                  } else if (d < 2.9 && ['Unitizadora', 'Big Bale', 'Big Balé'].includes(editingCoil.consumedIn)) {
+                                    update.consumedIn = 'Amarradeira 1';
+                                  }
+                                }
+                                setEditingCoil(update);
+                              }}
+                              className={cn(
+                                "flex-1 py-1.5 px-1 text-xs font-black rounded-xl border transition-all cursor-pointer text-center",
+                                isSelected
+                                  ? "bg-amber-500 text-white border-amber-600 shadow-xs"
+                                  : "bg-white text-slate-700 border-slate-200 hover:bg-amber-50 hover:border-amber-300"
+                              )}
+                            >
+                              {d.toFixed(2).replace('.', ',')}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                     <div>
                       <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Peso (kg)</label>
@@ -1592,18 +1653,41 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
 
                     {/* Diameter */}
                     <div className="sm:col-span-3 space-y-1">
-                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">
-                        Bitola (mm) *
-                      </label>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                          Bitola (mm) *
+                        </label>
+                        <span className="text-[10px] font-black text-emerald-700">
+                          {Number(newCoilInput.diameter || 2.30).toFixed(2).replace('.', ',')} mm
+                        </span>
+                      </div>
                       <select
-                        value={newCoilInput.diameter}
+                        value={Number(newCoilInput.diameter || 2.30).toFixed(2)}
                         onChange={(e) => setNewCoilInput(prev => ({ ...prev, diameter: parseFloat(e.target.value) || 2.30 }))}
-                        className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-xl text-sm font-black outline-none transition-all"
+                        className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-xl text-sm font-black outline-none transition-all cursor-pointer"
                       >
-                        {[2.18, 2.30, 2.50, 2.70, 3.00, 3.20, 3.50, 4.00].map(dia => (
-                          <option key={dia} value={dia}>{dia.toFixed(2)} mm</option>
+                        {[2.18, 2.30, 3.00].map(dia => (
+                          <option key={dia} value={dia.toFixed(2)}>{dia.toFixed(2).replace('.', ',')} mm</option>
                         ))}
                       </select>
+                      <div className="flex gap-1 mt-1.5">
+                        {[2.18, 2.30, 3.00].map(d => {
+                          const isSel = Math.abs((Number(newCoilInput.diameter) || 0) - d) < 0.01;
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => setNewCoilInput(prev => ({ ...prev, diameter: d }))}
+                              className={cn(
+                                "flex-1 py-1 px-0.5 text-[10px] font-black rounded-lg border transition-all cursor-pointer text-center",
+                                isSel ? "bg-emerald-600 text-white border-emerald-700 shadow-xs" : "bg-white text-slate-700 border-slate-200 hover:bg-emerald-50"
+                              )}
+                            >
+                              {d.toFixed(2).replace('.', ',')}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
 
                     {/* Weight */}

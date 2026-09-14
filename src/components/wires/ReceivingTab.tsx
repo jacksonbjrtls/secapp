@@ -62,13 +62,7 @@ import { exportWireBatchPdf } from '../../lib/wireBatchPdfGenerator';
 export const WIRE_STANDARD_DIAMETERS = [
   { value: '2.18', num: 2.18, label: '2,18 mm' },
   { value: '2.30', num: 2.30, label: '2,30 mm' },
-  { value: '2.50', num: 2.50, label: '2,50 mm' },
-  { value: '2.70', num: 2.70, label: '2,70 mm' },
-  { value: '2.80', num: 2.80, label: '2,80 mm' },
-  { value: '3.00', num: 3.00, label: '3,00 mm' },
-  { value: '3.20', num: 3.20, label: '3,20 mm' },
-  { value: '3.50', num: 3.50, label: '3,50 mm' },
-  { value: '4.00', num: 4.00, label: '4,00 mm' }
+  { value: '3.00', num: 3.00, label: '3,00 mm' }
 ];
 
 interface ReceivingTabProps {
@@ -1263,7 +1257,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                         </div>
                         {/* Quick Selection Pills */}
                         <div className="flex flex-wrap gap-1.5 mt-2.5">
-                          {[2.18, 2.30, 2.80, 3.00, 3.20].map((d) => {
+                          {[2.18, 2.30, 3.00].map((d) => {
                             const isSelected = Math.abs((manualData.diameter || 0) - d) < 0.01;
                             return (
                               <button
@@ -1833,6 +1827,26 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                                   </option>
                                 ))}
                               </select>
+                              <div className="flex gap-1 mt-1.5">
+                                {WIRE_STANDARD_DIAMETERS.map((dia) => {
+                                  const isSel = Math.abs((Number(coil.diameter) || 0) - dia.num) < 0.01;
+                                  return (
+                                    <button
+                                      key={dia.value}
+                                      type="button"
+                                      onClick={() => updateCoil(idx, { diameter: dia.num })}
+                                      className={cn(
+                                        "flex-1 py-0.5 px-1 text-[10px] font-black rounded-md border transition-all cursor-pointer text-center",
+                                        isSel
+                                          ? "bg-emerald-600 text-white border-emerald-700 shadow-2xs"
+                                          : "bg-white text-slate-600 border-slate-200 hover:bg-emerald-50"
+                                      )}
+                                    >
+                                      {dia.num.toFixed(2).replace('.', ',')}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </div>
                           </div>
                         </div>

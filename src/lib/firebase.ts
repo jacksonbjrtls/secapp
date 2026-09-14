@@ -4,8 +4,12 @@ import {
   initializeFirestore, 
   persistentLocalCache, 
   persistentMultipleTabManager, 
-  CACHE_SIZE_UNLIMITED 
+  CACHE_SIZE_UNLIMITED,
+  setLogLevel
 } from 'firebase/firestore';
+
+// Prevent noisy internal transport retries in sandboxed/iframe preview
+setLogLevel('error');
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBo5pmkm8yIvR_2rg08a2XzgqdHvCFNnwA",
@@ -22,6 +26,7 @@ const app = initializeApp(firebaseConfig);
 
 export const db = initializeFirestore(app, {
   ignoreUndefinedProperties: true,
+  experimentalForceLongPolling: true,
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager(),
     cacheSizeBytes: CACHE_SIZE_UNLIMITED,

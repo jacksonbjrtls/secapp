@@ -351,6 +351,11 @@ async function startServer() {
     app.use(express.urlencoded({ extended: true }));
   }
 
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // API Route to decrypt values on behalf of the client
   app.post("/api/crypto/decrypt", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
