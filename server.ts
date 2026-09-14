@@ -760,9 +760,26 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
       const finalSenderName = senderName || req.user?.displayName || "Equipe de Gestão SecApp";
       const finalSenderEmail = senderEmail || req.user?.email || "";
 
-      const gmailUser = process.env.GMAIL_USER || process.env.GMAIL_EMAIL || process.env.GMAIL_ACCOUNT;
-      const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASS || process.env.GMAIL_PASSWORD;
-      const resendApiKey = process.env.RESEND_API_KEY;
+      // 1. Try to load email config from Firestore settings/email_config
+      let emailConfig: any = null;
+      try {
+        const dbFirestore = getFirestore(undefined, (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52");
+        const cfgDoc = await dbFirestore.collection("settings").doc("email_config").get();
+        if (cfgDoc.exists) {
+          emailConfig = cfgDoc.data();
+        }
+      } catch (fErr) {
+        console.warn("[API reply-feedback] Firestore email_config fetch note:", fErr);
+      }
+
+      const activeGmailUser = emailConfig?.gmailUser || process.env.GMAIL_USER || process.env.GMAIL_EMAIL || process.env.GMAIL_ACCOUNT;
+      const activeGmailPass = emailConfig?.gmailAppPassword || emailConfig?.gmailPass || process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASS || process.env.GMAIL_PASSWORD;
+      const activeResendKey = emailConfig?.resendApiKey || process.env.RESEND_API_KEY;
+      const smtpHost = emailConfig?.smtpHost;
+      const smtpPort = Number(emailConfig?.smtpPort) || 587;
+      const smtpUser = emailConfig?.smtpUser;
+      const smtpPass = emailConfig?.smtpPass || emailConfig?.smtpPassword;
+      const smtpSecure = emailConfig?.smtpSecure === true || smtpPort === 465;
 
       const escapedMessage = String(message)
         .replace(/&/g, '&amp;')
@@ -789,9 +806,9 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
           <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f1f5f9; padding: 32px 16px;">
             <tr>
               <td align="center">
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06); border: 1px solid #e2e8f0;">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06); border: 1px solid #cbd5e1;">
                   
-                  <!-- Top Accent Bar -->
+                  <!-- Top Accent Bar (Eldorado Emerald Green) -->
                   <tr>
                     <td style="background-color: #059669; height: 6px;"></td>
                   </tr>
@@ -831,7 +848,7 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
                       </p>
 
                       ${escapedObservation ? `
-                      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 14px 16px; margin: 0 0 20px 0;">
+                      <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 14px 16px; margin: 0 0 20px 0;">
                         <div style="font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #b45309; margin-bottom: 6px;">
                           Sua Avaliação Registrada ${ratingStars ? `(${ratingStars})` : ''}:
                         </div>
@@ -842,17 +859,17 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
                       ` : ''}
 
                       <!-- Response box from management -->
-                      <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 18px 20px; margin: 0 0 20px 0;">
+                      <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-left: 4px solid #059669; border-radius: 12px; padding: 18px 20px; margin: 0 0 20px 0;">
                         <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #065f46; margin-bottom: 8px;">
                           💬 Retorno da Gestão / Analisado por: <strong>${finalSenderName}</strong>
                         </div>
-                        <div style="font-size: 13.5px; line-height: 1.65; color: #064e3b;">
+                        <div style="font-size: 13.5px; line-height: 1.65; color: #064e3b; font-weight: 500;">
                           ${escapedMessage}
                         </div>
                       </div>
 
                       <p style="font-size: 12.5px; line-height: 1.5; color: #64748b; margin: 0 0 24px 0;">
-                        Continuamos à disposição para ouvir suas sugestões. Se desejar acrescentar mais detalhes ou esclarecer qualquer ponto, sinta-se à vontade para responder a esta mensagem.
+                        Continuamos à total disposição para ouvir suas sugestões. Se desejar acrescentar mais detalhes ou esclarecer qualquer ponto, sinta-se à vontade para responder a esta mensagem.
                       </p>
 
                       <div style="text-align: center; margin: 16px 0;">
@@ -887,13 +904,48 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
       let sendMethod = 'none';
       let sendError: string | null = null;
 
-      if (gmailUser && gmailPass) {
+      // 1. Check custom SMTP (Office 365, Eldorado Internal SMTP, etc.)
+      if (smtpHost && smtpUser && smtpPass) {
+        try {
+          const transporter = nodemailer.createTransport({
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpSecure,
+            auth: {
+              user: smtpUser,
+              pass: smtpPass
+            },
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+            socketTimeout: 12000
+          });
+
+          const senderAddress = emailConfig?.senderEmail || smtpUser;
+          await transporter.sendMail({
+            from: `"${finalSenderName} (SecApp)" <${senderAddress}>`,
+            to: emailLower,
+            replyTo: finalSenderEmail || senderAddress,
+            subject: finalSubject,
+            html: htmlContent
+          });
+
+          emailSent = true;
+          sendMethod = 'smtp';
+          console.log(`[API reply-feedback] Sent via SMTP (${smtpHost}) to ${emailLower}`);
+        } catch (err: any) {
+          console.error(`[API reply-feedback] SMTP send failed:`, err);
+          sendError = err.message;
+        }
+      }
+
+      // 2. Check Gmail Transporter
+      if (!emailSent && activeGmailUser && activeGmailPass) {
         try {
           const transporter = nodemailer.createTransport({
             service: 'gmail',
             auth: {
-              user: gmailUser,
-              pass: gmailPass.replace(/\s+/g, '')
+              user: activeGmailUser,
+              pass: activeGmailPass.replace(/\s+/g, '')
             },
             connectionTimeout: 8000,
             greetingTimeout: 8000,
@@ -901,9 +953,9 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
           });
 
           await transporter.sendMail({
-            from: `"SecApp - Gestão de Feedback" <${gmailUser}>`,
+            from: `"${finalSenderName} (SecApp)" <${activeGmailUser}>`,
             to: emailLower,
-            replyTo: finalSenderEmail || gmailUser,
+            replyTo: finalSenderEmail || activeGmailUser,
             subject: finalSubject,
             html: htmlContent
           });
@@ -915,11 +967,14 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
           console.error(`[API reply-feedback] Gmail send failed:`, err);
           sendError = err.message;
         }
-      } else if (resendApiKey) {
+      }
+
+      // 3. Check Resend
+      if (!emailSent && activeResendKey) {
         try {
-          const resend = new Resend(resendApiKey);
+          const resend = new Resend(activeResendKey);
           const response = await resend.emails.send({
-            from: "SecApp <onboarding@resend.dev>",
+            from: `SecApp <onboarding@resend.dev>`,
             to: emailLower,
             replyTo: finalSenderEmail || undefined,
             subject: finalSubject,
@@ -950,7 +1005,7 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
           success: true,
           method: 'email',
           provider: sendMethod,
-          message: `E-mail enviado com sucesso para ${emailLower}!`,
+          message: `E-mail com formatação oficial enviado com sucesso para ${emailLower}!`,
           mailtoUrl
         });
       }
@@ -960,8 +1015,8 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
         success: true,
         method: 'mailto',
         warning: sendError 
-          ? `Não foi possível enviar diretamente pelo servidor (${sendError}). O link de e-mail (mailto) foi preparado.` 
-          : "Nenhum provedor de e-mail configurado no servidor. O link de e-mail (mailto) foi preparado para abertura no seu aplicativo de e-mail padrão.",
+          ? `Não foi possível enviar diretamente pelo servidor (${sendError}).` 
+          : "Nenhum provedor de e-mail direto configurado no servidor. Use os botões de copiar card ou configure o envio direto.",
         mailtoUrl
       });
 
@@ -976,6 +1031,101 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
         error: err.message || "Erro interno ao processar retorno",
         mailtoUrl: fallbackMailto 
       });
+    }
+  });
+
+  // API Route to get current email dispatch status/config
+  app.get("/api/admin/email-config", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      let emailConfig: any = null;
+      try {
+        const dbFirestore = getFirestore(undefined, (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52");
+        const cfgDoc = await dbFirestore.collection("settings").doc("email_config").get();
+        if (cfgDoc.exists) {
+          emailConfig = cfgDoc.data();
+        }
+      } catch (err) {}
+
+      const hasEnvGmail = Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
+      const hasEnvResend = Boolean(process.env.RESEND_API_KEY);
+
+      const isConfigured = Boolean(
+        (emailConfig?.smtpHost && emailConfig?.smtpUser && emailConfig?.smtpPass) ||
+        (emailConfig?.gmailUser && emailConfig?.gmailAppPassword) ||
+        emailConfig?.resendApiKey ||
+        hasEnvGmail ||
+        hasEnvResend
+      );
+
+      return res.json({
+        success: true,
+        configured: isConfigured,
+        provider: emailConfig?.provider || (hasEnvGmail ? 'gmail-env' : (hasEnvResend ? 'resend-env' : 'none')),
+        email: emailConfig?.gmailUser || emailConfig?.smtpUser || process.env.GMAIL_USER || '',
+        smtpHost: emailConfig?.smtpHost || '',
+        smtpPort: emailConfig?.smtpPort || 587,
+        senderName: emailConfig?.senderName || 'SecApp - Eldorado Brasil'
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API Route to save email dispatch configuration in Firestore
+  app.post("/api/admin/email-config", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        provider,
+        gmailUser,
+        gmailAppPassword,
+        smtpHost,
+        smtpPort,
+        smtpUser,
+        smtpPass,
+        smtpSecure,
+        resendApiKey,
+        senderName,
+        senderEmail
+      } = req.body || {};
+
+      const dbFirestore = getFirestore(undefined, (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52");
+      
+      const configData: any = {
+        provider: provider || 'gmail',
+        senderName: senderName || 'SecApp - Eldorado Brasil',
+        senderEmail: senderEmail || '',
+        updatedAt: new Date().toISOString(),
+        updatedBy: req.user?.email || 'admin'
+      };
+
+      if (provider === 'office365') {
+        configData.smtpHost = 'smtp.office365.com';
+        configData.smtpPort = 587;
+        configData.smtpSecure = false;
+        configData.smtpUser = smtpUser || gmailUser;
+        if (smtpPass || gmailAppPassword) configData.smtpPass = smtpPass || gmailAppPassword;
+      } else if (provider === 'smtp') {
+        configData.smtpHost = smtpHost || '';
+        configData.smtpPort = Number(smtpPort) || 587;
+        configData.smtpSecure = Boolean(smtpSecure);
+        configData.smtpUser = smtpUser || '';
+        if (smtpPass) configData.smtpPass = smtpPass;
+      } else if (provider === 'resend') {
+        if (resendApiKey) configData.resendApiKey = resendApiKey;
+      } else {
+        // default gmail
+        configData.gmailUser = gmailUser || '';
+        if (gmailAppPassword) configData.gmailAppPassword = gmailAppPassword;
+      }
+
+      await dbFirestore.collection("settings").doc("email_config").set(configData, { merge: true });
+
+      return res.json({
+        success: true,
+        message: "Configurações de e-mail salvas com sucesso no SecApp!"
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 

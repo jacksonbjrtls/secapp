@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Send, 
@@ -19,7 +19,11 @@ import {
   Check,
   Smartphone,
   Globe,
-  HelpCircle
+  HelpCircle,
+  Settings,
+  Key,
+  Server,
+  ShieldCheck
 } from 'lucide-react';
 import { AppFeedbackSurvey } from '../../types';
 import { formatLocalDateTimeBR } from '../../lib/utils';
@@ -82,8 +86,99 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
   const [copyNotification, setCopyNotification] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
 
+  // Email Server Configuration states
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [serverEmailConfigured, setServerEmailConfigured] = useState<boolean | null>(null);
+  const [serverEmailProvider, setServerEmailProvider] = useState<string>('');
+  const [configProvider, setConfigProvider] = useState<'office365' | 'smtp' | 'gmail' | 'resend'>('office365');
+  const [configEmail, setConfigEmail] = useState('');
+  const [configPassword, setConfigPassword] = useState('');
+  const [configSmtpHost, setConfigSmtpHost] = useState('');
+  const [configSmtpPort, setConfigSmtpPort] = useState(587);
+  const [configSenderName, setConfigSenderName] = useState('SecApp - Eldorado Brasil');
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [configStatusMsg, setConfigStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const senderName = userProfile?.displayName || user?.displayName || 'Gestão SecApp';
   const senderEmail = user?.email || userProfile?.email || 'gestao@eldorado.com.br';
+
+  useEffect(() => {
+    const checkEmailConfig = async () => {
+      try {
+        const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+        const res = await fetch('/api/admin/email-config', {
+          headers: { 'Authorization': `Bearer ${idToken}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setServerEmailConfigured(Boolean(data.configured));
+          setServerEmailProvider(data.provider || '');
+          if (data.email) setConfigEmail(data.email);
+          if (data.smtpHost) setConfigSmtpHost(data.smtpHost);
+          if (data.smtpPort) setConfigSmtpPort(data.smtpPort);
+          if (data.senderName) setConfigSenderName(data.senderName);
+        }
+      } catch (err) {
+        console.warn('Could not verify email configuration:', err);
+      }
+    };
+    checkEmailConfig();
+  }, []);
+
+  const handleSaveEmailConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingConfig(true);
+    setConfigStatusMsg(null);
+    try {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      const bodyPayload: any = {
+        provider: configProvider,
+        senderName: configSenderName,
+        senderEmail: configEmail
+      };
+
+      if (configProvider === 'office365') {
+        bodyPayload.smtpUser = configEmail;
+        bodyPayload.smtpPass = configPassword;
+      } else if (configProvider === 'smtp') {
+        bodyPayload.smtpHost = configSmtpHost;
+        bodyPayload.smtpPort = configSmtpPort;
+        bodyPayload.smtpUser = configEmail;
+        bodyPayload.smtpPass = configPassword;
+      } else if (configProvider === 'gmail') {
+        bodyPayload.gmailUser = configEmail;
+        bodyPayload.gmailAppPassword = configPassword;
+      } else if (configProvider === 'resend') {
+        bodyPayload.resendApiKey = configPassword;
+      }
+
+      const res = await fetch('/api/admin/email-config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify(bodyPayload)
+      });
+
+      const resData = await res.json();
+      if (res.ok && resData.success) {
+        setServerEmailConfigured(true);
+        setServerEmailProvider(configProvider);
+        setConfigStatusMsg({ type: 'success', text: 'Configurações salvas! Envio direto ativado no SecApp.' });
+        setTimeout(() => {
+          setShowConfigModal(false);
+          setConfigStatusMsg(null);
+        }, 1800);
+      } else {
+        setConfigStatusMsg({ type: 'error', text: resData.error || 'Erro ao salvar configuração.' });
+      }
+    } catch (err: any) {
+      setConfigStatusMsg({ type: 'error', text: err.message || 'Erro de conexão com o servidor.' });
+    } finally {
+      setSavingConfig(false);
+    }
+  };
 
   const handleApplyTemplate = (templateText: string) => {
     setMessage(templateText);
@@ -373,6 +468,23 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
                 <span className="sm:hidden">Prévia</span>
               </button>
             </div>
+
+            {/* Direct Email Server Config */}
+            <button
+              type="button"
+              onClick={() => setShowConfigModal(true)}
+              className={`p-1.5 px-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
+                serverEmailConfigured
+                  ? 'bg-emerald-600/60 text-emerald-100 hover:bg-emerald-600 border border-emerald-400/50 shadow-2xs'
+                  : 'bg-white/10 text-emerald-200 hover:text-white hover:bg-white/20 border border-white/10'
+              }`}
+              title="Configurar servidor de envio automático de e-mail (Office 365, Gmail, SMTP)"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {serverEmailConfigured ? 'Envio Direto Ativo' : 'Configurar E-mail'}
+              </span>
+            </button>
 
             <button
               onClick={onClose}
@@ -939,6 +1051,222 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
         </div>
 
       </div>
+
+      {/* Email Server Dispatch Configuration Modal */}
+      {showConfigModal && (
+        <div 
+          className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-fadeIn"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !savingConfig) setShowConfigModal(false);
+          }}
+        >
+          <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[90vh]">
+            <div className="bg-gradient-to-r from-emerald-800 to-slate-800 p-4 sm:p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center border border-white/20">
+                  <Server className="w-5 h-5 text-emerald-300" />
+                </div>
+                <div>
+                  <h4 className="text-sm sm:text-base font-bold text-white">
+                    Configuração de Envio Direto de E-mail
+                  </h4>
+                  <p className="text-[11px] text-emerald-200">
+                    Dispare e-mails formatados automaticamente pelo servidor
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowConfigModal(false)}
+                disabled={savingConfig}
+                className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEmailConfig} className="p-5 space-y-4 overflow-y-auto">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 text-xs text-emerald-900 flex items-start gap-2.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">Integração Segura Eldorado Brasil</p>
+                  <p className="text-[11px] text-emerald-800 leading-relaxed mt-0.5">
+                    Permite enviar o retorno de avaliações com 1 clique diretamente pelo SecApp, sem necessidade de colar manualmente no webmail. As credenciais são salvas de forma segura no Firestore da aplicação.
+                  </p>
+                </div>
+              </div>
+
+              {/* Provider Selection */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Provedor de Envio
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfigProvider('office365')}
+                    className={`p-2.5 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                      configProvider === 'office365'
+                        ? 'border-emerald-600 bg-emerald-50/80 text-emerald-900 shadow-xs'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-[10px] text-emerald-700 font-extrabold uppercase">Recomendado</div>
+                    Office 365
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfigProvider('gmail')}
+                    className={`p-2.5 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                      configProvider === 'gmail'
+                        ? 'border-emerald-600 bg-emerald-50/80 text-emerald-900 shadow-xs'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-[10px] text-slate-500 font-extrabold uppercase">Google</div>
+                    Gmail
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfigProvider('smtp')}
+                    className={`p-2.5 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                      configProvider === 'smtp'
+                        ? 'border-emerald-600 bg-emerald-50/80 text-emerald-900 shadow-xs'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-[10px] text-slate-500 font-extrabold uppercase">Interno</div>
+                    SMTP Custom
+                  </button>
+                </div>
+              </div>
+
+              {/* Sender Name */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Nome do Remetente
+                </label>
+                <input
+                  type="text"
+                  value={configSenderName}
+                  onChange={(e) => setConfigSenderName(e.target.value)}
+                  placeholder="Ex: SecApp - Eldorado Brasil"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Email Address */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {configProvider === 'office365' ? 'E-mail Corporativo (Office 365 / Eldorado)' : 'E-mail do Remetente'}
+                </label>
+                <input
+                  type="email"
+                  value={configEmail}
+                  onChange={(e) => setConfigEmail(e.target.value)}
+                  placeholder={configProvider === 'office365' ? 'gestao.seguranca@eldorado.com.br' : 'seu-email@dominio.com'}
+                  required
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Password or App Password */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {configProvider === 'gmail' ? 'Senha de Aplicativo Google (16 dígitos)' : 'Senha da Conta / Senha de Aplicativo'}
+                </label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    value={configPassword}
+                    onChange={(e) => setConfigPassword(e.target.value)}
+                    placeholder="••••••••••••••••"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                  />
+                  <Key className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3" />
+                </div>
+                {configProvider === 'gmail' && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Gere em: Conta Google → Segurança → Senhas de app.
+                  </p>
+                )}
+                {configProvider === 'office365' && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Utilize a senha corporativa ou senha de aplicativo gerada no portal Microsoft 365.
+                  </p>
+                )}
+              </div>
+
+              {/* If Custom SMTP */}
+              {configProvider === 'smtp' && (
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Host SMTP
+                    </label>
+                    <input
+                      type="text"
+                      value={configSmtpHost}
+                      onChange={(e) => setConfigSmtpHost(e.target.value)}
+                      placeholder="smtp.eldorado.com.br"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Porta
+                    </label>
+                    <input
+                      type="number"
+                      value={configSmtpPort}
+                      onChange={(e) => setConfigSmtpPort(Number(e.target.value))}
+                      placeholder="587"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {configStatusMsg && (
+                <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+                  configStatusMsg.type === 'success' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                }`}>
+                  {configStatusMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                  <span>{configStatusMsg.text}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowConfigModal(false)}
+                  disabled={savingConfig}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingConfig || !configEmail.trim()}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {savingConfig ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Salvando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Salvar Configuração</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
