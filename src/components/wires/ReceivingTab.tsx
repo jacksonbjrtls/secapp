@@ -53,11 +53,23 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
-import { parseWireQRCode } from '../../lib/wireUtils';
+import { parseWireQRCode, isSupplierCompatible } from '../../lib/wireUtils';
 import { QRCameraScanner } from './QRCameraScanner';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { useAuth } from '../../hooks/useAuth';
 import { exportWireBatchPdf } from '../../lib/wireBatchPdfGenerator';
+
+export const WIRE_STANDARD_DIAMETERS = [
+  { value: '2.18', num: 2.18, label: '2,18 mm' },
+  { value: '2.30', num: 2.30, label: '2,30 mm' },
+  { value: '2.50', num: 2.50, label: '2,50 mm' },
+  { value: '2.70', num: 2.70, label: '2,70 mm' },
+  { value: '2.80', num: 2.80, label: '2,80 mm' },
+  { value: '3.00', num: 3.00, label: '3,00 mm' },
+  { value: '3.20', num: 3.20, label: '3,20 mm' },
+  { value: '3.50', num: 3.50, label: '3,50 mm' },
+  { value: '4.00', num: 4.00, label: '4,00 mm' }
+];
 
 interface ReceivingTabProps {
   suppliers: WireSupplier[];
@@ -184,7 +196,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
   const [validatingSecurity, setValidatingSecurity] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [showManualModal, setShowManualModal] = useState(false);
-  const [manualData, setManualData] = useState({ coilNumber: '', weight: '', diameter: 2.30 });
+  const [manualData, setManualData] = useState({ coilNumber: '', weight: '', diameter: 3.00 });
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastSavedBatchId, setLastSavedBatchId] = useState<string | null>(null);
   const [lastSavedBatchForPdf, setLastSavedBatchForPdf] = useState<{
@@ -444,21 +456,26 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       return;
     }
 
-    const parsed = parseWireQRCode(data);
+    const selectedSupplier = suppliers.find(s => s.id === currentBatch.supplierId);
+    const defaultDiameter = scannedCoils.length > 0 ? (scannedCoils[0].diameter || 3.00) : (manualData.diameter || 3.00);
+
+    const parsed = parseWireQRCode(data, {
+      defaultDiameter,
+      preferredSupplier: selectedSupplier?.name
+    });
+
     if (!parsed) {
-      setError('Formato de código não reconhecido. Verifique se o QR code é de um fornecedor homologado.');
+      setError('Formato de código não reconhecido. Verifique se o QR code / DataMatrix é da etiqueta Belgo/Morlan ou use a Entrada Manual.');
       return;
     }
 
-    // Business Rule: Check if the scanned coil belongs to the selected supplier
-    const selectedSupplier = suppliers.find(s => s.id === currentBatch.supplierId);
-    if (!selectedSupplier) return;
-
-    const supplierMatch = parsed.supplier.toLowerCase().trim() === selectedSupplier.name.toLowerCase().trim();
-    
-    if (!supplierMatch) {
-      setError(`Erro de Fornecedor: Esta bobina é da ${parsed.supplier}, mas você selecionou ${selectedSupplier.name}. Todas as bobinas de uma carga devem ser do mesmo fornecedor.`);
-      return;
+    // Business Rule: Check if the scanned coil belongs to the selected supplier using flexible matching
+    if (selectedSupplier) {
+      const supplierMatch = isSupplierCompatible(parsed.supplier, selectedSupplier.name);
+      if (!supplierMatch) {
+        setError(`Erro de Fornecedor: Esta bobina é da ${parsed.supplier}, mas a carga está selecionada como ${selectedSupplier.name}. Todas as bobinas de uma carga devem ser do mesmo fornecedor.`);
+        return;
+      }
     }
 
     if (scannedCoils.some(c => c.coilNumber === parsed.coilNumber)) {
@@ -473,7 +490,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       supplierId: currentBatch.supplierId,
       status: 'received',
       receivedAt: new Date().toISOString(),
-      isDamaged: false
+      isDamaged: parsed.isPartialScan || false
     };
 
     const updatedCoils = [newCoil, ...scannedCoils];
@@ -506,10 +523,26 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       return;
     }
 
+    const parsedWeight = parseFloat(manualData.weight.toString().replace(',', '.'));
+    if (isNaN(parsedWeight) || parsedWeight <= 0) {
+      setError('Informe um peso válido em kg para a bobina.');
+      return;
+    }
+
+    if (scannedCoils.some(c => c.coilNumber.trim() === manualData.coilNumber.trim())) {
+      setError('Esta bobina já foi bipada/adicionada nesta carga.');
+      return;
+    }
+
+    const selectedDia = typeof manualData.diameter === 'number' 
+      ? manualData.diameter 
+      : (parseFloat(manualData.diameter) || 3.00);
+
     const manualCoil: Partial<WireCoil> = {
-      coilNumber: manualData.coilNumber,
-      diameter: manualData.diameter,
-      weight: parseFloat(manualData.weight.toString()),
+      coilNumber: manualData.coilNumber.trim(),
+      diameter: selectedDia,
+      weight: parsedWeight,
+      supplierId: currentBatch?.supplierId,
       status: 'received',
       receivedAt: new Date().toISOString(),
       isDamaged: true
@@ -519,7 +552,8 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     isLocalUpdateRef.current = true;
     setScannedCoils(updatedCoils);
     setShowManualModal(false);
-    setManualData({ coilNumber: '', weight: '', diameter: 2.30 });
+    // Keep chosen diameter for the next manual additions
+    setManualData(prev => ({ coilNumber: '', weight: '', diameter: prev.diameter }));
     setError('');
 
     playSuccessBeep();
@@ -1192,33 +1226,64 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Peso (kg)</label>
-                      <input
-                        required
-                        type="number"
-                        step="0.01"
-                        value={manualData.weight}
-                        onChange={(e) => setManualData({...manualData, weight: e.target.value})}
-                        placeholder="0.00"
-                        className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg text-slate-900"
-                      />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Peso (kg)</label>
+                        <input
+                          required
+                          type="number"
+                          step="0.01"
+                          value={manualData.weight}
+                          onChange={(e) => setManualData({...manualData, weight: e.target.value})}
+                          placeholder="Ex: 1620 ou 1004.5"
+                          className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg text-slate-900 shadow-xs"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-2 ml-1">
+                          <label className="block text-[10px] font-black text-slate-400 uppercase">Bitola (mm)</label>
+                          <span className="text-[10px] font-black text-emerald-600 uppercase">
+                            {Number(manualData.diameter || 3.00).toFixed(2).replace('.', ',')} mm selecionado
+                          </span>
+                        </div>
+                        <div className="relative">
+                          <select
+                            required
+                            value={Number(manualData.diameter || 3.00).toFixed(2)}
+                            onChange={(e) => setManualData({...manualData, diameter: parseFloat(e.target.value)})}
+                            className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-black text-lg text-slate-900 pr-10 cursor-pointer shadow-xs"
+                          >
+                            {WIRE_STANDARD_DIAMETERS.map((dia) => (
+                              <option key={dia.value} value={dia.value}>
+                                {dia.label}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown className="w-5 h-5 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        </div>
+                        {/* Quick Selection Pills */}
+                        <div className="flex flex-wrap gap-1.5 mt-2.5">
+                          {[2.18, 2.30, 2.80, 3.00, 3.20].map((d) => {
+                            const isSelected = Math.abs((manualData.diameter || 0) - d) < 0.01;
+                            return (
+                              <button
+                                key={d}
+                                type="button"
+                                onClick={() => setManualData({ ...manualData, diameter: d })}
+                                className={cn(
+                                  "px-2.5 py-1 rounded-lg text-xs font-black transition-all cursor-pointer",
+                                  isSelected
+                                    ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-300"
+                                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                )}
+                              >
+                                {d.toFixed(2).replace('.', ',')} mm
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Bitola (mm)</label>
-                      <select
-                        required
-                        value={manualData.diameter}
-                        onChange={(e) => setManualData({...manualData, diameter: parseFloat(e.target.value)})}
-                        className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg appearance-none text-slate-900"
-                      >
-                        <option value="2.18">2.18 mm</option>
-                        <option value="2.3">2.30 mm</option>
-                        <option value="3.0">3.00 mm</option>
-                      </select>
-                    </div>
-                  </div>
                 </div>
 
                 <div className="p-8 bg-slate-50 flex gap-4">
@@ -1638,6 +1703,11 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                               setError('Selecione primeiro o fornecedor da carga.');
                               return;
                             }
+                            const initialDia = scannedCoils.length > 0 ? (scannedCoils[0].diameter || 3.00) : (manualData.diameter || 3.00);
+                            setManualData(prev => ({
+                              ...prev,
+                              diameter: initialDia
+                            }));
                             setShowManualModal(true);
                           }}
                           className="flex items-center gap-2 px-6 py-3 bg-white border-2 border-emerald-100 text-emerald-700 rounded-xl text-sm font-black active:scale-95 transition-all hover:bg-emerald-50 cursor-pointer"
@@ -1752,21 +1822,17 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
                                  <Factory className="w-3 h-3 text-slate-400" />
                                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Bitola</span>
                               </div>
-                              {coil.isDamaged ? (
-                                <select
-                                  value={coil.diameter || 2.30}
-                                  onChange={(e) => updateCoil(idx, { diameter: parseFloat(e.target.value) })}
-                                  className="font-black text-sm text-slate-900 bg-transparent outline-none mt-1"
-                                >
-                                  <option value="2.18">2.18 mm</option>
-                                  <option value="2.3">2.30 mm</option>
-                                  <option value="3.0">3.00 mm</option>
-                                </select>
-                              ) : (
-                                <p className="font-black text-xl text-slate-900 tracking-tight">
-                                  {coil.diameter?.toFixed(2)} <span className="text-xs font-bold text-slate-400 font-sans">mm</span>
-                                </p>
-                              )}
+                              <select
+                                value={Number(coil.diameter || 3.00).toFixed(2)}
+                                onChange={(e) => updateCoil(idx, { diameter: parseFloat(e.target.value) })}
+                                className="font-black text-sm text-slate-900 bg-transparent outline-none mt-1 cursor-pointer"
+                              >
+                                {WIRE_STANDARD_DIAMETERS.map((dia) => (
+                                  <option key={dia.value} value={dia.value}>
+                                    {dia.label}
+                                  </option>
+                                ))}
+                              </select>
                             </div>
                           </div>
                         </div>
