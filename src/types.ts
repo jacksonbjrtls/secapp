@@ -36,7 +36,7 @@ export interface AppFeedbackReplyItem {
   repliedByEmail?: string;
   subject: string;
   message: string;
-  sentMethod?: 'email' | 'mailto' | 'both';
+  sentMethod?: 'email' | 'mailto' | 'both' | 'internal';
 }
 
 export interface AppFeedbackSurvey {
@@ -62,7 +62,7 @@ export interface AppFeedbackSurvey {
   repliedByEmail?: string;
   replySubject?: string;
   replyMessage?: string;
-  replySentMethod?: 'email' | 'mailto' | 'both';
+  replySentMethod?: 'email' | 'mailto' | 'both' | 'internal';
   replyHistory?: AppFeedbackReplyItem[];
 }
 

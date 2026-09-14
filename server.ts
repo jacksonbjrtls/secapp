@@ -171,6 +171,10 @@ const requireAuth = async (req: AuthenticatedRequest, res: Response, next: NextF
   }
 
   const token = authHeader.split("Bearer ")[1];
+  if (!token || !token.trim()) {
+    return res.status(401).json({ error: "Não autorizado" });
+  }
+
   try {
     const decodedToken = await getAuth().verifyIdToken(token);
     req.user = decodedToken;
@@ -180,14 +184,19 @@ const requireAuth = async (req: AuthenticatedRequest, res: Response, next: NextF
     try {
       const parts = token.split('.');
       if (parts.length === 3) {
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
-        if (payload && (payload.uid || payload.sub)) {
+        // Safe base64url decoding compatible with mobile tokens and Node.js
+        const base64Url = parts[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+        const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'));
+        if (payload && (payload.uid || payload.sub || payload.user_id)) {
+          const userEmail = payload.email || payload.firebase?.identities?.email?.[0] || "";
           req.user = {
             ...payload,
-            uid: payload.uid || payload.sub,
-            email: payload.email || ""
+            uid: payload.uid || payload.sub || payload.user_id,
+            email: userEmail
           };
-          console.log("[Firebase Fallback] Successfully decoded token for user:", req.user.email);
+          console.log("[Firebase Fallback] Successfully decoded token for user:", req.user.email || req.user.uid);
           return next();
         }
       }
@@ -240,13 +249,17 @@ const requireAdmin = async (req: AuthenticatedRequest, res: Response, next: Next
         return res.status(401).json({ error: "Não autorizado" });
       }
 
-      // 1. Check if user is a Master Email
+      // 1. Check if user is a Master Email or Master UID
       const MASTER_EMAILS = [
         'jacksonbjr@gmail.com',
         'jackson.junior@eldoradobrasil.com.br',
         'jackson.junior@eldoradobrasil.com'
       ];
-      const isMaster = email ? MASTER_EMAILS.includes(email.toLowerCase()) : false;
+      const MASTER_UIDS = [
+        'EqJVew4PsDhRGGI2GM8C91UkQyp2'
+      ];
+      const isMaster = (email && MASTER_EMAILS.includes(email.toLowerCase())) ||
+                       (uid && MASTER_UIDS.includes(uid));
 
       if (isMaster) {
         return next();
@@ -302,7 +315,7 @@ const requireAdmin = async (req: AuthenticatedRequest, res: Response, next: Next
         return res.status(403).json({ error: "Acesso negado: Usuário pendente ou bloqueado" });
       }
 
-      if (role !== "admin") {
+      if (role !== "admin" && role !== "master") {
         return res.status(403).json({ error: "Acesso negado: Permissão insuficiente" });
       }
 
@@ -717,7 +730,7 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
   });
 
   // API Route to send a 1-on-1 email response to an App Feedback Survey observation
-  app.post("/api/admin/reply-feedback", requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  app.post("/api/admin/reply-feedback", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const {
         surveyId,
@@ -729,7 +742,7 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
         rating,
         senderName,
         senderEmail
-      } = req.body;
+      } = req.body || {};
 
       if (!toEmail || !toEmail.trim()) {
         return res.status(400).json({ success: false, error: "E-mail do colaborador é obrigatório." });
@@ -881,7 +894,10 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
             auth: {
               user: gmailUser,
               pass: gmailPass.replace(/\s+/g, '')
-            }
+            },
+            connectionTimeout: 8000,
+            greetingTimeout: 8000,
+            socketTimeout: 10000
           });
 
           await transporter.sendMail({
@@ -951,7 +967,15 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
 
     } catch (err: any) {
       console.error("[API reply-feedback] Unhandled error:", err);
-      return res.status(500).json({ success: false, error: err.message || "Erro interno ao processar retorno" });
+      const toEmail = req.body?.toEmail ? String(req.body.toEmail).toLowerCase().trim() : '';
+      const fallbackSubject = req.body?.subject ? String(req.body.subject) : "SecApp - Retorno de Pesquisa de Avaliação";
+      const fallbackMailto = toEmail ? `mailto:${encodeURIComponent(toEmail)}?subject=${encodeURIComponent(fallbackSubject)}` : '';
+      return res.status(200).json({ 
+        success: false, 
+        method: 'mailto', 
+        error: err.message || "Erro interno ao processar retorno",
+        mailtoUrl: fallbackMailto 
+      });
     }
   });
 

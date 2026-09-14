@@ -85,38 +85,65 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
     setSuccessInfo(null);
     setFallbackMailto(null);
 
+    // Pre-calculate client mailto URL as an instant fallback
+    const finalSubject = subject.trim() || 'SecApp - Retorno sobre sua avaliação da Pesquisa de Satisfação';
+    const mailtoBody = `Olá, ${survey.userName || 'Colaborador'}!\n\nAvaliamos com muita atenção seu feedback na pesquisa de satisfação do SecApp:\n\n` +
+      (survey.observation ? `Sua observação: "${survey.observation}"\n\n` : '') +
+      `Retorno da Gestão:\n${message.trim()}\n\nAtenciosamente,\n${senderName}\nSecApp - Eldorado Brasil Celulose`;
+    const clientMailtoUrl = `mailto:${encodeURIComponent(survey.userEmail)}?subject=${encodeURIComponent(finalSubject)}&body=${encodeURIComponent(mailtoBody)}`;
+
     try {
       const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
-      const response = await fetch('/api/admin/reply-feedback', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify({
-          surveyId: survey.id,
-          toEmail: survey.userEmail,
-          toName: survey.userName,
-          subject: subject.trim(),
-          message: message.trim(),
-          observation: survey.observation || '',
-          rating: survey.rating,
-          senderName,
-          senderEmail
-        })
-      });
+      let response: Response | null = null;
+      
+      try {
+        response = await fetch('/api/admin/reply-feedback', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({
+            surveyId: survey.id,
+            toEmail: survey.userEmail,
+            toName: survey.userName,
+            subject: subject.trim(),
+            message: message.trim(),
+            observation: survey.observation || '',
+            rating: survey.rating,
+            senderName,
+            senderEmail
+          })
+        });
+      } catch (fetchErr: any) {
+        console.warn('Direct fetch to /api/admin/reply-feedback failed:', fetchErr);
+      }
 
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        if (data.mailtoUrl) {
-          setFallbackMailto(data.mailtoUrl);
+      let data: any = null;
+      if (response) {
+        try {
+          const responseText = await response.text();
+          data = responseText ? JSON.parse(responseText) : null;
+        } catch (jsonErr) {
+          console.warn('Could not parse response as JSON, falling back:', jsonErr);
         }
-        setError(data.error || data.warning || 'Não foi possível enviar o e-mail automaticamente.');
+      }
+
+      // If server dispatch was not confirmed (or returned failure/warning)
+      if (!response || !response.ok || !data || !data.success) {
+        const mailtoTarget = data?.mailtoUrl || clientMailtoUrl;
+        setFallbackMailto(mailtoTarget);
+        
+        const errorMsg = data?.error || data?.warning || 
+          (response && response.status === 401 
+            ? 'Sessão expirada. Você pode abrir e enviar direto pelo seu aplicativo de e-mail abaixo.' 
+            : 'Envio automático indisponível no servidor. Use a opção "Abrir no meu E-mail" ou "Registrar Retorno no SecApp".');
+        
+        setError(errorMsg);
         return;
       }
 
-      // Successful dispatch or mailto prepared
+      // Successful dispatch or mailto prepared by server
       const newHistoryItem = {
         id: 'reply_' + Date.now(),
         repliedAt: new Date().toISOString(),
@@ -165,14 +192,15 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
         }, 1600);
       } else {
         // Mailto prepared
-        setFallbackMailto(data.mailtoUrl);
-        setSuccessInfo('Status atualizado como respondido! Clique abaixo para abrir seu cliente de e-mail (Outlook/Gmail) e concluir o envio.');
+        setFallbackMailto(data.mailtoUrl || clientMailtoUrl);
+        setSuccessInfo('Status atualizado como respondido! Clique no botão abaixo para abrir o seu aplicativo de e-mail e concluir o envio.');
         onSuccess(updatedSurvey);
       }
 
     } catch (err: any) {
       console.error('Error sending feedback reply:', err);
-      setError('Erro de conexão com o servidor: ' + (err.message || ''));
+      setFallbackMailto(clientMailtoUrl);
+      setError('Envio direto pelo servidor não concluído. Você pode abrir seu aplicativo de e-mail (Gmail / Outlook) clicando abaixo.');
     } finally {
       setLoading(false);
     }
@@ -182,10 +210,16 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
     const finalSubject = subject.trim() || 'SecApp - Retorno sobre sua avaliação da Pesquisa de Satisfação';
     const mailtoBody = `Olá, ${survey.userName || 'Colaborador'}!\n\nAvaliamos com muita atenção seu feedback na pesquisa de satisfação do SecApp:\n\n` +
       (survey.observation ? `Sua observação: "${survey.observation}"\n\n` : '') +
-      `Retorno da Gestão:\n${message}\n\nAtenciosamente,\n${senderName}\nSecApp - Eldorado Brasil Celulose`;
+      `Retorno da Gestão:\n${message.trim()}\n\nAtenciosamente,\n${senderName}\nSecApp - Eldorado Brasil Celulose`;
 
     const mailtoUrl = `mailto:${encodeURIComponent(survey.userEmail)}?subject=${encodeURIComponent(finalSubject)}&body=${encodeURIComponent(mailtoBody)}`;
-    window.open(mailtoUrl, '_blank');
+    
+    // On mobile devices (iOS / Android), window.location.href opens the default Mail app directly without popup block
+    try {
+      window.location.href = mailtoUrl;
+    } catch {
+      window.open(mailtoUrl, '_blank');
+    }
 
     if (survey.id && message.trim()) {
       const newHistoryItem = {
@@ -222,10 +256,68 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
           replyHistory: updatedSurvey.replyHistory
         });
         onSuccess(updatedSurvey);
-        setSuccessInfo('Status atualizado como respondido via e-mail!');
+        setSuccessInfo('Status atualizado como respondido no SecApp!');
       } catch (dbErr) {
         console.warn('Could not update survey document in Firestore:', dbErr);
       }
+    }
+  };
+
+  const handleSaveInternalOnly = async () => {
+    if (!message.trim()) {
+      setError('Por favor, digite uma mensagem de retorno antes de registrar.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    const finalSubject = subject.trim() || 'SecApp - Retorno sobre sua avaliação da Pesquisa de Satisfação';
+
+    const newHistoryItem = {
+      id: 'reply_' + Date.now(),
+      repliedAt: new Date().toISOString(),
+      repliedBy: senderName,
+      repliedByEmail: senderEmail,
+      subject: finalSubject,
+      message: message.trim(),
+      sentMethod: 'mailto' as const
+    };
+
+    const updatedSurvey: AppFeedbackSurvey = {
+      ...survey,
+      replied: true,
+      repliedAt: new Date().toISOString(),
+      repliedBy: senderName,
+      repliedByEmail: senderEmail,
+      replySubject: finalSubject,
+      replyMessage: message.trim(),
+      replySentMethod: 'mailto',
+      replyHistory: [...(survey.replyHistory || []), newHistoryItem]
+    };
+
+    try {
+      if (survey.id) {
+        await updateDoc(doc(db, 'app_feedback_surveys', survey.id), {
+          replied: true,
+          repliedAt: updatedSurvey.repliedAt,
+          repliedBy: senderName,
+          repliedByEmail: senderEmail,
+          replySubject: finalSubject,
+          replyMessage: message.trim(),
+          replySentMethod: 'mailto',
+          replyHistory: updatedSurvey.replyHistory
+        });
+      }
+      setSuccessInfo('Retorno registrado com sucesso no SecApp!');
+      onSuccess(updatedSurvey);
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+    } catch (dbErr: any) {
+      console.warn('Could not update survey document in Firestore:', dbErr);
+      setError('Erro ao salvar no banco de dados: ' + (dbErr.message || ''));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -457,18 +549,29 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
           {error && (
             <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-700 flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-              <div className="space-y-1">
+              <div className="space-y-2 w-full">
                 <p>{error}</p>
-                {fallbackMailto && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {fallbackMailto && (
+                    <button
+                      type="button"
+                      onClick={handleOpenClientMail}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Abrir no Meu E-mail (Gmail / Outlook)
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={handleOpenClientMail}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-800 underline hover:text-rose-900 mt-1 cursor-pointer"
+                    onClick={handleSaveInternalOnly}
+                    disabled={loading || !message.trim()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
                   >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    Clique aqui para abrir no seu aplicativo de e-mail (Outlook / Webmail)
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Salvar Retorno no SecApp
                   </button>
-                )}
+                </div>
               </div>
             </div>
           )}
@@ -486,7 +589,7 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all cursor-pointer"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
-                    Abrir no Outlook / Gmail agora
+                    Abrir no Gmail / Outlook agora
                   </button>
                 )}
               </div>
@@ -496,23 +599,34 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
 
         {/* Action Footer */}
         <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={handleOpenClientMail}
-            disabled={loading || !message.trim()}
-            className="w-full sm:w-auto px-4 py-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Abrir diretamente no Outlook ou outro cliente instalado no computador"
-          >
-            <ExternalLink className="w-4 h-4 text-slate-500" />
-            Abrir no Outlook / Webmail
-          </button>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={handleOpenClientMail}
+              disabled={loading || !message.trim()}
+              className="w-full sm:w-auto px-3.5 py-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Abrir diretamente no aplicativo de e-mail do celular ou computador"
+            >
+              <ExternalLink className="w-4 h-4 text-slate-500" />
+              Abrir no Meu E-mail
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveInternalOnly}
+              disabled={loading || !message.trim()}
+              className="hidden sm:inline-flex px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Registrar resposta no SecApp sem abrir e-mail externo"
+            >
+              Salvar no App
+            </button>
+          </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="w-1/2 sm:w-auto px-4 py-2.5 bg-slate-200/80 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              className="w-1/3 sm:w-auto px-4 py-2.5 bg-slate-200/80 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
             >
               Cancelar
             </button>
@@ -520,7 +634,7 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
               type="button"
               onClick={handleSendEmail}
               disabled={loading || !message.trim()}
-              className="w-1/2 sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-700/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed active:scale-95"
+              className="w-2/3 sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-700/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed active:scale-95"
             >
               {loading ? (
                 <>
@@ -530,7 +644,7 @@ export const ReplyFeedbackModal: React.FC<ReplyFeedbackModalProps> = ({
               ) : (
                 <>
                   <Send className="w-4 h-4" />
-                  Enviar Retorno por E-mail
+                  Enviar E-mail
                 </>
               )}
             </button>
