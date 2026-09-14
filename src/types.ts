@@ -29,6 +29,16 @@ export interface UserProfile {
   appFeedbackSubmittedAt?: any;
 }
 
+export interface AppFeedbackReplyItem {
+  id?: string;
+  repliedAt: any;
+  repliedBy: string;
+  repliedByEmail?: string;
+  subject: string;
+  message: string;
+  sentMethod?: 'email' | 'mailto' | 'both';
+}
+
 export interface AppFeedbackSurvey {
   id?: string;
   userId: string;
@@ -45,6 +55,15 @@ export interface AppFeedbackSurvey {
   observation?: string;
   accessCount?: number;
   createdAt: any;
+  // Reply and 1-on-1 Feedback fields
+  replied?: boolean;
+  repliedAt?: any;
+  repliedBy?: string;
+  repliedByEmail?: string;
+  replySubject?: string;
+  replyMessage?: string;
+  replySentMethod?: 'email' | 'mailto' | 'both';
+  replyHistory?: AppFeedbackReplyItem[];
 }
 
 export interface WorkSector {

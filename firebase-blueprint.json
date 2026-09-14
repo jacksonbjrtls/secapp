@@ -794,7 +794,14 @@
         "highlights": { "type": "array", "items": { "type": "string" } },
         "observation": { "type": "string" },
         "accessCount": { "type": "number" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "replied": { "type": "boolean" },
+        "repliedAt": { "type": "string", "format": "date-time" },
+        "repliedBy": { "type": "string" },
+        "repliedByEmail": { "type": "string" },
+        "replySubject": { "type": "string" },
+        "replyMessage": { "type": "string" },
+        "replySentMethod": { "type": "string" }
       },
       "required": ["userId", "rating", "createdAt"]
     }

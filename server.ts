@@ -716,6 +716,245 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
     }
   });
 
+  // API Route to send a 1-on-1 email response to an App Feedback Survey observation
+  app.post("/api/admin/reply-feedback", requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        surveyId,
+        toEmail,
+        toName,
+        subject,
+        message,
+        observation,
+        rating,
+        senderName,
+        senderEmail
+      } = req.body;
+
+      if (!toEmail || !toEmail.trim()) {
+        return res.status(400).json({ success: false, error: "E-mail do colaborador é obrigatório." });
+      }
+
+      if (!message || !message.trim()) {
+        return res.status(400).json({ success: false, error: "Mensagem de retorno não pode estar vazia." });
+      }
+
+      const emailLower = toEmail.toLowerCase().trim();
+      const finalSubject = (subject && subject.trim()) 
+        ? subject.trim() 
+        : "SecApp - Retorno sobre sua avaliação da Pesquisa de Satisfação";
+
+      const finalSenderName = senderName || req.user?.displayName || "Equipe de Gestão SecApp";
+      const finalSenderEmail = senderEmail || req.user?.email || "";
+
+      const gmailUser = process.env.GMAIL_USER || process.env.GMAIL_EMAIL || process.env.GMAIL_ACCOUNT;
+      const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASS || process.env.GMAIL_PASSWORD;
+      const resendApiKey = process.env.RESEND_API_KEY;
+
+      const escapedMessage = String(message)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br/>');
+
+      const escapedObservation = observation ? String(observation)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;') : '';
+
+      const ratingStars = rating ? '★'.repeat(Math.max(1, Math.min(5, Math.round(Number(rating))))) : '';
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html lang="pt-BR">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${finalSubject}</title>
+        </head>
+        <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #1e293b;">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f1f5f9; padding: 32px 16px;">
+            <tr>
+              <td align="center">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06); border: 1px solid #e2e8f0;">
+                  
+                  <!-- Top Accent Bar -->
+                  <tr>
+                    <td style="background-color: #059669; height: 6px;"></td>
+                  </tr>
+
+                  <!-- Header Banner -->
+                  <tr>
+                    <td align="center" style="padding: 28px 32px 20px 32px; background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);">
+                      <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td align="center" style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; padding: 6px 14px;">
+                            <span style="font-size: 16px; font-weight: 800; color: #047857; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                              🛡️ Sec<span style="color: #0f172a;">App</span>
+                            </span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center" style="padding-top: 8px;">
+                            <span style="font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #059669; font-weight: 800;">
+                              Retorno de Pesquisa de Avaliação
+                            </span>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <!-- Body Content -->
+                  <tr>
+                    <td style="padding: 10px 36px 28px 36px;">
+                      <p style="font-size: 15px; margin: 0 0 14px 0; color: #0f172a;">
+                        Olá, <strong>${toName || 'Colaborador'}</strong>!
+                      </p>
+                      
+                      <p style="font-size: 13.5px; line-height: 1.6; color: #334155; margin: 0 0 18px 0;">
+                        Agradecemos muito pela sua participação na nossa <strong>Pesquisa de Avaliação do SecApp</strong>. 
+                        A sua opinião sincera e seus apontamentos são essenciais para que possamos aprimorar continuamente o sistema, suas ferramentas operacionais e a rotina da sua equipe.
+                      </p>
+
+                      ${escapedObservation ? `
+                      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 14px 16px; margin: 0 0 20px 0;">
+                        <div style="font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #b45309; margin-bottom: 6px;">
+                          Sua Avaliação Registrada ${ratingStars ? `(${ratingStars})` : ''}:
+                        </div>
+                        <div style="font-style: italic; color: #334155; font-size: 13px; line-height: 1.5;">
+                          "${escapedObservation}"
+                        </div>
+                      </div>
+                      ` : ''}
+
+                      <!-- Response box from management -->
+                      <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 18px 20px; margin: 0 0 20px 0;">
+                        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #065f46; margin-bottom: 8px;">
+                          💬 Retorno da Gestão / Analisado por: <strong>${finalSenderName}</strong>
+                        </div>
+                        <div style="font-size: 13.5px; line-height: 1.65; color: #064e3b;">
+                          ${escapedMessage}
+                        </div>
+                      </div>
+
+                      <p style="font-size: 12.5px; line-height: 1.5; color: #64748b; margin: 0 0 24px 0;">
+                        Continuamos à disposição para ouvir suas sugestões. Se desejar acrescentar mais detalhes ou esclarecer qualquer ponto, sinta-se à vontade para responder a esta mensagem.
+                      </p>
+
+                      <div style="text-align: center; margin: 16px 0;">
+                        <a href="https://${req.headers.host || 'secapp.eldorado.com.br'}" style="display: inline-block; background-color: #059669; color: #ffffff; text-decoration: none; padding: 11px 26px; border-radius: 8px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 6px rgba(5, 150, 105, 0.3);">
+                          Acessar o SecApp
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 32px; text-align: center;">
+                      <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; color: #475569;">
+                        SecApp • Gestão de Segurança e Produção
+                      </p>
+                      <p style="margin: 0; font-size: 10.5px; color: #94a3b8;">
+                        Eldorado Brasil Celulose • Três Lagoas - MS
+                      </p>
+                    </td>
+                  </tr>
+
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
+      `;
+
+      let emailSent = false;
+      let sendMethod = 'none';
+      let sendError: string | null = null;
+
+      if (gmailUser && gmailPass) {
+        try {
+          const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+              user: gmailUser,
+              pass: gmailPass.replace(/\s+/g, '')
+            }
+          });
+
+          await transporter.sendMail({
+            from: `"SecApp - Gestão de Feedback" <${gmailUser}>`,
+            to: emailLower,
+            replyTo: finalSenderEmail || gmailUser,
+            subject: finalSubject,
+            html: htmlContent
+          });
+
+          emailSent = true;
+          sendMethod = 'gmail';
+          console.log(`[API reply-feedback] Sent via Gmail to ${emailLower}`);
+        } catch (err: any) {
+          console.error(`[API reply-feedback] Gmail send failed:`, err);
+          sendError = err.message;
+        }
+      } else if (resendApiKey) {
+        try {
+          const resend = new Resend(resendApiKey);
+          const response = await resend.emails.send({
+            from: "SecApp <onboarding@resend.dev>",
+            to: emailLower,
+            replyTo: finalSenderEmail || undefined,
+            subject: finalSubject,
+            html: htmlContent
+          });
+          if (response.error) {
+            console.error(`[API reply-feedback] Resend error:`, response.error);
+            sendError = (response.error as any).message || "Erro no envio via Resend";
+          } else {
+            emailSent = true;
+            sendMethod = 'resend';
+            console.log(`[API reply-feedback] Sent via Resend to ${emailLower}`);
+          }
+        } catch (err: any) {
+          console.error(`[API reply-feedback] Resend send failed:`, err);
+          sendError = err.message;
+        }
+      }
+
+      // Encode mailto URL for direct client mail fallback
+      const mailtoBody = `Olá, ${toName || 'Colaborador'}!\n\nAvaliamos com muita atenção seu feedback na pesquisa do SecApp:\n\n` +
+        (observation ? `Sua observação: "${observation}"\n\n` : '') +
+        `Retorno da Gestão:\n${message}\n\nAtenciosamente,\n${finalSenderName}\nSecApp - Eldorado Brasil Celulose`;
+      const mailtoUrl = `mailto:${encodeURIComponent(emailLower)}?subject=${encodeURIComponent(finalSubject)}&body=${encodeURIComponent(mailtoBody)}`;
+
+      if (emailSent) {
+        return res.json({
+          success: true,
+          method: 'email',
+          provider: sendMethod,
+          message: `E-mail enviado com sucesso para ${emailLower}!`,
+          mailtoUrl
+        });
+      }
+
+      // If no credentials or send failed, return warning with mailto link
+      return res.json({
+        success: true,
+        method: 'mailto',
+        warning: sendError 
+          ? `Não foi possível enviar diretamente pelo servidor (${sendError}). O link de e-mail (mailto) foi preparado.` 
+          : "Nenhum provedor de e-mail configurado no servidor. O link de e-mail (mailto) foi preparado para abertura no seu aplicativo de e-mail padrão.",
+        mailtoUrl
+      });
+
+    } catch (err: any) {
+      console.error("[API reply-feedback] Unhandled error:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro interno ao processar retorno" });
+    }
+  });
+
   // API Route for custom auth emails (verification/welcome/password reset instructions)
   app.post("/api/send-custom-auth-email", (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (req.body?.type === "password_reset") {

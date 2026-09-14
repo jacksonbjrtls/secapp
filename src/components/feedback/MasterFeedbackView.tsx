@@ -13,7 +13,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Filter,
-  FileText
+  FileText,
+  Mail,
+  Clock,
+  Send
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -29,6 +32,7 @@ import {
 import { AppFeedbackSurvey } from '../../types';
 import { formatLocalDateTimeBR } from '../../lib/utils';
 import { AppFeedbackModal } from './AppFeedbackModal';
+import { ReplyFeedbackModal } from './ReplyFeedbackModal';
 
 interface MasterFeedbackViewProps {
   isMaster: boolean;
@@ -38,8 +42,9 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
   const [surveys, setSurveys] = useState<AppFeedbackSurvey[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [ratingFilter, setRatingFilter] = useState<'all' | '5' | '4' | '3' | '2' | '1' | 'with_obs'>('all');
+  const [ratingFilter, setRatingFilter] = useState<'all' | '5' | '4' | '3' | '2' | '1' | 'with_obs' | 'needs_reply' | 'replied'>('all');
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [replyModalSurvey, setReplyModalSurvey] = useState<AppFeedbackSurvey | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
@@ -94,6 +99,8 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
   const count2 = surveys.filter(s => s.rating === 2).length;
   const count1 = surveys.filter(s => s.rating === 1).length;
   const countWithObs = surveys.filter(s => s.observation && s.observation.trim().length > 0).length;
+  const countNeedsReply = surveys.filter(s => s.observation && s.observation.trim().length > 0 && !s.replied).length;
+  const countReplied = surveys.filter(s => !!s.replied).length;
 
   const satisfactionRate = totalCount > 0 
     ? Math.round(((count5 + count4) / totalCount) * 100) 
@@ -115,7 +122,13 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
         }
       }
 
-      // Rating filter
+      // Rating & Reply status filter
+      if (ratingFilter === 'needs_reply') {
+        return !!(item.observation && item.observation.trim().length > 0 && !item.replied);
+      }
+      if (ratingFilter === 'replied') {
+        return !!item.replied;
+      }
       if (ratingFilter === 'with_obs') {
         return !!(item.observation && item.observation.trim().length > 0);
       }
@@ -238,6 +251,7 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
         'Nota', 
         'Destaques Apontados', 
         'Comentario / Sugestao de Melhoria', 
+        'Retorno Gestao',
         'Acessos',
         'Data / Hora'
       ]];
@@ -257,6 +271,9 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
           : '-';
         
         const obsStr = s.observation?.trim() ? `"${s.observation.trim()}"` : '(Sem comentarios adicionais)';
+        const replyStatusStr = s.replied 
+          ? `Respondido (${s.repliedBy || 'Gestor'})\n${s.repliedAt ? formatLocalDateTimeBR(s.repliedAt) : ''}`
+          : (s.observation?.trim() ? 'Pendente' : '-');
         const accessesStr = s.accessCount ? `${s.accessCount}` : '10+';
         const dateStr = formatLocalDateTimeBR(s.createdAt);
 
@@ -266,6 +283,7 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
           sanitizePdfText(notaLabel),
           sanitizePdfText(highlightsStr),
           sanitizePdfText(obsStr),
+          sanitizePdfText(replyStatusStr),
           sanitizePdfText(accessesStr),
           sanitizePdfText(dateStr)
         ];
@@ -439,7 +457,7 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
       </div>
 
       {/* Metrics Dashboard Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Metric 1: Rating Médio */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
@@ -465,7 +483,7 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
               ))}
             </div>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center shrink-0">
             <Star className="w-6 h-6 fill-amber-400" />
           </div>
         </div>
@@ -483,7 +501,7 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
               Colaboradores que já responderam
             </span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
             <User className="w-6 h-6" />
           </div>
         </div>
@@ -502,7 +520,7 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
               {count5 + count4} de {totalCount} avaliações
             </span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
             <Sparkles className="w-6 h-6" />
           </div>
         </div>
@@ -520,8 +538,47 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
               {totalCount > 0 ? Math.round((countWithObs / totalCount) * 100) : 0}% deixaram observação
             </span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
             <MessageSquareHeart className="w-6 h-6" />
+          </div>
+        </div>
+
+        {/* Metric 5: Retornos por E-mail (1 a 1) */}
+        <div 
+          onClick={() => setRatingFilter(ratingFilter === 'needs_reply' ? 'all' : 'needs_reply')}
+          className={`bg-white p-5 rounded-2xl border shadow-sm flex items-center justify-between cursor-pointer transition-all hover:border-emerald-400 ${
+            ratingFilter === 'needs_reply' ? 'ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50/20' : 'border-slate-200/80'
+          }`}
+          title="Clique para filtrar pendentes de retorno"
+        >
+          <div className="space-y-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+              Retornos 1 a 1
+            </span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-black text-emerald-700">
+                {countReplied}
+              </span>
+              <span className="text-xs font-bold text-slate-400">
+                / {countWithObs} com obs.
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs font-semibold">
+              {countNeedsReply > 0 ? (
+                <span className="text-amber-700 font-black bg-amber-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  {countNeedsReply} pendente{countNeedsReply > 1 ? 's' : ''}
+                </span>
+              ) : (
+                <span className="text-emerald-700 font-bold flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  Todos respondidos
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+            <Mail className="w-6 h-6" />
           </div>
         </div>
       </div>
@@ -592,13 +649,19 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <span className="text-xs font-bold text-slate-500">Filtrar:</span>
           {[
-            { id: 'all', label: 'Todas' },
+            { id: 'all', label: `Todas (${totalCount})` },
+            { 
+              id: 'needs_reply', 
+              label: `Pendentes de Retorno (${countNeedsReply})`,
+              badgeColor: countNeedsReply > 0 ? 'text-amber-700 bg-amber-100' : ''
+            },
+            { id: 'replied', label: `Respondidas (${countReplied})` },
+            { id: 'with_obs', label: `Com Observações (${countWithObs})` },
             { id: '5', label: '5 ★' },
             { id: '4', label: '4 ★' },
             { id: '3', label: '3 ★' },
             { id: '2', label: '2 ★' },
-            { id: '1', label: '1 ★' },
-            { id: 'with_obs', label: 'Com Observações' }
+            { id: '1', label: '1 ★' }
           ].map(f => (
             <button
               key={f.id}
@@ -709,15 +772,32 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
                       )}
                     </td>
 
-                    {/* Observation */}
+                    {/* Observation & Reply Status */}
                     <td className="py-3.5 px-4 max-w-md">
-                      {item.observation && item.observation.trim() ? (
-                        <div className="p-2.5 bg-amber-50/60 border border-amber-200/60 rounded-xl text-slate-700 text-xs font-semibold leading-relaxed">
-                          "{item.observation}"
-                        </div>
-                      ) : (
-                        <span className="text-slate-300 text-[11px] italic">Sem observações adicionais</span>
-                      )}
+                      <div className="space-y-1.5">
+                        {item.observation && item.observation.trim() ? (
+                          <div className="p-2.5 bg-amber-50/70 border border-amber-200/70 rounded-xl text-slate-800 text-xs font-semibold leading-relaxed">
+                            "{item.observation}"
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-[11px] italic">Sem observação por escrito</span>
+                        )}
+
+                        {/* Reply Status Badge */}
+                        {item.replied ? (
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span>
+                              Retorno enviado {item.repliedBy ? `por ${item.repliedBy}` : ''} {item.repliedAt ? `(${formatLocalDateTimeBR(item.repliedAt)})` : ''}
+                            </span>
+                          </div>
+                        ) : item.observation && item.observation.trim() ? (
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-800 bg-amber-50/80 px-2.5 py-1 rounded-lg border border-amber-200/80">
+                            <Clock className="w-3 h-3 text-amber-600 shrink-0" />
+                            <span>Aguardando retorno da gestão</span>
+                          </div>
+                        ) : null}
+                      </div>
                     </td>
 
                     {/* Access Count */}
@@ -737,16 +817,33 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
 
                     {/* Actions */}
                     <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                      {item.id && (
+                      <div className="flex items-center justify-center gap-1.5">
                         <button
-                          onClick={() => handleDelete(item.id!)}
-                          disabled={deletingId === item.id}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title="Excluir esta avaliação"
+                          onClick={() => setReplyModalSurvey(item)}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95 ${
+                            item.replied
+                              ? 'bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 hover:border-emerald-300'
+                              : item.observation && item.observation.trim()
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-700/20'
+                                : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200'
+                          }`}
+                          title={item.replied ? 'Ver retorno enviado ou enviar novo e-mail' : 'Dar retorno por e-mail 1 a 1'}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Mail className="w-3.5 h-3.5" />
+                          {item.replied ? 'Ver Retorno' : 'Dar Retorno'}
                         </button>
-                      )}
+
+                        {item.id && (
+                          <button
+                            onClick={() => handleDelete(item.id!)}
+                            disabled={deletingId === item.id}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                            title="Excluir esta avaliação"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -755,6 +852,17 @@ export const MasterFeedbackView: React.FC<MasterFeedbackViewProps> = ({ isMaster
           </div>
         )}
       </div>
+
+      {/* 1-on-1 Reply Modal */}
+      {replyModalSurvey && (
+        <ReplyFeedbackModal
+          survey={replyModalSurvey}
+          onClose={() => setReplyModalSurvey(null)}
+          onSuccess={(updated) => {
+            setSurveys(prev => prev.map(s => s.id === updated.id ? updated : s));
+          }}
+        />
+      )}
 
       {/* Popout Preview Modal for Master testing */}
       {previewModalOpen && (
