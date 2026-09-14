@@ -2657,6 +2657,24 @@ const Quality: React.FC = () => {
     // Only save draft if there are some responses or observations or line selected or product selected
     if (Object.keys(responses).length === 0 && Object.keys(observations).length === 0 && !submissionLineId && !selectedProductId) return;
 
+    const draftData = {
+      templateId: fillingTemplate.id,
+      userId: user.uid,
+      responses,
+      observations,
+      submissionLineId,
+      productId: selectedProductId,
+      updatedAt: new Date().toISOString()
+    };
+
+    // Save immediately to localStorage (0ms latency)
+    try {
+      localStorage.setItem(`secapp_quality_draft_${user.uid}_${fillingTemplate.id}`, JSON.stringify(draftData));
+      setDraftSavedAt(new Date());
+    } catch (err) {
+      console.warn("Erro ao salvar rascunho local:", err);
+    }
+
     const timeoutId = setTimeout(async () => {
       const draftId = `${user.uid}_${fillingTemplate.id}`;
       try {
@@ -2671,7 +2689,7 @@ const Quality: React.FC = () => {
         });
         setDraftSavedAt(new Date());
       } catch (err) {
-        console.error("Erro ao salvar rascunho de checklist:", err);
+        console.error("Erro ao salvar rascunho de checklist no servidor:", err);
       }
     }, 1500);
 
@@ -3028,6 +3046,11 @@ const Quality: React.FC = () => {
 
             try {
               const draftId = `${user.uid}_${fillingTemplate.id}`;
+              try {
+                localStorage.removeItem(`secapp_quality_draft_${user.uid}_${fillingTemplate.id}`);
+              } catch (e) {
+                // ignore
+              }
               await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
             } catch (e) {
               console.warn("Erro ao deletar rascunho de checklist:", e);
@@ -4320,11 +4343,15 @@ const Quality: React.FC = () => {
                   <div className="space-y-0.5">
                     <h2 className="text-base font-black tracking-wide uppercase leading-tight">{fillingTemplate.name}</h2>
                     <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider line-clamp-1 max-w-[320px] mx-auto">{fillingTemplate.description || 'Check-list de Qualidade'}</p>
-                    {editingSubmissionId && (
+                    {editingSubmissionId ? (
                       <span className="inline-block mt-1 bg-amber-400 text-slate-950 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
                         Modo Edição de Inspeção Realizada
                       </span>
-                    )}
+                    ) : isDraftLoaded ? (
+                      <span className="inline-block mt-1 bg-emerald-400 text-emerald-950 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
+                        Rascunho Recuperado Automaticamente
+                      </span>
+                    ) : null}
                   </div>
 
                   {/* Right Close Button with safety modal */}
@@ -4342,6 +4369,11 @@ const Quality: React.FC = () => {
                           if (user && fillingTemplate && !editingSubmissionId) {
                             try {
                               const draftId = `${user.uid}_${fillingTemplate.id}`;
+                              try {
+                                localStorage.removeItem(`secapp_quality_draft_${user.uid}_${fillingTemplate.id}`);
+                              } catch (e) {
+                                // ignore
+                              }
                               await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
                             } catch (e) {
                               console.warn("Erro ao deletar rascunho de checklist:", e);
@@ -5894,6 +5926,11 @@ const Quality: React.FC = () => {
                           if (user && fillingTemplate) {
                             try {
                               const draftId = `${user.uid}_${fillingTemplate.id}`;
+                              try {
+                                localStorage.removeItem(`secapp_quality_draft_${user.uid}_${fillingTemplate.id}`);
+                              } catch (e) {
+                                // ignore
+                              }
                               await deleteDoc(doc(db, 'quality_checklist_drafts', draftId));
                             } catch (e) {
                               console.warn("Erro ao deletar rascunho de checklist:", e);
@@ -5993,19 +6030,8 @@ const Quality: React.FC = () => {
                     <button
                       key={`${template.id}-${templateIdx}`}
                       disabled={isCompleted}
-                      onClick={async () => {
-                        let loadedDraft: any = null;
-                        if (user) {
-                          try {
-                            const draftDoc = await getDoc(doc(db, 'quality_checklist_drafts', `${user.uid}_${template.id}`));
-                            if (draftDoc.exists()) {
-                              loadedDraft = draftDoc.data();
-                            }
-                          } catch (e) {
-                            console.error("Erro ao buscar rascunho de checklist:", e);
-                          }
-                        }
-
+                      onClick={() => {
+                        // 1. Open inspection form INSTANTLY (0ms latency, synchronous transition)
                         setFillingTemplate(template);
                         setEditingSubmissionId(null);
                         setExpandedItemId(template.items[0]?.id || null);
@@ -6017,20 +6043,26 @@ const Quality: React.FC = () => {
                           }
                         });
 
+                        // 2. Read local draft from localStorage synchronously in 0ms
+                        let loadedDraft: any = null;
+                        if (user) {
+                          try {
+                            const localSaved = localStorage.getItem(`secapp_quality_draft_${user.uid}_${template.id}`);
+                            if (localSaved) {
+                              loadedDraft = JSON.parse(localSaved);
+                            }
+                          } catch (err) {
+                            console.warn("Erro ao ler rascunho local:", err);
+                          }
+                        }
+
                         if (loadedDraft) {
                           setResponses({ ...initialDefaultResponses, ...(loadedDraft.responses || {}) });
                           setObservations(loadedDraft.observations || {});
                           setSubmissionLineId(loadedDraft.submissionLineId || '');
                           setSelectedProductId(loadedDraft.productId || template.productId || '');
                           setIsDraftLoaded(true);
-                          setDraftSavedAt(loadedDraft.updatedAt?.toDate ? loadedDraft.updatedAt.toDate() : new Date(loadedDraft.updatedAt));
-                          
-                          setModalConfig({
-                            isOpen: true,
-                            title: 'Rascunho Recuperado',
-                            message: `Seu rascunho de preenchimento para o check-list "${template.name}" foi recuperado com sucesso. Você pode continuar de onde parou!`,
-                            type: 'success'
-                          });
+                          setDraftSavedAt(loadedDraft.updatedAt ? new Date(loadedDraft.updatedAt) : null);
                         } else {
                           setResponses(initialDefaultResponses);
                           setObservations({});
@@ -6042,6 +6074,41 @@ const Quality: React.FC = () => {
                             ? selectedLineId
                             : (targetLineIds.length === 1 ? targetLineIds[0] : '');
                           setSubmissionLineId(defaultLineId);
+                        }
+
+                        // 3. Asynchronously sync remote draft from Firestore in background without blocking UI opening
+                        if (user) {
+                          (async () => {
+                            try {
+                              const draftDoc = await getDoc(doc(db, 'quality_checklist_drafts', `${user.uid}_${template.id}`));
+                              if (draftDoc.exists()) {
+                                const remoteDraft = draftDoc.data();
+                                if (remoteDraft) {
+                                  const remoteUpdatedAt = remoteDraft.updatedAt?.toDate ? remoteDraft.updatedAt.toDate() : new Date(remoteDraft.updatedAt);
+                                  const localUpdatedAt = loadedDraft?.updatedAt ? new Date(loadedDraft.updatedAt) : null;
+                                  
+                                  if (!loadedDraft || (localUpdatedAt && remoteUpdatedAt > localUpdatedAt)) {
+                                    setResponses(prev => ({ ...prev, ...(remoteDraft.responses || {}) }));
+                                    setObservations(prev => ({ ...prev, ...(remoteDraft.observations || {}) }));
+                                    if (remoteDraft.submissionLineId) setSubmissionLineId(remoteDraft.submissionLineId);
+                                    if (remoteDraft.productId) setSelectedProductId(remoteDraft.productId);
+                                    setIsDraftLoaded(true);
+                                    setDraftSavedAt(remoteUpdatedAt);
+                                    try {
+                                      localStorage.setItem(`secapp_quality_draft_${user.uid}_${template.id}`, JSON.stringify({
+                                        ...remoteDraft,
+                                        updatedAt: remoteUpdatedAt.toISOString()
+                                      }));
+                                    } catch (e) {
+                                      // ignore
+                                    }
+                                  }
+                                }
+                              }
+                            } catch (e) {
+                              console.warn("Sincronização em segundo plano de rascunho:", e);
+                            }
+                          })();
                         }
                       }}
                       className={cn(

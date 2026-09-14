@@ -777,6 +777,26 @@ const OperationalRoutes: React.FC = () => {
     if (!hasValues) return;
 
     const draftId = `${user.uid}_${selectedTemplate.id}`;
+    const draftData = {
+      templateId: selectedTemplate.id,
+      templateName: selectedTemplate.name,
+      operatorId: user.uid,
+      routeResponses,
+      detailingResponses,
+      selectedArea,
+      selectedSector: selectedSector ? { id: selectedSector.id, name: selectedSector.name } : null,
+      selectedLine: selectedLine ? { id: selectedLine.id, name: selectedLine.name } : null,
+      selectedShift,
+      selectedTeam,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      localStorage.setItem(`secapp_route_draft_${draftId}`, JSON.stringify(draftData));
+      setDraftSavedAt(new Date());
+    } catch (e) {
+      console.warn("Erro ao salvar rascunho de rota no armazenamento local:", e);
+    }
     
     const timeoutId = setTimeout(async () => {
       try {
@@ -822,6 +842,11 @@ const OperationalRoutes: React.FC = () => {
     
     const draftId = `${user.uid}_${selectedTemplate.id}`;
     try {
+      localStorage.removeItem(`secapp_route_draft_${draftId}`);
+    } catch (e) {
+      // ignore
+    }
+    try {
       await deleteDoc(doc(db, 'route_drafts', draftId));
     } catch (e) {
       console.error("Erro ao remover rascunho de rota deletado:", e);
@@ -832,6 +857,11 @@ const OperationalRoutes: React.FC = () => {
     setIsExitModalOpen(false);
     if (user && selectedTemplate) {
       const draftId = `${user.uid}_${selectedTemplate.id}`;
+      try {
+        localStorage.removeItem(`secapp_route_draft_${draftId}`);
+      } catch (e) {
+        // ignore
+      }
       try {
         await deleteDoc(doc(db, 'route_drafts', draftId));
       } catch (e) {
@@ -1335,15 +1365,16 @@ const OperationalRoutes: React.FC = () => {
     setIsDraftLoaded(false);
     setDraftSavedAt(null);
 
+    // 1. Check local draft synchronously (0ms latency)
     let loadedDraft: any = null;
     if (user) {
       try {
-        const draftDoc = await getDoc(doc(db, 'route_drafts', `${user.uid}_${tmpl.id}`));
-        if (draftDoc.exists()) {
-          loadedDraft = draftDoc.data();
+        const localSaved = localStorage.getItem(`secapp_route_draft_${user.uid}_${tmpl.id}`);
+        if (localSaved) {
+          loadedDraft = JSON.parse(localSaved);
         }
       } catch (e) {
-        console.error("Erro ao buscar rascunho anterior:", e);
+        console.warn("Erro ao buscar rascunho local de rota:", e);
       }
     }
 
@@ -1374,7 +1405,7 @@ const OperationalRoutes: React.FC = () => {
       if (loadedDraft.selectedShift) setSelectedShift(loadedDraft.selectedShift);
       if (loadedDraft.selectedTeam) setSelectedTeam(loadedDraft.selectedTeam);
       
-      const savedDate = loadedDraft.updatedAt?.toDate ? loadedDraft.updatedAt.toDate() : new Date(loadedDraft.updatedAt);
+      const savedDate = loadedDraft.updatedAt ? new Date(loadedDraft.updatedAt) : null;
       setDraftSavedAt(savedDate);
       setIsDraftLoaded(true);
       setRouteStep('active_inspection');
@@ -1413,6 +1444,43 @@ const OperationalRoutes: React.FC = () => {
       setSelectedShift(shiftMapping[currentShift] || '08:00 - 16:00');
       setSelectedTeam(getGroupForShift(new Date(), currentShift) || 'A');
       setDetailingResponses({});
+    }
+
+    // 2. Background check Firestore without delaying UI opening
+    if (user) {
+      (async () => {
+        try {
+          const draftDoc = await getDoc(doc(db, 'route_drafts', `${user.uid}_${tmpl.id}`));
+          if (draftDoc.exists()) {
+            const remoteDraft = draftDoc.data();
+            if (remoteDraft) {
+              const remoteUpdatedAt = remoteDraft.updatedAt?.toDate ? remoteDraft.updatedAt.toDate() : new Date(remoteDraft.updatedAt);
+              const localUpdatedAt = loadedDraft?.updatedAt ? new Date(loadedDraft.updatedAt) : null;
+              if (!loadedDraft || (localUpdatedAt && remoteUpdatedAt > localUpdatedAt)) {
+                if (remoteDraft.routeResponses) setRouteResponses(remoteDraft.routeResponses);
+                if (remoteDraft.detailingResponses) setDetailingResponses(remoteDraft.detailingResponses);
+                if (remoteDraft.selectedArea) setSelectedArea(remoteDraft.selectedArea);
+                if (remoteDraft.selectedSector) setSelectedSector(remoteDraft.selectedSector);
+                if (remoteDraft.selectedLine) setSelectedLine(remoteDraft.selectedLine);
+                if (remoteDraft.selectedShift) setSelectedShift(remoteDraft.selectedShift);
+                if (remoteDraft.selectedTeam) setSelectedTeam(remoteDraft.selectedTeam);
+                setDraftSavedAt(remoteUpdatedAt);
+                setIsDraftLoaded(true);
+                try {
+                  localStorage.setItem(`secapp_route_draft_${user.uid}_${tmpl.id}`, JSON.stringify({
+                    ...remoteDraft,
+                    updatedAt: remoteUpdatedAt.toISOString()
+                  }));
+                } catch (e) {
+                  // ignore
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Sincronização em segundo plano de rota:", e);
+        }
+      })();
     }
     
     setActiveTab('new_route');
@@ -1640,6 +1708,11 @@ const OperationalRoutes: React.FC = () => {
 
           // Delete Draft
           const draftId = `${user.uid}_${selectedTemplate.id}`;
+          try {
+            localStorage.removeItem(`secapp_route_draft_${draftId}`);
+          } catch (e) {
+            // ignore
+          }
           try {
             await deleteDoc(doc(db, 'route_drafts', draftId));
           } catch (e) {
