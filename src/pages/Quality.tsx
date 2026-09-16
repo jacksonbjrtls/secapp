@@ -2601,6 +2601,7 @@ const Quality: React.FC = () => {
   const [activeScanner, setActiveScanner] = useState<string | null>(null);
   const [isDraftLoaded, setIsDraftLoaded] = useState<boolean>(false);
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
+  const [editingSubsSelector, setEditingSubsSelector] = useState<{ template: QualityChecklistTemplate; submissions: QualityChecklistSubmission[]; } | null>(null);
 
   
   const sanitizeResponses = (rawResponses: Record<string, any>) => {
@@ -6272,95 +6273,119 @@ const Quality: React.FC = () => {
                   const completedLinesCount = linesStatus.filter(s => s.completed).length;
                   const totalLinesCount = targetLineIds.length;
 
-                  return (
-                    <button
-                      key={`${template.id}-${templateIdx}`}
-                      disabled={isCompleted}
-                      onClick={() => {
-                        // 1. Open inspection form INSTANTLY (0ms latency, synchronous transition)
-                        setFillingTemplate(template);
-                        setEditingSubmissionId(null);
-                        setExpandedItemId(template.items[0]?.id || null);
+                  const templateSubmissions = submissions.filter(sub => 
+                    sub.templateId === template.id && 
+                    (selectedLineId ? (sub.lineId === selectedLineId || sub.sectorId === selectedLineId) : true)
+                  );
+                  const todaySubmissions = templateSubmissions.filter(sub => {
+                    const d = safeToDate(sub.createdAt);
+                    return d && getLocalDateString(d) === todayStr;
+                  });
+                  const availableSubsToEdit = todaySubmissions.length > 0 ? todaySubmissions : templateSubmissions.slice(0, 5);
 
-                        const initialDefaultResponses: Record<string, any> = {};
-                        (template.items || []).forEach(it => {
-                          if (it.defaultValue !== undefined && it.defaultValue !== null && it.defaultValue !== '' && Boolean(it.autoFillDefaultValue)) {
-                            initialDefaultResponses[it.id] = it.defaultValue;
-                          }
-                        });
+                  const handleStartNewInspection = () => {
+                    // 1. Open inspection form INSTANTLY (0ms latency, synchronous transition)
+                    setFillingTemplate(template);
+                    setEditingSubmissionId(null);
+                    setExpandedItemId(template.items[0]?.id || null);
 
-                        // 2. Read local draft from localStorage synchronously in 0ms
-                        let loadedDraft: any = null;
-                        if (user) {
-                          try {
-                            const localSaved = localStorage.getItem(`secapp_quality_draft_${user.uid}_${template.id}`);
-                            if (localSaved) {
-                              loadedDraft = JSON.parse(localSaved);
-                            }
-                          } catch (err) {
-                            console.warn("Erro ao ler rascunho local:", err);
-                          }
+                    const initialDefaultResponses: Record<string, any> = {};
+                    (template.items || []).forEach(it => {
+                      if (it.defaultValue !== undefined && it.defaultValue !== null && it.defaultValue !== '' && Boolean(it.autoFillDefaultValue)) {
+                        initialDefaultResponses[it.id] = it.defaultValue;
+                      }
+                    });
+
+                    // 2. Read local draft from localStorage synchronously in 0ms
+                    let loadedDraft: any = null;
+                    if (user) {
+                      try {
+                        const localSaved = localStorage.getItem(`secapp_quality_draft_${user.uid}_${template.id}`);
+                        if (localSaved) {
+                          loadedDraft = JSON.parse(localSaved);
                         }
+                      } catch (err) {
+                        console.warn("Erro ao ler rascunho local:", err);
+                      }
+                    }
 
-                        if (loadedDraft) {
-                          setResponses({ ...initialDefaultResponses, ...(loadedDraft.responses || {}) });
-                          setObservations(loadedDraft.observations || {});
-                          setSubmissionLineId(loadedDraft.submissionLineId || '');
-                          setSelectedProductId(loadedDraft.productId || template.productId || '');
-                          setIsDraftLoaded(true);
-                          setDraftSavedAt(loadedDraft.updatedAt ? new Date(loadedDraft.updatedAt) : null);
-                        } else {
-                          setResponses(initialDefaultResponses);
-                          setObservations({});
-                          setIsDraftLoaded(false);
-                          setDraftSavedAt(null);
-                          setSelectedProductId(template.productId || '');
-                          // If selected line targets this template, default to it; otherwise default to empty or the template's single line
-                          const defaultLineId = selectedLineId && targetLineIds.includes(selectedLineId)
-                            ? selectedLineId
-                            : (targetLineIds.length === 1 ? targetLineIds[0] : '');
-                          setSubmissionLineId(defaultLineId);
-                        }
+                    if (loadedDraft) {
+                      setResponses({ ...initialDefaultResponses, ...(loadedDraft.responses || {}) });
+                      setObservations(loadedDraft.observations || {});
+                      setSubmissionLineId(loadedDraft.submissionLineId || '');
+                      setSelectedProductId(loadedDraft.productId || template.productId || '');
+                      setIsDraftLoaded(true);
+                      setDraftSavedAt(loadedDraft.updatedAt ? new Date(loadedDraft.updatedAt) : null);
+                    } else {
+                      setResponses(initialDefaultResponses);
+                      setObservations({});
+                      setIsDraftLoaded(false);
+                      setDraftSavedAt(null);
+                      setSelectedProductId(template.productId || '');
+                      // If selected line targets this template, default to it; otherwise default to empty or the template's single line
+                      const defaultLineId = selectedLineId && targetLineIds.includes(selectedLineId)
+                        ? selectedLineId
+                        : (targetLineIds.length === 1 ? targetLineIds[0] : '');
+                      setSubmissionLineId(defaultLineId);
+                    }
 
-                        // 3. Asynchronously sync remote draft from Firestore in background without blocking UI opening
-                        if (user) {
-                          (async () => {
-                            try {
-                              const draftDoc = await getDoc(doc(db, 'quality_checklist_drafts', `${user.uid}_${template.id}`));
-                              if (draftDoc.exists()) {
-                                const remoteDraft = draftDoc.data();
-                                if (remoteDraft) {
-                                  const remoteUpdatedAt = remoteDraft.updatedAt?.toDate ? remoteDraft.updatedAt.toDate() : new Date(remoteDraft.updatedAt);
-                                  const localUpdatedAt = loadedDraft?.updatedAt ? new Date(loadedDraft.updatedAt) : null;
-                                  
-                                  if (!loadedDraft || (localUpdatedAt && remoteUpdatedAt > localUpdatedAt)) {
-                                    setResponses(prev => ({ ...prev, ...(remoteDraft.responses || {}) }));
-                                    setObservations(prev => ({ ...prev, ...(remoteDraft.observations || {}) }));
-                                    if (remoteDraft.submissionLineId) setSubmissionLineId(remoteDraft.submissionLineId);
-                                    if (remoteDraft.productId) setSelectedProductId(remoteDraft.productId);
-                                    setIsDraftLoaded(true);
-                                    setDraftSavedAt(remoteUpdatedAt);
-                                    try {
-                                      localStorage.setItem(`secapp_quality_draft_${user.uid}_${template.id}`, JSON.stringify({
-                                        ...remoteDraft,
-                                        updatedAt: remoteUpdatedAt.toISOString()
-                                      }));
-                                    } catch (e) {
-                                      // ignore
-                                    }
-                                  }
+                    // 3. Asynchronously sync remote draft from Firestore in background without blocking UI opening
+                    if (user) {
+                      (async () => {
+                        try {
+                          const draftDoc = await getDoc(doc(db, 'quality_checklist_drafts', `${user.uid}_${template.id}`));
+                          if (draftDoc.exists()) {
+                            const remoteDraft = draftDoc.data();
+                            if (remoteDraft) {
+                              const remoteUpdatedAt = remoteDraft.updatedAt?.toDate ? remoteDraft.updatedAt.toDate() : new Date(remoteDraft.updatedAt);
+                              const localUpdatedAt = loadedDraft?.updatedAt ? new Date(loadedDraft.updatedAt) : null;
+                              
+                              if (!loadedDraft || (localUpdatedAt && remoteUpdatedAt > localUpdatedAt)) {
+                                setResponses(prev => ({ ...prev, ...(remoteDraft.responses || {}) }));
+                                setObservations(prev => ({ ...prev, ...(remoteDraft.observations || {}) }));
+                                if (remoteDraft.submissionLineId) setSubmissionLineId(remoteDraft.submissionLineId);
+                                if (remoteDraft.productId) setSelectedProductId(remoteDraft.productId);
+                                setIsDraftLoaded(true);
+                                setDraftSavedAt(remoteUpdatedAt);
+                                try {
+                                  localStorage.setItem(`secapp_quality_draft_${user.uid}_${template.id}`, JSON.stringify({
+                                    ...remoteDraft,
+                                    updatedAt: remoteUpdatedAt.toISOString()
+                                  }));
+                                } catch (e) {
+                                  // ignore
                                 }
                               }
-                            } catch (e) {
-                              console.warn("Sincronização em segundo plano de rascunho:", e);
                             }
-                          })();
+                          }
+                        } catch (e) {
+                          console.warn("Sincronização em segundo plano de rascunho:", e);
+                        }
+                      })();
+                    }
+                  };
+
+                  return (
+                    <div
+                      key={`${template.id}-${templateIdx}`}
+                      onClick={() => {
+                        if (isCompleted && availableSubsToEdit.length > 0) {
+                          if (availableSubsToEdit.length === 1) {
+                            handleEditSubmission(availableSubsToEdit[0]);
+                          } else {
+                            setEditingSubsSelector({
+                              template,
+                              submissions: availableSubsToEdit
+                            });
+                          }
+                        } else {
+                          handleStartNewInspection();
                         }
                       }}
                       className={cn(
-                        "group p-8 rounded-[2rem] border transition-all text-left flex flex-col justify-between relative overflow-hidden",
+                        "group p-8 rounded-[2rem] border transition-all text-left flex flex-col justify-between relative overflow-hidden cursor-pointer",
                         isCompleted 
-                          ? "bg-slate-50 border-slate-100 opacity-60 cursor-not-allowed" 
+                          ? "bg-slate-50/90 border-emerald-200/70 hover:border-amber-400 hover:shadow-xl hover:shadow-amber-50/50" 
                           : "bg-white border-slate-200 hover:border-emerald-500 hover:shadow-xl hover:shadow-emerald-50"
                       )}
                     >
@@ -6373,14 +6398,14 @@ const Quality: React.FC = () => {
                       <div className="space-y-4">
                         <div className={cn(
                           "w-12 h-12 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110",
-                          isCompleted ? "bg-slate-100 text-slate-400" : "bg-emerald-50 text-emerald-600"
+                          isCompleted ? "bg-emerald-50 text-emerald-600" : "bg-emerald-50 text-emerald-600"
                         )}>
                           <ClipboardCheck className="w-6 h-6" />
                         </div>
                         <div>
                           <h3 className={cn(
                             "text-xl font-black transition-colors uppercase tracking-tight",
-                            isCompleted ? "text-slate-500" : "text-slate-900 group-hover:text-emerald-600"
+                            isCompleted ? "text-slate-900 group-hover:text-amber-700" : "text-slate-900 group-hover:text-emerald-600"
                           )}>
                             {template.name}
                           </h3>
@@ -6388,7 +6413,7 @@ const Quality: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="mt-8 pt-6 border-t border-slate-50 flex items-center justify-between">
+                      <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-between">
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded flex items-center gap-1 w-fit">
                             <LayoutGrid className="w-3 h-3" />
@@ -6398,7 +6423,7 @@ const Quality: React.FC = () => {
                           <div className="flex items-center gap-2 mt-1">
                             <span className={cn(
                               "text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded flex items-center gap-1 w-fit",
-                              isCompleted ? "bg-slate-100 text-slate-500" : "bg-emerald-50 text-emerald-600"
+                              isCompleted ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" : "bg-emerald-50 text-emerald-600"
                             )}>
                               <Clock className="w-3 h-3" />
                               {selectedLineId 
@@ -6413,9 +6438,37 @@ const Quality: React.FC = () => {
                             )}
                           </div>
                         </div>
-                        {!isCompleted && <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-emerald-500 transition-all" />}
+                        <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-emerald-500 transition-all" />
                       </div>
-                    </button>
+
+                      {/* Botão de Ação Direta para Editar Inspeção Feita */}
+                      {availableSubsToEdit.length > 0 && (
+                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2 w-full">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (availableSubsToEdit.length === 1) {
+                                handleEditSubmission(availableSubsToEdit[0]);
+                              } else {
+                                setEditingSubsSelector({
+                                  template,
+                                  submissions: availableSubsToEdit
+                                });
+                              }
+                            }}
+                            className="w-full py-2.5 px-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer hover:scale-[1.01]"
+                            title="Editar inspeção de qualidade já realizada deste checklist"
+                          >
+                            <Edit2 className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Editar Inspeção Feita</span>
+                            <span className="text-[10px] bg-amber-200 text-amber-950 px-1.5 py-0.5 rounded-full font-bold">
+                              {availableSubsToEdit.length} {availableSubsToEdit.length === 1 ? 'feita' : 'feitas'}
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
 
@@ -9322,6 +9375,101 @@ const Quality: React.FC = () => {
                     }}
                   />
                 </label>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Seletor de Inspeção para Edição */}
+      <AnimatePresence>
+        {editingSubsSelector && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 space-y-6 shadow-2xl relative border border-slate-200"
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-bold">
+                    <Edit2 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">
+                      Selecione a Inspeção para Editar
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Check-list: <span className="font-bold text-slate-700">{editingSubsSelector.template.name}</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingSubsSelector(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                {editingSubsSelector.submissions.map((sub, idx) => {
+                  const lineName = lines.find(l => l.id === sub.lineId)?.name || sectors.find(s => s.id === sub.sectorId)?.name || sub.lineId || 'Linha';
+                  const submissionDate = safeToDate(sub.createdAt);
+                  return (
+                    <div
+                      key={sub.id || `sel-sub-${idx}`}
+                      onClick={() => {
+                        handleEditSubmission(sub);
+                        setEditingSubsSelector(null);
+                      }}
+                      className="group p-4 bg-slate-50 hover:bg-amber-50/60 rounded-2xl border border-slate-200/80 hover:border-amber-300 transition-all cursor-pointer flex items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                            {lineName}
+                          </span>
+                          <span className="text-xs font-bold text-slate-500">
+                            {sub.shift}
+                          </span>
+                          {sub.editedAt && (
+                            <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                              Já Editado
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600">
+                          Inspecionado por <strong className="text-slate-800">{sub.userName}</strong>
+                          {sub.productName && <span> • Produto: <strong className="text-slate-700">{sub.productName}</strong></span>}
+                        </p>
+                        <p className="text-[11px] text-slate-400 font-medium">
+                          {submissionDate?.toLocaleDateString('pt-BR')} às {submissionDate?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center gap-1.5 shrink-0"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>Editar</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setEditingSubsSelector(null)}
+                  className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs uppercase tracking-wider transition-all"
+                >
+                  Fechar
+                </button>
               </div>
             </motion.div>
           </div>
