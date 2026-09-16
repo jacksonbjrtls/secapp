@@ -374,7 +374,7 @@ service cloud.firestore {
       allow create: if isApproved() && isNotDisabled() &&
                       request.resource.data.userId == request.auth.uid &&
                       request.resource.data.createdAt == request.time;
-      allow update: if isManager();
+      allow update: if isApproved() && isNotDisabled();
       allow delete: if isMaster() || isManager();
     }
 

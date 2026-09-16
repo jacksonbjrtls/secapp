@@ -318,6 +318,19 @@ export interface QualityChecklistTemplate {
   photoRequirements?: TemplatePhotoRequirement[];
 }
 
+export interface QualitySubmissionEditChange {
+  field: string;
+  oldValue: any;
+  newValue: any;
+}
+
+export interface QualitySubmissionEditLog {
+  editedAt: string;
+  editedBy: string;
+  editedByEmail?: string;
+  changes: QualitySubmissionEditChange[];
+}
+
 export interface QualityChecklistSubmission {
   id: string;
   templateId: string;
@@ -337,6 +350,7 @@ export interface QualityChecklistSubmission {
   productId?: string;
   productName?: string;
   unitInspection?: UnitPhotoInspectionData;
+  editHistory?: QualitySubmissionEditLog[];
 }
 
 export interface QualityChecklistOmission {

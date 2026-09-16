@@ -14,7 +14,8 @@ import {
   getDoc,
   deleteDoc,
   setDoc,
-  limit
+  limit,
+  arrayUnion
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -31,7 +32,9 @@ import {
   QualityChecklistOptionSet,
   SecagemProduct,
   UnitPhotoInspectionData,
-  TemplatePhotoRequirement
+  TemplatePhotoRequirement,
+  QualitySubmissionEditLog,
+  QualitySubmissionEditChange
 } from '../types';
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 import { jsPDF } from 'jspdf';
@@ -78,6 +81,7 @@ import {
   AlertTriangle,
   Target,
   History,
+  UserCheck,
   Settings2,
   Mail,
   Bell,
@@ -2037,10 +2041,20 @@ const Quality: React.FC = () => {
       const mapped = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data() as any;
         const decName = await decryptValue(data.userName);
+        const decEditedBy = data.editedBy ? await decryptValue(data.editedBy) : undefined;
+        let decEditHistory = undefined;
+        if (Array.isArray(data.editHistory)) {
+          decEditHistory = await Promise.all(data.editHistory.map(async (entry: any) => ({
+            ...entry,
+            editedBy: entry.editedBy ? await decryptValue(entry.editedBy) : 'Usuário'
+          })));
+        }
         return {
           id: doc.id,
           ...data,
-          userName: decName
+          userName: decName,
+          editedBy: decEditedBy,
+          editHistory: decEditHistory
         } as QualityChecklistSubmission;
       }));
       setSubmissions(mapped);
@@ -2762,6 +2776,32 @@ const Quality: React.FC = () => {
     setActiveTab('perform');
   };
 
+  const formatAuditValue = (val: any, item?: ChecklistItemDefinition): string => {
+    if (val === undefined || val === null || val === '') return '(em branco)';
+    if (typeof val === 'object') {
+      try {
+        if ('cover' in val || 'bale' in val) {
+          const c = val.cover !== undefined && val.cover !== '' ? `Capa: ${val.cover}` : '';
+          const b = val.bale !== undefined && val.bale !== '' ? `Fardo: ${val.bale}` : '';
+          return [c, b].filter(Boolean).join(' | ') || JSON.stringify(val);
+        }
+        if ('left' in val || 'right' in val) {
+          return `Esq: ${val.left || 'Limpo'} | Dir: ${val.right || 'Limpo'}`;
+        }
+        if ('left_top' in val || 'right_top' in val) {
+          return `Esq.Sup: ${val.left_top || 'Limpo'} | Dir.Sup: ${val.right_top || 'Limpo'} | Esq.Inf: ${val.left_bottom || 'Limpo'} | Dir.Inf: ${val.right_bottom || 'Limpo'}`;
+        }
+        return JSON.stringify(val);
+      } catch {
+        return String(val);
+      }
+    }
+    if (val === 'ok' || val === true) return 'Conforme (OK)';
+    if (val === 'not_ok' || val === false) return 'Não Conforme (NOK)';
+    if (item?.type === 'number' && item?.unit) return `${val} ${item.unit}`;
+    return String(val);
+  };
+
   const generateRangeOptions = (min?: number, max?: number, step?: number) => {
     if (min === undefined || max === undefined) return [];
     
@@ -3019,6 +3059,125 @@ const Quality: React.FC = () => {
           let submissionDocId = editingSubmissionId;
 
           if (editingSubmissionId) {
+            const originalSub = submissions.find(s => s.id === editingSubmissionId);
+            const detectedChanges: QualitySubmissionEditChange[] = [];
+
+            if (originalSub) {
+              // 1. Check line change
+              if (originalSub.lineId !== targetLineId) {
+                const oldLineName = lines.find(l => l.id === originalSub.lineId)?.name || sectors.find(s => s.id === originalSub.lineId)?.name || originalSub.lineId || 'N/A';
+                const newLineName = lines.find(l => l.id === targetLineId)?.name || sectors.find(s => s.id === targetLineId)?.name || targetLineId || 'N/A';
+                detectedChanges.push({
+                  field: 'Linha Inspecionada',
+                  oldValue: oldLineName,
+                  newValue: newLineName
+                });
+              }
+
+              // 2. Check product change
+              const oldProdId = originalSub.productId || '';
+              const newProdId = selectedProductId || '';
+              if (oldProdId !== newProdId) {
+                const oldProdName = originalSub.productName || products.find(p => p.id === oldProdId)?.name || (oldProdId ? oldProdId : 'Nenhum Produto');
+                const newProdName = matchedProd?.name || (products.find(p => p.id === newProdId)?.name) || (newProdId ? newProdId : 'Nenhum Produto');
+                detectedChanges.push({
+                  field: 'Produto em Produção',
+                  oldValue: oldProdName,
+                  newValue: newProdName
+                });
+              }
+
+              // 3. Check items responses
+              (fillingTemplate.items || []).forEach(item => {
+                const oldResp = originalSub.responses?.find(r => r.itemId === item.id);
+                const newResp = sanitizedResponses.find(r => r.itemId === item.id);
+
+                const oldVal = oldResp?.value;
+                const newVal = newResp?.value;
+
+                const oldValComp = typeof oldVal === 'object' ? JSON.stringify(oldVal) : String(oldVal ?? '');
+                const newValComp = typeof newVal === 'object' ? JSON.stringify(newVal) : String(newVal ?? '');
+
+                if (oldValComp !== newValComp) {
+                  detectedChanges.push({
+                    field: item.label || 'Item da Inspeção',
+                    oldValue: formatAuditValue(oldVal, item),
+                    newValue: formatAuditValue(newVal, item)
+                  });
+                }
+
+                // Check observations
+                const oldObs = (oldResp?.observation || '').trim();
+                const newObs = (newResp?.observation || '').trim();
+                if (oldObs !== newObs) {
+                  detectedChanges.push({
+                    field: `Obs. de "${item.label || 'Item'}"`,
+                    oldValue: oldObs || '(sem observação)',
+                    newValue: newObs || '(removida)'
+                  });
+                }
+              });
+
+              // 4. Check unit evaluation if applicable
+              if (originalSub.unitInspection?.evaluation || unitInspectionPayload?.evaluation) {
+                const oldEval = originalSub.unitInspection?.evaluation;
+                const newEval = unitInspectionPayload?.evaluation;
+                if (oldEval && newEval) {
+                  if ((oldEval.overallStatus || '') !== (newEval.overallStatus || '')) {
+                    detectedChanges.push({
+                      field: 'Unit: Status Geral',
+                      oldValue: oldEval.overallStatus || '(em branco)',
+                      newValue: newEval.overallStatus || '(em branco)'
+                    });
+                  }
+                  if ((oldEval.wireTyingStatus || '') !== (newEval.wireTyingStatus || '')) {
+                    detectedChanges.push({
+                      field: 'Unit: Amarração dos Arames',
+                      oldValue: oldEval.wireTyingStatus || 'N/A',
+                      newValue: newEval.wireTyingStatus || 'N/A'
+                    });
+                  }
+                  if ((oldEval.coverQualityStatus || '') !== (newEval.coverQualityStatus || '')) {
+                    detectedChanges.push({
+                      field: 'Unit: Qualidade da Capa',
+                      oldValue: oldEval.coverQualityStatus || 'N/A',
+                      newValue: newEval.coverQualityStatus || 'N/A'
+                    });
+                  }
+                  if ((oldEval.labelPrintingStatus || '') !== (newEval.labelPrintingStatus || '')) {
+                    detectedChanges.push({
+                      field: 'Unit: Impressão da Etiqueta',
+                      oldValue: oldEval.labelPrintingStatus || 'N/A',
+                      newValue: newEval.labelPrintingStatus || 'N/A'
+                    });
+                  }
+                  if ((oldEval.unitHeightStatus || '') !== (newEval.unitHeightStatus || '')) {
+                    detectedChanges.push({
+                      field: 'Unit: Altura do Unit',
+                      oldValue: oldEval.unitHeightStatus || 'N/A',
+                      newValue: newEval.unitHeightStatus || 'N/A'
+                    });
+                  }
+                  if ((oldEval.notes || '').trim() !== (newEval.notes || '').trim()) {
+                    detectedChanges.push({
+                      field: 'Unit: Observações do Avaliador',
+                      oldValue: oldEval.notes || '(sem observações)',
+                      newValue: newEval.notes || '(sem observações)'
+                    });
+                  }
+                }
+              }
+            }
+
+            const editLogEntry: QualitySubmissionEditLog = {
+              editedAt: new Date().toISOString(),
+              editedBy: encName,
+              editedByEmail: profile.email || user.email || '',
+              changes: detectedChanges.length > 0 ? detectedChanges : [
+                { field: 'Revisão da Inspeção', oldValue: 'Valores confirmados', newValue: 'Reinspeção salva sem alteração de valores' }
+              ]
+            };
+
             await updateDoc(doc(db, 'quality_checklist_submissions', editingSubmissionId), {
               lineId: targetLineId,
               productId: selectedProductId || '',
@@ -3026,6 +3185,7 @@ const Quality: React.FC = () => {
               responses: sanitizedResponses,
               editedAt: serverTimestamp(),
               editedBy: encName,
+              editHistory: arrayUnion(editLogEntry),
               ...(unitInspectionPayload ? { unitInspection: unitInspectionPayload } : {})
             });
           } else {
@@ -3452,6 +3612,10 @@ const Quality: React.FC = () => {
     ];
     if (sub.productName) {
       infoData.push(['Produto Sendo Produzido:', sanitizePdfText(sub.productName), '', '']);
+    }
+    if (sub.editedAt) {
+      const editDateStr = safeToDate(sub.editedAt)?.toLocaleString('pt-BR') || '';
+      infoData.push(['Status da Inspeção:', 'EDITADA (Revisões no fim)', 'Última Alteração:', editDateStr]);
     }
     
     autoTable(doc, {
@@ -3961,6 +4125,88 @@ const Quality: React.FC = () => {
           }
         });
       }
+    }
+    
+    // ----------------------------------------------------
+    // HISTÓRICO DE AUDITORIA / ALTERAÇÕES NO FIM DO RELATÓRIO PDF
+    // ----------------------------------------------------
+    const hasEdits = Boolean((sub.editHistory && sub.editHistory.length > 0) || sub.editedAt);
+    if (hasEdits) {
+      const lastFinalY = (doc as any).lastAutoTable?.finalY || 100;
+      let auditStartY = lastFinalY + 14;
+      if (auditStartY > 220) {
+        doc.addPage();
+        auditStartY = 25;
+      }
+
+      // Banner Header
+      doc.setFillColor(245, 158, 11); // amber-500
+      doc.rect(14, auditStartY, pageWidth - 28, 7.5, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(9.5);
+      doc.setFont('helvetica', 'bold');
+      doc.text('REGISTRO DE ALTERAÇÕES / AUDITORIA DA INSPEÇÃO', 18, auditStartY + 5.2);
+
+      const auditRows: any[] = [];
+
+      if (sub.editHistory && sub.editHistory.length > 0) {
+        for (let logIdx = 0; logIdx < sub.editHistory.length; logIdx++) {
+          const log = sub.editHistory[logIdx];
+          const editDate = safeToDate(log.editedAt) || (log.editedAt ? new Date(log.editedAt) : null);
+          const editDateStr = editDate ? editDate.toLocaleString('pt-BR') : 'Data não registrada';
+          const rawEditor = log.editedBy || 'Usuário';
+          const editorName = await decryptValue(rawEditor);
+          const editorDisplay = log.editedByEmail ? `${editorName} (${log.editedByEmail})` : editorName;
+
+          const changeItems = log.changes && log.changes.length > 0 ? log.changes : [
+            { field: 'Revisão da Inspeção', oldValue: 'Valores confirmados', newValue: 'Reinspeção salva' }
+          ];
+
+          changeItems.forEach((ch, chIdx) => {
+            auditRows.push([
+              chIdx === 0 ? `#${logIdx + 1}` : '',
+              chIdx === 0 ? sanitizePdfText(editDateStr) : '',
+              chIdx === 0 ? sanitizePdfText(editorDisplay) : '',
+              sanitizePdfText(ch.field || 'Campo'),
+              sanitizePdfText(String(ch.oldValue ?? '-')),
+              sanitizePdfText(String(ch.newValue ?? '-'))
+            ]);
+          });
+        }
+      } else {
+        const editDate = safeToDate(sub.editedAt);
+        const editDateStr = editDate ? editDate.toLocaleString('pt-BR') : 'Data não registrada';
+        const editorName = sub.editedBy ? await decryptValue(sub.editedBy) : 'Usuário';
+        auditRows.push([
+          '#1',
+          sanitizePdfText(editDateStr),
+          sanitizePdfText(editorName),
+          'Inspeção Atualizada',
+          'Versão Anterior',
+          'Versão Editada'
+        ]);
+      }
+
+      autoTable(doc, {
+        startY: auditStartY + 10,
+        head: [['Rev.', 'Data/Hora', 'Quem Alterou', 'Campo / Item Alterado', 'Valor Anterior', 'Novo Valor']],
+        body: auditRows,
+        headStyles: {
+          fillColor: [254, 243, 199], // amber-100
+          textColor: [146, 64, 14], // amber-800
+          fontStyle: 'bold',
+          fontSize: 8
+        },
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        columnStyles: {
+          0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 36 },
+          3: { cellWidth: 42, fontStyle: 'bold' },
+          4: { cellWidth: 31, textColor: [185, 28, 28] }, // red-700
+          5: { cellWidth: 31, textColor: [4, 120, 87] } // emerald-700
+        }
+      });
     }
     
     await addSecAppPdfFooter(doc);
@@ -7567,20 +7813,22 @@ const Quality: React.FC = () => {
                              {safeToDate(sub.createdAt)?.toLocaleDateString('pt-BR')}
                            </p>
                            {sub.editedAt && (
-                             <span className="inline-block text-[9px] font-black text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/50 uppercase tracking-wider mt-0.5">
-                               Editado
+                             <span 
+                               className="inline-block text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 uppercase tracking-wider mt-0.5"
+                               title={sub.editedBy ? `Editado por ${sub.editedBy}` : 'Inspeção com histórico de alteração'}
+                             >
+                               Editado {sub.editHistory && sub.editHistory.length > 1 ? `(${sub.editHistory.length}x)` : ''}
                              </span>
                            )}
                          </div>
-                         {(isManager || isAdmin || isMaster || sub.userId === user?.uid) && (
-                           <button 
-                             onClick={() => handleEditSubmission(sub)}
-                             className="p-2 text-slate-300 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
-                             title="Editar Inspeção"
-                           >
-                             <Edit2 className="w-5 h-5" />
-                           </button>
-                         )}
+                         <button 
+                           onClick={() => handleEditSubmission(sub)}
+                           className="px-2.5 py-1.5 text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100/80 border border-amber-200/80 rounded-xl transition-all flex items-center gap-1.5 font-black text-xs shadow-sm"
+                           title="Editar Inspeção já realizada"
+                         >
+                           <Edit2 className="w-4 h-4 text-amber-600" />
+                           <span className="hidden sm:inline">Editar</span>
+                         </button>
                          {(isManager || isAdmin || isMaster) && (
                            <button 
                              onClick={() => setSubmissionToDelete(sub)}
@@ -8822,27 +9070,108 @@ const Quality: React.FC = () => {
                 </div>
               )}
 
+              {/* HISTÓRICO DE ALTERAÇÕES DA INSPEÇÃO (AUDITORIA) */}
+              {((viewingSubmission.editHistory && viewingSubmission.editHistory.length > 0) || viewingSubmission.editedAt) && (
+                <div className="mt-8 pt-6 border-t border-slate-200">
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-5 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shadow-sm">
+                          <History className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">
+                            Histórico de Alterações / Revisões da Inspeção
+                          </h4>
+                          <p className="text-[11px] text-slate-500 font-medium">
+                            Registro de alterações realizadas após o envio original da inspeção.
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-wider bg-amber-200/80 text-amber-950 px-2.5 py-1 rounded-full">
+                        {viewingSubmission.editHistory?.length || 1} {((viewingSubmission.editHistory?.length || 1) === 1) ? 'Edição Registrada' : 'Edições Registradas'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {(viewingSubmission.editHistory && viewingSubmission.editHistory.length > 0) ? (
+                        viewingSubmission.editHistory.map((log, lIdx) => (
+                          <div key={`edit-log-${lIdx}`} className="bg-white rounded-xl border border-amber-200/60 p-4 shadow-sm space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-900 font-black text-[10px] flex items-center justify-center">
+                                  #{lIdx + 1}
+                                </span>
+                                <span className="font-bold text-slate-800">
+                                  Alterado por: <span className="text-amber-800 font-black">{log.editedBy || 'Usuário'}</span>
+                                  {log.editedByEmail && <span className="text-slate-400 font-normal ml-1">({log.editedByEmail})</span>}
+                                </span>
+                              </div>
+                              <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                {log.editedAt ? new Date(log.editedAt).toLocaleString('pt-BR') : 'Data não registrada'}
+                              </span>
+                            </div>
+
+                            <div className="space-y-2 pt-1">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                                O que foi alterado ({log.changes?.length || 0}):
+                              </span>
+                              <div className="grid gap-2">
+                                {log.changes && log.changes.map((ch, chIdx) => (
+                                  <div key={`ch-${chIdx}`} className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-200/60 text-xs space-y-1">
+                                    <div className="font-bold text-slate-800">{ch.field}</div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                                      <span className="text-slate-500 font-medium">De:</span>
+                                      <span className="line-through text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200/60 font-semibold max-w-xs truncate">
+                                        {String(ch.oldValue ?? '-')}
+                                      </span>
+                                      <span className="text-slate-400 font-bold">➔</span>
+                                      <span className="text-slate-500 font-medium">Para:</span>
+                                      <span className="text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/60 font-bold max-w-xs truncate">
+                                        {String(ch.newValue ?? '-')}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="bg-white rounded-xl border border-amber-200/60 p-4 shadow-sm text-xs space-y-1">
+                          <div className="flex items-center justify-between text-slate-800">
+                            <span className="font-bold">Alterado por: <span className="text-amber-800 font-black">{viewingSubmission.editedBy || 'Usuário'}</span></span>
+                            <span className="text-slate-500 font-medium">{safeToDate(viewingSubmission.editedAt)?.toLocaleString('pt-BR')}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500">Inspeção atualizada com salvamento de dados.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="mt-10 flex flex-col sm:flex-row gap-3">
-                 {(isManager || isAdmin || isMaster || viewingSubmission.userId === user?.uid) && (
-                   <button
-                     onClick={() => handleEditSubmission(viewingSubmission)}
-                     className="flex-1 py-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-2xl transition-all shadow-xl shadow-amber-100 flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
-                   >
-                     <Edit2 className="w-5 h-5" /> Editar Inspeção
-                   </button>
-                 )}
-                 <button
-                   onClick={() => generateSubmissionPDF(viewingSubmission)}
-                   className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
-                 >
-                   <Printer className="w-5 h-5" /> Exportar PDF
-                 </button>
-                 <button
-                   onClick={() => setViewingSubmission(null)}
-                   className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black rounded-2xl transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
-                 >
-                   Fechar
-                 </button>
+                <button
+                  onClick={() => handleEditSubmission(viewingSubmission)}
+                  className="flex-1 py-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-2xl transition-all shadow-xl shadow-amber-100 flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
+                  title="Editar dados desta inspeção"
+                >
+                  <Edit2 className="w-5 h-5" /> Editar Inspeção
+                </button>
+                <button
+                  onClick={() => generateSubmissionPDF(viewingSubmission)}
+                  className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
+                >
+                  <Printer className="w-5 h-5" /> Exportar PDF
+                </button>
+                <button
+                  onClick={() => setViewingSubmission(null)}
+                  className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black rounded-2xl transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-xs"
+                >
+                  Fechar
+                </button>
               </div>
             </motion.div>
           </div>

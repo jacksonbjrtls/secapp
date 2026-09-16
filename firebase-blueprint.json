@@ -329,7 +329,31 @@
             }
           }
         },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "editedAt": { "type": "string", "format": "date-time" },
+        "editedBy": { "type": "string" },
+        "editHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "editedAt": { "type": "string" },
+              "editedBy": { "type": "string" },
+              "editedByEmail": { "type": "string" },
+              "changes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": { "type": "string" },
+                    "oldValue": { "type": "any" },
+                    "newValue": { "type": "any" }
+                  }
+                }
+              }
+            }
+          }
+        }
       },
       "required": ["templateId", "sectorId", "userId", "userName", "shift", "responses", "createdAt"]
     },
