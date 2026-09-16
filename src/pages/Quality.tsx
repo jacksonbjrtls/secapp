@@ -6281,7 +6281,8 @@ const Quality: React.FC = () => {
                     const d = safeToDate(sub.createdAt);
                     return d && getLocalDateString(d) === todayStr;
                   });
-                  const availableSubsToEdit = todaySubmissions.length > 0 ? todaySubmissions : templateSubmissions.slice(0, 5);
+                  // Sempre disponibiliza submissões para edição para todos os usuários
+                  const availableSubsToEdit = todaySubmissions.length > 0 ? todaySubmissions : templateSubmissions;
 
                   const handleStartNewInspection = () => {
                     // 1. Open inspection form INSTANTLY (0ms latency, synchronous transition)
@@ -6441,9 +6442,22 @@ const Quality: React.FC = () => {
                         <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-emerald-500 transition-all" />
                       </div>
 
-                      {/* Botão de Ação Direta para Editar Inspeção Feita */}
-                      {availableSubsToEdit.length > 0 && (
-                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2 w-full">
+                      {/* Botões de Ação Direta para todos os usuários */}
+                      <div className="mt-5 pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center gap-2 w-full">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartNewInspection();
+                          }}
+                          className="w-full flex-1 py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer active:scale-95"
+                          title="Iniciar uma nova inspeção para este checklist"
+                        >
+                          <ClipboardCheck className="w-4 h-4 text-emerald-600" />
+                          <span>Nova Inspeção</span>
+                        </button>
+
+                        {availableSubsToEdit.length > 0 && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -6457,17 +6471,17 @@ const Quality: React.FC = () => {
                                 });
                               }
                             }}
-                            className="w-full py-2.5 px-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer hover:scale-[1.01]"
-                            title="Editar inspeção de qualidade já realizada deste checklist"
+                            className="w-full flex-1 py-2.5 px-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer active:scale-95"
+                            title="Editar inspeção de qualidade já realizada deste checklist (aberto para todos)"
                           >
-                            <Edit2 className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Editar Inspeção Feita</span>
+                            <Edit2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>Editar Feita</span>
                             <span className="text-[10px] bg-amber-200 text-amber-950 px-1.5 py-0.5 rounded-full font-bold">
-                              {availableSubsToEdit.length} {availableSubsToEdit.length === 1 ? 'feita' : 'feitas'}
+                              {availableSubsToEdit.length}
                             </span>
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   );
                 })}
