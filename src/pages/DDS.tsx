@@ -516,13 +516,13 @@ const DDS: React.FC = () => {
   }, [passcode, sessions, activeSession]);
 
   useEffect(() => {
-    if (!auth.currentUser || (!isManager && !isAdmin && !isMaster)) {
+    if (!auth.currentUser) {
       setAllSessionsList([]);
       setAllSignaturesList([]);
       return;
     }
 
-    // Fetch sessions for the whole month for charts and global compliance (Managers/Admins only)
+    // Fetch sessions and signatures for the whole month for charts, history, and participant monitoring (All authenticated users including viewers)
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
     
@@ -2332,6 +2332,95 @@ const DDS: React.FC = () => {
                               {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : <UserCheck className="w-6 h-6" />}
                               Assinar DDS
                             </button>
+                          )}
+
+                          {/* Live Participants & Mood Monitoring in Active Session (Visible to all users including viewers) */}
+                          {activeSession && (
+                            <div className="border-t border-slate-200/80 pt-4 mt-4">
+                              {(() => {
+                                const activeSigs = signaturesBySession[activeSession.id] || [];
+                                const totalPrev = activeSession.totalPrevisto || 9;
+                                return (
+                                  <div>
+                                    <div className="flex items-center justify-between gap-2 mb-3">
+                                      <div className="flex items-center gap-2">
+                                        <Users className="w-4 h-4 text-emerald-600" />
+                                        <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                                          Participantes que já assinaram ({activeSigs.length}/{totalPrev})
+                                        </span>
+                                      </div>
+                                      <span className={cn(
+                                        "px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider",
+                                        activeSigs.length >= totalPrev
+                                          ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                          : activeSigs.length > 0
+                                            ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                            : "bg-slate-100 text-slate-600"
+                                      )}>
+                                        {activeSigs.length >= totalPrev ? 'Meta Atingida' : activeSigs.length > 0 ? 'Em andamento' : 'Aguardando assinaturas'}
+                                      </span>
+                                    </div>
+
+                                    {activeSigs.length > 0 ? (
+                                      <div className="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                                        {activeSigs.map((sig: any, sIdx: number) => (
+                                          <div
+                                            key={`active-sig-${sig.id || sIdx}`}
+                                            className="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-emerald-50/40 rounded-xl border border-slate-200/70 transition-all text-xs"
+                                          >
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                              <div className="w-6 h-6 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-slate-700 font-black text-[11px] shrink-0 shadow-2xs">
+                                                {sIdx + 1}
+                                              </div>
+                                              <div className="min-w-0">
+                                                <p className="font-bold text-slate-800 truncate flex items-center gap-1.5">
+                                                  <span className="truncate">{sig.userName}</span>
+                                                  {sig.registration && (
+                                                    <span className="text-[9px] font-mono text-slate-500 bg-slate-200/70 px-1 py-0.2 rounded shrink-0">
+                                                      Matrícula: {sig.registration}
+                                                    </span>
+                                                  )}
+                                                </p>
+                                                <p className="text-[10px] text-slate-400 font-medium">
+                                                  Assinado às {safeToDate(sig.timestamp)?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) || 'Horário registrado'}
+                                                </p>
+                                              </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                              {sig.mood === 'happy' && (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                  <Smile className="w-3.5 h-3.5 text-emerald-500" /> FELIZ
+                                                </span>
+                                              )}
+                                              {sig.mood === 'neutral' && (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-50 text-blue-700 border border-blue-200">
+                                                  <Meh className="w-3.5 h-3.5 text-blue-500" /> NEUTRO
+                                                </span>
+                                              )}
+                                              {sig.mood === 'sad' && (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-50 text-amber-700 border border-amber-200">
+                                                  <Frown className="w-3.5 h-3.5 text-amber-500" /> TRISTE
+                                                </span>
+                                              )}
+                                              {!sig.mood && (
+                                                <span className="text-[10px] text-slate-400 font-medium italic">
+                                                  Sem humor
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-center text-xs text-slate-400 py-3 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                                        Nenhum colaborador assinou este DDS até o momento.
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </div>
                           )}
                         </>
                       )}
