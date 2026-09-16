@@ -6,7 +6,8 @@ import {
   CheckCircle2, 
   Sparkles,
   MessageSquareHeart,
-  Clock
+  Clock,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../hooks/useAuth';
@@ -46,6 +47,8 @@ const QUICK_TAGS = [
   'Precisa de pequenos ajustes'
 ];
 
+const MAX_DISMISS_COUNT = 3;
+
 export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = false, onCloseForce }) => {
   const { user, profile, isApproved } = useAuth();
 
@@ -57,6 +60,8 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
   const [submitting, setSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [currentAccessCount, setCurrentAccessCount] = useState<number>(0);
+  const [dismissCount, setDismissCount] = useState<number>(0);
+  const [isLocked, setIsLocked] = useState<boolean>(false);
 
   // Evaluate if popout should be shown to user
   useEffect(() => {
@@ -77,14 +82,25 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
       return;
     }
 
-    // 2. Check if user postponed in this browser session
-    const isPostponedSession = sessionStorage.getItem(`secapp_feedback_postponed_${user.uid}`) === 'true';
-    if (isPostponedSession) {
-      setIsOpen(false);
-      return;
+    // 2. Check dismiss count (from profile or localStorage)
+    const localDismissCount = parseInt(localStorage.getItem(`secapp_feedback_dismiss_count_${user.uid}`) || '0', 10);
+    const profileDismissCount = profile?.appFeedbackDismissCount || 0;
+    const effectiveDismissCount = Math.max(localDismissCount, profileDismissCount);
+    setDismissCount(effectiveDismissCount);
+
+    const locked = effectiveDismissCount >= MAX_DISMISS_COUNT || profile?.appFeedbackDismissLocked === true;
+    setIsLocked(locked);
+
+    // 3. Check if user postponed in this browser session (ONLY allowed if NOT locked)
+    if (!locked) {
+      const isPostponedSession = sessionStorage.getItem(`secapp_feedback_postponed_${user.uid}`) === 'true';
+      if (isPostponedSession) {
+        setIsOpen(false);
+        return;
+      }
     }
 
-    // 3. Track current session & calculate total access count
+    // 4. Track current session & calculate total access count
     const checkAccessAndTrigger = async () => {
       try {
         let count = profile?.accessCount || 0;
@@ -126,12 +142,12 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
 
         setCurrentAccessCount(count);
 
-        // Required: only show if user accessed at least 10 times
-        if (count >= 10) {
-          // Add a smooth delay so it appears gently after the page is loaded
+        // Required: only show if user accessed at least 10 times OR if locked due to 3 dismisses
+        if (count >= 10 || locked) {
+          // If locked, open immediately so user cannot bypass; otherwise soft delay of 2s
           const timer = setTimeout(() => {
             setIsOpen(true);
-          }, 2000);
+          }, locked ? 600 : 2000);
           return () => clearTimeout(timer);
         }
       } catch (e) {
@@ -149,9 +165,31 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
   };
 
   const handlePostpone = () => {
-    if (user) {
-      sessionStorage.setItem(`secapp_feedback_postponed_${user.uid}`, 'true');
+    // If locked after 3 dismisses, user CANNOT dismiss anymore
+    if (isLocked) {
+      return;
     }
+
+    if (user) {
+      const nextCount = dismissCount + 1;
+      setDismissCount(nextCount);
+      localStorage.setItem(`secapp_feedback_dismiss_count_${user.uid}`, String(nextCount));
+      
+      const willBeLocked = nextCount >= MAX_DISMISS_COUNT;
+      if (willBeLocked) {
+        setIsLocked(true);
+      } else {
+        sessionStorage.setItem(`secapp_feedback_postponed_${user.uid}`, 'true');
+      }
+
+      // Persist in user document
+      updateDoc(doc(db, 'users', user.uid), {
+        appFeedbackDismissCount: nextCount,
+        appFeedbackDismissLocked: willBeLocked,
+        updatedAt: serverTimestamp()
+      }).catch(() => {});
+    }
+
     setIsOpen(false);
     if (onCloseForce) onCloseForce();
   };
@@ -182,15 +220,17 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
         // Save evaluation to app_feedback_surveys collection
         await addDoc(collection(db, 'app_feedback_surveys'), surveyData);
 
-        // Mark on user's profile that feedback was submitted
+        // Mark on user's profile that feedback was submitted and clear dismiss locks
         await updateDoc(doc(db, 'users', user.uid), {
           appFeedbackSubmitted: true,
           appFeedbackSubmittedAt: serverTimestamp(),
+          appFeedbackDismissLocked: false,
           updatedAt: serverTimestamp()
         });
 
         // Store locally so it never shows again on this device/browser
         localStorage.setItem(`secapp_feedback_submitted_${user.uid}`, 'true');
+        localStorage.removeItem(`secapp_feedback_dismiss_count_${user.uid}`);
       }
 
       setIsSubmitted(true);
@@ -224,7 +264,7 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
     <AnimatePresence>
       <div 
         id="app-feedback-modal-backdrop" 
-        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm"
+        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm"
       >
         <motion.div
           id="app-feedback-modal-card"
@@ -237,17 +277,19 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
           {/* Header decorative bar */}
           <div className="h-2 w-full bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-500" />
 
-          {/* Close button (Postpones for this session) */}
-          <button
-            id="btn-close-app-feedback"
-            type="button"
-            onClick={handlePostpone}
-            disabled={submitting}
-            className="absolute top-4 right-4 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors z-10"
-            title="Lembrar mais tarde"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {/* Close button (Postpones for this session only if not locked) */}
+          {!isLocked && (
+            <button
+              id="btn-close-app-feedback"
+              type="button"
+              onClick={handlePostpone}
+              disabled={submitting}
+              className="absolute top-4 right-4 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors z-10"
+              title="Lembrar mais tarde"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
 
           {isSubmitted ? (
             <div className="p-8 text-center space-y-4">
@@ -278,9 +320,39 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
                   Como está sendo sua experiência?
                 </h2>
                 <p className="text-xs font-medium text-slate-500 max-w-sm mx-auto">
-                  Você já é um usuário frequente do nosso novo aplicativo. Conte-nos o que está achando do sistema!
+                  {isLocked ? (
+                    <span className="font-semibold text-amber-700">
+                      Sua participação nesta pesquisa é obrigatória para continuar utilizando o aplicativo.
+                    </span>
+                  ) : (
+                    "Você já é um usuário frequente do nosso novo aplicativo. Conte-nos o que está achando do sistema!"
+                  )}
                 </p>
               </div>
+
+              {/* Mandatory Alert if Locked */}
+              {isLocked && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-2.5 text-left">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-bold text-amber-900">
+                      Pesquisa Obrigatória ({MAX_DISMISS_COUNT} de {MAX_DISMISS_COUNT} lembretes utilizados)
+                    </p>
+                    <p className="text-[11px] text-amber-700 leading-snug">
+                      Para garantir a melhoria contínua de nossas ferramentas de trabalho, por favor responda abaixo para liberar o uso normal do sistema.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Dismiss count indicator if not locked */}
+              {!isLocked && dismissCount > 0 && (
+                <div className="flex items-center justify-center gap-1 text-[11px] text-slate-500 font-medium">
+                  <span>Lembretes adiados:</span>
+                  <span className="font-bold text-slate-700">{dismissCount} de {MAX_DISMISS_COUNT}</span>
+                  <span className="text-slate-400">(na 3ª vez a resposta será obrigatória)</span>
+                </div>
+              )}
 
               {/* Star Rating Selection */}
               <div className="bg-slate-50 border border-slate-150/80 rounded-2xl p-4 text-center space-y-2.5">
@@ -376,16 +448,18 @@ export const AppFeedbackModal: React.FC<AppFeedbackModalProps> = ({ forceOpen = 
 
               {/* Footer Actions */}
               <div className="pt-2 flex flex-col-reverse sm:flex-row items-center gap-2">
-                <button
-                  type="button"
-                  id="btn-postpone-feedback"
-                  onClick={handlePostpone}
-                  disabled={submitting}
-                  className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  Lembrar mais tarde
-                </button>
+                {!isLocked && (
+                  <button
+                    type="button"
+                    id="btn-postpone-feedback"
+                    onClick={handlePostpone}
+                    disabled={submitting}
+                    className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    Lembrar mais tarde ({dismissCount + 1}/3)
+                  </button>
+                )}
 
                 <button
                   type="submit"

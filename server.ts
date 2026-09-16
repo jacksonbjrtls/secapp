@@ -207,6 +207,63 @@ const requireAuth = async (req: AuthenticatedRequest, res: Response, next: NextF
   }
 };
 
+async function fetchFirestoreDocRest(collection: string, docId: string, idToken?: string) {
+  const localProjectId = projectId;
+  const localDatabaseId = (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
+  const localApiKey = apiKey;
+
+  let url = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/${collection}/${docId}`;
+  if (localApiKey) {
+    url += `?key=${localApiKey}`;
+  }
+
+  const headers: Record<string, string> = {};
+  if (idToken) {
+    headers["Authorization"] = `Bearer ${idToken}`;
+  }
+
+  const response = await fetch(url, { headers });
+  if (response.status === 404) {
+    return { exists: false, data: () => null };
+  }
+  if (!response.ok) {
+    throw new Error(`Firestore REST returned ${response.status}: ${await response.text()}`);
+  }
+  const data: any = await response.json();
+  const fields = data.fields || {};
+
+  const parseValue = (field: any): any => {
+    if (!field) return undefined;
+    if ('stringValue' in field) return field.stringValue;
+    if ('booleanValue' in field) return field.booleanValue;
+    if ('integerValue' in field) return parseInt(field.integerValue);
+    if ('doubleValue' in field) return parseFloat(field.doubleValue);
+    if ('timestampValue' in field) return field.timestampValue;
+    if ('nullValue' in field) return null;
+    if ('mapValue' in field && field.mapValue.fields) {
+      const mapObj: any = {};
+      for (const [k, v] of Object.entries(field.mapValue.fields)) {
+        mapObj[k] = parseValue(v);
+      }
+      return mapObj;
+    }
+    if ('arrayValue' in field && field.arrayValue.values) {
+      return field.arrayValue.values.map(parseValue);
+    }
+    return undefined;
+  };
+
+  const parsedData: any = {};
+  for (const [k, v] of Object.entries(fields)) {
+    parsedData[k] = parseValue(v);
+  }
+
+  return {
+    exists: true,
+    data: () => parsedData
+  };
+}
+
 async function fetchUserDocFromRest(projectId: string, databaseId: string, uid: string, idToken: string) {
   const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/users/${uid}`;
   const response = await fetch(url, {
@@ -773,8 +830,17 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
         if (cfgDoc.exists) {
           emailConfig = cfgDoc.data();
         }
-      } catch (fErr) {
-        console.warn("[API reply-feedback] Firestore email_config fetch note:", fErr);
+      } catch (fErr: any) {
+        // Fallback using client token if Admin SDK is uncredentialed
+        const userToken = req.headers.authorization?.split("Bearer ")[1];
+        try {
+          const restDoc = await fetchFirestoreDocRest("settings", "email_config", userToken);
+          if (restDoc.exists) {
+            emailConfig = restDoc.data();
+          }
+        } catch (restErr) {
+          // Silent fallback to env vars if neither admin nor rest config document is present
+        }
       }
 
       const activeGmailUser = emailConfig?.gmailUser || process.env.GMAIL_USER || process.env.GMAIL_EMAIL || process.env.GMAIL_ACCOUNT;
@@ -1049,7 +1115,18 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
         if (cfgDoc.exists) {
           emailConfig = cfgDoc.data();
         }
-      } catch (err) {}
+      } catch (err: any) {
+        // Fallback using client token if Admin SDK is uncredentialed
+        const userToken = req.headers.authorization?.split("Bearer ")[1];
+        try {
+          const restDoc = await fetchFirestoreDocRest("settings", "email_config", userToken);
+          if (restDoc.exists) {
+            emailConfig = restDoc.data();
+          }
+        } catch (restErr) {
+          // Silent fallback to env vars
+        }
+      }
 
       const hasEnvGmail = Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
       const hasEnvResend = Boolean(process.env.RESEND_API_KEY);
@@ -1123,7 +1200,38 @@ Responda ESTRITAMENTE em formato JSON com o seguinte formato de objeto:
         if (gmailAppPassword) configData.gmailAppPassword = gmailAppPassword;
       }
 
-      await dbFirestore.collection("settings").doc("email_config").set(configData, { merge: true });
+      try {
+        await dbFirestore.collection("settings").doc("email_config").set(configData, { merge: true });
+      } catch (adminErr: any) {
+        // Fallback using user authorization token via REST API
+        const userToken = req.headers.authorization?.split("Bearer ")[1];
+        const localProjectId = projectId;
+        const localDatabaseId = (firebaseConfig as any).firestoreDatabaseId || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-0394a074-0ded-48a0-9733-51828b2a3a52";
+        const localApiKey = apiKey;
+        
+        const restUrl = `https://firestore.googleapis.com/v1/projects/${localProjectId}/databases/${localDatabaseId}/documents/settings/email_config${localApiKey ? `?key=${localApiKey}` : ''}`;
+        
+        // Convert JS object to Firestore REST fields format
+        const fields: Record<string, any> = {};
+        for (const [key, val] of Object.entries(configData)) {
+          if (typeof val === 'string') fields[key] = { stringValue: val };
+          else if (typeof val === 'number') fields[key] = { integerValue: String(val) };
+          else if (typeof val === 'boolean') fields[key] = { booleanValue: val };
+        }
+
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
+
+        const restRes = await fetch(restUrl, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ fields })
+        });
+
+        if (!restRes.ok) {
+          throw new Error(`Erro ao salvar configurações de e-mail (REST status ${restRes.status}): ${await restRes.text()}`);
+        }
+      }
 
       return res.json({
         success: true,

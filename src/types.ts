@@ -27,6 +27,8 @@ export interface UserProfile {
   accessCount?: number;
   appFeedbackSubmitted?: boolean;
   appFeedbackSubmittedAt?: any;
+  appFeedbackDismissCount?: number;
+  appFeedbackDismissLocked?: boolean;
 }
 
 export interface AppFeedbackReplyItem {
