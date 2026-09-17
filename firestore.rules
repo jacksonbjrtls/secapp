@@ -545,21 +545,22 @@ service cloud.firestore {
 
     // Overtime Justifications
     match /overtime_justifications/{justificationId} {
-      allow get, list: if isApproved() && (isManager() || resource.data.userId == request.auth.uid);
-      allow create, update: if isApproved() && isNotDisabled() && (isManager() || request.resource.data.userId == request.auth.uid);
-      allow delete: if isManager() || (isApproved() && resource.data.userId == request.auth.uid);
+      allow get, list: if isApproved() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isApproved() && isNotDisabled() && (isAdmin() || request.resource.data.userId == request.auth.uid);
+      allow update: if isApproved() && isNotDisabled() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin() || (isApproved() && resource.data.userId == request.auth.uid);
     }
 
     // Overtime Functions
     match /overtime_functions/{functionId} {
       allow read: if isApproved();
-      allow create, update, delete: if isManager();
+      allow create, update, delete: if isAdmin();
     }
 
     // Overtime Areas
     match /overtime_areas/{areaId} {
       allow read: if isApproved();
-      allow create, update, delete: if isManager();
+      allow create, update, delete: if isAdmin();
     }
 
     // Work Sectors

@@ -58,7 +58,7 @@ import { cn, safeToDate } from '../lib/utils';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
 
 const Dashboard: React.FC = () => {
-  const { isManager, isMaster } = useAuth();
+  const { isManager, isAdmin, isMaster } = useAuth();
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
     dds: true,
     forklifts: true,
@@ -78,13 +78,19 @@ const Dashboard: React.FC = () => {
     { id: 'forklifts', moduleKey: 'forklifts', label: 'Empilhadeiras', icon: Truck },
     { id: 'quality', moduleKey: 'quality', label: 'Inspeções', icon: ClipboardCheck },
     { id: 'wire', moduleKey: 'wires', label: 'Arames', icon: LayersIcon },
-    { id: 'overtime', moduleKey: 'overtime', label: 'Horas Extras', icon: Clock },
+    ...((isAdmin || isMaster) ? [{ id: 'overtime', moduleKey: 'overtime', label: 'Horas Extras', icon: Clock } as const] : []),
     { id: 'operational_routes', moduleKey: 'operational_routes', label: 'Rota Operacional', icon: Activity },
     { id: 'safety_observations', moduleKey: 'safety_observations', label: 'Observações de Segurança', icon: ShieldAlert },
     { id: 'consumables', moduleKey: 'consumables', label: 'Controle de Insumos', icon: Box }
-  ] as const, []);
+  ] as const, [isAdmin, isMaster]);
 
   const [activeTab, setActiveTab ] = useState<'dds' | 'forklifts' | 'quality' | 'wire' | 'overtime' | 'operational_routes' | 'safety_observations' | 'consumables'>('dds');
+
+  useEffect(() => {
+    if (!isAdmin && !isMaster && activeTab === 'overtime') {
+      setActiveTab('dds');
+    }
+  }, [isAdmin, isMaster, activeTab]);
   const [routesSubmissions, setRoutesSubmissions ] = useState<any[]>([]);
   const [routesTemplates, setRoutesTemplates ] = useState<any[]>([]);
   const [safetyObservations, setSafetyObservations] = useState<any[]>([]);
@@ -376,21 +382,24 @@ const Dashboard: React.FC = () => {
       setConsumableLogs(docs);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_logs'));
 
-    // Overtime Listeners
-    const qOvertime = query(
-      collection(db, 'overtime_justifications'),
-      where('date', '>=', monthStartStr),
-      where('date', '<=', monthEndStr)
-    );
-    const unsubOvertime = onSnapshot(qOvertime, async (snapshot) => {
-      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        const decCreatedByName = await decryptValue(data.createdByName);
-        return { id: doc.id, ...data, userName: decName, createdByName: decCreatedByName };
-      }));
-      setOvertimeJustifications(docs);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'overtime_justifications'));
+    // Overtime Listeners (Admins and Masters only)
+    let unsubOvertime = () => {};
+    if (isAdmin || isMaster) {
+      const qOvertime = query(
+        collection(db, 'overtime_justifications'),
+        where('date', '>=', monthStartStr),
+        where('date', '<=', monthEndStr)
+      );
+      unsubOvertime = onSnapshot(qOvertime, async (snapshot) => {
+        const docs = await Promise.all(snapshot.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          const decCreatedByName = await decryptValue(data.createdByName);
+          return { id: doc.id, ...data, userName: decName, createdByName: decCreatedByName };
+        }));
+        setOvertimeJustifications(docs);
+      }, (err) => handleFirestoreError(err, OperationType.LIST, 'overtime_justifications'));
+    }
 
     return () => {
       unsubscribe();
@@ -411,7 +420,7 @@ const Dashboard: React.FC = () => {
       unsubConsumableLogs();
       unsubOvertime();
     };
-  }, [isManager, filterYear, filterMonth]);
+  }, [isManager, isAdmin, isMaster, filterYear, filterMonth]);
 
   // Derived forklift metrics for the selected period
   const forkliftMetrics = useMemo(() => {

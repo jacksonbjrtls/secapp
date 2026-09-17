@@ -174,9 +174,9 @@ export default function Overtime() {
       }
     }, 'name');
 
-    // 3. Listen for users if admin/master/manager from shared decrypted cache
+    // 3. Listen for users if admin/master from shared decrypted cache
     let unsubUsers = () => {};
-    if (isAdmin || isMaster || isManager) {
+    if (isAdmin || isMaster) {
       // Immediate cached render
       const cached = getLocalCachedUsers();
       if (cached.length > 0) {
@@ -199,7 +199,7 @@ export default function Overtime() {
       unsubAreas();
       unsubUsers();
     };
-  }, [isAdmin, isMaster, isManager]);
+  }, [isAdmin, isMaster]);
 
   // Load and listen to Overtime Justifications
   useEffect(() => {
@@ -207,8 +207,8 @@ export default function Overtime() {
 
     let q = query(collection(db, 'overtime_justifications'), orderBy('date', 'desc'), limit(200));
     
-    // Non-managers/admins can only see their own justifications
-    if (!isManager && !isAdmin && !isMaster) {
+    // Only Admins and Masters can view all justifications across the company
+    if (!isAdmin && !isMaster) {
       q = query(
         collection(db, 'overtime_justifications'), 
         where('userId', '==', user.uid),
@@ -239,7 +239,14 @@ export default function Overtime() {
     });
 
     return () => unsubJusts();
-  }, [user, isManager, isAdmin, isMaster]);
+  }, [user, isAdmin, isMaster]);
+
+  // Only Admins and Masters have access to parameters/configs tab
+  useEffect(() => {
+    if (!isAdmin && !isMaster && activeTab === 'configs') {
+      setActiveTab('register');
+    }
+  }, [isAdmin, isMaster, activeTab]);
 
   // Prefill default form values from current profile when not launching for other
   useEffect(() => {
@@ -282,7 +289,7 @@ export default function Overtime() {
     let targetGroup = formGroup || profile?.group || 'A';
 
     // If launching for other collaborator (admin/master only)
-    if (launchForOther && (isManager || isAdmin || isMaster)) {
+    if (launchForOther && (isAdmin || isMaster)) {
       if (!selectedCollabId) {
         alert('Por favor, selecione o colaborador.');
         setSubmitting(false);
@@ -758,8 +765,8 @@ export default function Overtime() {
           </p>
         </div>
 
-        {/* Export Button for Admin/Managers */}
-        {(isManager || isAdmin || isMaster) && activeTab === 'history' && (
+        {/* Export Button for Admin/Master */}
+        {(isAdmin || isMaster) && activeTab === 'history' && (
           <button
             onClick={handleExportPDF}
             className="flex items-center gap-2 px-5 py-3 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition-all shadow-md shadow-emerald-200 text-sm cursor-pointer"
@@ -794,9 +801,9 @@ export default function Overtime() {
           )}
         >
           <CalendarDays className="w-4 h-4" />
-          {isManager || isAdmin || isMaster ? "Histórico Geral & Resumo" : "Minhas Justificativas"}
+          {isAdmin || isMaster ? "Histórico Geral & Resumo" : "Minhas Justificativas"}
         </button>
-        {(isManager || isAdmin || isMaster) && (
+        {(isAdmin || isMaster) && (
           <button
             onClick={() => setActiveTab('configs')}
             className={cn(
@@ -832,13 +839,13 @@ export default function Overtime() {
 
               <form onSubmit={handleSubmitJustification} className="space-y-6">
                 {/* Admin-only Switch to launch for others */}
-                {(isManager || isAdmin || isMaster) && (
+                {(isAdmin || isMaster) && (
                   <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Users className="w-5 h-5 text-slate-500" />
                       <div>
                         <p className="text-sm font-bold text-slate-800">Lançar para outro colaborador</p>
-                        <p className="text-xs text-slate-500 font-medium">Permitido para Gestores, Administradores e Masters</p>
+                        <p className="text-xs text-slate-500 font-medium">Permitido para Administradores e Masters</p>
                       </div>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
@@ -859,7 +866,7 @@ export default function Overtime() {
                 {/* Grid Inputs */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Prefilled or collaborator Select */}
-                  {launchForOther && (isManager || isAdmin || isMaster) ? (
+                  {launchForOther && (isAdmin || isMaster) ? (
                     <div>
                       <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">
                         Selecionar Colaborador
@@ -1124,8 +1131,8 @@ export default function Overtime() {
             transition={{ duration: 0.2 }}
             className="space-y-6"
           >
-            {/* Cards metrics top row for Managers/Admins/Masters */}
-            {(isManager || isAdmin || isMaster) && (
+            {/* Cards metrics top row for Admins/Masters */}
+            {(isAdmin || isMaster) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm flex items-center justify-between">
                   <div>
@@ -1184,7 +1191,7 @@ export default function Overtime() {
                 </div>
                 
                 <div className="flex items-center gap-3">
-                  {(isManager || isAdmin || isMaster) && (
+                  {(isAdmin || isMaster) && (
                     <span className="text-xs text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-xl">
                       {filteredJustifications.length} de {justifications.length} registros
                     </span>
@@ -1335,7 +1342,7 @@ export default function Overtime() {
                 </div>
 
                 {/* Filter User / Colaborador */}
-                {(isManager || isAdmin || isMaster) ? (
+                {(isAdmin || isMaster) ? (
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
                       Filtrar por Colaborador
@@ -1366,7 +1373,7 @@ export default function Overtime() {
                 )}
 
                 {/* Filter Area */}
-                {(isManager || isAdmin || isMaster) ? (
+                {(isAdmin || isMaster) ? (
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
                       Filtrar por Área
@@ -1420,8 +1427,8 @@ export default function Overtime() {
               </div>
             </div>
 
-            {/* RANKING CHART & STATISTICAL OVERVIEW (ADMIN, MASTER, MANAGER ONLY) */}
-            {(isManager || isAdmin || isMaster) && (
+            {/* RANKING CHART & STATISTICAL OVERVIEW (ADMIN, MASTER ONLY) */}
+            {(isAdmin || isMaster) && (
               <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
                 <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-4 gap-3">
                   <div>
@@ -1704,7 +1711,7 @@ export default function Overtime() {
                                 >
                                   <Download className="w-4 h-4" />
                                 </button>
-                                {(isMaster || isManager || isAdmin || item.userId === user?.uid) && (
+                                {(isMaster || isAdmin || item.userId === user?.uid) && (
                                   <button
                                     onClick={() => handleDeleteJustification(item.id)}
                                     title="Excluir"
@@ -1723,8 +1730,8 @@ export default function Overtime() {
                 )}
               </div>
 
-              {/* Sidebar top hours table for Managers/Admins/Masters */}
-              {(isManager || isAdmin || isMaster) && (
+              {/* Sidebar top hours table for Admins/Masters */}
+              {(isAdmin || isMaster) && (
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-6">
                   <div>
                     <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-1.5">
@@ -1772,7 +1779,7 @@ export default function Overtime() {
         )}
 
         {/* TAB 3: CONFIGURATIONS (ADMIN & MASTER ONLY) */}
-        {activeTab === 'configs' && (isManager || isAdmin || isMaster) && (
+        {activeTab === 'configs' && (isAdmin || isMaster) && (
           <motion.div
             key="configs-tab"
             initial={{ opacity: 0, y: 15 }}
