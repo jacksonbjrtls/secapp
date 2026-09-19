@@ -326,18 +326,52 @@ const OperationalRoutes: React.FC = () => {
     'Turno 3': '16:00 às 24:00'
   };
 
-  const isTemplateAllowedInShift = (tmpl: RouteTemplate, targetShift: Shift): boolean => {
-    if (!tmpl.allowedShifts || tmpl.allowedShifts.length === 0) {
-      return true; // Sem restrição de turno: disponível 24h
+  const getTemplateAllowedShifts = (tmpl: RouteTemplate): string[] => {
+    if (tmpl.allowedShifts && Array.isArray(tmpl.allowedShifts) && tmpl.allowedShifts.length > 0) {
+      return tmpl.allowedShifts;
     }
-    return tmpl.allowedShifts.some(shift => {
+    const anyTmpl = tmpl as any;
+    if (Array.isArray(anyTmpl.shifts) && anyTmpl.shifts.length > 0) {
+      return anyTmpl.shifts;
+    }
+    if (Array.isArray(anyTmpl.turnos) && anyTmpl.turnos.length > 0) {
+      return anyTmpl.turnos;
+    }
+    if (typeof anyTmpl.shift === 'string' && anyTmpl.shift.trim()) {
+      return [anyTmpl.shift.trim()];
+    }
+    if (typeof anyTmpl.turno === 'string' && anyTmpl.turno.trim()) {
+      return [anyTmpl.turno.trim()];
+    }
+    // Detect from title or name if the template was created specifically for a turno
+    const nameStr = (tmpl.name || anyTmpl.title || '').toLowerCase();
+    const detected: string[] = [];
+    if (/\bturno\s*0?1\b|\b1[ºoª]\s*turno\b|\bt1\b/i.test(nameStr)) {
+      detected.push('Turno 1');
+    }
+    if (/\bturno\s*0?2\b|\b2[ºoª]\s*turno\b|\bt2\b/i.test(nameStr)) {
+      detected.push('Turno 2');
+    }
+    if (/\bturno\s*0?3\b|\b3[ºoª]\s*turno\b|\bt3\b/i.test(nameStr)) {
+      detected.push('Turno 3');
+    }
+    return detected;
+  };
+
+  const isTemplateAllowedInShift = (tmpl: RouteTemplate, targetShift: Shift): boolean => {
+    const allowed = getTemplateAllowedShifts(tmpl);
+    if (!allowed || allowed.length === 0) {
+      // Se não houver restrição estipulada de turno, fica disponível 24h
+      return true;
+    }
+    return allowed.some(shift => {
       if (!shift) return false;
       const s = shift.trim().toLowerCase();
       const t = targetShift.toLowerCase();
       if (s === t) return true;
-      if (targetShift === 'Turno 1' && (s.includes('1') || s.includes('00:00'))) return true;
-      if (targetShift === 'Turno 2' && (s.includes('2') || s.includes('08:00'))) return true;
-      if (targetShift === 'Turno 3' && (s.includes('3') || s.includes('16:00'))) return true;
+      if (targetShift === 'Turno 1' && (s === '1' || s === '01' || s === 't1' || s.includes('turno 1') || s.includes('00:00'))) return true;
+      if (targetShift === 'Turno 2' && (s === '2' || s === '02' || s === 't2' || s.includes('turno 2') || s.includes('08:00'))) return true;
+      if (targetShift === 'Turno 3' && (s === '3' || s === '03' || s === 't3' || s.includes('turno 3') || s.includes('16:00'))) return true;
       return false;
     });
   };
@@ -1085,7 +1119,7 @@ const OperationalRoutes: React.FC = () => {
     setTemplateSectorId('all');
     setTemplateFrequency('shift');
     setTemplateCustomPeriod('');
-    setTemplateAllowedShifts([]);
+    setTemplateAllowedShifts([currentOperationalShift]);
     setTemplateEquipments([
       { 
         id: 'eq_1', 
@@ -1107,7 +1141,7 @@ const OperationalRoutes: React.FC = () => {
     setTemplateSectorId(tmpl.sectorId || 'all');
     setTemplateFrequency(tmpl.frequency || 'shift');
     setTemplateCustomPeriod(tmpl.customFrequencyPeriod || '');
-    setTemplateAllowedShifts(tmpl.allowedShifts || []);
+    setTemplateAllowedShifts(getTemplateAllowedShifts(tmpl));
     setTemplateEquipments(tmpl.equipments || []);
     setIsTemplateModalOpen(true);
   };
@@ -1274,6 +1308,24 @@ const OperationalRoutes: React.FC = () => {
       return;
     }
 
+    let finalAllowedShifts = [...templateAllowedShifts];
+    if (templateFrequency === 'shift' && finalAllowedShifts.length === 0) {
+      const nameStr = templateName.toLowerCase();
+      if (/\bturno\s*0?1\b|\b1[ºoª]\s*turno\b|\bt1\b/i.test(nameStr)) finalAllowedShifts.push('Turno 1');
+      if (/\bturno\s*0?2\b|\b2[ºoª]\s*turno\b|\bt2\b/i.test(nameStr)) finalAllowedShifts.push('Turno 2');
+      if (/\bturno\s*0?3\b|\b3[ºoª]\s*turno\b|\bt3\b/i.test(nameStr)) finalAllowedShifts.push('Turno 3');
+
+      if (finalAllowedShifts.length === 0) {
+        setModalConfig({
+          isOpen: true,
+          title: 'Definição de Turno Obrigatória',
+          message: 'Para rotas com frequência "Por Turno", você deve selecionar ao menos um turno estipulado (Turno 1: 00h às 08h, Turno 2: 08h às 16h ou Turno 3: 16h às 24h). Isso garante que a rota só fique disponível no horário correspondente.',
+          type: 'error'
+        });
+        return;
+      }
+    }
+
     setIsSavingTemplate(true);
     try {
       const templateData = {
@@ -1283,7 +1335,7 @@ const OperationalRoutes: React.FC = () => {
         sectorId: templateSectorId,
         frequency: templateFrequency,
         customFrequencyPeriod: templateFrequency === 'custom' ? templateCustomPeriod : '',
-        allowedShifts: templateAllowedShifts,
+        allowedShifts: finalAllowedShifts,
         equipments: validEquipments.map(eq => ({
           id: eq.id || `eq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           name: eq.name.trim(),
@@ -1395,8 +1447,8 @@ const OperationalRoutes: React.FC = () => {
 
     // Strict validation: Block execution outside the stipulated shift hours
     if (!isAllowedInShift) {
-      const allowedShiftsText = tmpl.allowedShifts?.join(', ') || '';
-      const allowedSchedule = tmpl.allowedShifts?.map(s => `${s} (${SHIFT_HOURS[s] || ''})`).join(' ou ') || '';
+      const allowedShiftsList = getTemplateAllowedShifts(tmpl);
+      const allowedSchedule = allowedShiftsList.map(s => `${s} (${SHIFT_HOURS[s] || ''})`).join(' ou ') || 'Turno específico';
       const curHours = SHIFT_HOURS[curShift] || '';
 
       setModalConfig({
@@ -1551,6 +1603,109 @@ const OperationalRoutes: React.FC = () => {
     }
     
     setActiveTab('new_route');
+  };
+
+  // Helper to handle equipment inspection: 'OK' advances to next item; 'NÃO OK' opens deviation options
+  const handleEquipmentOptionSelect = (
+    eq: RouteEquipmentItem,
+    selectedOption: string,
+    currentIndex: number,
+    allEquipments: RouteEquipmentItem[]
+  ) => {
+    if (isReadOnlyRoute) return;
+
+    const labelLower = selectedOption.toLowerCase().trim();
+    const isNotOk = (
+      labelLower === 'not ok' || 
+      labelLower === 'nok' || 
+      labelLower === 'não ok' || 
+      labelLower === 'nao ok' || 
+      labelLower.includes('não') || 
+      labelLower.includes('nao') || 
+      labelLower.includes('falha') || 
+      labelLower.includes('instável') ||
+      labelLower === 'baixo' ||
+      labelLower === 'alto' ||
+      labelLower === 'low' ||
+      labelLower === 'high'
+    );
+
+    const autoStatus: 'ok' | 'not_ok' = isNotOk ? 'not_ok' : 'ok';
+
+    // 1. Update response
+    setRouteResponses(prev => ({
+      ...prev,
+      [eq.id]: {
+        ...prev[eq.id],
+        value: selectedOption,
+        status: autoStatus
+      }
+    }));
+
+    if (autoStatus === 'not_ok') {
+      // Se clicou em NÃO OK -> AÍ SIM ELE ABRE AS OUTRAS OPÇÕES!
+      setDetailingResponses(prev => {
+        if (prev[eq.id]) return prev;
+        return {
+          ...prev,
+          [eq.id]: {
+            inspectionType: 'Desvio Rota',
+            diagnostic: 'Não Conformidade',
+            notes: '',
+            photoUrl: '',
+            actionTaken: 'Atendimento de Desvio',
+            responsibleCenter: '',
+            schedule: '',
+            sapNote: ''
+          }
+        };
+      });
+
+      // Abre as outras opções detalhadas
+      setExpandedEquipmentId(eq.id);
+
+      // Rola suavemente para focar neste equipamento e suas opções abertas
+      setTimeout(() => {
+        const el = document.getElementById(`equipment-card-${eq.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+
+    } else {
+      // Se clicou em OK -> VAI PARA O PRÓXIMO ITEM!
+      if (expandedEquipmentId === eq.id) {
+        setExpandedEquipmentId(null);
+      }
+
+      // Identifica o próximo item da lista
+      const nextEq = allEquipments[currentIndex + 1];
+      if (nextEq) {
+        setTimeout(() => {
+          const nextEl = document.getElementById(`equipment-card-${nextEq.id}`);
+          if (nextEl) {
+            nextEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            // Efeito visual sutil para orientar a atenção do operador
+            nextEl.classList.add('ring-2', 'ring-[#0d6e4f]', 'ring-offset-2');
+            setTimeout(() => {
+              nextEl.classList.remove('ring-2', 'ring-[#0d6e4f]', 'ring-offset-2');
+            }, 1200);
+          }
+        }, 120);
+      } else {
+        // Se era o último item, rola suavemente até o botão de Finalizar Ronda
+        setTimeout(() => {
+          const finishBtn = document.getElementById('btn-finish-route');
+          if (finishBtn) {
+            finishBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            finishBtn.classList.add('ring-4', 'ring-emerald-400', 'ring-offset-2', 'animate-pulse');
+            setTimeout(() => {
+              finishBtn.classList.remove('ring-4', 'ring-emerald-400', 'ring-offset-2', 'animate-pulse');
+            }, 2000);
+          }
+        }, 200);
+      }
+    }
   };
 
   // Save Route Submission
@@ -2227,20 +2382,23 @@ const OperationalRoutes: React.FC = () => {
                         <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-slate-50 text-slate-500 rounded">
                           {tmpl.equipments?.length || 0} Equipamentos
                         </span>
-                        {tmpl.allowedShifts && tmpl.allowedShifts.length > 0 ? (
-                          <span className={cn(
-                            "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 border rounded-lg",
-                            isAllowedNow
-                              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                              : "bg-amber-50 text-amber-800 border-amber-200"
-                          )}>
-                            {isAllowedNow ? `Liberada no: ${tmpl.allowedShifts.join(', ')}` : `Apenas no: ${tmpl.allowedShifts.join(', ')}`}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg">
-                            Livre (Todos Turnos)
-                          </span>
-                        )}
+                        {(() => {
+                          const allowedList = getTemplateAllowedShifts(tmpl);
+                          return allowedList.length > 0 ? (
+                            <span className={cn(
+                              "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 border rounded-lg",
+                              isAllowedNow
+                                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                : "bg-amber-50 text-amber-800 border-amber-200"
+                            )}>
+                              {isAllowedNow ? `Liberada no: ${allowedList.join(', ')}` : `Apenas no: ${allowedList.join(', ')}`}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg">
+                              Livre (Todos Turnos)
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -2801,6 +2959,21 @@ const OperationalRoutes: React.FC = () => {
                         });
                         return;
                       }
+
+                      if (selectedTemplate && !isTemplateAllowedInShift(selectedTemplate, currentOperationalShift)) {
+                        const allowedList = getTemplateAllowedShifts(selectedTemplate);
+                        const allowedSchedule = allowedList.map(s => `${s} (${SHIFT_HOURS[s] || ''})`).join(' ou ') || 'Turno específico';
+                        const curHours = SHIFT_HOURS[currentOperationalShift] || '';
+
+                        setModalConfig({
+                          isOpen: true,
+                          title: 'Horário de Turno Restrito',
+                          message: `Esta rota foi configurada para ser executada exclusivamente durante: ${allowedSchedule}. No momento o sistema opera no ${currentOperationalShift} (${curHours}). A rota só pode ser iniciada quando seu horário estipulado for alcançado.`,
+                          type: 'error'
+                        });
+                        return;
+                      }
+
                       setRouteStep('active_inspection');
                     }}
                     className="w-full bg-[#0d6e4f] hover:bg-emerald-800 text-white font-black py-4 rounded-2xl transition-all shadow-md active:scale-95 text-xs uppercase tracking-wider"
@@ -2986,19 +3159,23 @@ const OperationalRoutes: React.FC = () => {
                       return (
                         <div
                           key={eq.id}
+                          id={`equipment-card-${eq.id}`}
                           className={cn(
                             "border rounded-3xl transition-all bg-white relative",
                             isChecked ? "border-[#0d6e4f]/60 shadow-sm" : "border-slate-200"
                           )}
                         >
                           {/* Item Header */}
-                          <div className="p-4 flex items-center justify-between gap-4 select-none">
-                            {/* Left part */}
+                          <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 select-none">
+                            {/* Left part: Tag, Status & Name */}
                             <div 
                               onClick={() => setExpandedEquipmentId(isExpanded ? null : eq.id)}
-                              className="flex-1 cursor-pointer"
+                              className="flex-1 cursor-pointer min-w-0"
                             >
                               <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded leading-none">
+                                  #{inlineIdx + 1}
+                                </span>
                                 {eq.tag ? (
                                   <span className={cn(
                                     "text-xs font-black px-2 py-0.5 rounded leading-none uppercase transition-colors duration-200",
@@ -3013,28 +3190,77 @@ const OperationalRoutes: React.FC = () => {
                                 )}
                                 
                                 {isChecked && (
-                                  <Check className={cn(
-                                    "w-4 h-4 shrink-0 font-bold",
-                                    resp.status === 'not_ok' ? "text-rose-500" : "text-[#0d6e4f]"
-                                  )} />
+                                  <span className={cn(
+                                    "text-[10px] font-black uppercase px-2 py-0.5 rounded-md flex items-center gap-1 leading-none",
+                                    resp.status === 'not_ok' 
+                                      ? "bg-rose-50 text-rose-700 border border-rose-200" 
+                                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  )}>
+                                    {resp.status === 'not_ok' ? (
+                                      <><AlertTriangle className="w-3 h-3 text-rose-500 shrink-0" /> NÃO OK</>
+                                    ) : (
+                                      <><Check className="w-3 h-3 text-emerald-600 shrink-0" /> OK</>
+                                    )}
+                                  </span>
                                 )}
                               </div>
-                              <h4 className="font-extrabold text-slate-700 text-sm mt-1 leading-tight uppercase truncate max-w-[340px]">
+                              <h4 className="font-extrabold text-slate-700 text-sm mt-1 leading-tight uppercase truncate max-w-md">
                                 {eq.name}
                               </h4>
                             </div>
 
-                            {/* Down Arrow square button (matches images exactly) */}
-                            <button
-                              type="button"
-                              onClick={() => setExpandedEquipmentId(isExpanded ? null : eq.id)}
-                              className={cn(
-                                "w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 text-white cursor-pointer",
-                                isExpanded ? "bg-emerald-800 rotate-180" : "bg-[#0d6e4f] hover:bg-emerald-800"
-                              )}
-                            >
-                              <ChevronRight className="w-5 h-5 rotate-90 stroke-[3]" />
-                            </button>
+                            {/* Right: Quick Action Buttons OK / NÃO OK + Chevron */}
+                            <div className="flex items-center gap-2 self-stretch sm:self-auto justify-end shrink-0">
+                              <button
+                                type="button"
+                                disabled={isReadOnlyRoute}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEquipmentOptionSelect(eq, 'OK', inlineIdx, filtered);
+                                }}
+                                className={cn(
+                                  "flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all border shadow-2xs",
+                                  isReadOnlyRoute ? "cursor-not-allowed opacity-60" : "cursor-pointer active:scale-95",
+                                  resp.value === 'OK' || (resp.status === 'ok' && resp.value !== '')
+                                    ? "bg-emerald-600 text-white border-emerald-700 ring-2 ring-emerald-500/40"
+                                    : "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200"
+                                )}
+                                title="Conforme / OK (Avança automaticamente para o próximo item)"
+                              >
+                                <Check className="w-3.5 h-3.5 stroke-[3]" /> OK
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isReadOnlyRoute}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEquipmentOptionSelect(eq, 'NÃO OK', inlineIdx, filtered);
+                                }}
+                                className={cn(
+                                  "flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all border shadow-2xs",
+                                  isReadOnlyRoute ? "cursor-not-allowed opacity-60" : "cursor-pointer active:scale-95",
+                                  resp.value === 'NÃO OK' || resp.status === 'not_ok'
+                                    ? "bg-rose-600 text-white border-rose-700 ring-2 ring-rose-500/40"
+                                    : "bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200"
+                                )}
+                                title="Não Conforme / NÃO OK (Abre opções de desvio e evidências)"
+                              >
+                                <X className="w-3.5 h-3.5 stroke-[3]" /> NÃO OK
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setExpandedEquipmentId(isExpanded ? null : eq.id)}
+                                className={cn(
+                                  "w-9 h-9 rounded-xl flex items-center justify-center transition-all shrink-0 cursor-pointer shadow-2xs",
+                                  isExpanded ? "bg-slate-700 text-white rotate-180" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                                )}
+                                title={isExpanded ? "Recolher detalhes" : "Mais detalhes do item"}
+                              >
+                                <ChevronRight className="w-4 h-4 rotate-90 stroke-[2.5]" />
+                              </button>
+                            </div>
                           </div>
 
                           <AnimatePresence>
@@ -3064,52 +3290,25 @@ const OperationalRoutes: React.FC = () => {
                                         <div className="flex flex-wrap gap-2 justify-end">
                                           {(optionSets.find(o => o.id === eq.conditionOptionsId)?.options || ['OK', 'NÃO OK']).map((option, inlineOptionIdx) => {
                                             const isSelected = resp.value === option;
+                                            const optLower = option.toLowerCase();
+                                            const isNotOkOption = optLower === 'not ok' || optLower === 'nok' || optLower.includes('não') || optLower.includes('falha') || optLower.includes('instável');
+
                                             return (
                                               <button
                                                 key={`${option}-${inlineOptionIdx}`}
                                                 type="button"
                                                 disabled={isReadOnlyRoute}
-                                                onClick={() => {
-                                                  const labelLower = option.toLowerCase();
-                                                  const autoStatus = (labelLower === 'not ok' || labelLower === 'nok' || labelLower.includes('não') || labelLower.includes('falha') || labelLower.includes('instável'))
-                                                    ? 'not_ok'
-                                                    : 'ok';
-                                                  
-                                                  setRouteResponses(prev => ({
-                                                    ...prev,
-                                                    [eq.id]: {
-                                                      ...prev[eq.id],
-                                                      value: option,
-                                                      status: autoStatus
-                                                    }
-                                                  }));
-                                                  
-                                                  if (autoStatus === 'not_ok') {
-                                                    setAnomalyDetailingEqId(eq.id);
-                                                    setDetailingResponses(prev => {
-                                                      if (prev[eq.id]) return prev;
-                                                      return {
-                                                        ...prev,
-                                                        [eq.id]: {
-                                                          inspectionType: 'Desvio Rota',
-                                                          diagnostic: 'Não Conformidade',
-                                                          notes: '',
-                                                          photoUrl: '',
-                                                          actionTaken: 'Atendimento de Desvio',
-                                                          responsibleCenter: '',
-                                                          schedule: '',
-                                                          sapNote: ''
-                                                        }
-                                                      };
-                                                    });
-                                                  }
-                                                }}
+                                                onClick={() => handleEquipmentOptionSelect(eq, option, inlineIdx, filtered)}
                                                 className={cn(
-                                                  "px-3 py-2 rounded-xl text-xs font-bold border transition-all",
-                                                  isReadOnlyRoute ? "cursor-not-allowed opacity-75" : "cursor-pointer",
+                                                  "px-3.5 py-2 rounded-xl text-xs font-bold border transition-all",
+                                                  isReadOnlyRoute ? "cursor-not-allowed opacity-75" : "cursor-pointer active:scale-95",
                                                   isSelected 
-                                                    ? "bg-emerald-50 text-emerald-700 border-[#0d6e4f] ring-1 ring-[#0d6e4f]" 
-                                                    : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                                                    ? (isNotOkOption
+                                                        ? "bg-rose-600 text-white border-rose-700 ring-2 ring-rose-400/40"
+                                                        : "bg-emerald-600 text-white border-emerald-700 ring-2 ring-emerald-400/40")
+                                                    : (isNotOkOption
+                                                        ? "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100"
+                                                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100")
                                                 )}
                                               >
                                                 {option}
@@ -3199,45 +3398,16 @@ const OperationalRoutes: React.FC = () => {
                                             { label: 'NORMAL / OK', val: 'normal', col: 'bg-[#0d6e4f] text-white border-[#0d6e4f]' },
                                             { label: 'ALTO', val: 'high', col: 'bg-rose-600 text-white border-rose-600' }
                                           ].map((rnVal, rnIdx) => {
-                                            const isActive = resp.value === rnVal.val;
+                                            const isActive = resp.value === rnVal.val || resp.value === rnVal.label;
                                             return (
                                               <button
                                                 key={`rnval-${rnVal.val}-${rnIdx}`}
                                                 type="button"
                                                 disabled={isReadOnlyRoute}
-                                                onClick={() => {
-                                                  const autoStatus = rnVal.val === 'low' || rnVal.val === 'high' ? 'not_ok' : 'ok';
-                                                  setRouteResponses(prev => ({
-                                                    ...prev,
-                                                    [eq.id]: {
-                                                      ...prev[eq.id],
-                                                      value: rnVal.val,
-                                                      status: autoStatus
-                                                    }
-                                                  }));
-                                                  if (autoStatus === 'not_ok') {
-                                                    setAnomalyDetailingEqId(eq.id);
-                                                    setDetailingResponses(prev => {
-                                                      if (prev[eq.id]) return prev;
-                                                      return {
-                                                        ...prev,
-                                                        [eq.id]: {
-                                                          inspectionType: 'Desvio Rota',
-                                                          diagnostic: 'Não Conformidade',
-                                                          notes: '',
-                                                          photoUrl: '',
-                                                          actionTaken: 'Atendimento de Desvio',
-                                                          responsibleCenter: '',
-                                                          schedule: '',
-                                                          sapNote: ''
-                                                        }
-                                                      };
-                                                    });
-                                                  }
-                                                }}
+                                                onClick={() => handleEquipmentOptionSelect(eq, rnVal.label, inlineIdx, filtered)}
                                                 className={cn(
                                                   "px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase border transition-all text-center",
-                                                  isReadOnlyRoute ? "cursor-not-allowed opacity-75" : "cursor-pointer",
+                                                  isReadOnlyRoute ? "cursor-not-allowed opacity-75" : "cursor-pointer active:scale-95",
                                                   isActive ? rnVal.col : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
                                                 )}
                                               >
@@ -3635,19 +3805,55 @@ const OperationalRoutes: React.FC = () => {
                                   )}
 
                                   {/* CONFIRM BUTTON */}
-                                  <button
-                                    type="button"
-                                    disabled={isReadOnlyRoute}
-                                    onClick={() => setExpandedEquipmentId(null)}
-                                    className={cn(
-                                      "w-full py-2.5 font-extrabold rounded-xl text-[10px] uppercase tracking-wider transition-colors shadow-xs",
-                                      isReadOnlyRoute
-                                        ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
-                                        : "bg-[#0d6e4f] hover:bg-emerald-800 text-white cursor-pointer"
-                                    )}
-                                  >
-                                    OK / Confirmar
-                                  </button>
+                                  <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+                                    <button
+                                      type="button"
+                                      disabled={isReadOnlyRoute}
+                                      onClick={() => {
+                                        setExpandedEquipmentId(null);
+                                        const nextEq = filtered[inlineIdx + 1];
+                                        if (nextEq) {
+                                          setTimeout(() => {
+                                            const nextEl = document.getElementById(`equipment-card-${nextEq.id}`);
+                                            if (nextEl) {
+                                              nextEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                              nextEl.classList.add('ring-2', 'ring-[#0d6e4f]', 'ring-offset-2');
+                                              setTimeout(() => {
+                                                nextEl.classList.remove('ring-2', 'ring-[#0d6e4f]', 'ring-offset-2');
+                                              }, 1200);
+                                            }
+                                          }, 120);
+                                        } else {
+                                          setTimeout(() => {
+                                            const finishBtn = document.getElementById('btn-finish-route');
+                                            if (finishBtn) {
+                                              finishBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                              finishBtn.classList.add('ring-4', 'ring-emerald-400', 'ring-offset-2', 'animate-pulse');
+                                              setTimeout(() => {
+                                                finishBtn.classList.remove('ring-4', 'ring-emerald-400', 'ring-offset-2', 'animate-pulse');
+                                              }, 2000);
+                                            }
+                                          }, 200);
+                                        }
+                                      }}
+                                      className={cn(
+                                        "w-full sm:flex-1 py-3 font-black rounded-xl text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2",
+                                        isReadOnlyRoute
+                                          ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                                          : "bg-[#0d6e4f] hover:bg-emerald-800 text-white cursor-pointer active:scale-95"
+                                      )}
+                                    >
+                                      <Check className="w-4 h-4 stroke-[3]" /> Confirmar e Próximo Item
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedEquipmentId(null)}
+                                      className="w-full sm:w-auto px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold uppercase transition-colors cursor-pointer"
+                                    >
+                                      Recolher
+                                    </button>
+                                  </div>
                               </motion.div>
                             )}
                           </AnimatePresence>
@@ -3689,6 +3895,7 @@ const OperationalRoutes: React.FC = () => {
                       </button>
                     ) : (
                       <button
+                        id="btn-finish-route"
                         type="button"
                         onClick={handleSaveRouteSubmission}
                         className="px-8 py-3 bg-[#0d6e4f] hover:bg-emerald-800 text-white font-black rounded-xl text-xs uppercase tracking-wide leading-none shadow-md shadow-emerald-50 active:scale-95 transition-all"
@@ -3757,11 +3964,18 @@ const OperationalRoutes: React.FC = () => {
                       <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
                         Foco de Rota: <span className="font-extrabold text-slate-700">{applicableLabel}</span>
                       </p>
-                      {tmpl.allowedShifts && tmpl.allowedShifts.length > 0 && (
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
-                          Turno(s) Autorizados: <span className="font-extrabold text-[#0d6e4f]">{tmpl.allowedShifts.join(', ')}</span>
-                        </p>
-                      )}
+                      {(() => {
+                        const allowedList = getTemplateAllowedShifts(tmpl);
+                        return allowedList.length > 0 ? (
+                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">
+                            Turno(s) Autorizados: <span className="font-extrabold text-[#0d6e4f]">{allowedList.join(', ')}</span>
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wide">
+                            Turno(s): <span className="font-bold text-slate-600">Livre (Todos os turnos)</span>
+                          </p>
+                        );
+                      })()}
                     </div>
 
                     <div className="bg-slate-50 p-4 rounded-xl max-h-[140px] overflow-y-auto border border-slate-100/50">
