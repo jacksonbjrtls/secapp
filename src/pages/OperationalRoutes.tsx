@@ -17,7 +17,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
-import { getCurrentShift, getGroupForShift } from '../lib/scaleUtils';
+import { getCurrentShift, getGroupForShift, type Shift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate, formatDateBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
@@ -319,6 +319,38 @@ const OperationalRoutes: React.FC = () => {
   // Tabs: 'my_routes' | 'new_route' | 'manage_templates' | 'metrics' | 'deviation_settings'
   const [activeTab, setActiveTab] = useState<'my_routes' | 'new_route' | 'manage_templates' | 'metrics' | 'deviation_settings'>('my_routes');
 
+  // Shift schedule mapping and validation helpers
+  const SHIFT_HOURS: Record<string, string> = {
+    'Turno 1': '00:00 às 08:00',
+    'Turno 2': '08:00 às 16:00',
+    'Turno 3': '16:00 às 24:00'
+  };
+
+  const isTemplateAllowedInShift = (tmpl: RouteTemplate, targetShift: Shift): boolean => {
+    if (!tmpl.allowedShifts || tmpl.allowedShifts.length === 0) {
+      return true; // Sem restrição de turno: disponível 24h
+    }
+    return tmpl.allowedShifts.some(shift => {
+      if (!shift) return false;
+      const s = shift.trim().toLowerCase();
+      const t = targetShift.toLowerCase();
+      if (s === t) return true;
+      if (targetShift === 'Turno 1' && (s.includes('1') || s.includes('00:00'))) return true;
+      if (targetShift === 'Turno 2' && (s.includes('2') || s.includes('08:00'))) return true;
+      if (targetShift === 'Turno 3' && (s.includes('3') || s.includes('16:00'))) return true;
+      return false;
+    });
+  };
+
+  // Live operational clock for real-time shift checking
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const currentOperationalShift = useMemo(() => getCurrentShift(currentTime), [currentTime]);
+
   // Firestore States
   const [templates, setTemplates] = useState<RouteTemplate[]>([]);
   const [submissions, setSubmissions] = useState<RouteSubmission[]>([]);
@@ -338,7 +370,7 @@ const OperationalRoutes: React.FC = () => {
   const [editingTemplate, setEditingTemplate] = useState<RouteTemplate | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
-  const [showOnlyCurrentShift, setShowOnlyCurrentShift] = useState(false);
+  const [showOnlyCurrentShift, setShowOnlyCurrentShift] = useState(true);
   const [templateName, setTemplateName] = useState('');
   const [templateSectorId, setTemplateSectorId] = useState('all');
   const [templateFrequency, setTemplateFrequency] = useState<'shift' | 'weekly' | 'custom'>('shift');
@@ -661,18 +693,18 @@ const OperationalRoutes: React.FC = () => {
 
   // Helper helper function to find route submission under current shift and today's date
   const getTemplateShiftSubmissionToday = (tmplId: string) => {
-    const currentShift = getCurrentShift();
     const shiftMapping: Record<string, string> = {
       'Turno 1': '00:00 - 08:00',
       'Turno 2': '08:00 - 16:00',
       'Turno 3': '16:00 - 24:00'
     };
-    const currentShiftValue = shiftMapping[currentShift] || '08:00 - 16:00';
+    const currentShiftValue = shiftMapping[currentOperationalShift] || '08:00 - 16:00';
     const today = new Date();
 
     return submissions.find(s => {
       if (s.templateId !== tmplId) return false;
-      if (s.shift !== currentShiftValue) return false;
+      const matchesShift = s.shift === currentShiftValue || s.shift === currentOperationalShift;
+      if (!matchesShift) return false;
       const subDate = safeToDate(s.createdAt);
       if (!subDate) return false;
       return (
@@ -1358,6 +1390,24 @@ const OperationalRoutes: React.FC = () => {
 
   // Initialize Route Execution responses
   const handleStartRoute = async (tmpl: RouteTemplate) => {
+    const curShift = currentOperationalShift;
+    const isAllowedInShift = isTemplateAllowedInShift(tmpl, curShift);
+
+    // Strict validation: Block execution outside the stipulated shift hours
+    if (!isAllowedInShift) {
+      const allowedShiftsText = tmpl.allowedShifts?.join(', ') || '';
+      const allowedSchedule = tmpl.allowedShifts?.map(s => `${s} (${SHIFT_HOURS[s] || ''})`).join(' ou ') || '';
+      const curHours = SHIFT_HOURS[curShift] || '';
+
+      setModalConfig({
+        isOpen: true,
+        title: 'Horário de Turno Restrito',
+        message: `Esta rota foi configurada para ser executada exclusivamente durante: ${allowedSchedule}. No momento o sistema opera no ${curShift} (${curHours}). A rota só pode ser iniciada quando seu horário estipulado for alcançado.`,
+        type: 'error'
+      });
+      return;
+    }
+
     // Check if the route has already been completed in the current shift today
     const existingSubmission = getTemplateShiftSubmissionToday(tmpl.id);
     if (existingSubmission) {
@@ -2034,53 +2084,82 @@ const OperationalRoutes: React.FC = () => {
           <Loader2 className="w-12 h-12 text-slate-300 animate-spin" />
           <p className="text-slate-400 font-bold mt-4 text-xs">Aguardando dados de sincronização do Firestore...</p>
         </div>
-      ) : activeTab === 'my_routes' ? (
+      ) : activeTab === 'my_routes' ? (() => {
+        const activeTemplates = templates.filter(t => t.active);
+        const currentShiftTemplates = activeTemplates.filter(t => isTemplateAllowedInShift(t, currentOperationalShift));
+        const otherShiftTemplatesCount = activeTemplates.length - currentShiftTemplates.length;
+        const displayedTemplates = showOnlyCurrentShift ? currentShiftTemplates : activeTemplates;
+
+        return (
         <div className="space-y-8">
-          {/* List of active templates for worker inspection */}
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-black text-slate-900 tracking-tight ml-1">Rotas de Vistoria Ativas</h2>
-                <p className="text-xs text-slate-400 font-semibold ml-1">
-                  Selecione uma rota para iniciar ou acompanhar a vistoria operacional.
-                </p>
+          {/* Operational Shift & Schedule Bar */}
+          <div className="bg-white border border-slate-200 p-5 rounded-[2rem] flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-2xs">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-200/70 flex items-center justify-center text-[#0d6e4f] shrink-0 shadow-2xs">
+                <Clock className="w-5 h-5" />
               </div>
-              <div className="flex items-center gap-2 self-start sm:self-auto">
-                <button
-                  type="button"
-                  onClick={() => setShowOnlyCurrentShift(prev => !prev)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-colors flex items-center gap-1.5 cursor-pointer",
-                    showOnlyCurrentShift
-                      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                      : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                  )}
-                >
-                  <Filter className="w-3.5 h-3.5" />
-                  {showOnlyCurrentShift ? `Apenas ${getCurrentShift()}` : "Todos os Turnos"}
-                </button>
-                {isManager && (
-                  <button
-                    type="button"
-                    onClick={handleOpenAddTemplate}
-                    className="px-3.5 py-1.5 bg-[#0d6e4f] hover:bg-emerald-800 text-white rounded-xl text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Criar Rota
-                  </button>
-                )}
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-black text-slate-800 uppercase tracking-tight">Turno Vigente:</span>
+                  <span className="px-2.5 py-0.5 rounded-lg text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-200">
+                    {currentOperationalShift} ({SHIFT_HOURS[currentOperationalShift]})
+                  </span>
+                  <span className="text-xs font-bold text-slate-500">
+                    • Escala: Letra {getGroupForShift(currentTime, currentOperationalShift)}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
+                  Rotas operacionais só ficam liberadas para execução nos horários definidos em sua criação.
+                </p>
               </div>
             </div>
 
+            <div className="flex flex-wrap items-center gap-2.5 self-stretch md:self-auto justify-end">
+              <button
+                type="button"
+                onClick={() => setShowOnlyCurrentShift(prev => !prev)}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 cursor-pointer",
+                  showOnlyCurrentShift
+                    ? "bg-emerald-50 text-emerald-900 border-emerald-300 shadow-2xs font-black"
+                    : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                )}
+              >
+                <Filter className="w-3.5 h-3.5" />
+                {showOnlyCurrentShift 
+                  ? `Apenas ${currentOperationalShift} (${currentShiftTemplates.length})` 
+                  : `Todos os Turnos (${activeTemplates.length})`}
+              </button>
+              {isManager && (
+                <button
+                  type="button"
+                  onClick={handleOpenAddTemplate}
+                  className="px-4 py-2 bg-[#0d6e4f] hover:bg-emerald-800 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Criar Rota
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* List of active templates for worker inspection */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-1">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight ml-1">Rotas de Vistoria Ativas</h2>
+                <p className="text-xs text-slate-400 font-semibold ml-1">
+                  {showOnlyCurrentShift 
+                    ? `Exibindo apenas rotas programadas para o ${currentOperationalShift}.` 
+                    : "Exibindo todas as rotas (rotas fora do horário permanecem bloqueadas)."}
+                </p>
+              </div>
+              <span className="text-xs font-bold text-slate-400">
+                {displayedTemplates.length} rota(s) exibida(s)
+              </span>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {templates
-                .filter(t => t.active)
-                .filter(t => {
-                  if (!showOnlyCurrentShift) return true;
-                  if (!t.allowedShifts || t.allowedShifts.length === 0) return true;
-                  const currentShift = getCurrentShift();
-                  return t.allowedShifts.includes(currentShift);
-                })
-                .map(tmpl => {
+              {displayedTemplates.map(tmpl => {
                 const sectorObj = sectors.find(s => s.id === tmpl.sectorId);
                 const lineObj = lines.find(l => l.id === tmpl.sectorId);
                 const scopeLabel = tmpl.sectorId === 'all' 
@@ -2088,30 +2167,53 @@ const OperationalRoutes: React.FC = () => {
                   : (sectorObj?.name || lineObj?.name || 'Setor de Máquinas');
                 
                 const showPeriod = tmpl.frequency === 'custom' && tmpl.customFrequencyPeriod;
-
                 const completionToday = getTemplateShiftSubmissionToday(tmpl.id);
+                const isAllowedNow = isTemplateAllowedInShift(tmpl, currentOperationalShift);
 
                 return (
                   <div key={tmpl.id} className={cn(
-                    "bg-white border p-8 rounded-[2rem] shadow-xs flex flex-col justify-between hover:border-emerald-500 transition-all group",
-                    completionToday ? "border-emerald-100 bg-[#fafdfb]" : "border-slate-200"
+                    "border p-8 rounded-[2rem] shadow-xs flex flex-col justify-between transition-all group",
+                    !isAllowedNow
+                      ? "bg-slate-50/70 border-slate-200 opacity-80"
+                      : completionToday 
+                      ? "border-emerald-200 bg-[#fafdfb] hover:border-emerald-500" 
+                      : "bg-white border-slate-200 hover:border-emerald-500"
                   )}>
                     <div className="space-y-4">
-                      <div className={cn(
-                        "w-11 h-11 rounded-2xl flex items-center justify-center",
-                        completionToday ? "bg-emerald-100 text-emerald-700" : "bg-emerald-50 text-emerald-600"
-                      )}>
-                        <Wrench className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="flex items-start justify-between gap-2">
-                          <h3 className="font-black text-lg text-slate-900 tracking-tight leading-tight group-hover:text-emerald-600 transition-colors uppercase">{tmpl.name}</h3>
-                          {completionToday && (
-                            <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg flex items-center gap-1 shrink-0 animate-fade-in select-none">
-                              <Check className="w-3 h-3 text-emerald-800 shrink-0" /> Turno Ok
-                            </span>
-                          )}
+                      <div className="flex items-center justify-between">
+                        <div className={cn(
+                          "w-11 h-11 rounded-2xl flex items-center justify-center",
+                          !isAllowedNow
+                            ? "bg-slate-200 text-slate-500"
+                            : completionToday 
+                            ? "bg-emerald-100 text-emerald-700" 
+                            : "bg-emerald-50 text-emerald-600"
+                        )}>
+                          {!isAllowedNow ? <Lock className="w-5 h-5" /> : <Wrench className="w-5 h-5" />}
                         </div>
+
+                        {!isAllowedNow ? (
+                          <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-1 bg-amber-100 text-amber-900 border border-amber-200 rounded-lg flex items-center gap-1 shrink-0 select-none">
+                            <Lock className="w-3 h-3 text-amber-700 shrink-0" /> Fora do Horário
+                          </span>
+                        ) : completionToday ? (
+                          <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg flex items-center gap-1 shrink-0 animate-fade-in select-none">
+                            <Check className="w-3 h-3 text-emerald-800 shrink-0" /> Turno Ok
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg flex items-center gap-1 shrink-0 select-none">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Liberada Agora
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <h3 className={cn(
+                          "font-black text-lg tracking-tight leading-tight uppercase transition-colors",
+                          !isAllowedNow ? "text-slate-700" : "text-slate-900 group-hover:text-emerald-600"
+                        )}>
+                          {tmpl.name}
+                        </h3>
                         <p className="text-xs text-slate-400 font-semibold mt-1 flex items-center gap-1">
                           <LayoutGrid className="w-3.5 h-3.5 text-slate-400" /> {scopeLabel}
                         </p>
@@ -2125,24 +2227,41 @@ const OperationalRoutes: React.FC = () => {
                         <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-slate-50 text-slate-500 rounded">
                           {tmpl.equipments?.length || 0} Equipamentos
                         </span>
-                        {tmpl.allowedShifts && tmpl.allowedShifts.length > 0 && (
-                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-lg">
-                            {tmpl.allowedShifts.join(', ')}
+                        {tmpl.allowedShifts && tmpl.allowedShifts.length > 0 ? (
+                          <span className={cn(
+                            "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 border rounded-lg",
+                            isAllowedNow
+                              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                              : "bg-amber-50 text-amber-800 border-amber-200"
+                          )}>
+                            {isAllowedNow ? `Liberada no: ${tmpl.allowedShifts.join(', ')}` : `Apenas no: ${tmpl.allowedShifts.join(', ')}`}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg">
+                            Livre (Todos Turnos)
                           </span>
                         )}
                       </div>
                     </div>
 
                     <button
+                      disabled={!isAllowedNow}
                       onClick={() => handleStartRoute(tmpl)}
                       className={cn(
-                        "w-full mt-6 py-3 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer",
-                        completionToday 
-                          ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200" 
-                          : "bg-slate-900 hover:bg-slate-800 text-white"
+                        "w-full mt-6 py-3 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2",
+                        !isAllowedNow
+                          ? "bg-slate-200/80 text-slate-500 border border-slate-300 cursor-not-allowed select-none opacity-80"
+                          : completionToday 
+                          ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 cursor-pointer" 
+                          : "bg-slate-900 hover:bg-slate-800 text-white cursor-pointer"
                       )}
                     >
-                      {completionToday ? (
+                      {!isAllowedNow ? (
+                        <>
+                          <Lock className="w-4 h-4 text-slate-400" />
+                          Bloqueada (Fora do Horário)
+                        </>
+                      ) : completionToday ? (
                         <>Visualizar Ronda (Concluída) <Check className="w-4 h-4 text-emerald-600 shrink-0" /></>
                       ) : (
                         <>Iniciar Ronda <Clipboard className="w-4 h-4 shrink-0" /></>
@@ -2151,7 +2270,9 @@ const OperationalRoutes: React.FC = () => {
                   </div>
                 );
               })}
-              {templates.filter(t => t.active).length === 0 && (
+
+              {/* Empty state: when no routes at all */}
+              {activeTemplates.length === 0 && (
                 <div className="col-span-full py-16 bg-white border border-dashed border-slate-200 rounded-[2rem] text-center text-slate-400 p-8 space-y-3">
                   <Wrench className="w-12 h-12 text-slate-200 mx-auto mb-1 animate-[spin_4s_linear_infinite]" />
                   <p className="font-black text-sm text-slate-700">Nenhum modelo de rota ativo disponível.</p>
@@ -2167,6 +2288,39 @@ const OperationalRoutes: React.FC = () => {
                       <Plus className="w-4 h-4" /> Criar Primeiro Modelo de Rota
                     </button>
                   )}
+                </div>
+              )}
+
+              {/* Empty state: when there are routes, but none for the current shift */}
+              {activeTemplates.length > 0 && displayedTemplates.length === 0 && (
+                <div className="col-span-full py-14 px-8 bg-amber-50/50 border border-amber-200/80 rounded-[2rem] text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto shadow-2xs">
+                    <Clock className="w-6 h-6" />
+                  </div>
+                  <p className="font-black text-base text-slate-900">
+                    Nenhuma rota liberada para o {currentOperationalShift} ({SHIFT_HOURS[currentOperationalShift]}).
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Existem {otherShiftTemplatesCount} rota(s) cadastradas para outros horários de turno. Elas ficam disponíveis automaticamente quando seus respectivos horários forem atingidos.
+                  </p>
+                  <div className="pt-2 flex flex-wrap justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowOnlyCurrentShift(false)}
+                      className="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                    >
+                      Exibir Rotas de Outros Turnos (Bloqueadas)
+                    </button>
+                    {isManager && (
+                      <button
+                        type="button"
+                        onClick={handleOpenAddTemplate}
+                        className="px-5 py-2.5 bg-[#0d6e4f] hover:bg-emerald-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4 inline mr-1" /> Criar Rota para {currentOperationalShift}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -2323,7 +2477,8 @@ const OperationalRoutes: React.FC = () => {
             </div>
           </div>
         </div>
-      ) : activeTab === 'new_route' && selectedTemplate ? (
+        );
+      })() : activeTab === 'new_route' && selectedTemplate ? (
         <motion.div 
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
@@ -4280,15 +4435,15 @@ const OperationalRoutes: React.FC = () => {
                     })}
                   </div>
                   {templateAllowedShifts.length > 0 && (
-                    <p className="text-[9px] text-emerald-700 font-black uppercase tracking-wider flex items-center gap-1 mt-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                      Visível somente no: {templateAllowedShifts.join(', ')}
+                    <p className="text-[10px] text-emerald-700 font-black uppercase tracking-wider flex items-center gap-1.5 mt-1.5 bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200/60">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                      Liberada exclusivamente no(s) horário(s): {templateAllowedShifts.join(', ')} ({templateAllowedShifts.map(s => SHIFT_HOURS[s] || s).join(' | ')}). Fora destes horários, o preenchimento da ronda ficará bloqueado.
                     </p>
                   )}
                   {templateAllowedShifts.length === 0 && (
-                    <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider flex items-center gap-1 mt-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
-                      Livre: Visível e executável em todos os turnos
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1.5 mt-1.5 bg-slate-100/80 p-2.5 rounded-xl border border-slate-200/60">
+                      <span className="w-2 h-2 rounded-full bg-slate-400 shrink-0" />
+                      Livre: Visível e executável em qualquer horário e turno (24 horas).
                     </p>
                   )}
                 </div>
