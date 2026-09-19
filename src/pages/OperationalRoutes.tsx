@@ -21,11 +21,12 @@ import { getCurrentShift, getGroupForShift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, safeToDate, formatDateBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
-import { subscribeSharedCollection } from '../lib/referenceCache';
+import { subscribeSharedCollection, invalidateReferenceCache } from '../lib/referenceCache';
 import { Html5Qrcode } from 'html5-qrcode';
 import { 
   Activity, 
   Plus, 
+  Filter, 
   Trash2, 
   Edit2, 
   CheckCircle2, 
@@ -336,6 +337,8 @@ const OperationalRoutes: React.FC = () => {
   // New Route Template Form
   const [editingTemplate, setEditingTemplate] = useState<RouteTemplate | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [showOnlyCurrentShift, setShowOnlyCurrentShift] = useState(false);
   const [templateName, setTemplateName] = useState('');
   const [templateSectorId, setTemplateSectorId] = useState('all');
   const [templateFrequency, setTemplateFrequency] = useState<'shift' | 'weekly' | 'custom'>('shift');
@@ -717,7 +720,7 @@ const OperationalRoutes: React.FC = () => {
     const unsubTemplates = subscribeSharedCollection('route_templates', (list) => {
       setTemplates(list as RouteTemplate[]);
       setLoading(false);
-    }, 'title');
+    }, 'name');
 
     return () => unsubTemplates();
   }, []);
@@ -1228,29 +1231,32 @@ const OperationalRoutes: React.FC = () => {
       return;
     }
 
-    if (templateEquipments.length === 0 || templateEquipments.some(eq => !eq.name.trim())) {
+    const validEquipments = templateEquipments.filter(eq => eq.name && eq.name.trim().length > 0);
+    if (validEquipments.length === 0) {
       setModalConfig({
         isOpen: true,
         title: 'Equipamentos Incompletos',
-        message: 'Por favor, registre pelo menos um equipamento e certifique-se de que todos tenham nome.',
+        message: 'Por favor, informe o nome de pelo menos um equipamento para compor a rota.',
         type: 'error'
       });
       return;
     }
 
+    setIsSavingTemplate(true);
     try {
       const templateData = {
-        name: templateName,
+        name: templateName.trim(),
+        title: templateName.trim(), // ensures compatibility with queries sorting by title or name
         active: editingTemplate ? editingTemplate.active : true,
         sectorId: templateSectorId,
         frequency: templateFrequency,
         customFrequencyPeriod: templateFrequency === 'custom' ? templateCustomPeriod : '',
         allowedShifts: templateAllowedShifts,
-        equipments: templateEquipments.map(eq => ({
-          id: eq.id,
-          name: eq.name,
-          tag: eq.tag || '',
-          description: eq.description || '',
+        equipments: validEquipments.map(eq => ({
+          id: eq.id || `eq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          name: eq.name.trim(),
+          tag: eq.tag ? eq.tag.trim() : '',
+          description: eq.description ? eq.description.trim() : '',
           required: eq.required !== false,
           type: eq.type || 'condition',
           conditionOptionsId: eq.conditionOptionsId || '',
@@ -1274,15 +1280,25 @@ const OperationalRoutes: React.FC = () => {
         });
       }
 
+      invalidateReferenceCache('route_templates');
       setIsTemplateModalOpen(false);
       setModalConfig({
         isOpen: true,
         title: 'Modelo Salvo',
-        message: `O modelo de rota "${templateName}" foi salvo com sucesso!`,
+        message: `O modelo de rota "${templateName.trim()}" foi salvo com sucesso!`,
         type: 'success'
       });
-    } catch (err) {
+    } catch (err: any) {
+      console.error('Erro ao salvar modelo de rota:', err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro ao Salvar Rota',
+        message: `Não foi possível salvar o modelo de rota: ${err?.message || 'Verifique sua conexão ou permissões.'}`,
+        type: 'error'
+      });
       handleFirestoreError(err, OperationType.CREATE, 'route_templates');
+    } finally {
+      setIsSavingTemplate(false);
     }
   };
 
@@ -1293,6 +1309,7 @@ const OperationalRoutes: React.FC = () => {
         active: !tmpl.active,
         updatedAt: serverTimestamp()
       });
+      invalidateReferenceCache('route_templates');
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, 'route_templates');
     }
@@ -1871,63 +1888,74 @@ const OperationalRoutes: React.FC = () => {
         </div>
 
         {/* Action Button for Managers to create models */}
-        <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
-          <button 
-            onClick={() => {
-              setSelectedTemplate(null);
-              setRouteResponses({});
-              setActiveTab('my_routes');
-            }}
-            className={cn(
-              "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", 
-              activeTab === 'my_routes' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
-            )}
-          >
-            Últimas Rondadas
-          </button>
-          {isManager && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
             <button 
               onClick={() => {
                 setSelectedTemplate(null);
                 setRouteResponses({});
-                setActiveTab('manage_templates');
+                setActiveTab('my_routes');
               }}
               className={cn(
                 "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", 
-                activeTab === 'manage_templates' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                activeTab === 'my_routes' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
               )}
             >
-              Modelos Rota
+              Últimas Rondadas
             </button>
-          )}
-          {isManager && (
+            {isManager && (
+              <button 
+                onClick={() => {
+                  setSelectedTemplate(null);
+                  setRouteResponses({});
+                  setActiveTab('manage_templates');
+                }}
+                className={cn(
+                  "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", 
+                  activeTab === 'manage_templates' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                )}
+              >
+                Modelos Rota
+              </button>
+            )}
+            {isManager && (
+              <button 
+                onClick={() => {
+                  setSelectedTemplate(null);
+                  setRouteResponses({});
+                  setActiveTab('deviation_settings');
+                }}
+                className={cn(
+                  "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", 
+                  activeTab === 'deviation_settings' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                )}
+              >
+                Opções Desvios
+              </button>
+            )}
             <button 
               onClick={() => {
                 setSelectedTemplate(null);
                 setRouteResponses({});
-                setActiveTab('deviation_settings');
+                setActiveTab('metrics');
               }}
               className={cn(
                 "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", 
-                activeTab === 'deviation_settings' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                activeTab === 'metrics' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
               )}
             >
-              Opções Desvios
+              Métricas
+            </button>
+          </div>
+
+          {isManager && (
+            <button
+              onClick={handleOpenAddTemplate}
+              className="flex items-center gap-2 bg-[#0d6e4f] hover:bg-emerald-800 text-white px-5 py-2.5 rounded-2xl text-xs font-black shadow-md shadow-emerald-50 uppercase tracking-wider transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" /> Criar Rota
             </button>
           )}
-          <button 
-            onClick={() => {
-              setSelectedTemplate(null);
-              setRouteResponses({});
-              setActiveTab('metrics');
-            }}
-            className={cn(
-              "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", 
-              activeTab === 'metrics' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
-            )}
-          >
-            Métricas
-          </button>
         </div>
       </div>
 
@@ -2010,11 +2038,44 @@ const OperationalRoutes: React.FC = () => {
         <div className="space-y-8">
           {/* List of active templates for worker inspection */}
           <div className="space-y-4">
-            <h2 className="text-xl font-black text-slate-900 tracking-tight ml-1">Rotas de Vistoria Ativas</h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight ml-1">Rotas de Vistoria Ativas</h2>
+                <p className="text-xs text-slate-400 font-semibold ml-1">
+                  Selecione uma rota para iniciar ou acompanhar a vistoria operacional.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowOnlyCurrentShift(prev => !prev)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-colors flex items-center gap-1.5 cursor-pointer",
+                    showOnlyCurrentShift
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                      : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                  )}
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  {showOnlyCurrentShift ? `Apenas ${getCurrentShift()}` : "Todos os Turnos"}
+                </button>
+                {isManager && (
+                  <button
+                    type="button"
+                    onClick={handleOpenAddTemplate}
+                    className="px-3.5 py-1.5 bg-[#0d6e4f] hover:bg-emerald-800 text-white rounded-xl text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Criar Rota
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {templates
                 .filter(t => t.active)
                 .filter(t => {
+                  if (!showOnlyCurrentShift) return true;
                   if (!t.allowedShifts || t.allowedShifts.length === 0) return true;
                   const currentShift = getCurrentShift();
                   return t.allowedShifts.includes(currentShift);
@@ -2073,17 +2134,16 @@ const OperationalRoutes: React.FC = () => {
                     </div>
 
                     <button
-                      disabled={!!completionToday}
                       onClick={() => handleStartRoute(tmpl)}
                       className={cn(
-                        "w-full mt-6 py-3 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2",
+                        "w-full mt-6 py-3 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer",
                         completionToday 
-                          ? "bg-slate-50 text-slate-400 border border-slate-150 cursor-not-allowed opacity-60" 
+                          ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200" 
                           : "bg-slate-900 hover:bg-slate-800 text-white"
                       )}
                     >
                       {completionToday ? (
-                        <>Ronda Concluída <Check className="w-4 h-4 text-emerald-600 shrink-0" /></>
+                        <>Visualizar Ronda (Concluída) <Check className="w-4 h-4 text-emerald-600 shrink-0" /></>
                       ) : (
                         <>Iniciar Ronda <Clipboard className="w-4 h-4 shrink-0" /></>
                       )}
@@ -2092,9 +2152,21 @@ const OperationalRoutes: React.FC = () => {
                 );
               })}
               {templates.filter(t => t.active).length === 0 && (
-                <div className="col-span-full py-16 bg-white border border-dashed border-slate-200 rounded-[2rem] text-center text-slate-400">
-                  <Wrench className="w-12 h-12 text-slate-200 mx-auto mb-3 animate-[spin_4s_linear_infinite]" />
-                  <p className="font-black text-xs">Nenhum modelo de rota ativo disponível.</p>
+                <div className="col-span-full py-16 bg-white border border-dashed border-slate-200 rounded-[2rem] text-center text-slate-400 p-8 space-y-3">
+                  <Wrench className="w-12 h-12 text-slate-200 mx-auto mb-1 animate-[spin_4s_linear_infinite]" />
+                  <p className="font-black text-sm text-slate-700">Nenhum modelo de rota ativo disponível.</p>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    Crie um modelo de rota operacional com seus equipamentos e frequências para iniciar vistorias.
+                  </p>
+                  {isManager && (
+                    <button
+                      type="button"
+                      onClick={handleOpenAddTemplate}
+                      className="mt-2 inline-flex items-center gap-2 px-5 py-2.5 bg-[#0d6e4f] hover:bg-emerald-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" /> Criar Primeiro Modelo de Rota
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -3575,8 +3647,19 @@ const OperationalRoutes: React.FC = () => {
               );
             })}
             {templates.length === 0 && (
-              <div className="col-span-full text-center py-20 text-slate-400 text-xs bg-white rounded-3xl border border-slate-200">
-                Nenhum modelo cadastrado. Comece criando um novo modelo!
+              <div className="col-span-full text-center py-20 text-slate-400 text-xs bg-white rounded-3xl border border-slate-200 p-8 space-y-4">
+                <Wrench className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="font-bold text-sm text-slate-700">Nenhum modelo de rota cadastrado.</p>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  Crie seu primeiro modelo de rota operacional definindo os equipamentos a serem inspecionados.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleOpenAddTemplate}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#0d6e4f] hover:bg-emerald-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Criar Novo Modelo de Rota
+                </button>
               </div>
             )}
           </div>
@@ -4502,10 +4585,12 @@ const OperationalRoutes: React.FC = () => {
                 </button>
                 <button
                   type="button"
+                  disabled={isSavingTemplate}
                   onClick={handleSaveTemplate}
-                  className="px-8 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs uppercase shadow-md shadow-emerald-150"
+                  className="px-8 py-2.5 bg-[#0d6e4f] hover:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black rounded-xl text-xs uppercase shadow-md shadow-emerald-150 flex items-center gap-2 cursor-pointer"
                 >
-                  Salvar Rota
+                  {isSavingTemplate && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isSavingTemplate ? 'Salvando...' : 'Salvar Rota'}
                 </button>
               </div>
             </motion.div>
@@ -4863,6 +4948,7 @@ const OperationalRoutes: React.FC = () => {
           if (!routeToDelete) return;
           try {
             await deleteDoc(doc(db, 'route_templates', routeToDelete.id));
+            invalidateReferenceCache('route_templates');
             setRouteToDelete(null);
             setModalConfig({
               isOpen: true,

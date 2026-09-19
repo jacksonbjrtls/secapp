@@ -293,9 +293,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return allowedDomains.includes(domainPart) || allowedDomains.includes(domainWithAt);
   }, [user?.email, allowedDomains, domainsLoading, isMaster]);
 
-  const isAdmin = profile?.role === 'admin' || isMaster;
-  const isManager = profile?.role === 'manager' || isAdmin;
-  const isViewer = (profile?.role === 'viewer' || (!profile?.role && !isAdmin && !isManager)) && !isMaster;
+  const normalizedRole = (profile?.role || '').toLowerCase().trim();
+  const isAdmin = normalizedRole === 'admin' || normalizedRole === 'administrador' || isMaster;
+  const isManager = normalizedRole === 'manager' || normalizedRole === 'gerente' || isAdmin;
+  const isViewer = (normalizedRole === 'viewer' || (!normalizedRole && !isAdmin && !isManager)) && !isMaster;
   const isApproved = profile?.status === 'approved' || isMaster;
   const isPending = profile?.status === 'pending' && !isMaster;
   const isBlocked = profile?.status === 'blocked' && !isMaster;
