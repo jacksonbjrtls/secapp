@@ -26,12 +26,12 @@ const SEQUENCES: Record<Shift, Group[]> = {
  * Calculates which group is assigned to a specific shift on a specific date.
  */
 export function getGroupForShift(date: Date, shift: Shift): Group {
-  // Calculate days difference from anchor
+  // Calculate days difference from anchor using Math.round to prevent any daylight variance
   const diffTime = date.getTime() - ANCHOR_DATE.getTime();
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
   
   // Since the cycle is 35 days, use modulo
-  // Handle negative difference if user checks date before anchor (unlikely but safe)
+  // Handle negative difference if user checks date before anchor
   let dayInCycle = diffDays % 35;
   if (dayInCycle < 0) dayInCycle += 35;
   

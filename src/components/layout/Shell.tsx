@@ -29,7 +29,8 @@ import {
   Clock,
   Gift,
   Wrench,
-  BookOpen
+  BookOpen,
+  Lock
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
@@ -40,6 +41,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from '../ui/Logo';
 import { PrivacyPolicyModal } from '../ui/PrivacyPolicyModal';
 import { AppFeedbackModal } from '../feedback/AppFeedbackModal';
+import { ProfileCompletionModal } from '../profile/ProfileCompletionModal';
+import { getProfileCompletionStatus } from '../../lib/profileCompletion';
 import { QuotaBanner } from './QuotaBanner';
 import { fetchUsersSafely, getLocalCachedUsers } from '../../lib/usersCache';
 import {
@@ -69,9 +72,10 @@ interface NavItemProps {
   isActive: boolean;
   onClick: () => void;
   isExternal?: boolean;
+  isLocked?: boolean;
 }
 
-const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, show, isActive, onClick, isExternal }) => {
+const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, show, isActive, onClick, isExternal, isLocked }) => {
   const {
     attributes,
     listeners,
@@ -92,6 +96,7 @@ const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, s
   };
 
   const isPdfOrExternal = isExternal || href.endsWith('.pdf');
+  const isItemLocked = isLocked && href !== '/profile';
 
   return (
     <div ref={setNodeRef} style={style} className="group relative">
@@ -102,7 +107,18 @@ const SortableNavItem: React.FC<NavItemProps> = ({ id, name, href, icon: Icon, s
       >
         <GripVertical className="w-4 h-4" />
       </div>
-      {isPdfOrExternal ? (
+      {isItemLocked ? (
+        <button
+          type="button"
+          onClick={onClick}
+          className="w-full flex items-center gap-3 px-4 py-2.5 pl-8 rounded-lg text-sm font-medium transition-all text-slate-400 bg-slate-50/70 hover:bg-rose-50/50 hover:text-rose-600 opacity-70 cursor-not-allowed text-left group"
+          title="Navegação bloqueada: complete seus dados principais no Meu Perfil"
+        >
+          <Icon className="w-5 h-5 text-slate-400 group-hover:text-rose-500 shrink-0" />
+          <span className="truncate flex-1">{name}</span>
+          <Lock className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+        </button>
+      ) : isPdfOrExternal ? (
         <a
           href={href}
           target="_blank"
@@ -249,6 +265,9 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const location = useLocation();
   const navigate = useNavigate();
+
+  const profileStatus = getProfileCompletionStatus(profile);
+  const isProfileLocked = profileStatus.isLocked;
 
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
     dds: true,
@@ -514,7 +533,13 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                         show={item.show}
                         isExternal={item.isExternal}
                         isActive={location.pathname === item.href}
-                        onClick={() => setIsSidebarOpen(false)}
+                        isLocked={isProfileLocked}
+                        onClick={() => {
+                          if (isProfileLocked && item.href !== '/profile') {
+                            navigate('/profile');
+                          }
+                          setIsSidebarOpen(false);
+                        }}
                       />
                     ))}
                   </SortableContext>
@@ -585,18 +610,27 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 <Link
                   to="/profile"
                   className={cn(
-                    "flex items-center gap-3 px-4 py-2.5 mb-2 rounded-lg text-sm font-medium transition-all group",
+                    "flex items-center justify-between gap-3 px-4 py-2.5 mb-2 rounded-lg text-sm font-medium transition-all group",
                     location.pathname === '/profile'
                       ? "bg-emerald-50 text-emerald-700 shadow-sm"
+                      : isProfileLocked
+                      ? "bg-rose-50 text-rose-700 border border-rose-200 animate-pulse"
                       : "text-slate-600 hover:bg-slate-50 hover:text-emerald-600"
                   )}
                   onClick={() => setIsSidebarOpen(false)}
                 >
-                  <Settings className={cn(
-                    "w-5 h-5",
-                    location.pathname === '/profile' ? "text-emerald-600" : "text-slate-400 group-hover:text-emerald-600"
-                  )} />
-                  Meu Perfil
+                  <div className="flex items-center gap-3">
+                    <Settings className={cn(
+                      "w-5 h-5",
+                      location.pathname === '/profile' ? "text-emerald-600" : isProfileLocked ? "text-rose-600" : "text-slate-400 group-hover:text-emerald-600"
+                    )} />
+                    <span>Meu Perfil</span>
+                  </div>
+                  {isProfileLocked && (
+                    <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-rose-200/80 text-rose-800">
+                      Obrigatório
+                    </span>
+                  )}
                 </Link>
 
                 <button
@@ -632,6 +666,17 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             {navigation.find(item => item.href === location.pathname)?.name || (location.pathname === '/profile' ? 'Meu Perfil' : 'Resumo do Sistema')}
           </h1>
           <div className="flex items-center gap-3">
+            {isProfileLocked && (
+              <Link
+                to="/profile"
+                className="flex items-center gap-2 px-3.5 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 rounded-xl text-xs font-black shadow-xs transition-all animate-pulse"
+                title="Ação Obrigatória: Complete seus dados no Meu Perfil para liberar o sistema"
+              >
+                <Lock className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                <span>Cadastro Pendente (Aviso 3/3): Preencher Meu Perfil</span>
+              </Link>
+            )}
+
             {/* Manual do Sistema Button */}
             <a
               href="/Manual_do_Usuario_SecApp.pdf"
@@ -963,6 +1008,9 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       {/* App Feedback Survey Popout (Only for users who accessed at least 10 times) */}
       <AppFeedbackModal />
+
+      {/* Profile Completion Popout (3-time reminder + lock to /profile) */}
+      <ProfileCompletionModal />
 
       {/* Privacy Policy Modal */}
       <PrivacyPolicyModal isOpen={privacyModalOpen} onClose={() => setPrivacyModalOpen(false)} />

@@ -32,10 +32,16 @@ import {
   X,
   Maximize2,
   Search,
-  Mail
+  Mail,
+  Sparkles,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { 
+  getProfileCompletionStatus, 
+  resetProfileReminder 
+} from '../lib/profileCompletion';
 
 const formatSignatureDate = (signedAtStr: string) => {
   if (!signedAtStr) return '';
@@ -79,6 +85,17 @@ const Profile: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [showSuccessUnlockModal, setShowSuccessUnlockModal] = useState(false);
+
+  const completionStatus = getProfileCompletionStatus(profile);
+  const isLocked = completionStatus.isLocked;
+
+  const isNameMissing = !displayName.trim() || displayName.trim().toLowerCase() === 'sem nome' || displayName.trim().toLowerCase() === 'usuário' || displayName.trim().toLowerCase() === 'usuario';
+  const isGroupMissing = !group || !['A', 'B', 'C', 'D', 'E'].includes(group);
+  const isSectorMissing = !sectorId;
+  const isCargoMissing = !cargoId;
+  const isBirthDateMissing = !birthDate || !birthDate.trim();
+  const isTshirtSizeMissing = !tshirtSize || !tshirtSize.trim();
 
   const [courses, setCourses] = useState<any[]>([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
@@ -344,6 +361,35 @@ const Profile: React.FC = () => {
         ...(isDataUrl ? {} : { photoURL })
       });
 
+      // Validate the 6 required profile fields
+      const pendingFields: string[] = [];
+      if (!nameTrimmed || nameTrimmed.toLowerCase() === 'sem nome' || nameTrimmed.toLowerCase() === 'usuário' || nameTrimmed.toLowerCase() === 'usuario') {
+        pendingFields.push('Nome Completo');
+      }
+      if (!group || !['A', 'B', 'C', 'D', 'E'].includes(group)) {
+        pendingFields.push('Letra de Trabalho (Escala)');
+      }
+      if (!sectorId) {
+        pendingFields.push('Setor de Trabalho');
+      }
+      if (!cargoId) {
+        pendingFields.push('Cargo / Função');
+      }
+      if (!birthDate || !birthDate.trim()) {
+        pendingFields.push('Data de Nascimento');
+      }
+      if (!tshirtSize || !tshirtSize.trim()) {
+        pendingFields.push('Tamanho da Camisa');
+      }
+
+      if (isLocked && pendingFields.length > 0) {
+        setError(`Para desbloquear o acesso ao sistema, todos os 6 campos obrigatórios devem ser preenchidos. Pendente(s): ${pendingFields.join(', ')}.`);
+        setLoading(false);
+        return;
+      }
+
+      const allSixFilled = pendingFields.length === 0;
+
       // Encrypt values for Firestore
       const encDisplayName = await encryptValue(nameTrimmed);
       const encEmail = await encryptValue(emailLower);
@@ -363,8 +409,17 @@ const Profile: React.FC = () => {
         sectorName: sectors.find(s => s.id === sectorId)?.name || null,
         cargoId: cargoId || null,
         cargoName: functions.find(f => f.id === cargoId)?.name || null,
+        ...(allSixFilled ? {
+          profileReminderCount: 0,
+          profileReminderLocked: false
+        } : {}),
         updatedAt: serverTimestamp()
       });
+
+      if (allSixFilled) {
+        await resetProfileReminder(auth.currentUser.uid);
+        setShowSuccessUnlockModal(true);
+      }
 
       // Update users_public lookup if email changed
       if (oldEmailHash && oldEmailHash !== newEmailHash) {
@@ -525,6 +580,84 @@ const Profile: React.FC = () => {
         <p className="text-slate-500 mt-1">Gerencie suas informações pessoais e segurança da conta.</p>
       </div>
 
+      {/* Profile Completion Enforcement Banner */}
+      {isLocked ? (
+        <div className="bg-gradient-to-r from-rose-600 via-rose-700 to-slate-900 text-white rounded-[2rem] p-6 shadow-xl border border-rose-400/50 relative overflow-hidden no-print animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0">
+              <Lock className="w-6 h-6 text-white" />
+            </div>
+            <div className="space-y-2 flex-1 min-w-0">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-[10px] font-black uppercase tracking-wider">
+                <span>🔒 Ação Obrigatória • Aviso 3 de 3 (Acesso Retido)</span>
+              </div>
+              <h3 className="text-xl font-black tracking-tight">
+                Preenchimento Cadastral Obrigatório
+              </h3>
+              <p className="text-xs text-white/90 leading-relaxed font-medium">
+                Você atingiu o 3º aviso sem preenchimento completo. O acesso aos outros módulos do sistema fica retido nesta página até que todos os <strong>6 campos principais</strong> destacados abaixo sejam preenchidos e salvos.
+              </p>
+              <div className="pt-2 border-t border-white/20 flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-bold uppercase text-white/80 tracking-wider">
+                  Campos Pendentes:
+                </span>
+                {isNameMissing && (
+                  <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-white text-rose-800 shadow-xs">
+                    ⚠️ Nome Completo
+                  </span>
+                )}
+                {isGroupMissing && (
+                  <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-white text-rose-800 shadow-xs">
+                    ⚠️ Letra da Escala
+                  </span>
+                )}
+                {isSectorMissing && (
+                  <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-white text-rose-800 shadow-xs">
+                    ⚠️ Setor de Trabalho
+                  </span>
+                )}
+                {isCargoMissing && (
+                  <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-white text-rose-800 shadow-xs">
+                    ⚠️ Cargo / Função
+                  </span>
+                )}
+                {isBirthDateMissing && (
+                  <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-white text-rose-800 shadow-xs">
+                    ⚠️ Data de Nascimento
+                  </span>
+                )}
+                {isTshirtSizeMissing && (
+                  <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-white text-rose-800 shadow-xs">
+                    ⚠️ Tamanho da Camisa
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : !completionStatus.isComplete ? (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-950 rounded-[2rem] p-5 shadow-xs flex items-center justify-between gap-4 no-print">
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-black uppercase tracking-wider text-emerald-900">
+                Progresso do Cadastro: {completionStatus.filledCount} de {completionStatus.totalCount} campos preenchidos ({completionStatus.percentage}%)
+              </h4>
+              <p className="text-xs text-emerald-800 leading-snug mt-0.5 font-medium">
+                Mantenha seus 6 dados principais completos para cálculo correto de escala, uniformes e eventos.
+              </p>
+            </div>
+          </div>
+          <div className="hidden sm:block text-right shrink-0">
+            <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+              Avisos Usados: {completionStatus.reminderCount} de 3
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-8">
         {/* Profile Info */}
         <motion.div
@@ -548,7 +681,20 @@ const Profile: React.FC = () => {
 
           <form onSubmit={handleUpdateProfile} className="space-y-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Nome de Exibição</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">
+                  Nome Completo de Exibição
+                </label>
+                {isNameMissing ? (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                    ⚠️ Obrigatório Pendente
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    ✓ Preenchido
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
@@ -556,8 +702,11 @@ const Profile: React.FC = () => {
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   disabled={loading}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none disabled:opacity-60 disabled:bg-slate-100/40"
-                  placeholder="Seu nome"
+                  className={cn(
+                    "w-full bg-slate-50 border rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    isNameMissing && isLocked ? "border-rose-400 bg-rose-50/20 ring-2 ring-rose-100" : "border-slate-200"
+                  )}
+                  placeholder="Seu nome completo"
                   required
                 />
               </div>
@@ -580,7 +729,20 @@ const Profile: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Letra de Trabalho (Escala)</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">
+                  Letra de Trabalho (Escala)
+                </label>
+                {isGroupMissing ? (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                    ⚠️ Obrigatório Pendente
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    ✓ Preenchido
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <select
@@ -588,11 +750,12 @@ const Profile: React.FC = () => {
                   onChange={(e) => setGroup(e.target.value as any)}
                   disabled={loading}
                   className={cn(
-                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    "w-full bg-slate-50 border rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    isGroupMissing && isLocked ? "border-rose-400 bg-rose-50/20 ring-2 ring-rose-100" : "border-slate-200",
                     group ? "text-emerald-600" : "text-slate-400"
                   )}
                 >
-                  <option value="">Nenhuma</option>
+                  <option value="">Selecione sua Letra</option>
                   <option value="A">Letra A</option>
                   <option value="B">Letra B</option>
                   <option value="C">Letra C</option>
@@ -608,7 +771,20 @@ const Profile: React.FC = () => {
 
             {/* Setor de Trabalho */}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Setor de Trabalho</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">
+                  Setor de Trabalho
+                </label>
+                {isSectorMissing ? (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                    ⚠️ Obrigatório Pendente
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    ✓ Preenchido
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <select
@@ -619,7 +795,8 @@ const Profile: React.FC = () => {
                   }}
                   disabled={loading}
                   className={cn(
-                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    "w-full bg-slate-50 border rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    isSectorMissing && isLocked ? "border-rose-400 bg-rose-50/20 ring-2 ring-rose-100" : "border-slate-200",
                     sectorId ? "text-emerald-600" : "text-slate-400"
                   )}
                 >
@@ -636,7 +813,20 @@ const Profile: React.FC = () => {
 
             {/* Cargo / Função */}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Cargo / Função</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">
+                  Cargo / Função
+                </label>
+                {isCargoMissing ? (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                    ⚠️ Obrigatório Pendente
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    ✓ Preenchido
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <select
@@ -644,7 +834,8 @@ const Profile: React.FC = () => {
                   onChange={(e) => setCargoId(e.target.value)}
                   disabled={loading || !sectorId}
                   className={cn(
-                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    "w-full bg-slate-50 border rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    isCargoMissing && isLocked ? "border-rose-400 bg-rose-50/20 ring-2 ring-rose-100" : "border-slate-200",
                     cargoId ? "text-emerald-600" : "text-slate-400"
                   )}
                 >
@@ -664,7 +855,20 @@ const Profile: React.FC = () => {
 
             {/* Data de Nascimento */}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Data de Nascimento</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">
+                  Data de Nascimento
+                </label>
+                {isBirthDateMissing ? (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                    ⚠️ Obrigatório Pendente
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    ✓ Preenchido
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
@@ -672,7 +876,10 @@ const Profile: React.FC = () => {
                   value={birthDate}
                   onChange={(e) => setBirthDate(e.target.value)}
                   disabled={loading}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none disabled:opacity-60 disabled:bg-slate-100/40"
+                  className={cn(
+                    "w-full bg-slate-50 border rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    isBirthDateMissing && isLocked ? "border-rose-400 bg-rose-50/20 ring-2 ring-rose-100" : "border-slate-200"
+                  )}
                 />
               </div>
               <p className="text-[10px] text-slate-400 ml-1">Para o controle e homenagem aos aniversariantes do mês.</p>
@@ -680,7 +887,20 @@ const Profile: React.FC = () => {
 
             {/* Tamanho da Camisa */}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Tamanho de Camisa para Brindes</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">
+                  Tamanho de Camisa para Brindes
+                </label>
+                {isTshirtSizeMissing ? (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                    ⚠️ Obrigatório Pendente
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    ✓ Preenchido
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Gift className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <select
@@ -688,7 +908,8 @@ const Profile: React.FC = () => {
                   onChange={(e) => setTshirtSize(e.target.value)}
                   disabled={loading}
                   className={cn(
-                    "w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    "w-full bg-slate-50 border rounded-2xl py-4 pl-12 pr-4 text-sm font-bold focus:ring-2 focus:ring-emerald-500 transition-all outline-none appearance-none disabled:opacity-60 disabled:bg-slate-100/40",
+                    isTshirtSizeMissing && isLocked ? "border-rose-400 bg-rose-50/20 ring-2 ring-rose-100" : "border-slate-200",
                     tshirtSize ? "text-emerald-600" : "text-slate-400"
                   )}
                 >
@@ -1778,6 +1999,41 @@ const Profile: React.FC = () => {
         </div>
         );
       })()}
+
+      {/* Success Unlock Celebration Modal */}
+      {showSuccessUnlockModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs no-print">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl text-center border border-emerald-100"
+          >
+            <div className="w-20 h-20 bg-emerald-100 rounded-3xl flex items-center justify-center mx-auto mb-6 text-emerald-600 shadow-inner">
+              <CheckCircle2 className="w-10 h-10" />
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-black uppercase tracking-wider mb-3">
+              <Sparkles className="w-3.5 h-3.5" />
+              Cadastro 100% Concluído
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 tracking-tight mb-2">
+              Perfil Atualizado com Sucesso!
+            </h3>
+            <p className="text-sm text-slate-500 leading-relaxed mb-8 font-medium">
+              Todos os seus dados obrigatórios (Nome, Letra da Escala, Setor, Cargo, Nascimento e Tamanho da Camisa) foram registrados. A navegação em todos os módulos do sistema está totalmente liberada.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowSuccessUnlockModal(false);
+                window.location.hash = '#/';
+              }}
+              className="w-full py-4 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-emerald-200 transition-all cursor-pointer"
+            >
+              Continuar para o Sistema
+            </button>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };

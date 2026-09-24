@@ -29,6 +29,8 @@ export interface UserProfile {
   appFeedbackSubmittedAt?: any;
   appFeedbackDismissCount?: number;
   appFeedbackDismissLocked?: boolean;
+  profileReminderCount?: number;
+  profileReminderLocked?: boolean;
 }
 
 export interface AppFeedbackReplyItem {

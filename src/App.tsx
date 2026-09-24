@@ -1,5 +1,5 @@
 import React from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { auth, db } from './lib/firebase';
 import { signOut, updatePassword } from 'firebase/auth';
@@ -27,6 +27,7 @@ import Overtime from './pages/Overtime';
 import Vacations from './pages/Vacations';
 import Maintenance from './pages/Maintenance';
 import { handleFirestoreError, OperationType } from './lib/errorHandler';
+import { getProfileCompletionStatus } from './lib/profileCompletion';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean; requireManager?: boolean }> = ({ 
@@ -323,6 +324,13 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
 
   if (requireManager && !isManager && !isAdmin) {
     return <Navigate to="/dds" replace />;
+  }
+
+  // Profile Incomplete Lock Enforcement (On 3rd warning without completion)
+  const profileStatus = getProfileCompletionStatus(profile);
+  const location = useLocation();
+  if (profileStatus.isLocked && location.pathname !== '/profile') {
+    return <Navigate to="/profile" replace />;
   }
 
   return <Shell>{children}</Shell>;

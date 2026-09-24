@@ -1,5 +1,17 @@
 import React, { useState, useRef } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
+import { 
+  Calendar, 
+  ChevronLeft, 
+  ChevronRight, 
+  Download, 
+  Loader2, 
+  CalendarDays, 
+  ChevronDown, 
+  X, 
+  ArrowRight, 
+  RotateCcw, 
+  Search 
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { getGroupForShift, Shift, Group } from '../lib/scaleUtils';
@@ -498,6 +510,38 @@ const Schedule: React.FC = () => {
   const [showErrorModal, setShowErrorModal] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const currentRealYear = new Date().getFullYear();
+  const [isYearPickerOpen, setIsYearPickerOpen] = useState(false);
+  const [pickerDecadeStart, setPickerDecadeStart] = useState(() => Math.floor(new Date().getFullYear() / 10) * 10);
+  const [customYearInput, setCustomYearInput] = useState('');
+
+  const openYearPicker = () => {
+    setPickerDecadeStart(Math.floor(selectedYear / 10) * 10);
+    setCustomYearInput(selectedYear.toString());
+    setIsYearPickerOpen(true);
+  };
+
+  const handleSelectYear = (year: number) => {
+    setSelectedYear(year);
+    setIsYearPickerOpen(false);
+  };
+
+  const handleApplyCustomYear = () => {
+    const parsed = parseInt(customYearInput.trim(), 10);
+    if (!isNaN(parsed) && parsed >= 1900 && parsed <= 2150) {
+      handleSelectYear(parsed);
+    }
+  };
+
+  const quickYears = [
+    selectedYear - 2,
+    selectedYear - 1,
+    selectedYear,
+    selectedYear + 1,
+    selectedYear + 2,
+    selectedYear + 3,
+  ];
+
   const exportPDF = async () => {
     setExporting(true);
 
@@ -616,10 +660,157 @@ const Schedule: React.FC = () => {
           @page { size: landscape; }
         }
       `}} />
+
+      {/* Modern Unlimited Year Picker Modal */}
+      <AnimatePresence>
+        {isYearPickerOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="bg-white rounded-[2rem] shadow-2xl border border-slate-200 p-6 md:p-7 max-w-md w-full space-y-5"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-xs">
+                    <CalendarDays className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800 tracking-tight">Selecione o Ano da Escala</h3>
+                    <p className="text-xs text-slate-400 font-medium">Navegação contínua sem limite de anos</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsYearPickerOpen(false)}
+                  className="w-8 h-8 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Decade Navigator */}
+              <div className="flex items-center justify-between bg-slate-50 px-3 py-2 rounded-2xl border border-slate-200/80">
+                <button
+                  onClick={() => setPickerDecadeStart(prev => prev - 10)}
+                  className="p-2 hover:bg-white rounded-xl text-slate-600 hover:text-emerald-600 transition-all shadow-xs"
+                  title="Década Anterior (-10 anos)"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <div className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                  Década de {pickerDecadeStart} ({pickerDecadeStart} – {pickerDecadeStart + 9})
+                </div>
+                <button
+                  onClick={() => setPickerDecadeStart(prev => prev + 10)}
+                  className="p-2 hover:bg-white rounded-xl text-slate-600 hover:text-emerald-600 transition-all shadow-xs"
+                  title="Próxima Década (+10 anos)"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Year Grid */}
+              <div className="grid grid-cols-3 gap-2.5">
+                {Array.from({ length: 12 }, (_, i) => pickerDecadeStart - 1 + i).map((y) => {
+                  const isSelected = y === selectedYear;
+                  const isCurrent = y === currentRealYear;
+                  return (
+                    <button
+                      key={`grid-year-${y}`}
+                      onClick={() => handleSelectYear(y)}
+                      className={cn(
+                        "relative p-3 rounded-2xl text-center font-black transition-all flex flex-col items-center justify-center gap-0.5",
+                        isSelected
+                          ? "bg-emerald-600 text-white shadow-lg shadow-emerald-200 scale-[1.02] ring-2 ring-emerald-600 ring-offset-2"
+                          : "bg-slate-50 hover:bg-emerald-50/80 text-slate-700 hover:text-emerald-800 border border-slate-200/60 hover:border-emerald-200"
+                      )}
+                    >
+                      <span className="text-sm tracking-tight">{y}</span>
+                      {isCurrent && (
+                        <span className={cn(
+                          "text-[9px] uppercase tracking-wider px-1.5 py-0.2 rounded-full font-bold",
+                          isSelected ? "bg-white/20 text-white" : "bg-emerald-100 text-emerald-800"
+                        )}>
+                          Atual
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Direct Year Input */}
+              <div className="pt-2 border-t border-slate-100 space-y-2">
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Ou digite qualquer ano desejado:
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="number"
+                      value={customYearInput}
+                      onChange={(e) => setCustomYearInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleApplyCustomYear();
+                        }
+                      }}
+                      placeholder="Ex: 2038 ou 2050"
+                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
+                    />
+                  </div>
+                  <button
+                    onClick={handleApplyCustomYear}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm active:scale-95 shrink-0"
+                  >
+                    Ir <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <button
+                  onClick={() => handleSelectYear(currentRealYear)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all",
+                    selectedYear === currentRealYear ? "bg-emerald-100 text-emerald-800 font-black" : "bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600"
+                  )}
+                >
+                  Ano Atual ({currentRealYear})
+                </button>
+                <button
+                  onClick={() => handleSelectYear(selectedYear + 1)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 text-[11px] font-bold transition-all"
+                >
+                  +1 Ano ({selectedYear + 1})
+                </button>
+                <button
+                  onClick={() => handleSelectYear(selectedYear + 5)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 text-[11px] font-bold transition-all"
+                >
+                  +5 Anos ({selectedYear + 5})
+                </button>
+                <button
+                  onClick={() => handleSelectYear(selectedYear + 10)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 text-[11px] font-bold transition-all"
+                >
+                  +10 Anos ({selectedYear + 10})
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Escala de Turno</h1>
-          <p className="text-gray-500 mt-1">Consulte a escala de trabalho e folgas.</p>
+          <p className="text-gray-500 mt-1">Consulte a escala de trabalho e folgas com calendário contínuo sem limites.</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -648,57 +839,73 @@ const Schedule: React.FC = () => {
             onClick={exportPDF}
             disabled={exporting}
             className="flex items-center gap-2 bg-emerald-600 px-4 py-2.5 rounded-xl text-xs font-bold text-white hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50"
+            title={`Exportar ${viewMode === 'annual' ? `Escala Anual de ${selectedYear}` : `Escala de ${months[selectedMonth]}/${selectedYear}`} em PDF`}
           >
             {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            PDF
+            PDF {viewMode === 'annual' ? selectedYear : ''}
           </button>
 
-          <div className={cn(
-            "flex items-center gap-1 bg-white p-1 rounded-2xl border border-slate-200 shadow-sm transition-all focus-within:ring-2 focus-within:ring-emerald-100",
-            viewMode === 'annual' ? "min-w-[140px]" : ""
-          )}>
+          {/* Navigator Container */}
+          <div className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-slate-200 shadow-xs transition-all">
             <button 
               onClick={viewMode === 'monthly' ? handlePrevMonth : handlePrevYear}
-              className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-indigo-600 transition-all outline-none"
+              className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-emerald-600 transition-all outline-none"
               title={viewMode === 'monthly' ? "Mês Anterior" : "Ano Anterior"}
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
             
-            <div className={cn("flex flex-col items-center px-2", viewMode === 'monthly' ? "min-w-[140px]" : "min-w-[100px]")}>
-              {viewMode === 'monthly' && (
+            {viewMode === 'monthly' ? (
+              <div className="flex items-center px-1">
                 <select 
                   value={selectedMonth}
                   onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                  className="bg-transparent border-none text-sm font-bold text-slate-900 leading-none focus:ring-0 cursor-pointer p-0 text-center w-full appearance-none outline-none"
+                  className="bg-transparent border-none text-sm font-black text-slate-900 leading-none focus:ring-0 cursor-pointer py-1 px-2 appearance-none outline-none hover:text-emerald-600"
                 >
                   {months.map((m, i) => (
                     <option key={`sched-month-${m}-${i}`} value={i}>{m}</option>
                   ))}
                 </select>
-              )}
-              <select
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                className={cn(
-                  "bg-transparent border-none focus:ring-0 cursor-pointer p-0 text-center w-full appearance-none outline-none",
-                  viewMode === 'monthly' ? "text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1" : "text-sm font-bold text-slate-900 leading-none"
-                )}
+                <button
+                  onClick={openYearPicker}
+                  className="flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-slate-100 text-xs font-black text-slate-500 hover:text-emerald-700 transition-all"
+                  title="Clique para escolher qualquer ano livremente"
+                >
+                  <span>{selectedYear}</span>
+                  <ChevronDown className="w-3 h-3 text-slate-400" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={openYearPicker}
+                className="flex items-center gap-2 py-1.5 px-3 rounded-xl hover:bg-emerald-50/60 text-sm font-black text-slate-900 hover:text-emerald-700 transition-all"
+                title="Clique para abrir o seletor anual ilimitado"
               >
-                {Array.from({ length: 11 }, (_, i) => 2024 + i).map((y, yIdx) => (
-                  <option key={`sched-year-${y}-${yIdx}`} value={y}>{y}</option>
-                ))}
-              </select>
-            </div>
+                <Calendar className="w-4 h-4 text-emerald-600" />
+                <span>Ano {selectedYear}</span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+            )}
 
             <button 
               onClick={viewMode === 'monthly' ? handleNextMonth : handleNextYear}
-              className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-indigo-600 transition-all outline-none"
+              className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-emerald-600 transition-all outline-none"
               title={viewMode === 'monthly' ? "Próximo Mês" : "Próximo Ano"}
             >
               <ChevronRight className="w-5 h-5" />
             </button>
           </div>
+
+          {selectedYear !== currentRealYear && (
+            <button
+              onClick={() => setSelectedYear(currentRealYear)}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 text-xs font-bold transition-all border border-slate-200 shadow-2xs"
+              title="Voltar para o ano corrente"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Ano Atual ({currentRealYear})
+            </button>
+          )}
         </div>
       </div>
 
@@ -707,12 +914,72 @@ const Schedule: React.FC = () => {
           key={`${viewMode}-${selectedMonth}-${selectedYear}`}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className={cn(viewMode === 'monthly' ? "" : "space-y-4")}
+          className={cn(viewMode === 'monthly' ? "" : "space-y-6")}
         >
           {viewMode === 'monthly' ? (
             <MonthTable month={selectedMonth} year={selectedYear} />
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-6">
+              {/* Annual Header Banner with Quick Chips */}
+              <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-900 text-white rounded-[2rem] p-6 shadow-lg border border-emerald-800/40 flex flex-col md:flex-row md:items-center justify-between gap-5">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[10px] font-black uppercase tracking-wider text-emerald-300">
+                      Calendário Anual Completo
+                    </span>
+                    <span className="text-xs text-emerald-200/90 font-bold">• 12 Meses (Jan a Dez)</span>
+                  </div>
+                  <h2 className="text-2xl md:text-3xl font-black tracking-tight text-white flex items-center gap-3">
+                    Escala de Turno — {selectedYear}
+                  </h2>
+                  <p className="text-xs text-emerald-100/80 max-w-xl">
+                    Ciclo contínuo de 35 dias rotativo. Visualize os dias de trabalho e folgas para qualquer ano futuro ou passado sem qualquer limitação.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center gap-1 bg-white/10 backdrop-blur-md p-1.5 rounded-2xl border border-white/15">
+                    <button
+                      onClick={handlePrevYear}
+                      className="p-1.5 hover:bg-white/20 rounded-xl text-white transition-colors"
+                      title="Ano Anterior"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    {quickYears.map((qy) => (
+                      <button
+                        key={`quick-year-${qy}`}
+                        onClick={() => setSelectedYear(qy)}
+                        className={cn(
+                          "px-3 py-1 rounded-xl text-xs font-black transition-all",
+                          qy === selectedYear
+                            ? "bg-emerald-500 text-white shadow-md scale-105"
+                            : "text-white/80 hover:bg-white/15 hover:text-white"
+                        )}
+                      >
+                        {qy}
+                      </button>
+                    ))}
+                    <button
+                      onClick={handleNextYear}
+                      className="p-1.5 hover:bg-white/20 rounded-xl text-white transition-colors"
+                      title="Próximo Ano"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={openYearPicker}
+                    className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-white font-black text-xs px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95"
+                    title="Abrir Seletor Anual Ilimitado"
+                  >
+                    <CalendarDays className="w-4 h-4" />
+                    Escolher Ano
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 gap-4">
                 {months.map((_, index) => (
                   <MonthTable key={index} month={index} year={selectedYear} isMini={true} />
