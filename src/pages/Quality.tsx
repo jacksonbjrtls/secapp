@@ -2238,7 +2238,7 @@ const Quality: React.FC = () => {
             { name: 'Item Demonstrativo 01', observation: 'Teste de disparo automático de e-mail de não conformidade.' },
             { name: 'Item Demonstrativo 02', observation: 'Validando ordem de envio: usuário logado + lista de responsáveis.' }
           ],
-          localTime: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+          localTime: new Date().toLocaleString('pt-BR', { timeZone: 'America/Cuiaba' }),
           extraInfo: {
             lineOrSector: 'Linha de Demonstração / Secagem',
             shift: 'Turno 1'
@@ -3280,7 +3280,7 @@ const Quality: React.FC = () => {
                     inspectorName: profile.displayName || user.email || 'Inspetor',
                     recipients: responsibleList,
                     failures: itemFailures,
-                    localTime: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+                    localTime: new Date().toLocaleString('pt-BR', { timeZone: 'America/Cuiaba' }),
                     extraInfo: {
                       lineOrSector: lineObj?.name || fillingTemplate.sectorId || '',
                       shift: shiftIdentifier,

@@ -126,7 +126,7 @@ const getEmailTemplate = (
         </tr>
         <tr>
           <td style="font-weight: 600; color: #64748b;">Data/Hora:</td>
-          <td style="color: #0f172a;">${localTime || new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</td>
+          <td style="color: #0f172a;">${localTime || new Date().toLocaleString('pt-BR', { timeZone: 'America/Cuiaba' })}</td>
         </tr>
       </table>
     </div>

@@ -344,18 +344,18 @@ export function isSubmissionMatchingShift(
     return true;
   }
 
-  // If shift string is missing or ambiguous, derive shift from the Brazilian local hour
+  // If shift string is missing or ambiguous, derive shift from the Cuiabá local hour
   if (isSameCalendarDate && !sub.shift) {
     try {
       const hourFormatter = new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
+        timeZone: 'America/Cuiaba',
         hour: 'numeric',
         hour12: false
       });
-      const hourBR = parseInt(hourFormatter.format(subDate), 10);
+      const hourAMT = parseInt(hourFormatter.format(subDate), 10);
       let derivedShift: 'Turno 1' | 'Turno 2' | 'Turno 3' = 'Turno 3';
-      if (hourBR >= 0 && hourBR < 8) derivedShift = 'Turno 1';
-      else if (hourBR >= 8 && hourBR < 16) derivedShift = 'Turno 2';
+      if (hourAMT >= 0 && hourAMT < 8) derivedShift = 'Turno 1';
+      else if (hourAMT >= 8 && hourAMT < 16) derivedShift = 'Turno 2';
       if (derivedShift === targetShift) {
         return true;
       }

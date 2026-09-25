@@ -1,7 +1,7 @@
 /**
  * Scale Utility for Shift Rotation
  * Based on the 35-day continuous cycle provided in the "ESCALA DE TURNO - 2026"
- * Plant location timezone: America/Sao_Paulo (Horário de Brasília)
+ * Plant location timezone: America/Cuiaba (Horário de Cuiabá - AMT / UTC-4)
  */
 
 export type Shift = 'Turno 1' | 'Turno 2' | 'Turno 3';
@@ -31,7 +31,7 @@ const SEQUENCES: Record<Shift, Group[]> = {
 /**
  * Extracts calendar { year, month, day } safe from timezone shifting.
  * For local calendar dates (midnight: new Date(year, month, day)), keeps local parts.
- * For live timestamps or ISO dates, resolves in Brazilian industrial timezone (America/Sao_Paulo).
+ * For live timestamps or ISO dates, resolves in Cuiabá operational timezone (America/Cuiaba).
  */
 export function getCalendarParts(date: Date): { year: number; month: number; day: number } {
   if (
@@ -49,7 +49,7 @@ export function getCalendarParts(date: Date): { year: number; month: number; day
 
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Sao_Paulo',
+      timeZone: 'America/Cuiaba',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -72,12 +72,12 @@ export function getCalendarParts(date: Date): { year: number; month: number; day
 }
 
 /**
- * Returns current hour (0-23) in Brazilian operational timezone (America/Sao_Paulo).
+ * Returns current hour (0-23) in Cuiabá operational timezone (America/Cuiaba).
  */
 export function getOperationalHour(date: Date = new Date()): number {
   try {
     const formatter = new Intl.DateTimeFormat('pt-BR', {
-      timeZone: 'America/Sao_Paulo',
+      timeZone: 'America/Cuiaba',
       hour: 'numeric',
       hour12: false
     });

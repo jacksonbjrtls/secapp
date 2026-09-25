@@ -79,25 +79,20 @@ export function safeToDate(timestamp: any): Date | null {
 }
 
 /**
- * Default Brazilian industrial timezone (Brasília standard time)
+ * Plant operational timezone: Cuiabá (Mato Grosso - AMT / UTC-4)
  */
-export const BRAZIL_TIMEZONE = 'America/Sao_Paulo';
+export const PLANT_TIMEZONE = 'America/Cuiaba';
+export const BRAZIL_TIMEZONE = 'America/Cuiaba';
 
 /**
- * Resolves local browser timezone, falling back to America/Sao_Paulo if running in UTC/server container
+ * Resolves operational timezone for the plant in Cuiabá (America/Cuiaba)
  */
 export function getLocalTimeZone(): string {
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz && tz !== 'UTC' && tz !== 'Etc/UTC') {
-      return tz;
-    }
-  } catch {}
-  return BRAZIL_TIMEZONE;
+  return PLANT_TIMEZONE;
 }
 
 /**
- * Returns YYYY-MM-DD string in local Brazilian timezone (America/Sao_Paulo)
+ * Returns YYYY-MM-DD string in local Cuiabá operational timezone (America/Cuiaba)
  */
 export function getLocalDateStrBR(dateInput: any): string {
   if (!dateInput && dateInput !== 0) return '';
