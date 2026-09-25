@@ -323,6 +323,28 @@ const DDS: React.FC = () => {
     });
   }, [sessions, todayDateStr]);
 
+  // Trava de Duplicidade: Verifica em tempo real se já existe um DDS registrado para o mesmo dia e turno
+  const existingDdsForShift = useMemo(() => {
+    const targetDate = newDate || getLocalDateStr(new Date());
+    const targetShift = (newShift || getCurrentShift()) as Shift;
+
+    // 1. Procurar nas sessões recentes (sessions)
+    const foundInRecent = sessions.find((s: any) => {
+      if (editingSession && s.id === editingSession.id) return false;
+      const sDate = getLocalDateStr(s.createdAt || s.date);
+      return sDate === targetDate && s.shift === targetShift;
+    });
+    if (foundInRecent) return foundInRecent;
+
+    // 2. Procurar na lista do mês (allSessionsList)
+    const foundInMonth = allSessionsList.find((s: any) => {
+      if (editingSession && s.id === editingSession.id) return false;
+      const sDate = getLocalDateStr(s.createdAt || s.date);
+      return sDate === targetDate && s.shift === targetShift;
+    });
+    return foundInMonth || null;
+  }, [sessions, allSessionsList, newDate, newShift, editingSession]);
+
   // Signatures mapped by session ID (sorted chronologically)
   const signaturesBySession = useMemo(() => {
     const map: Record<string, any[]> = {};
@@ -957,6 +979,67 @@ const DDS: React.FC = () => {
     const currentShiftAuto = getCurrentShift();
     const shiftToUse = (newShift || currentShiftAuto) as Shift;
     const groupToUse = getGroupForShift(new Date(), shiftToUse);
+
+    // ==============================================================
+    // TRAVA DE DUPLICIDADE: PERMITE APENAS 1 DDS POR DIA E POR TURNO
+    // ==============================================================
+    if (!editingSession) {
+      // 1. Verificação instantânea em memória local
+      const localDuplicate = sessions.find((s: any) => {
+        const sDate = getLocalDateStr(s.createdAt || s.date);
+        return sDate === creationDateStr && s.shift === shiftToUse;
+      }) || allSessionsList.find((s: any) => {
+        const sDate = getLocalDateStr(s.createdAt || s.date);
+        return sDate === creationDateStr && s.shift === shiftToUse;
+      });
+
+      if (localDuplicate) {
+        setError(`Operação bloqueada: Já existe um DDS registrado para o ${shiftToUse} na data ${formatDateBR(creationDateStr)} ("${localDuplicate.title || 'DDS do Turno'}"). O sistema permite apenas 1 DDS registrado por turno para evitar duplicidade.`);
+        return;
+      }
+
+      // 2. Verificação atômica no Firestore para proteção contra concorrência simultânea
+      try {
+        const [year, month, day] = creationDateStr.split('-').map(Number);
+        const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+        const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+        const dupQuery = query(
+          collection(db, 'dds_sessions'),
+          where('createdAt', '>=', Timestamp.fromDate(startOfDay)),
+          where('createdAt', '<=', Timestamp.fromDate(endOfDay))
+        );
+        const dupSnap = await getDocs(dupQuery);
+        const firestoreDuplicate = dupSnap.docs.find(d => {
+          const dData = d.data();
+          return dData.shift === shiftToUse;
+        });
+
+        if (firestoreDuplicate) {
+          const fData = firestoreDuplicate.data();
+          setError(`Operação bloqueada: Já existe um DDS registrado para o ${shiftToUse} na data ${formatDateBR(creationDateStr)} ("${fData.title || 'DDS do Turno'}"). O sistema permite apenas 1 DDS registrado por turno para evitar duplicidade.`);
+          return;
+        }
+      } catch (dupErr) {
+        console.warn('Verificação de duplicidade no Firestore gerou aviso, mantendo bloqueio padrão:', dupErr);
+      }
+    } else {
+      // Se estiver editando, não permitir alterar para outro turno que já possua DDS registrado no mesmo dia
+      const otherSessionDuplicate = sessions.find((s: any) => {
+        if (s.id === editingSession.id) return false;
+        const sDate = getLocalDateStr(s.createdAt || s.date);
+        return sDate === creationDateStr && s.shift === shiftToUse;
+      }) || allSessionsList.find((s: any) => {
+        if (s.id === editingSession.id) return false;
+        const sDate = getLocalDateStr(s.createdAt || s.date);
+        return sDate === creationDateStr && s.shift === shiftToUse;
+      });
+
+      if (otherSessionDuplicate) {
+        setError(`Não é possível alterar este DDS para o ${shiftToUse}, pois já existe outra sessão de DDS registrada neste turno na data ${formatDateBR(creationDateStr)}.`);
+        return;
+      }
+    }
 
     const titleToSave = (newTitle || '').trim() || `${shiftToUse} - DDS ${formatDateDDMMAAAA(new Date())}`;
     
@@ -1738,25 +1821,58 @@ const DDS: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsCreateFormExpanded(prev => !prev)}
-              className={`w-full flex items-center justify-between p-4 bg-slate-800/90 hover:bg-slate-800 rounded-2xl border border-slate-700/60 transition-all text-left group ${
+              className={`w-full flex items-center justify-between p-4 bg-slate-800/90 hover:bg-slate-800 rounded-2xl border transition-all text-left group ${
+                existingDdsForShift && !editingSession 
+                  ? 'border-amber-500/40 bg-slate-800/95' 
+                  : 'border-slate-700/60'
+              } ${
                 isCreateFormExpanded || editingSession || (activeSession && (isManager || isAdmin)) ? 'mb-2' : 'mb-0'
               }`}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform">
-                  {editingSession ? <Edit2 className="w-5 h-5 text-white" /> : <Plus className="w-5 h-5 text-white" />}
+                <div className={cn(
+                  "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg group-hover:scale-105 transition-transform",
+                  editingSession 
+                    ? "bg-amber-500 shadow-amber-500/20 text-white" 
+                    : existingDdsForShift 
+                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" 
+                    : "bg-emerald-500 shadow-emerald-500/20 text-white"
+                )}>
+                  {editingSession ? (
+                    <Edit2 className="w-5 h-5 text-white" />
+                  ) : existingDdsForShift ? (
+                    <Lock className="w-5 h-5 text-amber-400" />
+                  ) : (
+                    <Plus className="w-5 h-5 text-white" />
+                  )}
                 </div>
                 <div>
-                  <h3 className="text-base font-extrabold tracking-tight text-white group-hover:text-emerald-300 transition-colors">
-                    {editingSession ? 'EDITAR DDS' : 'CRIE NOVO DDS'}
-                  </h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base font-extrabold tracking-tight text-white group-hover:text-emerald-300 transition-colors">
+                      {editingSession ? 'EDITAR DDS' : 'CRIE NOVO DDS'}
+                    </h3>
+                    {existingDdsForShift && !editingSession && (
+                      <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                        <Lock className="w-3 h-3 text-amber-400" /> 1 DDS Já Registrado
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[11px] text-slate-400 font-medium">
-                    {editingSession ? 'Clique para alterar os dados da sessão' : 'Clique aqui para expandir o formulário'}
+                    {editingSession 
+                      ? 'Clique para alterar os dados da sessão' 
+                      : existingDdsForShift 
+                      ? `Turno atual (${newShift}) já possui DDS cadastrado` 
+                      : 'Clique aqui para expandir o formulário'}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className={cn(
+                  "text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg border",
+                  existingDdsForShift && !editingSession 
+                    ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                    : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                )}>
                   {isCreateFormExpanded || editingSession ? 'Recolher' : 'Expandir'}
                 </span>
                 {isCreateFormExpanded || editingSession ? (
@@ -1793,6 +1909,57 @@ const DDS: React.FC = () => {
                   )}
 
                   <form onSubmit={handleCreateSession} className="space-y-4 pt-2 pb-2">
+                    {/* Trava Visual de Duplicidade */}
+                    {existingDdsForShift && !editingSession && (
+                      <div className="bg-amber-500/15 border border-amber-500/40 rounded-2xl p-4 text-amber-200 space-y-3">
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl shrink-0 mt-0.5">
+                            <AlertTriangle className="w-5 h-5 text-amber-400" />
+                          </div>
+                          <div className="space-y-1">
+                            <h4 className="text-xs font-black text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                              <span>Trava de Segurança: DDS Já Registrado Neste Turno</span>
+                            </h4>
+                            <p className="text-xs text-amber-200/90 leading-relaxed font-medium">
+                              Já existe um DDS cadastrado para o <strong>{newShift}</strong> na data <strong>{formatDateBR(newDate)}</strong>. Pelas regras operacionais, é permitido registrar <strong>somente 1 DDS por turno</strong> para evitar duplicidade de listas e assinaturas.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Dados da sessão existente */}
+                        <div className="bg-slate-900/90 border border-amber-500/30 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                {existingDdsForShift.shift} • Letra {existingDdsForShift.group}
+                              </span>
+                              <span className="text-xs font-bold text-white truncate">
+                                {existingDdsForShift.title || `${existingDdsForShift.shift} - DDS`}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 mt-1">
+                              Responsável: <strong className="text-slate-200">{existingDdsForShift.executor || existingDdsForShift.createdByName || 'Operador'}</strong>
+                              {existingDdsForShift.createdAt && (
+                                <span> • Registrado às {safeToDate(existingDdsForShift.createdAt)?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                              )}
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveSession(existingDdsForShift);
+                              setIsCreateFormExpanded(false);
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                            className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl transition-all shadow-md shrink-0 flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Acessar DDS Criado
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {/* Top Row: Data, Turno e Letra (Clean automatic status indicators) */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {/* 1. Data do DDS */}
@@ -1991,11 +2158,32 @@ const DDS: React.FC = () => {
 
                     <button
                       type="submit"
-                      disabled={loading}
-                      className="w-full bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 text-sm cursor-pointer"
+                      disabled={loading || (!!existingDdsForShift && !editingSession)}
+                      className={cn(
+                        "w-full font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 text-sm",
+                        existingDdsForShift && !editingSession
+                          ? "bg-slate-800 text-slate-400 border border-slate-700/80 cursor-not-allowed opacity-75"
+                          : "bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] text-white shadow-lg shadow-emerald-500/20 cursor-pointer"
+                      )}
                     >
-                      {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (editingSession ? <CheckCircle2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />)}
-                      {editingSession ? 'Salvar Alterações' : 'Criar e Iniciar DDS'}
+                      {loading ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : existingDdsForShift && !editingSession ? (
+                        <>
+                          <Lock className="w-4 h-4 text-rose-400" />
+                          <span>Bloqueado: Apenas 1 DDS por Turno</span>
+                        </>
+                      ) : editingSession ? (
+                        <>
+                          <CheckCircle2 className="w-5 h-5" />
+                          <span>Salvar Alterações</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-5 h-5" />
+                          <span>Criar e Iniciar DDS</span>
+                        </>
+                      )}
                     </button>
                   </form>
                 </motion.div>
