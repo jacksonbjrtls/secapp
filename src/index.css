@@ -7,6 +7,14 @@
 }
 
 @layer base {
+  html, body {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    min-height: 100%;
+    min-height: 100dvh;
+  }
+
   html {
     font-size: 14.5px; /* Reduz o tamanho das fontes e espaçamentos em todo o aplicativo de forma proporcional */
   }
@@ -15,6 +23,37 @@
     html {
       font-size: 13.5px; /* Ajuste proporcional extra para dispositivos móveis */
     }
+  }
+
+  /* PREVENÇÃO DE AUTO-ZOOM INDESEJADO NO SAFARI DO IPHONE:
+     No Safari/WebKit iOS, qualquer input/select/textarea com font-size menor que 16px
+     aciona zoom automático que corta a tela e quebra a diagramação.
+     Garantir font-size de 16px no mobile resolve 100% esse problema. */
+  @media screen and (max-width: 768px) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+    select,
+    textarea {
+      font-size: 16px !important;
+      line-height: 1.35 !important;
+    }
+
+    input[type="date"],
+    input[type="time"],
+    input[type="datetime-local"] {
+      -webkit-appearance: none;
+      appearance: none;
+      min-height: 2.6rem;
+    }
+  }
+
+  button, 
+  [role="button"], 
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, h3, h4 {
@@ -114,5 +153,44 @@
       max-height: none !important;
       overflow: visible !important;
     }
+  }
+
+  /* Dynamic Viewport Height (dvh) para evitar cortes causados pela barra de navegação dinâmica do Safari */
+  .min-h-screen {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  .h-screen {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .max-h-screen {
+    max-height: 100vh;
+    max-height: 100dvh;
+  }
+
+  /* Suporte a Safe Areas para iPhone (Notch e Barra de Início inferior) */
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-left {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .safe-right {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* Momentum Scroll nativo e contenção de scroll horizontal no iOS Safari */
+  .overflow-y-auto,
+  .overflow-x-auto,
+  .overflow-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .overflow-x-auto {
+    overscroll-behavior-x: contain;
   }
 }

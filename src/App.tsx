@@ -36,6 +36,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
   requireManager 
 }) => {
   const { user, profile, loading, isAdmin, isManager, isApproved, isPending, isBlocked, isDisabled, isEmailVerified, mustChangePassword, isMaster, isDomainAllowed } = useAuth();
+  const location = useLocation();
   const [newPassword, setNewPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
@@ -328,7 +329,6 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
 
   // Profile Incomplete Lock Enforcement (On 3rd warning without completion)
   const profileStatus = getProfileCompletionStatus(profile);
-  const location = useLocation();
   if (profileStatus.isLocked && location.pathname !== '/profile') {
     return <Navigate to="/profile" replace />;
   }

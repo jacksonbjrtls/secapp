@@ -664,12 +664,12 @@ const Schedule: React.FC = () => {
       {/* Modern Unlimited Year Picker Modal */}
       <AnimatePresence>
         {isYearPickerOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 12 }}
-              className="bg-white rounded-[2rem] shadow-2xl border border-slate-200 p-6 md:p-7 max-w-md w-full space-y-5"
+              className="bg-white rounded-[2rem] shadow-2xl border border-slate-200 p-5 sm:p-6 md:p-7 max-w-md w-full space-y-4 sm:space-y-5 max-h-[calc(100dvh-1.5rem)] overflow-y-auto"
             >
               {/* Modal Header */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">

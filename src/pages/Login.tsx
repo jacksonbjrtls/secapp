@@ -569,7 +569,7 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-8 px-6 lg:px-8 relative overflow-hidden">
+    <div className="min-h-screen min-h-[100dvh] bg-slate-900 flex flex-col justify-center py-8 px-6 lg:px-8 relative overflow-hidden pt-[max(2rem,env(safe-area-inset-top,0px))] pb-[max(2rem,env(safe-area-inset-bottom,0px))]">
       <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500 rounded-full blur-[120px]"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-green-500 rounded-full blur-[120px]"></div>
@@ -643,6 +643,9 @@ const Login: React.FC = () => {
                   <input
                     type="email"
                     required
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     className={`block w-full pl-4 pr-12 py-3 bg-gray-50 border rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all ${
                       emailChecked && emailExists === false ? 'border-red-300 bg-red-50/30' : 
                       emailChecked && emailExists === true ? 'border-emerald-300 bg-emerald-50/10' : 'border-gray-200'
@@ -692,6 +695,9 @@ const Login: React.FC = () => {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     disabled={!emailChecked || emailExists !== true || checkingEmail}
                     className={`block w-full pl-4 pr-12 py-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all ${
                       (!emailChecked || emailExists !== true || checkingEmail) 
@@ -811,6 +817,9 @@ const Login: React.FC = () => {
                   <input
                     type="email"
                     required
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     className="block w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 transition-all"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -892,6 +901,9 @@ const Login: React.FC = () => {
                   <input
                     required
                     type={showNewPassword ? 'text' : 'password'}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     className="w-full pl-4 pr-12 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none font-bold transition-all text-slate-800"
@@ -913,6 +925,9 @@ const Login: React.FC = () => {
                   <input
                     required
                     type={showNewPassword ? 'text' : 'password'}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={confirmNewPassword}
                     onChange={(e) => setConfirmNewPassword(e.target.value)}
                     className="w-full pl-4 pr-12 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none font-bold transition-all text-slate-800"

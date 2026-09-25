@@ -469,18 +469,18 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans">
-      {/* Mobile Header */}
-      <div className="md:hidden h-16 bg-white border-b border-slate-200 px-4 flex items-center justify-between sticky top-0 z-50">
+    <div className="min-h-screen min-h-[100dvh] bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans">
+      {/* Mobile Header with iOS Safe Area support */}
+      <div className="md:hidden bg-white border-b border-slate-200 px-4 flex items-center justify-between sticky top-0 z-50 pt-[env(safe-area-inset-top,0px)] h-[calc(4rem+env(safe-area-inset-top,0px))]">
         <Link to="/" className="flex items-center">
           <Logo className="h-8" />
         </Link>
-        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-600" id="mobile-menu-toggle">
+        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-600 active:scale-95 transition-transform" id="mobile-menu-toggle">
           {isSidebarOpen ? <X /> : <Menu />}
         </button>
       </div>
 
-      {/* Sidebar */}
+      {/* Sidebar with iOS Safe Area support */}
       <AnimatePresence>
         {(isSidebarOpen || true) && (
           <motion.aside
@@ -488,7 +488,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             animate={{ x: isSidebarOpen || window.innerWidth >= 768 ? 0 : -256 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
             className={cn(
-              "fixed top-16 bottom-0 left-0 z-40 w-64 bg-white border-r border-slate-200 md:top-0 md:relative md:block",
+              "fixed top-[calc(4rem+env(safe-area-inset-top,0px))] bottom-0 left-0 z-40 w-64 bg-white border-r border-slate-200 md:top-0 md:relative md:block",
               !isSidebarOpen && "hidden md:block"
             )}
           >
@@ -642,7 +642,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </button>
 
                 {/* LGPD Privacy Link */}
-                <div className="mt-4 pt-4 border-t border-slate-100 text-center">
+                <div className="mt-4 pt-4 border-t border-slate-100 text-center pb-[env(safe-area-inset-bottom,0px)]">
                   <button
                     type="button"
                     onClick={() => setPrivacyModalOpen(true)}
@@ -727,7 +727,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto bg-slate-50">
+        <main className="flex-1 overflow-auto bg-slate-50 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]">
           <div className="p-3 sm:p-4 md:p-8">
             {children}
           </div>
@@ -737,7 +737,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       {/* Mobile Overlay */}
       {isSidebarOpen && (
         <div
-          className="fixed inset-0 top-16 bg-black/50 z-30 md:hidden"
+          className="fixed inset-0 top-[calc(4rem+env(safe-area-inset-top,0px))] bg-black/50 z-30 md:hidden"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}
@@ -745,13 +745,13 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       {/* PWA Installation Instructions Modal */}
       <AnimatePresence>
         {showInstallModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/65 backdrop-blur-sm overflow-y-auto pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-              className="bg-white w-full max-w-md rounded-[2.5rem] border border-slate-200 shadow-2xl p-6 md:p-8 space-y-5 relative my-8"
+              className="bg-white w-full max-w-md rounded-[2rem] sm:rounded-[2.5rem] border border-slate-200 shadow-2xl p-5 sm:p-6 md:p-8 space-y-4 sm:space-y-5 relative my-auto max-h-[calc(100dvh-2rem)] overflow-y-auto"
             >
               {/* Close Button */}
               <button 
