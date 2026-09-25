@@ -1,4 +1,5 @@
 import { QualityChecklistTemplate, QualityChecklistOptionSet } from '../types';
+import { getLocalDateStrBR, safeToDate } from './utils';
 
 /**
  * Checks whether an item's label refers to an anomaly, defect, breakage or fault.
@@ -292,4 +293,98 @@ export function isResponseCompliant(
   }
 
   return true;
+}
+
+/**
+ * Extracts normalized Shift name ('Turno 1' | 'Turno 2' | 'Turno 3') from any shift string
+ * (e.g. "A - Turno 1", "Turno 1", "Turno 2", "B - Turno 3", "T1", "1").
+ */
+export function extractShiftName(rawShift: string | undefined | null): 'Turno 1' | 'Turno 2' | 'Turno 3' | null {
+  if (!rawShift) return null;
+  const s = String(rawShift).trim().toLowerCase();
+  if (s.includes('turno 1') || s === 't1' || s === '1' || s.endsWith('- 1')) return 'Turno 1';
+  if (s.includes('turno 2') || s === 't2' || s === '2' || s.endsWith('- 2')) return 'Turno 2';
+  if (s.includes('turno 3') || s === 't3' || s === '3' || s.endsWith('- 3')) return 'Turno 3';
+  return null;
+}
+
+/**
+ * Robustly checks if a quality submission belongs to a specific shift and target date.
+ * Handles both group-prefixed shift strings ("A - Turno 1"), pure shift names ("Turno 1"),
+ * local Brazilian calendar dates, and operational shift time ranges.
+ */
+export function isSubmissionMatchingShift(
+  sub: { createdAt: any; shift?: string; date?: any },
+  targetShift: 'Turno 1' | 'Turno 2' | 'Turno 3',
+  targetDate: Date = new Date(),
+  isDayBased: boolean = false
+): boolean {
+  const targetDateStr = getLocalDateStrBR(targetDate);
+  const subDate = safeToDate(sub.createdAt || sub.date);
+
+  // 1. Shift matching logic
+  const subShiftNorm = extractShiftName(sub.shift);
+  const shiftMatches = subShiftNorm === targetShift || Boolean(sub.shift && sub.shift.includes(targetShift));
+
+  // If timestamp is not yet resolved (e.g. optimistic local write before serverTimestamp resolves)
+  if (!subDate || isNaN(subDate.getTime())) {
+    if (isDayBased) return true;
+    return Boolean(shiftMatches);
+  }
+
+  const subDateStr = getLocalDateStrBR(subDate);
+  const isSameCalendarDate = Boolean(subDateStr && subDateStr === targetDateStr);
+
+  if (isDayBased) {
+    return isSameCalendarDate;
+  }
+
+  // If dates match in Brazilian timezone and shift matches explicitly
+  if (isSameCalendarDate && shiftMatches) {
+    return true;
+  }
+
+  // If shift string is missing or ambiguous, derive shift from the Brazilian local hour
+  if (isSameCalendarDate && !sub.shift) {
+    try {
+      const hourFormatter = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: 'numeric',
+        hour12: false
+      });
+      const hourBR = parseInt(hourFormatter.format(subDate), 10);
+      let derivedShift: 'Turno 1' | 'Turno 2' | 'Turno 3' = 'Turno 3';
+      if (hourBR >= 0 && hourBR < 8) derivedShift = 'Turno 1';
+      else if (hourBR >= 8 && hourBR < 16) derivedShift = 'Turno 2';
+      if (derivedShift === targetShift) {
+        return true;
+      }
+    } catch {
+      const hourLocal = subDate.getHours();
+      let derivedShift: 'Turno 1' | 'Turno 2' | 'Turno 3' = 'Turno 3';
+      if (hourLocal >= 0 && hourLocal < 8) derivedShift = 'Turno 1';
+      else if (hourLocal >= 8 && hourLocal < 16) derivedShift = 'Turno 2';
+      if (derivedShift === targetShift) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Checks if a submission matches a target line ID or sector ID.
+ */
+export function isSubmissionMatchingLineOrSector(
+  sub: { lineId?: string; sectorId?: string },
+  targetLineId: string,
+  templateSectorId?: string
+): boolean {
+  if (!targetLineId || targetLineId === 'all') return true;
+  if (sub.lineId === 'all' || sub.sectorId === 'all') return true;
+  if (sub.lineId === targetLineId) return true;
+  if (sub.sectorId === targetLineId) return true;
+  if (!sub.lineId && (templateSectorId === 'all' || templateSectorId === targetLineId)) return true;
+  return false;
 }

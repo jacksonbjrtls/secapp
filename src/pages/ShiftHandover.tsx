@@ -17,9 +17,10 @@ import {
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { decryptValue } from '../lib/crypto';
-import { safeToDate, cn } from '../lib/utils';
+import { safeToDate, cn, getLocalDateStrBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { getCurrentShift, getGroupForShift, Shift, Group } from '../lib/scaleUtils';
+import { isSubmissionMatchingShift } from '../lib/qualityUtils';
 import { 
   ArrowLeftRight, 
   CalendarDays, 
@@ -371,16 +372,8 @@ export const ShiftHandover: React.FC = () => {
     const d = safeToDate(ts);
     if (!d) return null;
     
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const dateStr = `${year}-${month}-${day}`;
-    
-    const hour = d.getHours();
-    let shiftName: Shift = 'Turno 1';
-    if (hour >= 0 && hour < 8) shiftName = 'Turno 1';
-    else if (hour >= 8 && hour < 16) shiftName = 'Turno 2';
-    else shiftName = 'Turno 3';
+    const dateStr = getLocalDateStrBR(d);
+    const shiftName: Shift = getCurrentShift(d);
     
     return { dateStr, shiftName };
   };
@@ -400,10 +393,7 @@ export const ShiftHandover: React.FC = () => {
 
     // 2. Quality checklist approvals
     const relevantQuality = qualitySubmissions.filter(sub => {
-      // In Quality, shift format can be group-prefixed "A - Turno 1". Let's check matching.
-      const isCorrectShift = sub.shift && sub.shift.includes(selectedShift);
-      const itemInfo = parseIncidentTime(sub.createdAt);
-      return isCorrectShift && itemInfo && itemInfo.dateStr === selectedDate;
+      return isSubmissionMatchingShift(sub, selectedShift, new Date(selectedDate + 'T12:00:00'), false);
     });
 
     // 3. Operational route completions

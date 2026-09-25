@@ -5,6 +5,7 @@ import {
   collection, 
   addDoc, 
   setDoc,
+  getDoc,
   doc,
   getDocs, 
   query, 
@@ -81,7 +82,7 @@ import {
   CartesianGrid 
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeToDate, formatDateBR, formatDateDDMMAAAA } from '../lib/utils';
+import { cn, safeToDate, formatDateBR, formatDateDDMMAAAA, getLocalDateStrBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { getCurrentShift, getGroupForShift, getTodayGroups, getShiftTimeRange, isWithinShiftWindow, type Shift } from '../lib/scaleUtils';
 
@@ -267,13 +268,14 @@ const DDS: React.FC = () => {
   const [newGroup, setNewGroup] = useState<string>(() => getGroupForShift(new Date(), getCurrentShift()));
   const [newExecutor, setNewExecutor] = useState('');
   const [newTotalPrevisto, setNewTotalPrevisto] = useState<number>(9);
-  const [newDate, setNewDate] = useState<string>(() => getLocalDateStr(new Date()));
+  const [newDate, setNewDate] = useState<string>(() => getLocalDateStrBR(new Date()));
   const [isCreateFormExpanded, setIsCreateFormExpanded] = useState(false);
+  const isSubmittingDdsRef = useRef(false);
 
   // Keep automatic shift and group synchronized with real-time clock
   const updateAutomaticShiftAndGroup = () => {
     const now = new Date();
-    const curDateStr = getLocalDateStr(now);
+    const curDateStr = getLocalDateStrBR(now);
     const curShift = getCurrentShift(now);
     const curGroup = getGroupForShift(now, curShift);
     setNewDate(curDateStr);
@@ -282,7 +284,7 @@ const DDS: React.FC = () => {
   };
 
   const handleDateChange = (dateVal: string) => {
-    const todayStr = getLocalDateStr(new Date());
+    const todayStr = getLocalDateStrBR(new Date());
     // Prevent selecting a past date
     if (dateVal && dateVal < todayStr) {
       setError('Não é permitido criar DDS com data anterior à data atual.');
@@ -312,35 +314,42 @@ const DDS: React.FC = () => {
   const [selectedMood, setSelectedMood] = useState<'happy' | 'neutral' | 'sad' | null>(null);
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
 
-  // Today date string in local timezone
-  const todayDateStr = useMemo(() => getLocalDateStr(new Date()), []);
+  // Today date string in Brazilian timezone
+  const todayDateStr = useMemo(() => getLocalDateStrBR(new Date()), []);
 
   // Today's active and created sessions (timezone-safe check)
   const todaySessions = useMemo(() => {
     return sessions.filter((s: any) => {
-      const dStr = getLocalDateStr(s.createdAt || s.date);
+      const dStr = getLocalDateStrBR(s.createdAt || s.date);
       return dStr === todayDateStr;
     });
   }, [sessions, todayDateStr]);
 
   // Trava de Duplicidade: Verifica em tempo real se já existe um DDS registrado para o mesmo dia e turno
   const existingDdsForShift = useMemo(() => {
-    const targetDate = newDate || getLocalDateStr(new Date());
+    const targetDate = newDate || getLocalDateStrBR(new Date());
     const targetShift = (newShift || getCurrentShift()) as Shift;
+    const cleanShift = (s: string) => (s || '').trim().toLowerCase();
 
     // 1. Procurar nas sessões recentes (sessions)
     const foundInRecent = sessions.find((s: any) => {
       if (editingSession && s.id === editingSession.id) return false;
-      const sDate = getLocalDateStr(s.createdAt || s.date);
-      return sDate === targetDate && s.shift === targetShift;
+      const sDate = getLocalDateStrBR(s.createdAt || s.date);
+      const sShift = cleanShift(s.shift);
+      const tShift = cleanShift(targetShift);
+      const shiftMatches = sShift === tShift || sShift.includes(tShift);
+      return sDate === targetDate && shiftMatches;
     });
     if (foundInRecent) return foundInRecent;
 
     // 2. Procurar na lista do mês (allSessionsList)
     const foundInMonth = allSessionsList.find((s: any) => {
       if (editingSession && s.id === editingSession.id) return false;
-      const sDate = getLocalDateStr(s.createdAt || s.date);
-      return sDate === targetDate && s.shift === targetShift;
+      const sDate = getLocalDateStrBR(s.createdAt || s.date);
+      const sShift = cleanShift(s.shift);
+      const tShift = cleanShift(targetShift);
+      const shiftMatches = sShift === tShift || sShift.includes(tShift);
+      return sDate === targetDate && shiftMatches;
     });
     return foundInMonth || null;
   }, [sessions, allSessionsList, newDate, newShift, editingSession]);
@@ -967,86 +976,113 @@ const DDS: React.FC = () => {
 
   const handleCreateSession = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validate that creation date cannot be in the past
-    const todayStr = getLocalDateStr(new Date());
-    const creationDateStr = newDate || todayStr;
-    if (creationDateStr < todayStr) {
-      setError('Não é permitido criar DDS com data retroativa/anterior.');
-      return;
-    }
 
-    const currentShiftAuto = getCurrentShift();
-    const shiftToUse = (newShift || currentShiftAuto) as Shift;
-    const groupToUse = getGroupForShift(new Date(), shiftToUse);
-
-    // ==============================================================
-    // TRAVA DE DUPLICIDADE: PERMITE APENAS 1 DDS POR DIA E POR TURNO
-    // ==============================================================
-    if (!editingSession) {
-      // 1. Verificação instantânea em memória local
-      const localDuplicate = sessions.find((s: any) => {
-        const sDate = getLocalDateStr(s.createdAt || s.date);
-        return sDate === creationDateStr && s.shift === shiftToUse;
-      }) || allSessionsList.find((s: any) => {
-        const sDate = getLocalDateStr(s.createdAt || s.date);
-        return sDate === creationDateStr && s.shift === shiftToUse;
-      });
-
-      if (localDuplicate) {
-        setError(`Operação bloqueada: Já existe um DDS registrado para o ${shiftToUse} na data ${formatDateBR(creationDateStr)} ("${localDuplicate.title || 'DDS do Turno'}"). O sistema permite apenas 1 DDS registrado por turno para evitar duplicidade.`);
-        return;
-      }
-
-      // 2. Verificação atômica no Firestore para proteção contra concorrência simultânea
-      try {
-        const [year, month, day] = creationDateStr.split('-').map(Number);
-        const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-        const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
-
-        const dupQuery = query(
-          collection(db, 'dds_sessions'),
-          where('createdAt', '>=', Timestamp.fromDate(startOfDay)),
-          where('createdAt', '<=', Timestamp.fromDate(endOfDay))
-        );
-        const dupSnap = await getDocs(dupQuery);
-        const firestoreDuplicate = dupSnap.docs.find(d => {
-          const dData = d.data();
-          return dData.shift === shiftToUse;
-        });
-
-        if (firestoreDuplicate) {
-          const fData = firestoreDuplicate.data();
-          setError(`Operação bloqueada: Já existe um DDS registrado para o ${shiftToUse} na data ${formatDateBR(creationDateStr)} ("${fData.title || 'DDS do Turno'}"). O sistema permite apenas 1 DDS registrado por turno para evitar duplicidade.`);
-          return;
-        }
-      } catch (dupErr) {
-        console.warn('Verificação de duplicidade no Firestore gerou aviso, mantendo bloqueio padrão:', dupErr);
-      }
-    } else {
-      // Se estiver editando, não permitir alterar para outro turno que já possua DDS registrado no mesmo dia
-      const otherSessionDuplicate = sessions.find((s: any) => {
-        if (s.id === editingSession.id) return false;
-        const sDate = getLocalDateStr(s.createdAt || s.date);
-        return sDate === creationDateStr && s.shift === shiftToUse;
-      }) || allSessionsList.find((s: any) => {
-        if (s.id === editingSession.id) return false;
-        const sDate = getLocalDateStr(s.createdAt || s.date);
-        return sDate === creationDateStr && s.shift === shiftToUse;
-      });
-
-      if (otherSessionDuplicate) {
-        setError(`Não é possível alterar este DDS para o ${shiftToUse}, pois já existe outra sessão de DDS registrada neste turno na data ${formatDateBR(creationDateStr)}.`);
-        return;
-      }
-    }
-
-    const titleToSave = (newTitle || '').trim() || `${shiftToUse} - DDS ${formatDateDDMMAAAA(new Date())}`;
-    
+    if (isSubmittingDdsRef.current) return;
+    isSubmittingDdsRef.current = true;
     setLoading(true);
     setError('');
-
+    
     try {
+      // Validate that creation date cannot be in the past
+      const todayStr = getLocalDateStrBR(new Date());
+      const creationDateStr = newDate || todayStr;
+      if (creationDateStr < todayStr) {
+        setError('Não é permitido criar DDS com data retroativa/anterior.');
+        return;
+      }
+
+      const currentShiftAuto = getCurrentShift();
+      const shiftToUse = (newShift || currentShiftAuto) as Shift;
+      const groupToUse = getGroupForShift(new Date(), shiftToUse);
+      const cleanShift = (s: string) => (s || '').trim().toLowerCase();
+      const targetClean = cleanShift(shiftToUse);
+
+      // ==============================================================
+      // TRAVA DE DUPLICIDADE: PERMITE APENAS 1 DDS POR DIA E POR TURNO
+      // ==============================================================
+      if (!editingSession) {
+        // 1. Verificação instantânea em memória local (recentes e mês)
+        const localDuplicate = sessions.find((s: any) => {
+          const sDate = getLocalDateStrBR(s.createdAt || s.date);
+          const sShift = cleanShift(s.shift);
+          return sDate === creationDateStr && (sShift === targetClean || sShift.includes(targetClean));
+        }) || allSessionsList.find((s: any) => {
+          const sDate = getLocalDateStrBR(s.createdAt || s.date);
+          const sShift = cleanShift(s.shift);
+          return sDate === creationDateStr && (sShift === targetClean || sShift.includes(targetClean));
+        });
+
+        if (localDuplicate) {
+          setActiveSession(localDuplicate);
+          setIsCreateFormExpanded(false);
+          setError(`Atenção: Já existe um DDS registrado para o ${shiftToUse} na data ${formatDateBR(creationDateStr)} ("${localDuplicate.title || 'DDS do Turno'}"). O sistema permite somente 1 DDS registrado por turno para evitar duplicidade.`);
+          return;
+        }
+
+        // 2. Verificação atômica no Firestore (ID determinístico e busca direta)
+        const deterministicId = `dds_${creationDateStr}_${shiftToUse.toLowerCase().replace(/\s+/g, '')}`;
+        try {
+          const docDirectSnap = await getDoc(doc(db, 'dds_sessions', deterministicId));
+          if (docDirectSnap.exists()) {
+            const fData = docDirectSnap.data();
+            setActiveSession({ id: docDirectSnap.id, ...fData });
+            setIsCreateFormExpanded(false);
+            setError(`Atenção: Já existe um DDS registrado para o ${shiftToUse} na data ${formatDateBR(creationDateStr)} ("${fData.title || 'DDS do Turno'}"). O sistema permite somente 1 DDS registrado por turno para evitar duplicidade.`);
+            return;
+          }
+
+          // Busca com janela ampla de 24h para cobrir variações de fuso horário
+          const [year, month, day] = creationDateStr.split('-').map(Number);
+          const startSearch = new Date(year, month - 1, day, 0, 0, 0, 0);
+          startSearch.setHours(startSearch.getHours() - 12);
+          const endSearch = new Date(year, month - 1, day, 23, 59, 59, 999);
+          endSearch.setHours(endSearch.getHours() + 12);
+
+          const dupQuery = query(
+            collection(db, 'dds_sessions'),
+            where('createdAt', '>=', Timestamp.fromDate(startSearch)),
+            where('createdAt', '<=', Timestamp.fromDate(endSearch))
+          );
+          const dupSnap = await getDocs(dupQuery);
+          const firestoreDuplicate = dupSnap.docs.find(d => {
+            const dData = d.data();
+            const dDate = getLocalDateStrBR(dData.createdAt || dData.date);
+            const dShift = cleanShift(dData.shift);
+            return dDate === creationDateStr && (dShift === targetClean || dShift.includes(targetClean));
+          });
+
+          if (firestoreDuplicate) {
+            const fData = firestoreDuplicate.data();
+            setActiveSession({ id: firestoreDuplicate.id, ...fData });
+            setIsCreateFormExpanded(false);
+            setError(`Atenção: Já existe um DDS registrado para o ${shiftToUse} na data ${formatDateBR(creationDateStr)} ("${fData.title || 'DDS do Turno'}"). O sistema permite somente 1 DDS registrado por turno para evitar duplicidade.`);
+            return;
+          }
+        } catch (dupErr) {
+          console.warn('Verificação de duplicidade no Firestore gerou aviso:', dupErr);
+        }
+      } else {
+        // Se estiver editando, não permitir alterar para outro turno que já possua DDS registrado no mesmo dia
+        const otherSessionDuplicate = sessions.find((s: any) => {
+          if (s.id === editingSession.id) return false;
+          const sDate = getLocalDateStrBR(s.createdAt || s.date);
+          const sShift = cleanShift(s.shift);
+          return sDate === creationDateStr && (sShift === targetClean || sShift.includes(targetClean));
+        }) || allSessionsList.find((s: any) => {
+          if (s.id === editingSession.id) return false;
+          const sDate = getLocalDateStrBR(s.createdAt || s.date);
+          const sShift = cleanShift(s.shift);
+          return sDate === creationDateStr && (sShift === targetClean || sShift.includes(targetClean));
+        });
+
+        if (otherSessionDuplicate) {
+          setError(`Não é possível alterar este DDS para o ${shiftToUse}, pois já existe outra sessão de DDS registrada neste turno na data ${formatDateBR(creationDateStr)}.`);
+          return;
+        }
+      }
+
+      const titleToSave = (newTitle || '').trim() || `${shiftToUse} - DDS ${formatDateDDMMAAAA(new Date())}`;
+
       if (editingSession) {
         const updatePayload: any = {
           title: titleToSave,
@@ -1075,8 +1111,9 @@ const DDS: React.FC = () => {
 
         // Validity for DDS signature is exactly 4 hours from creation
         const expiresAt = new Date(now.getTime() + 4 * 60 * 60 * 1000);
+        const deterministicId = `dds_${creationDateStr}_${shiftToUse.toLowerCase().replace(/\s+/g, '')}`;
 
-        await addDoc(collection(db, 'dds_sessions'), {
+        await setDoc(doc(db, 'dds_sessions', deterministicId), {
           title: titleToSave,
           description: newDescription,
           shift: shiftToUse,
@@ -1111,6 +1148,7 @@ const DDS: React.FC = () => {
       }
       handleFirestoreError(err, editingSession ? OperationType.UPDATE : OperationType.CREATE, 'dds_sessions');
     } finally {
+      isSubmittingDdsRef.current = false;
       setLoading(false);
     }
   };

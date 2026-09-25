@@ -32,7 +32,16 @@
   @media screen and (max-width: 768px) {
     input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
     select,
-    textarea {
+    textarea,
+    input.text-xs,
+    input.text-sm,
+    input.text-base,
+    select.text-xs,
+    select.text-sm,
+    select.text-base,
+    textarea.text-xs,
+    textarea.text-sm,
+    textarea.text-base {
       font-size: 16px !important;
       line-height: 1.35 !important;
     }
@@ -42,7 +51,8 @@
     input[type="datetime-local"] {
       -webkit-appearance: none;
       appearance: none;
-      min-height: 2.6rem;
+      min-height: 2.75rem;
+      font-size: 16px !important;
     }
   }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { 
   collection, 
@@ -41,7 +41,13 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { getCurrentShift, getGroupForShift, Shift } from '../lib/scaleUtils';
-import { isResponseCompliant, isCoverRelatedChecklistItem } from '../lib/qualityUtils';
+import { 
+  isResponseCompliant, 
+  isCoverRelatedChecklistItem, 
+  extractShiftName, 
+  isSubmissionMatchingShift, 
+  isSubmissionMatchingLineOrSector 
+} from '../lib/qualityUtils';
 import { 
   ClipboardCheck, 
   Settings, 
@@ -2035,7 +2041,7 @@ const Quality: React.FC = () => {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_options'));
 
     const baseSubQuery = collection(db, 'quality_checklist_submissions');
-    const subQuery = query(baseSubQuery, orderBy('createdAt', 'desc'), limit(150));
+    const subQuery = query(baseSubQuery, orderBy('createdAt', 'desc'), limit(350));
 
     const unsubSubmissions = onSnapshot(subQuery, async (snapshot) => {
       const mapped = await Promise.all(snapshot.docs.map(async (doc) => {
@@ -2893,15 +2899,14 @@ const Quality: React.FC = () => {
     const currentShiftName = getCurrentShift();
     const currentGroup = getGroupForShift(new Date(), currentShiftName);
     const shiftIdentifier = `${currentGroup} - ${currentShiftName}`;
-    const todayStr = getLocalDateString(new Date());
 
     const isDayBased = fillingTemplate.scheduleType && fillingTemplate.scheduleType !== 'shift';
+    const targetLineId = submissionLineId || fillingTemplate.sectorId;
     const existingSubmissions = submissions.filter(sub => 
       sub.id !== editingSubmissionId &&
       sub.templateId === fillingTemplate.id && 
-      (sub.lineId === submissionLineId || sub.lineId === fillingTemplate.sectorId) &&
-      (isDayBased ? true : sub.shift === shiftIdentifier) &&
-      getLocalDateString(safeToDate(sub.createdAt) || new Date()) === todayStr
+      isSubmissionMatchingLineOrSector(sub, targetLineId, fillingTemplate.sectorId) &&
+      isSubmissionMatchingShift(sub, currentShiftName, new Date(), isDayBased)
     );
 
     if (existingSubmissions.length >= fillingTemplate.frequencyPerShift) {
@@ -2916,7 +2921,6 @@ const Quality: React.FC = () => {
       return;
     }
 
-    const targetLineId = submissionLineId || fillingTemplate.sectorId;
     const lineObj = lines.find(l => l.id === targetLineId) || sectors.find(s => s.id === targetLineId);
     const lineSuffix = lineObj ? ` para a ${lineObj.name}` : '';
 
@@ -3371,37 +3375,37 @@ const Quality: React.FC = () => {
                 if (isDayBased && s !== 'Turno 3') continue;
 
                 // Determine target line IDs for this template
-                const targetLineIds = template.sectorId === 'all'
+                const rawLineIds = template.sectorId === 'all'
                   ? lines.map(l => l.id)
                   : sectors.find(sec => sec.id === template.sectorId)?.lineIds || [];
+                const targetLineIds = rawLineIds.length > 0 ? rawLineIds : [template.sectorId || template.id];
 
                 for (const lineId of targetLineIds) {
-                  const lineObj = lines.find(l => l.id === lineId);
-                  if (!lineObj) continue;
+                  const lineObj = lines.find(l => l.id === lineId) || sectors.find(sec => sec.id === lineId);
+                  const lineDisplayName = lineObj?.name || 'Geral';
 
                   const count = submissions.filter(sub => 
                     sub.templateId === template.id && 
-                    sub.lineId === lineId &&
-                    (isDayBased ? true : sub.shift === shiftIdentifier) &&
-                    getLocalDateString(safeToDate(sub.createdAt) || new Date()) === dStr
+                    isSubmissionMatchingLineOrSector(sub, lineId, template.sectorId) &&
+                    isSubmissionMatchingShift(sub, s, d, isDayBased)
                   ).length;
 
-                  if (count < template.frequencyPerShift) {
+                  if (count < (template.frequencyPerShift || 1)) {
                     const wasJustified = omissions.some(o => 
                       o.templateId === template.id && 
-                      o.lineId === lineId &&
+                      (o.lineId === lineId || o.lineId === template.sectorId) &&
                       o.date === dStr &&
-                      o.shift === shiftIdentifier
+                      (o.shift === shiftIdentifier || o.shift === s || (o.shift && o.shift.includes(s)))
                     );
 
                     if (!wasJustified) {
                       pending.push({
                         template,
                         lineId,
-                        lineName: lineObj.name,
+                        lineName: lineDisplayName,
                         date: dStr,
                         shift: shiftIdentifier,
-                        missing: template.frequencyPerShift - count
+                        missing: (template.frequencyPerShift || 1) - count
                       });
                     }
                   }
@@ -4335,6 +4339,49 @@ const Quality: React.FC = () => {
 
   const activeDryerSub = dryerSubmissions.find(s => s.id === selectedDryerSubId) || dryerSubmissions[0];
 
+  const currentShiftNow = getCurrentShift();
+  const shiftInspectionStats = useMemo(() => {
+    const activeTemplates = templates.filter(t => t.active);
+    let totalDone = 0;
+    let totalPending = 0;
+    let totalExpected = 0;
+
+    activeTemplates.forEach(template => {
+      const isDayBased = template.scheduleType && template.scheduleType !== 'shift';
+      const rawTargetLines = template.sectorId === 'all'
+        ? lines.map(l => l.id)
+        : (sectors.find(sec => sec.id === template.sectorId)?.lineIds || (lines.find(l => l.id === template.sectorId) ? [template.sectorId] : []));
+      
+      const effectiveLines = rawTargetLines.length > 0 ? rawTargetLines : [template.sectorId || template.id];
+      const targetLinesToEvaluate = selectedLineId 
+        ? effectiveLines.filter(lId => lId === selectedLineId)
+        : effectiveLines;
+
+      targetLinesToEvaluate.forEach(lineId => {
+        const reqCount = template.frequencyPerShift || 1;
+        totalExpected += reqCount;
+        const actualCount = submissions.filter(sub => 
+          sub.templateId === template.id &&
+          isSubmissionMatchingLineOrSector(sub, lineId, template.sectorId) &&
+          isSubmissionMatchingShift(sub, currentShiftNow, new Date(), isDayBased)
+        ).length;
+
+        totalDone += Math.min(actualCount, reqCount);
+        totalPending += Math.max(0, reqCount - actualCount);
+      });
+    });
+
+    const progress = totalExpected > 0 ? Math.round((totalDone / totalExpected) * 100) : 100;
+
+    return {
+      currentShift: currentShiftNow,
+      totalDone,
+      totalPending,
+      totalExpected,
+      progress
+    };
+  }, [templates, submissions, lines, sectors, selectedLineId, currentShiftNow]);
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -4500,16 +4547,65 @@ const Quality: React.FC = () => {
                     <div className="bg-emerald-50 px-4 py-2 rounded-xl flex items-center gap-2 border border-emerald-100">
                       <Clock className="w-4 h-4 text-emerald-600" />
                       <span className="text-xs font-black text-emerald-900 uppercase">
-                        {getCurrentShift()}
+                        {currentShiftNow}
                       </span>
                     </div>
                     <div className="bg-blue-50 px-4 py-2 rounded-xl flex items-center gap-2 border border-blue-100">
                       <Layers className="w-4 h-4 text-blue-600" />
                       <span className="text-xs font-black text-blue-900 uppercase">
-                        Letra {getGroupForShift(new Date(), getCurrentShift())}
+                        Letra {getGroupForShift(new Date(), currentShiftNow)}
                       </span>
                     </div>
                   </div>
+               </div>
+
+               {/* Resumo de Inspeções Feitas e Pendentes dentro do Turno Atual */}
+               <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                 <div className="flex items-center gap-6">
+                   <div className="space-y-1">
+                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Feitas no Turno</p>
+                     <div className="flex items-baseline gap-1.5">
+                       <span className="text-2xl font-black text-emerald-600 tabular-nums leading-none">
+                         {shiftInspectionStats.totalDone}
+                       </span>
+                       <span className="text-[10px] font-bold text-slate-400">/ {shiftInspectionStats.totalExpected} esperadas</span>
+                     </div>
+                   </div>
+                   
+                   <div className="w-px h-8 bg-slate-200 shrink-0" />
+                   
+                   <div className="space-y-1">
+                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Pendentes no Turno</p>
+                     <div className="flex items-baseline gap-1.5">
+                       <span className={cn(
+                         "text-2xl font-black tabular-nums leading-none",
+                         shiftInspectionStats.totalPending > 0 ? "text-amber-600" : "text-slate-400"
+                       )}>
+                         {shiftInspectionStats.totalPending}
+                       </span>
+                       <span className="text-[10px] font-bold text-slate-400">restantes</span>
+                     </div>
+                   </div>
+                 </div>
+
+                 {/* Barra de Progresso do Turno */}
+                 <div className="flex-1 max-w-xs space-y-1.5 self-stretch sm:self-auto flex flex-col justify-center">
+                   <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-slate-500 leading-none">
+                     <span>Progresso {currentShiftNow}</span>
+                     <span className={shiftInspectionStats.progress === 100 ? "text-emerald-600 font-black" : "text-slate-600"}>
+                       {shiftInspectionStats.progress}%
+                     </span>
+                   </div>
+                   <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                     <div 
+                       className={cn(
+                         "h-full rounded-full transition-all duration-500",
+                         shiftInspectionStats.progress === 100 ? "bg-emerald-500" : "bg-emerald-600"
+                       )}
+                       style={{ width: `${shiftInspectionStats.progress}%` }}
+                     />
+                   </div>
+                 </div>
                </div>
 
                <div>
@@ -4656,18 +4752,13 @@ const Quality: React.FC = () => {
                           return sector?.lineIds.includes(l.id);
                         }).map((line, lineIdx) => {
                           const currentShift = getCurrentShift();
-                          const currentGroup = getGroupForShift(new Date(), currentShift);
-                          const shiftIdentifier = `${currentGroup} - ${currentShift}`;
-                          const todayStr = getLocalDateString(new Date());
-
                           const isDayBased = fillingTemplate.scheduleType && fillingTemplate.scheduleType !== 'shift';
                           const lineSubmissionsCount = submissions.filter(sub => 
                             sub.templateId === fillingTemplate.id && 
-                            sub.lineId === line.id &&
-                            (isDayBased ? true : sub.shift === shiftIdentifier) &&
-                            getLocalDateString(safeToDate(sub.createdAt) || new Date()) === todayStr
+                            isSubmissionMatchingLineOrSector(sub, line.id, fillingTemplate.sectorId) &&
+                            isSubmissionMatchingShift(sub, currentShift, new Date(), isDayBased)
                           ).length;
-                          const isLineCompleted = lineSubmissionsCount >= fillingTemplate.frequencyPerShift;
+                          const isLineCompleted = lineSubmissionsCount >= (fillingTemplate.frequencyPerShift || 1);
 
                           return (
                             <button
@@ -6245,23 +6336,27 @@ const Quality: React.FC = () => {
                   const shiftIdentifier = `${currentGroup} - ${currentShift}`;
                   const todayStr = getLocalDateString(new Date());
 
-                  const targetLineIds = template.sectorId === 'all'
+                  const rawTargetLineIds = template.sectorId === 'all'
                     ? lines.map(l => l.id)
                     : (sectors.find(sec => sec.id === template.sectorId)?.lineIds || (lines.find(l => l.id === template.sectorId) ? [template.sectorId] : []));
 
                   const isDayBased = template.scheduleType && template.scheduleType !== 'shift';
+                  const effectiveTargetLineIds = rawTargetLineIds.length > 0 
+                    ? rawTargetLineIds 
+                    : [template.sectorId || template.id];
 
-                  const linesStatus = targetLineIds.map(lineId => {
+                  const linesStatus = effectiveTargetLineIds.map(lineId => {
                     const lineSubmissions = submissions.filter(sub => 
                       sub.templateId === template.id && 
-                      sub.lineId === lineId &&
-                      (isDayBased ? true : sub.shift === shiftIdentifier) &&
-                      getLocalDateString(safeToDate(sub.createdAt) || new Date()) === todayStr
+                      isSubmissionMatchingLineOrSector(sub, lineId, template.sectorId) &&
+                      isSubmissionMatchingShift(sub, currentShift, new Date(), isDayBased)
                     );
+                    const reqCount = template.frequencyPerShift || 1;
                     return {
                       lineId,
-                      completed: lineSubmissions.length >= template.frequencyPerShift,
-                      count: lineSubmissions.length
+                      completed: lineSubmissions.length >= reqCount,
+                      count: lineSubmissions.length,
+                      required: reqCount
                     };
                   });
 
@@ -6271,18 +6366,21 @@ const Quality: React.FC = () => {
 
                   const isCompleted = activeStatuses.length > 0 && activeStatuses.every(s => s.completed);
                   const completedLinesCount = linesStatus.filter(s => s.completed).length;
-                  const totalLinesCount = targetLineIds.length;
+                  const totalLinesCount = effectiveTargetLineIds.length;
 
                   const templateSubmissions = submissions.filter(sub => 
                     sub.templateId === template.id && 
-                    (selectedLineId ? (sub.lineId === selectedLineId || sub.sectorId === selectedLineId) : true)
+                    (selectedLineId ? isSubmissionMatchingLineOrSector(sub, selectedLineId, template.sectorId) : true)
                   );
                   const todaySubmissions = templateSubmissions.filter(sub => {
                     const d = safeToDate(sub.createdAt);
                     return d && getLocalDateString(d) === todayStr;
                   });
-                  // Sempre disponibiliza submissões para edição para todos os usuários
-                  const availableSubsToEdit = todaySubmissions.length > 0 ? todaySubmissions : templateSubmissions;
+                  const shiftSubmissions = templateSubmissions.filter(sub =>
+                    isSubmissionMatchingShift(sub, currentShift, new Date(), isDayBased)
+                  );
+                  // Sempre disponibiliza submissões para edição para todos os usuários (priorizando as do turno atual)
+                  const availableSubsToEdit = shiftSubmissions.length > 0 ? shiftSubmissions : (todaySubmissions.length > 0 ? todaySubmissions : templateSubmissions);
 
                   const handleStartNewInspection = () => {
                     // 1. Open inspection form INSTANTLY (0ms latency, synchronous transition)
@@ -6324,9 +6422,9 @@ const Quality: React.FC = () => {
                       setDraftSavedAt(null);
                       setSelectedProductId(template.productId || '');
                       // If selected line targets this template, default to it; otherwise default to empty or the template's single line
-                      const defaultLineId = selectedLineId && targetLineIds.includes(selectedLineId)
+                      const defaultLineId = selectedLineId && effectiveTargetLineIds.includes(selectedLineId)
                         ? selectedLineId
-                        : (targetLineIds.length === 1 ? targetLineIds[0] : '');
+                        : (effectiveTargetLineIds.length === 1 ? effectiveTargetLineIds[0] : '');
                       setSubmissionLineId(defaultLineId);
                     }
 
@@ -6421,22 +6519,29 @@ const Quality: React.FC = () => {
                             {locationName}
                           </span>
                           
-                          <div className="flex items-center gap-2 mt-1">
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
                             <span className={cn(
-                              "text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded flex items-center gap-1 w-fit",
-                              isCompleted ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" : "bg-emerald-50 text-emerald-600"
+                              "text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded flex items-center gap-1.5 w-fit border",
+                              isCompleted ? "bg-emerald-50 text-emerald-700 border-emerald-200/80" : "bg-amber-50 text-amber-700 border-amber-200/80"
                             )}>
-                              <Clock className="w-3 h-3" />
+                              {isCompleted ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              ) : (
+                                <Clock className="w-3.5 h-3.5 text-amber-600" />
+                              )}
                               {selectedLineId 
-                                ? `${activeStatuses[0]?.count || 0} / ${template.frequencyPerShift}x`
-                                : `${completedLinesCount} / ${totalLinesCount} Linhas`
+                                ? `${activeStatuses[0]?.count || 0} / ${template.frequencyPerShift || 1}x`
+                                : `${completedLinesCount} / ${totalLinesCount} ${totalLinesCount === 1 ? 'Linha' : 'Linhas'}`
                               }
                             </span>
-                            {isCompleted && (
-                              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">
-                                Concluído hoje
-                              </span>
-                            )}
+                            <span className={cn(
+                              "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded",
+                              isCompleted 
+                                ? "bg-emerald-100 text-emerald-800" 
+                                : "bg-amber-100 text-amber-800"
+                            )}>
+                              {isCompleted ? 'Feito no Turno' : 'Pendente no Turno'}
+                            </span>
                           </div>
                         </div>
                         <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-emerald-500 transition-all" />

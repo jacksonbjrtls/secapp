@@ -3,13 +3,13 @@ import { collection, onSnapshot, query, where, Timestamp, doc, orderBy, limit } 
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
-import { safeToDate, cn } from '../lib/utils';
+import { safeToDate, cn, getLocalDateStrBR } from '../lib/utils';
 import { getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { subscribeSharedCollection } from '../lib/referenceCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { decryptValue } from '../lib/crypto';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
-import { isResponseCompliant } from '../lib/qualityUtils';
+import { isResponseCompliant, isSubmissionMatchingShift, isSubmissionMatchingLineOrSector } from '../lib/qualityUtils';
 import { 
   Activity, 
   ShieldAlert, 
@@ -508,10 +508,13 @@ export const Overview: React.FC = () => {
 
   // 3. Quality Inspections Summary today
   const qualityTodayStats = useMemo(() => {
-    // Qualitysubmissions done today
+    // Quality submissions done today
+    const todayStrBR = getLocalDateStrBR(todayStart);
     const subsToday = qualitySubmissions.filter(sub => {
       const created = safeToDate(sub.createdAt);
-      return created && created >= todayStart && created <= todayEnd;
+      if (!created) return true; // optimistic inclusion
+      const dStr = getLocalDateStrBR(created);
+      return dStr === todayStrBR || (created >= todayStart && created <= todayEnd);
     });
 
     // Quality omissions for today (by actual event target date, NOT the creation date of the justification)
@@ -553,42 +556,51 @@ export const Overview: React.FC = () => {
       }
     });
 
-    // Calculate done and pending checklists for today
+    // Calculate done and pending checklists for today and current shift
     let doneCalculated = 0;
     let pendingCalculated = 0;
+    let shiftDoneCalculated = 0;
+    let shiftPendingCalculated = 0;
+    const currentShift = getCurrentShift();
     const activeTemplates = qualityTemplates.filter(t => t.active);
     const shifts: Shift[] = ['Turno 1', 'Turno 2', 'Turno 3'];
 
     shifts.forEach(s => {
-      const groupToWork = getGroupForShift(todayStart, s);
-      const shiftIdentifier = `${groupToWork} - ${s}`;
-
       activeTemplates.forEach(template => {
-        const lineIds = template.sectorId === 'all'
+        const isDayBased = template.scheduleType && template.scheduleType !== 'shift';
+        const rawLineIds = template.sectorId === 'all'
           ? lines.map(l => l.id)
-          : qualitySectors.find(sec => sec.id === template.sectorId)?.lineIds || [];
+          : (qualitySectors.find(sec => sec.id === template.sectorId)?.lineIds || (lines.find(l => l.id === template.sectorId) ? [template.sectorId] : []));
+        const lineIds = rawLineIds.length > 0 ? rawLineIds : [template.sectorId || template.id];
 
         lineIds.forEach(lineId => {
-          const lineObj = lines.find(l => l.id === lineId);
-          if (!lineObj) return;
-
           const reqCount = template.frequencyPerShift || 1;
           const actualCount = subsToday.filter(sub => 
             sub.templateId === template.id && 
-            sub.lineId === lineId && 
-            sub.shift === shiftIdentifier
+            isSubmissionMatchingLineOrSector(sub, lineId, template.sectorId) &&
+            isSubmissionMatchingShift(sub, s, todayStart, isDayBased)
           ).length;
 
-          doneCalculated += Math.min(actualCount, reqCount);
-          pendingCalculated += Math.max(0, reqCount - actualCount);
+          const doneForSlot = Math.min(actualCount, reqCount);
+          const pendingForSlot = Math.max(0, reqCount - actualCount);
+          doneCalculated += doneForSlot;
+          pendingCalculated += pendingForSlot;
+
+          if (s === currentShift) {
+            shiftDoneCalculated += doneForSlot;
+            shiftPendingCalculated += pendingForSlot;
+          }
         });
       });
     });
 
     return {
+      currentShift,
       totalInspectionsToday: subsToday.length,
       doneCount: doneCalculated,
       pendingCount: pendingCalculated,
+      shiftDoneCount: shiftDoneCalculated,
+      shiftPendingCount: shiftPendingCalculated,
       omissionsCount: omiToday.length,
       nonConformitiesCount: totalNonConformities,
       recentSubmissions: subsToday.map(sub => {
@@ -1720,31 +1732,49 @@ export const Overview: React.FC = () => {
                 <span className="text-[10px] font-bold text-slate-400">Total submetidas: {qualityTodayStats.totalInspectionsToday}</span>
               </div>
 
-              {/* New Feitas & Pendentes Counter with Visual Progress Bar */}
-              <div className="mb-6 bg-slate-50/50 p-4 rounded-2xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
+              {/* Feitas & Pendentes Counter with Visual Progress Bar */}
+              <div className="mb-6 bg-slate-50/70 p-4 rounded-2xl border border-slate-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-4 flex-wrap sm:flex-nowrap">
+                  {/* Current Shift Stats */}
                   <div className="space-y-1">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Realizadas</p>
+                    <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest leading-none flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-emerald-600" /> Feitas ({qualityTodayStats.currentShift})
+                    </p>
                     <div className="flex items-baseline gap-1">
                       <span className="text-2xl font-black text-emerald-600 tabular-nums leading-none">
-                        {qualityTodayStats.doneCount}
+                        {qualityTodayStats.shiftDoneCount}
                       </span>
-                      <span className="text-[9px] font-bold text-slate-400">inspeções</span>
+                      <span className="text-[9px] font-bold text-slate-400">no turno</span>
                     </div>
                   </div>
                   
                   <div className="w-px h-8 bg-slate-200 shrink-0" />
                   
                   <div className="space-y-1">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Ainda Pendentes</p>
+                    <p className="text-[10px] font-black text-amber-800 uppercase tracking-widest leading-none flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-amber-600" /> Pendentes ({qualityTodayStats.currentShift})
+                    </p>
                     <div className="flex items-baseline gap-1">
                       <span className={cn(
                         "text-2xl font-black tabular-nums leading-none",
-                        qualityTodayStats.pendingCount > 0 ? "text-amber-600" : "text-slate-400"
+                        qualityTodayStats.shiftPendingCount > 0 ? "text-amber-600" : "text-slate-400"
                       )}>
-                        {qualityTodayStats.pendingCount}
+                        {qualityTodayStats.shiftPendingCount}
                       </span>
-                      <span className="text-[9px] font-bold text-slate-400">pendentes hoje</span>
+                      <span className="text-[9px] font-bold text-slate-400">no turno</span>
+                    </div>
+                  </div>
+
+                  <div className="w-px h-8 bg-slate-200 shrink-0 hidden sm:block" />
+
+                  {/* Today Total */}
+                  <div className="space-y-1 hidden sm:block">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Total Hoje</p>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-lg font-black text-slate-700 tabular-nums leading-none">
+                        {qualityTodayStats.doneCount}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400">/ {qualityTodayStats.doneCount + qualityTodayStats.pendingCount}</span>
                     </div>
                   </div>
                 </div>
@@ -1752,15 +1782,15 @@ export const Overview: React.FC = () => {
                 {/* Progress Bar Visualizer */}
                 <div className="flex-1 max-w-[200px] space-y-1.5 self-stretch sm:self-auto flex flex-col justify-center">
                   <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none">
-                    <span>Progresso</span>
+                    <span>Progresso {qualityTodayStats.currentShift}</span>
                     <span>
-                      {Math.round((qualityTodayStats.doneCount / Math.max(1, qualityTodayStats.doneCount + qualityTodayStats.pendingCount)) * 100)}%
+                      {Math.round((qualityTodayStats.shiftDoneCount / Math.max(1, qualityTodayStats.shiftDoneCount + qualityTodayStats.shiftPendingCount)) * 100)}%
                     </span>
                   </div>
-                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
                     <div 
                       className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                      style={{ width: `${(qualityTodayStats.doneCount / Math.max(1, qualityTodayStats.doneCount + qualityTodayStats.pendingCount)) * 100}%` }}
+                      style={{ width: `${(qualityTodayStats.shiftDoneCount / Math.max(1, qualityTodayStats.shiftDoneCount + qualityTodayStats.shiftPendingCount)) * 100}%` }}
                     />
                   </div>
                 </div>
