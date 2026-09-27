@@ -285,8 +285,8 @@ const DDS: React.FC = () => {
 
   const handleDateChange = (dateVal: string) => {
     const todayStr = getLocalDateStrBR(new Date());
-    // Prevent selecting a past date
-    if (dateVal && dateVal < todayStr) {
+    // Prevent selecting a past date when creating a new DDS
+    if (!editingSession && dateVal && dateVal < todayStr) {
       setError('Não é permitido criar DDS com data anterior à data atual.');
       return;
     }
@@ -983,17 +983,23 @@ const DDS: React.FC = () => {
     setError('');
     
     try {
-      // Validate that creation date cannot be in the past
+      // Validate that creation date cannot be in the past (only for new creations)
       const todayStr = getLocalDateStrBR(new Date());
       const creationDateStr = newDate || todayStr;
-      if (creationDateStr < todayStr) {
+      if (!editingSession && creationDateStr < todayStr) {
         setError('Não é permitido criar DDS com data retroativa/anterior.');
         return;
       }
 
       const currentShiftAuto = getCurrentShift();
       const shiftToUse = (newShift || currentShiftAuto) as Shift;
-      const groupToUse = getGroupForShift(new Date(), shiftToUse);
+      
+      let groupToUse = newGroup;
+      if (creationDateStr) {
+        const [y, m, d] = creationDateStr.split('-').map(Number);
+        const targetDateObj = new Date(y, m - 1, d, 12, 0, 0);
+        groupToUse = getGroupForShift(targetDateObj, shiftToUse) || newGroup;
+      }
       const cleanShift = (s: string) => (s || '').trim().toLowerCase();
       const targetClean = cleanShift(shiftToUse);
 
@@ -1081,7 +1087,9 @@ const DDS: React.FC = () => {
         }
       }
 
-      const titleToSave = (newTitle || '').trim() || `${shiftToUse} - DDS ${formatDateDDMMAAAA(new Date())}`;
+      const [year, month, day] = (creationDateStr || todayStr).split('-').map(Number);
+      const sessionDate = new Date(year, month - 1, day, 12, 0, 0);
+      const titleToSave = (newTitle || '').trim() || `${shiftToUse} - DDS ${formatDateDDMMAAAA(sessionDate)}`;
 
       if (editingSession) {
         const updatePayload: any = {
@@ -1095,12 +1103,24 @@ const DDS: React.FC = () => {
         };
 
         if (newDate) {
-          const [year, month, day] = newDate.split('-').map(Number);
-          const sessionDate = new Date(year, month - 1, day, 12, 0, 0);
-          updatePayload.createdAt = Timestamp.fromDate(sessionDate);
+          const [y, m, d] = newDate.split('-').map(Number);
+          const updatedDateObj = new Date(y, m - 1, d, 12, 0, 0);
+          updatePayload.createdAt = Timestamp.fromDate(updatedDateObj);
+          updatePayload.date = newDate;
         }
 
         await updateDoc(doc(db, 'dds_sessions', editingSession.id), updatePayload);
+
+        // Update activeSession immediately if it is the one being edited
+        if (activeSession && activeSession.id === editingSession.id) {
+          setActiveSession((prev: any) => ({
+            ...prev,
+            ...updatePayload,
+            id: editingSession.id,
+            createdAt: updatePayload.createdAt || prev.createdAt
+          }));
+        }
+
         setEditingSession(null);
       } else {
         // Generate 6 digit passcode for managers, admins and masters
@@ -1166,11 +1186,11 @@ const DDS: React.FC = () => {
     setNewExecutor(session.executor || '');
     setNewTotalPrevisto(session.totalPrevisto || 9);
     
-    const dObj = safeToDate(session.createdAt);
+    const dObj = safeToDate(session.createdAt || session.date);
     if (dObj) {
-      setNewDate(dObj.toISOString().split('T')[0]);
+      setNewDate(getLocalDateStrBR(dObj));
     } else {
-      setNewDate(new Date().toISOString().split('T')[0]);
+      setNewDate(getLocalDateStrBR(new Date()));
     }
     setIsCreateFormExpanded(true);
     
@@ -1937,6 +1957,7 @@ const DDS: React.FC = () => {
                         setNewTitle('');
                         setNewDescription('');
                         setNewExecutor(profile?.displayName || '');
+                        updateAutomaticShiftAndGroup();
                         setIsCreateFormExpanded(false);
                       }}
                       className="mb-6 flex items-center gap-2 text-emerald-300 hover:text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
@@ -1998,21 +2019,37 @@ const DDS: React.FC = () => {
                         </div>
                       </div>
                     )}
-                    {/* Top Row: Data, Turno e Letra (Clean automatic status indicators) */}
+                    {/* Top Row: Data, Turno e Letra */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {/* 1. Data do DDS */}
                       <div className="bg-slate-800/90 p-3 rounded-xl border border-slate-700/60">
                         <div className="flex items-center justify-between mb-1">
                           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                            Data
+                            Data do DDS
                           </label>
-                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
-                            Hoje
-                          </span>
+                          {editingSession ? (
+                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                              Alterar Data
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                              Hoje
+                            </span>
+                          )}
                         </div>
-                        <p className="text-sm font-bold text-white">
-                          {formatDateBR(newDate)}
-                        </p>
+                        {editingSession ? (
+                          <input
+                            type="date"
+                            value={newDate}
+                            onChange={(e) => handleDateChange(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700/70 rounded-lg px-2.5 py-1.5 text-sm font-bold text-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                            required
+                          />
+                        ) : (
+                          <p className="text-sm font-bold text-white">
+                            {formatDateBR(newDate)}
+                          </p>
+                        )}
                       </div>
 
                       {/* 2. Turno */}
@@ -2025,9 +2062,21 @@ const DDS: React.FC = () => {
                             {newShift === 'Turno 1' ? '00h-08h' : newShift === 'Turno 2' ? '08h-16h' : '16h-00h'}
                           </span>
                         </div>
-                        <p className="text-sm font-bold text-white">
-                          {newShift}
-                        </p>
+                        {editingSession ? (
+                          <select
+                            value={newShift}
+                            onChange={(e) => handleShiftChange(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700/70 rounded-lg px-2.5 py-1.5 text-sm font-bold text-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                          >
+                            <option value="Turno 1">Turno 1 (00h-08h)</option>
+                            <option value="Turno 2">Turno 2 (08h-16h)</option>
+                            <option value="Turno 3">Turno 3 (16h-00h)</option>
+                          </select>
+                        ) : (
+                          <p className="text-sm font-bold text-white">
+                            {newShift}
+                          </p>
+                        )}
                       </div>
 
                       {/* 3. Letra da Escala */}
@@ -2037,7 +2086,7 @@ const DDS: React.FC = () => {
                             Letra
                           </label>
                           <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
-                            Escalado
+                            Escala
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
