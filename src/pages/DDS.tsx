@@ -473,6 +473,7 @@ const DDS: React.FC = () => {
         const decDesc = await decryptValue(data.description);
         const decExecutor = await decryptValue(data.executor);
         const decCreatedByName = await decryptValue(data.createdByName || data.creatorName);
+        const decEditadoPor = data.editadoPor ? await decryptValue(data.editadoPor) : (data.editadoPor || '');
         return {
           id: doc.id,
           ...data,
@@ -480,7 +481,8 @@ const DDS: React.FC = () => {
           description: decDesc,
           executor: decExecutor,
           createdByName: decCreatedByName,
-          creatorName: decCreatedByName
+          creatorName: decCreatedByName,
+          editadoPor: decEditadoPor || data.editadoPor
         };
       }));
       setSessions(docs);
@@ -1092,6 +1094,8 @@ const DDS: React.FC = () => {
       const titleToSave = (newTitle || '').trim() || `${shiftToUse} - DDS ${formatDateDDMMAAAA(sessionDate)}`;
 
       if (editingSession) {
+        const editorName = profile?.displayName || auth.currentUser?.displayName || profile?.email || auth.currentUser?.email || 'Usuário';
+
         const updatePayload: any = {
           title: titleToSave,
           description: newDescription,
@@ -1099,6 +1103,8 @@ const DDS: React.FC = () => {
           group: groupToUse,
           executor: newExecutor,
           totalPrevisto: newTotalPrevisto,
+          editadoPor: editorName,
+          ultimaAlteracao: serverTimestamp(),
           updatedAt: serverTimestamp()
         };
 
@@ -1117,7 +1123,9 @@ const DDS: React.FC = () => {
             ...prev,
             ...updatePayload,
             id: editingSession.id,
-            createdAt: updatePayload.createdAt || prev.createdAt
+            createdAt: updatePayload.createdAt || prev.createdAt,
+            editadoPor: editorName,
+            ultimaAlteracao: new Date()
           }));
         }
 
@@ -1477,8 +1485,11 @@ const DDS: React.FC = () => {
     try {
       const newExpiresAt = new Date();
       newExpiresAt.setHours(newExpiresAt.getHours() + 4);
+      const editorName = profile?.displayName || auth.currentUser?.displayName || profile?.email || auth.currentUser?.email || 'Usuário';
       await updateDoc(doc(db, 'dds_sessions', sessionId), {
         expiresAt: Timestamp.fromDate(newExpiresAt),
+        editadoPor: editorName,
+        ultimaAlteracao: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
       setSuccessMessage('Sessão reativada por mais 4 horas!');
@@ -2362,9 +2373,12 @@ const DDS: React.FC = () => {
                             const code = Math.floor(100000 + Math.random() * 900000).toString();
                             const expiresAt = new Date();
                             expiresAt.setHours(expiresAt.getHours() + 4);
+                            const editorName = profile?.displayName || auth.currentUser?.displayName || profile?.email || auth.currentUser?.email || 'Usuário';
                             await updateDoc(doc(db, 'dds_sessions', activeSession.id), {
                               passcode: code,
                               expiresAt: Timestamp.fromDate(expiresAt),
+                              editadoPor: editorName,
+                              ultimaAlteracao: serverTimestamp(),
                               updatedAt: serverTimestamp()
                             });
                           }}
@@ -2459,6 +2473,17 @@ const DDS: React.FC = () => {
                            <h4 className="font-bold text-slate-900 mb-1">{formatSessionDisplayTitle(activeSession)}</h4>
                            <p className="text-sm text-slate-500 mb-2">{activeSession.description || 'Nenhuma descrição fornecida.'}</p>
                            <p className="text-xs text-slate-400">Executante: <span className="font-bold text-slate-600">{activeSession.executor}</span></p>
+                           {activeSession.editadoPor && (
+                             <p className="text-[11px] text-amber-700 mt-1.5 flex items-center gap-1 font-medium bg-amber-50/80 border border-amber-200/70 px-2 py-0.5 rounded-lg w-fit">
+                               <span className="text-amber-500 font-semibold">Alterado por:</span>
+                               <strong className="text-amber-950 font-bold">{activeSession.editadoPor}</strong>
+                               {(activeSession.ultimaAlteracao || activeSession.updatedAt) && (
+                                 <span className="text-[10px] text-amber-600 font-normal">
+                                   • {safeToDate(activeSession.ultimaAlteracao || activeSession.updatedAt)?.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                                 </span>
+                               )}
+                             </p>
+                           )}
 
                            {/* Shift Schedule Notice */}
                            {(() => {
@@ -3456,6 +3481,17 @@ const DDS: React.FC = () => {
                                     <div className="text-xs text-slate-600 font-medium flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200/60">
                                       <span className="text-slate-400 font-semibold">Executante:</span>
                                       <strong className="text-slate-800 font-bold">{session.executor}</strong>
+                                    </div>
+                                  )}
+                                  {session.editadoPor && (
+                                    <div className="text-xs text-amber-800 font-medium flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/70">
+                                      <span className="text-amber-500 font-semibold">Alterado por:</span>
+                                      <strong className="text-amber-950 font-bold">{session.editadoPor}</strong>
+                                      {(session.ultimaAlteracao || session.updatedAt) && (
+                                        <span className="text-[10px] text-amber-600 font-normal">
+                                          ({safeToDate(session.ultimaAlteracao || session.updatedAt)?.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })})
+                                        </span>
+                                      )}
                                     </div>
                                   )}
                                   <span className={cn(

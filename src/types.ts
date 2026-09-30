@@ -596,6 +596,44 @@ export interface MaintenanceIssue {
   updatedAt?: any;
 }
 
+export type SafetyIncidentClassification = 'SAFSR' | 'APS' | 'CA' | 'SAFCR';
+
+export interface SafetyCategoryConfig {
+  code: SafetyIncidentClassification;
+  name: string;
+  fullName: string;
+  color: string;
+  badgeBg: string;
+  badgeText: string;
+  borderColor: string;
+  cardBg: string;
+  gradient: string;
+  initialDate?: string; // YYYY-MM-DD or ISO baseline
+  initialDescription?: string;
+}
+
+export interface SafetyIncident {
+  id: string;
+  classification: SafetyIncidentClassification;
+  date: any;
+  title: string;
+  description?: string;
+  sector?: string;
+  equipment?: string;
+  bodyPart?: string;
+  injuryType?: string;
+  lostDays?: number;
+  restrictionDays?: number;
+  preventiveActions?: string;
+  registeredBy?: string;
+  registeredByUid?: string;
+  editadoPor?: string;
+  ultimaAlteracao?: any;
+  createdAt: any;
+  updatedAt?: any;
+}
+
+
 
 
 

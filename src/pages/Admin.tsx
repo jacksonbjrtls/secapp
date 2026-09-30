@@ -2557,6 +2557,7 @@ const Admin: React.FC = () => {
               { id: 'schedule', label: 'Escala de Turno', desc: 'Gestão de escalas de folgas e times operacionais.', icon: 'CalendarDays' },
               { id: 'operational_routes', label: 'Rotas Operacionais', desc: 'Criação de modelos de rota, inspeção de equipamentos com anexo de fotos e geração de observações.', icon: 'Activity' },
               { id: 'safety_observations', label: 'Observação de Segurança', desc: 'Mecanismo para que operadores possam reportar desvios de segurança e condições inseguras.', icon: 'ShieldAlert' },
+              { id: 'safety_incidents', label: 'Ocorrências de Segurança (Painel Sem Acidentes)', desc: 'Gestão de ocorrências e evolução de dias sem acidentes (SAFSR, APS, CA, SAFCR) com gráfico interativo e cronômetro em tempo real.', icon: 'ShieldAlert' },
               { id: 'consumables', label: 'Controle de Insumos', desc: 'Controle de estoque, entrada de produtos por unidade de medida e consumo de insumos (como tinta) por setor e linha.', icon: 'PackagePlus' },
               { id: 'certificates', label: 'Treinamentos/Certificados', desc: 'Módulo de treinamentos de Secagem para emissão e controle de certificados de qualificação e presença.', icon: 'Award' },
               { id: 'stops_control', label: 'Controle de Parada', desc: 'Módulo de controle de paradas (programadas, gerais, emergências e inspeções) com registro de frentes de trabalho e estatísticas.', icon: 'Clock' },

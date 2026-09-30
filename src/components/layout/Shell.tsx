@@ -283,6 +283,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     stops_control: true,
     overtime: true,
     vacations: true,
+    safety_incidents: true,
   });
 
   useEffect(() => {
@@ -378,6 +379,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'dds', name: 'DDS Online', href: '/dds', icon: ShieldCheck, show: activeModules.dds !== false },
       { id: 'operational_routes', name: 'Rota Operacional', href: '/operational-routes', icon: Activity, show: activeModules.operational_routes !== false },
       { id: 'safety_observations', name: 'Obs. Segurança', href: '/safety-observations', icon: ShieldAlert, show: activeModules.safety_observations !== false },
+      { id: 'safety_incidents', name: 'Painel de Segurança', href: '/safety-incidents', icon: ShieldAlert, show: activeModules.safety_incidents !== false },
       { id: 'schedule', name: 'Escala', href: '/schedule', icon: CalendarDays, show: activeModules.schedule !== false },
       { id: 'certificates', name: 'Treinamentos/Certificados', href: '/certificates', icon: Award, show: activeModules.certificates !== false },
       { id: 'stops_control', name: 'Controle de Parada', href: '/stops-control', icon: Clock, show: activeModules.stops_control !== false },

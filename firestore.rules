@@ -277,6 +277,13 @@ service cloud.firestore {
       allow create, update, delete: if isSignedIn();
     }
 
+    // Safety Incidents (Ocorrências de Segurança e Dias Sem Acidentes)
+    match /safety_incidents/{incidentId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isMaster() || isManager()) && isValidId(incidentId);
+      allow delete: if (isAdmin() || isMaster() || isManager()) && isValidId(incidentId);
+    }
+
     // Settings
     match /settings/{settingsId} {
       allow read: if isSignedIn();

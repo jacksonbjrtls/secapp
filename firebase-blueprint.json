@@ -59,6 +59,8 @@
         "createdBy": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
+        "editadoPor": { "type": "string" },
+        "ultimaAlteracao": { "type": "string", "format": "date-time" },
         "importedAt": { "type": "string", "format": "date-time" },
         "legacyId": { "type": "string" }
       },
@@ -828,9 +830,38 @@
         "replySentMethod": { "type": "string" }
       },
       "required": ["userId", "rating", "createdAt"]
+    },
+    "SafetyIncident": {
+      "title": "Safety Incident",
+      "description": "Workplace safety occurrence record for tracking days without accidents.",
+      "type": "object",
+      "properties": {
+        "classification": { "type": "string", "enum": ["SAFSR", "APS", "CA", "SAFCR"] },
+        "date": { "type": "string", "format": "date-time" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "sector": { "type": "string" },
+        "equipment": { "type": "string" },
+        "bodyPart": { "type": "string" },
+        "injuryType": { "type": "string" },
+        "lostDays": { "type": "number" },
+        "restrictionDays": { "type": "number" },
+        "preventiveActions": { "type": "string" },
+        "registeredBy": { "type": "string" },
+        "registeredByUid": { "type": "string" },
+        "editadoPor": { "type": "string" },
+        "ultimaAlteracao": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["classification", "date", "title", "createdAt"]
     }
   },
   "firestore": {
+    "/system_config/safety_incidents": {
+      "schema": "SafetyIncident",
+      "description": "Safety incidents and accident occurrence log stored in system config."
+    },
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles and roles."

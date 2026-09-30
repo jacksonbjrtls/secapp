@@ -26,6 +26,7 @@ import StopsControl from './pages/StopsControl';
 import Overtime from './pages/Overtime';
 import Vacations from './pages/Vacations';
 import Maintenance from './pages/Maintenance';
+import SafetyIncidents from './pages/SafetyIncidents';
 import { handleFirestoreError, OperationType } from './lib/errorHandler';
 import { getProfileCompletionStatus } from './lib/profileCompletion';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
@@ -496,6 +497,15 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <SafetyObservations />
+              </ProtectedRoute>
+            } 
+          />
+
+          <Route 
+            path="/safety-incidents" 
+            element={
+              <ProtectedRoute>
+                <SafetyIncidents />
               </ProtectedRoute>
             } 
           />

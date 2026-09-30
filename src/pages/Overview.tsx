@@ -94,6 +94,7 @@ export const Overview: React.FC = () => {
     maintenance: true,
     overtime: true,
     vacations: true,
+    safety_incidents: true,
   });
 
   useEffect(() => {
