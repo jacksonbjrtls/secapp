@@ -32,7 +32,7 @@ export const REQUIRED_PROFILE_FIELDS: RequiredProfileFieldMeta[] = [
     id: 'group',
     label: 'Letra de Trabalho (Escala)',
     category: 'Escala & Turno',
-    description: 'Sua turma operacional na escala de revezamento (Letra A, B, C, D ou E).',
+    description: 'Sua turma operacional na escala de revezamento (Letra A, B, C, D, E ou ADM).',
     placeholder: 'Selecione a Letra da Escala',
     iconName: 'Users'
   },
@@ -117,7 +117,7 @@ export function getProfileCompletionStatus(profile: UserProfile | null): Profile
       }
       case 'group': {
         const val = profile.group;
-        hasValue = Boolean(val && ['A', 'B', 'C', 'D', 'E'].includes(val));
+        hasValue = Boolean(val && ['A', 'B', 'C', 'D', 'E', 'ADM'].includes(val));
         break;
       }
       case 'sectorId': {

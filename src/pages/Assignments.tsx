@@ -31,7 +31,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { cn } from '../lib/utils';
-import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers, updateCachedUserField, updateCachedUsersBulk, subscribeToUsers } from '../lib/usersCache';
 import { subscribeSharedCollection } from '../lib/referenceCache';
 import { decryptValue } from '../lib/crypto';
 import { WorkSector, WorkFunction, UserProfile } from '../types';
@@ -118,7 +118,7 @@ export default function Assignments() {
   ];
 
   // Fetch all assignments data
-  const fetchData = async (silent = false) => {
+  const fetchData = async (force = false, silent = false) => {
     try {
       if (!silent) setLoading(true);
       
@@ -143,8 +143,8 @@ export default function Assignments() {
       setFunctions(activeFunctions);
 
       // 3. Fetch Users safely
-      const freshUsers = await fetchUsersSafely();
-      const usersList = freshUsers.filter(u => u.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com');
+      const freshUsers = await fetchUsersSafely(force);
+      const usersList = freshUsers.filter(u => u.displayName !== 'Sem nome');
       setAllUsers(usersList as any[]);
 
     } catch (err: any) {
@@ -180,7 +180,7 @@ export default function Assignments() {
 
     // 3. Listen in real-time to user updates from shared decrypted cache
     const unsubUsers = subscribeToUsers((cachedUsers) => {
-      const validList = cachedUsers.filter(u => u.displayName !== 'Sem nome' && u.email !== 'jacksonbjr@gmail.com');
+      const validList = cachedUsers.filter(u => u.displayName !== 'Sem nome');
       setAllUsers(validList as any[]);
     });
 
@@ -326,21 +326,51 @@ export default function Assignments() {
     try {
       const selectedS = sectors.find(s => s.id === sId);
       const selectedF = functions.find(f => f.id === fId);
+      const raw = groupLetter ? groupLetter.trim().toUpperCase() : '';
+      const normGroup = raw.startsWith('ADM') ? 'ADM' : raw;
 
-      await updateDoc(doc(db, 'users', uid), {
+      const updateData = {
         sectorId: sId || null,
         sectorName: selectedS?.name || null,
         cargoId: fId || null,
         cargoName: selectedF?.name || null,
-        group: groupLetter || null,
+        group: normGroup || null,
         birthDate: bDate || null,
         tshirtSize: tshirtSize || null,
         updatedAt: serverTimestamp()
+      };
+
+      const userRef = doc(db, 'users', uid);
+      try {
+        await updateDoc(userRef, updateData);
+      } catch (uErr) {
+        await setDoc(userRef, updateData, { merge: true });
+      }
+
+      updateCachedUserField(uid, {
+        sectorId: sId || '',
+        sectorName: selectedS?.name || '',
+        cargoId: fId || '',
+        cargoName: selectedF?.name || '',
+        group: normGroup,
+        birthDate: bDate || '',
+        tshirtSize: tshirtSize || ''
       });
 
+      setAllUsers(prev => prev.map(u => u.uid === uid ? {
+        ...u,
+        sectorId: sId || undefined,
+        sectorName: selectedS?.name || undefined,
+        cargoId: fId || undefined,
+        cargoName: selectedF?.name || undefined,
+        group: normGroup as any,
+        birthDate: bDate || undefined,
+        tshirtSize: tshirtSize || undefined
+      } : u));
+
       setSuccess('Dados de trabalho do usuário atualizados com sucesso.');
-      fetchData(true);
     } catch (err) {
+      console.error('Error assigning user role info:', err);
       setError('Erro ao atualizar informações do colaborador.');
     }
   };
@@ -364,7 +394,8 @@ export default function Assignments() {
         (u.cargoId === colabFilterCargo);
       const matchesGroup = colabFilterGroup === 'all' ||
         (colabFilterGroup === 'none' && !u.group) ||
-        (u.group === colabFilterGroup);
+        (u.group === colabFilterGroup) ||
+        (colabFilterGroup === 'ADM' && (u.group || '').toUpperCase().startsWith('ADM'));
       const matchesSize = colabFilterSize === 'all' || 
         (colabFilterSize === 'none' && !u.tshirtSize) ||
         (u.tshirtSize === colabFilterSize);
@@ -390,32 +421,67 @@ export default function Assignments() {
     setIsBulkUpdating(true);
     try {
       let updatedCount = 0;
+      const bulkUpdatesList: { uid: string; fields: Partial<UserProfile> }[] = [];
+
       for (const u of targetUsers) {
         const updateData: any = {
           updatedAt: serverTimestamp()
         };
+        const cachePatch: any = {};
+
         if (bulkSector !== '') {
           const selectedS = sectors.find(s => s.id === bulkSector);
           updateData.sectorId = bulkSector || null;
           updateData.sectorName = selectedS?.name || null;
           updateData.cargoId = null;
           updateData.cargoName = null;
+          cachePatch.sectorId = bulkSector || '';
+          cachePatch.sectorName = selectedS?.name || '';
+          cachePatch.cargoId = '';
+          cachePatch.cargoName = '';
         }
         if (bulkCargo !== '') {
           const selectedF = functions.find(f => f.id === bulkCargo);
           updateData.cargoId = bulkCargo || null;
           updateData.cargoName = selectedF?.name || null;
+          cachePatch.cargoId = bulkCargo || '';
+          cachePatch.cargoName = selectedF?.name || '';
         }
         if (bulkGroup !== '') {
-          updateData.group = bulkGroup === 'none' ? null : bulkGroup;
+          if (bulkGroup === 'none') {
+            updateData.group = null;
+            cachePatch.group = '';
+          } else {
+            const rawG = bulkGroup.trim().toUpperCase();
+            const normG = rawG.startsWith('ADM') ? 'ADM' : rawG;
+            updateData.group = normG;
+            cachePatch.group = normG;
+          }
         }
         if (bulkSize !== '') {
           updateData.tshirtSize = bulkSize || null;
+          cachePatch.tshirtSize = bulkSize || '';
         }
 
         const userDocRef = doc(db, 'users', u.uid);
-        await updateDoc(userDocRef, updateData);
+        try {
+          await updateDoc(userDocRef, updateData);
+        } catch (uErr) {
+          await setDoc(userDocRef, updateData, { merge: true });
+        }
+        bulkUpdatesList.push({ uid: u.uid, fields: cachePatch });
         updatedCount++;
+      }
+
+      if (bulkUpdatesList.length > 0) {
+        updateCachedUsersBulk(bulkUpdatesList);
+        setAllUsers(prev => {
+          const patchMap = new Map(bulkUpdatesList.map(item => [item.uid, item.fields]));
+          return prev.map(u => {
+            const patch = patchMap.get(u.uid);
+            return patch ? { ...u, ...patch } : u;
+          });
+        });
       }
       
       setSuccess(`Edição geral concluída! ${updatedCount} colaborador(es) atualizado(s) com sucesso.`);
@@ -424,7 +490,6 @@ export default function Assignments() {
       setBulkGroup('');
       setBulkSize('');
       setShowBulkEdit(false);
-      fetchData(true);
     } catch (err: any) {
       console.error(err);
       setError('Erro ao aplicar alteração em massa.');
@@ -581,7 +646,8 @@ export default function Assignments() {
       (colab.cargoId === colabFilterCargo);
     const matchesGroup = colabFilterGroup === 'all' || 
       (colabFilterGroup === 'none' && !colab.group) ||
-      (colab.group === colabFilterGroup);
+      (colab.group === colabFilterGroup) ||
+      (colabFilterGroup === 'ADM' && (colab.group || '').toUpperCase().startsWith('ADM'));
     const matchesSize = colabFilterSize === 'all' || 
       (colabFilterSize === 'none' && !colab.tshirtSize) ||
       (colab.tshirtSize === colabFilterSize);
@@ -934,7 +1000,7 @@ export default function Assignments() {
               <option value="C">Letra C</option>
               <option value="D">Letra D</option>
               <option value="E">Letra E</option>
-              <option value="ADM">ADM (Administração)</option>
+              <option value="ADM">ADM</option>
             </select>
           </div>
 
@@ -1202,9 +1268,16 @@ function UserAssignmentRow({ colab, sectors, functions, onSave }: UserAssignment
 
       <td className="p-3">
         <select
-          value={group}
-          onChange={(e) => setGroup(e.target.value as any)}
-          className="bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[11px] font-bold text-slate-700"
+          value={(group || '').toUpperCase().startsWith('ADM') ? 'ADM' : (group || '')}
+          onChange={async (e) => {
+            const val = e.target.value;
+            setGroup(val);
+            await onSave(colab.uid, sector, cargo, val, birth, tshirtSize);
+          }}
+          className={cn(
+            "border rounded px-2 py-1 text-[11px] font-bold outline-none",
+            group ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-50 text-slate-700 border-slate-200"
+          )}
         >
           <option value="">Nenhuma</option>
           <option value="A">Letra A</option>

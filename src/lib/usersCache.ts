@@ -94,6 +94,35 @@ export function setLocalCachedUsers(users: CachedUserItem[]) {
 }
 
 /**
+ * Immediately updates one user's fields in the centralized cache and notifies all listeners across the app.
+ */
+export function updateCachedUserField(uid: string, fields: Partial<CachedUserItem>) {
+  const current = getLocalCachedUsers();
+  const index = current.findIndex(u => u.uid === uid);
+  if (index !== -1) {
+    const updated = [...current];
+    updated[index] = { ...updated[index], ...fields };
+    setLocalCachedUsers(updated);
+  } else {
+    const updated = [...current, { uid, ...fields } as CachedUserItem];
+    setLocalCachedUsers(updated);
+  }
+}
+
+/**
+ * Immediately updates multiple users' fields in the centralized cache and notifies all listeners across the app.
+ */
+export function updateCachedUsersBulk(updates: { uid: string; fields: Partial<CachedUserItem> }[]) {
+  const updateMap = new Map(updates.map(u => [u.uid, u.fields]));
+  const current = getLocalCachedUsers();
+  const updated = current.map(u => {
+    const patch = updateMap.get(u.uid);
+    return patch ? { ...u, ...patch } : u;
+  });
+  setLocalCachedUsers(updated);
+}
+
+/**
  * Controlled fetch of users without keeping permanent onSnapshot connections open.
  */
 export function ensureUsersLiveSync(): () => void {
@@ -164,6 +193,10 @@ export async function fetchUsersSafely(force = false): Promise<CachedUserItem[]>
   if (!force && lastFetchPromise) {
     return lastFetchPromise;
   }
+  if (!force && isUsersCacheFresh()) {
+    const cached = getLocalCachedUsers();
+    if (cached.length > 0) return cached;
+  }
 
   lastFetchPromise = (async () => {
     try {
@@ -174,13 +207,15 @@ export async function fetchUsersSafely(force = false): Promise<CachedUserItem[]>
           const data = d.data();
           const decName = await decryptValue(data.displayName);
           const decEmail = await decryptValue(data.email);
+          const rawGroup = data.group ? String(data.group).trim().toUpperCase() : '';
+          const normGroup = rawGroup.startsWith('ADM') ? 'ADM' : rawGroup;
           return {
             uid: d.id,
             displayName: decName || 'Sem nome',
             email: (decEmail || '').toLowerCase().trim(),
             role: data.role || 'viewer',
             status: data.status || 'approved',
-            group: data.group || '',
+            group: normGroup || '',
             sectorId: data.sectorId || '',
             sectorName: data.sectorName || '',
             cargoId: data.cargoId || '',

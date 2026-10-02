@@ -18,7 +18,7 @@ import {
 import { db, auth } from '../lib/firebase';
 import { UserProfile, AllowedDomain, UserRole, UserStatus } from '../types';
 import { MASTER_EMAILS } from '../constants';
-import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers, CachedUserItem, subscribeToUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, setLocalCachedUsers, updateCachedUserField, CachedUserItem, subscribeToUsers } from '../lib/usersCache';
 import { subscribeSharedCollection } from '../lib/referenceCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { encryptValue, decryptValue, hashEmailForSearch } from '../lib/crypto';
@@ -143,7 +143,7 @@ const Admin: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
-  const [newUser, setNewUser] = useState({ name: '', email: '', role: 'viewer' as UserRole });
+  const [newUser, setNewUser] = useState({ name: '', email: '', role: 'viewer' as UserRole, group: '' });
   const [addUserLoading, setAddUserLoading] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
@@ -661,7 +661,6 @@ const Admin: React.FC = () => {
           isMaster: isUserMaster
         } as UserProfile;
       })
-      .filter(user => user.email?.toLowerCase().trim() !== 'jacksonbjr@gmail.com')
       .filter(user => !user.isMaster || isMaster);
 
     // Group by email and auto-cleanup duplicates (sandbox vs real)
@@ -1039,12 +1038,15 @@ const Admin: React.FC = () => {
       const encryptedEmail = await encryptValue(emailLower);
       const encryptedName = await encryptValue(displayName);
       const emailHash = hashEmailForSearch(emailLower);
+      const rawGrp = newUser.group ? newUser.group.trim().toUpperCase() : '';
+      const initialGroup = rawGrp.startsWith('ADM') ? 'ADM' : rawGrp;
 
       await setDoc(doc(db, 'users', finalUid), {
         email: encryptedEmail,
         emailHash: emailHash,
         displayName: encryptedName,
         role: newUser.role,
+        group: initialGroup || null,
         status: 'approved',
         mustChangePassword: true,
         emailVerifiedInAuth: !isFallback,
@@ -1069,8 +1071,8 @@ const Admin: React.FC = () => {
       }
 
       setIsAddUserOpen(false);
-      setNewUser({ name: '', email: '', role: 'viewer' });
-      fetchData();
+      setNewUser({ name: '', email: '', role: 'viewer', group: '' });
+      fetchData(true);
     } catch (err: any) {
       console.error("[Admin] Error creating user:", err);
       setError(err?.message || 'Erro ao criar usuário. Tente novamente.');
@@ -1531,13 +1533,25 @@ const Admin: React.FC = () => {
   };
 
   const handleUpdateGroup = async (userId: string, newGroup: string) => {
+    const raw = newGroup ? newGroup.trim().toUpperCase() : '';
+    const normGroup = raw.startsWith('ADM') ? 'ADM' : raw;
     try {
-      await updateDoc(doc(db, 'users', userId), { 
-        group: newGroup || null,
-        updatedAt: serverTimestamp()
-      });
-      setUsers(users.map(u => u.uid === userId ? { ...u, group: newGroup as any } : u));
-      setSuccess('Escala atualizada com sucesso!');
+      const userRef = doc(db, 'users', userId);
+      try {
+        await updateDoc(userRef, { 
+          group: normGroup || null,
+          updatedAt: serverTimestamp()
+        });
+      } catch (uErr: any) {
+        await setDoc(userRef, {
+          group: normGroup || null,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
+
+      setUsers(prev => prev.map(u => u.uid === userId ? { ...u, group: normGroup as any } : u));
+      updateCachedUserField(userId, { group: normGroup });
+      setSuccess('Escala / Letra atualizada com sucesso!');
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
       setError('Erro ao atualizar escala.');
@@ -2114,7 +2128,7 @@ const Admin: React.FC = () => {
                 <option value="C">Letra C</option>
                 <option value="D">Letra D</option>
                 <option value="E">Letra E</option>
-                <option value="ADM">ADM (Administração)</option>
+                <option value="ADM">ADM</option>
               </select>
             </div>
 
@@ -2256,7 +2270,7 @@ const Admin: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <select
-                        value={user.group || ''}
+                        value={(user.group || '').toUpperCase().startsWith('ADM') ? 'ADM' : (user.group || '')}
                         onChange={(e) => handleUpdateGroup(user.uid, e.target.value)}
                         className={cn(
                           "text-sm border border-gray-200 rounded-lg px-2 py-1 focus:ring-2 focus:ring-emerald-500 outline-none font-bold",
@@ -3679,6 +3693,22 @@ const Admin: React.FC = () => {
                     <option value="viewer">Viewer</option>
                     <option value="manager">Manager</option>
                     <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Escala / Letra Inicial</label>
+                  <select
+                    value={newUser.group}
+                    onChange={(e) => setNewUser({...newUser, group: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold transition-all"
+                  >
+                    <option value="">Nenhuma (Sem Escala)</option>
+                    <option value="A">Letra A</option>
+                    <option value="B">Letra B</option>
+                    <option value="C">Letra C</option>
+                    <option value="D">Letra D</option>
+                    <option value="E">Letra E</option>
+                    <option value="ADM">ADM</option>
                   </select>
                 </div>
 

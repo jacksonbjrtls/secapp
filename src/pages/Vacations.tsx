@@ -46,7 +46,7 @@ import autoTable from 'jspdf-autotable';
 import { cn, formatDateBR } from '../lib/utils';
 import { subscribeSharedCollection } from '../lib/referenceCache';
 import { decryptValue } from '../lib/crypto';
-import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
+import { fetchUsersSafely, getLocalCachedUsers, updateCachedUserField, subscribeToUsers } from '../lib/usersCache';
 import { VacationRequest, VacationQueueItem, WorkSector, WorkFunction, UserProfile } from '../types';
 
 export default function Vacations() {
@@ -1168,21 +1168,51 @@ export default function Vacations() {
     try {
       const selectedS = sectors.find(s => s.id === sId);
       const selectedF = functions.find(f => f.id === fId);
+      const raw = groupLetter ? groupLetter.trim().toUpperCase() : '';
+      const normGroup = raw.startsWith('ADM') ? 'ADM' : raw;
 
-      await updateDoc(doc(db, 'users', uid), {
+      const updateData = {
         sectorId: sId || null,
         sectorName: selectedS?.name || null,
         cargoId: fId || null,
         cargoName: selectedF?.name || null,
-        group: groupLetter || null,
+        group: normGroup || null,
         birthDate: bDate || null,
         tshirtSize: tshirtSize || null,
         updatedAt: serverTimestamp()
+      };
+
+      const userRef = doc(db, 'users', uid);
+      try {
+        await updateDoc(userRef, updateData);
+      } catch (uErr) {
+        await setDoc(userRef, updateData, { merge: true });
+      }
+
+      updateCachedUserField(uid, {
+        sectorId: sId || '',
+        sectorName: selectedS?.name || '',
+        cargoId: fId || '',
+        cargoName: selectedF?.name || '',
+        group: normGroup,
+        birthDate: bDate || '',
+        tshirtSize: tshirtSize || ''
       });
 
+      setAllUsers(prev => prev.map(u => u.uid === uid ? {
+        ...u,
+        sectorId: sId || undefined,
+        sectorName: selectedS?.name || undefined,
+        cargoId: fId || undefined,
+        cargoName: selectedF?.name || undefined,
+        group: normGroup as any,
+        birthDate: bDate || undefined,
+        tshirtSize: tshirtSize || undefined
+      } : u));
+
       setSuccess('Dados de trabalho do usuário atualizados com sucesso.');
-      fetchData(true);
     } catch (err) {
+      console.error(err);
       setError('Erro ao atualizar informações do colaborador.');
     }
   };

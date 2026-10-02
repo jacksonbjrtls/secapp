@@ -91,7 +91,7 @@ const Profile: React.FC = () => {
   const isLocked = completionStatus.isLocked;
 
   const isNameMissing = !displayName.trim() || displayName.trim().toLowerCase() === 'sem nome' || displayName.trim().toLowerCase() === 'usuário' || displayName.trim().toLowerCase() === 'usuario';
-  const isGroupMissing = !group || !['A', 'B', 'C', 'D', 'E'].includes(group);
+  const isGroupMissing = !group || !['A', 'B', 'C', 'D', 'E', 'ADM'].includes(group);
   const isSectorMissing = !sectorId;
   const isCargoMissing = !cargoId;
   const isBirthDateMissing = !birthDate || !birthDate.trim();
@@ -366,7 +366,7 @@ const Profile: React.FC = () => {
       if (!nameTrimmed || nameTrimmed.toLowerCase() === 'sem nome' || nameTrimmed.toLowerCase() === 'usuário' || nameTrimmed.toLowerCase() === 'usuario') {
         pendingFields.push('Nome Completo');
       }
-      if (!group || !['A', 'B', 'C', 'D', 'E'].includes(group)) {
+      if (!group || !['A', 'B', 'C', 'D', 'E', 'ADM'].includes(group)) {
         pendingFields.push('Letra de Trabalho (Escala)');
       }
       if (!sectorId) {
@@ -761,7 +761,7 @@ const Profile: React.FC = () => {
                   <option value="C">Letra C</option>
                   <option value="D">Letra D</option>
                   <option value="E">Letra E</option>
-                  <option value="ADM">ADM (Administração)</option>
+                  <option value="ADM">ADM</option>
                 </select>
                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
                   <span className="text-slate-400">▼</span>

@@ -911,8 +911,8 @@ export default function Overtime() {
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800"
                     >
                       <option value="">Selecione...</option>
-                      {['A', 'B', 'C', 'D', 'E', 'Geral'].map((g, gIdx) => (
-                        <option key={`ot-form-group-${g}-${gIdx}`} value={g}>Letra {g}</option>
+                      {['A', 'B', 'C', 'D', 'E', 'ADM', 'Geral'].map((g, gIdx) => (
+                        <option key={`ot-form-group-${g}-${gIdx}`} value={g}>{g === 'ADM' ? 'ADM' : g === 'Geral' ? 'Geral' : `Letra ${g}`}</option>
                       ))}
                     </select>
                   </div>
@@ -1335,8 +1335,8 @@ export default function Overtime() {
                     className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                   >
                     <option value="all">Todas as Letras</option>
-                    {['A', 'B', 'C', 'D', 'E', 'Geral'].map((g, gIdx) => (
-                      <option key={`ot-filter-group-${g}-${gIdx}`} value={g}>Letra {g}</option>
+                    {['A', 'B', 'C', 'D', 'E', 'ADM', 'Geral'].map((g, gIdx) => (
+                      <option key={`ot-filter-group-${g}-${gIdx}`} value={g}>{g === 'ADM' ? 'ADM' : g === 'Geral' ? 'Geral' : `Letra ${g}`}</option>
                     ))}
                   </select>
                 </div>

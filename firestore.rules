@@ -160,6 +160,11 @@ service cloud.firestore {
                       ((isAdmin() || isMaster()) && 
                         // CRITICAL: NO ONE (not even admins) can update a Master Account except the Master themselves
                         (!isMasterDoc(resource.data) || isMaster()) &&
+                        (request.resource.data.updatedAt == request.time || request.resource.data.updatedAt is timestamp)) ||
+                      // 3. Manager updates (work assignments: group, sector, cargo, birthDate, tshirtSize)
+                      (isManager() &&
+                        (!isMasterDoc(resource.data)) &&
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status', 'isMaster', 'disabled', 'isEmailVerifiedOverride', 'createdAt', 'email', 'emailHash']) &&
                         (request.resource.data.updatedAt == request.time || request.resource.data.updatedAt is timestamp))
                     );
       
@@ -198,7 +203,7 @@ service cloud.firestore {
       function isValidSession(data) {
         return data.title is string && data.title.size() <= 200 &&
                data.shift in ['Turno 1', 'Turno 2', 'Turno 3'] &&
-               data.group in ['A', 'B', 'C', 'D', 'E'] &&
+               data.group in ['A', 'B', 'C', 'D', 'E', 'ADM'] &&
                data.executor is string &&
                (isManager() || data.passcode == '') &&
                data.get('expiresAt', request.time) is timestamp &&

@@ -171,7 +171,7 @@ service cloud.firestore {
       function isValidSession(data) {
         return data.title is string && data.title.size() <= 200 &&
                data.shift in ['Turno 1', 'Turno 2', 'Turno 3'] &&
-               data.group in ['A', 'B', 'C', 'D', 'E'] &&
+               data.group in ['A', 'B', 'C', 'D', 'E', 'ADM'] &&
                data.executor is string &&
                (isManager() || data.passcode == '') &&
                data.get('expiresAt', request.time) is timestamp &&
