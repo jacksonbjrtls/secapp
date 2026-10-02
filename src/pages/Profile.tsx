@@ -755,12 +755,13 @@ const Profile: React.FC = () => {
                     group ? "text-emerald-600" : "text-slate-400"
                   )}
                 >
-                  <option value="">Selecione sua Letra</option>
+                  <option value="">Selecione sua Letra / Escala</option>
                   <option value="A">Letra A</option>
                   <option value="B">Letra B</option>
                   <option value="C">Letra C</option>
                   <option value="D">Letra D</option>
                   <option value="E">Letra E</option>
+                  <option value="ADM">ADM (Administração)</option>
                 </select>
                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
                   <span className="text-slate-400">▼</span>

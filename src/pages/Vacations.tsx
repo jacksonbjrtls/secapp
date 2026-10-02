@@ -2670,6 +2670,7 @@ function UserRow({ colab, sectors, functions, onSave }: UserRowProps) {
           <option value="C">Letra C</option>
           <option value="D">Letra D</option>
           <option value="E">Letra E</option>
+          <option value="ADM">ADM</option>
         </select>
       </td>
 

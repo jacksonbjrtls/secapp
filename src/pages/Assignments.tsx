@@ -60,6 +60,7 @@ export default function Assignments() {
   const [colabSearch, setColabSearch] = useState('');
   const [colabFilterSector, setColabFilterSector] = useState('all');
   const [colabFilterCargo, setColabFilterCargo] = useState('all');
+  const [colabFilterGroup, setColabFilterGroup] = useState('all');
   const [colabFilterSize, setColabFilterSize] = useState('all');
 
   // PDF Export Customization States
@@ -361,10 +362,13 @@ export default function Assignments() {
       const matchesCargo = colabFilterCargo === 'all' || 
         (colabFilterCargo === 'none' && !u.cargoId) ||
         (u.cargoId === colabFilterCargo);
+      const matchesGroup = colabFilterGroup === 'all' ||
+        (colabFilterGroup === 'none' && !u.group) ||
+        (u.group === colabFilterGroup);
       const matchesSize = colabFilterSize === 'all' || 
         (colabFilterSize === 'none' && !u.tshirtSize) ||
         (u.tshirtSize === colabFilterSize);
-      return matchesSearch && matchesSector && matchesCargo && matchesSize;
+      return matchesSearch && matchesSector && matchesCargo && matchesGroup && matchesSize;
     });
 
     if (targetUsers.length === 0) {
@@ -403,7 +407,7 @@ export default function Assignments() {
           updateData.cargoName = selectedF?.name || null;
         }
         if (bulkGroup !== '') {
-          updateData.group = bulkGroup || null;
+          updateData.group = bulkGroup === 'none' ? null : bulkGroup;
         }
         if (bulkSize !== '') {
           updateData.tshirtSize = bulkSize || null;
@@ -575,10 +579,13 @@ export default function Assignments() {
     const matchesCargo = colabFilterCargo === 'all' || 
       (colabFilterCargo === 'none' && !colab.cargoId) ||
       (colab.cargoId === colabFilterCargo);
+    const matchesGroup = colabFilterGroup === 'all' || 
+      (colabFilterGroup === 'none' && !colab.group) ||
+      (colab.group === colabFilterGroup);
     const matchesSize = colabFilterSize === 'all' || 
       (colabFilterSize === 'none' && !colab.tshirtSize) ||
       (colab.tshirtSize === colabFilterSize);
-    return matchesSearch && matchesSector && matchesCargo && matchesSize;
+    return matchesSearch && matchesSector && matchesCargo && matchesGroup && matchesSize;
   }).sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '', 'pt-BR'));
 
   if (!isElevated) {
@@ -785,11 +792,13 @@ export default function Assignments() {
                   className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-amber-500"
                 >
                   <option value="">Manter atual (Sem Alterar)</option>
+                  <option value="none">Remover Letra (Nenhuma)</option>
                   <option value="A">Letra A</option>
                   <option value="B">Letra B</option>
                   <option value="C">Letra C</option>
                   <option value="D">Letra D</option>
                   <option value="E">Letra E</option>
+                  <option value="ADM">ADM</option>
                 </select>
               </div>
 
@@ -866,7 +875,7 @@ export default function Assignments() {
         </div>
 
         {/* Dynamic Filtering & Search for Quick Editing */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-slate-50/50 border border-slate-150 rounded-2xl p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 bg-slate-50/50 border border-slate-150 rounded-2xl p-4">
           <div>
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Buscar Colaborador</label>
             <input
@@ -912,6 +921,24 @@ export default function Assignments() {
           </div>
 
           <div>
+            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Filtrar por Letra / Escala</label>
+            <select
+              value={colabFilterGroup}
+              onChange={(e) => setColabFilterGroup(e.target.value)}
+              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+            >
+              <option value="all">Todas as Letras / Escalas</option>
+              <option value="none">Sem Letra Definida</option>
+              <option value="A">Letra A</option>
+              <option value="B">Letra B</option>
+              <option value="C">Letra C</option>
+              <option value="D">Letra D</option>
+              <option value="E">Letra E</option>
+              <option value="ADM">ADM (Administração)</option>
+            </select>
+          </div>
+
+          <div>
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Filtrar por Camisa</label>
             <select
               value={colabFilterSize}
@@ -935,13 +962,14 @@ export default function Assignments() {
         {/* Dynamic Count Feedback */}
         <div className="flex justify-between items-center text-xs text-slate-500 font-semibold px-1">
           <span>Exibindo <strong>{filteredUsers.length}</strong> de <strong>{allUsers.length}</strong> colaboradores</span>
-          {(colabSearch || colabFilterSector !== 'all' || colabFilterCargo !== 'all' || colabFilterSize !== 'all') && (
+          {(colabSearch || colabFilterSector !== 'all' || colabFilterCargo !== 'all' || colabFilterGroup !== 'all' || colabFilterSize !== 'all') && (
             <button
               type="button"
               onClick={() => {
                 setColabSearch('');
                 setColabFilterSector('all');
                 setColabFilterCargo('all');
+                setColabFilterGroup('all');
                 setColabFilterSize('all');
               }}
               className="text-emerald-600 hover:text-emerald-700 font-bold transition-all cursor-pointer"
@@ -1184,6 +1212,7 @@ function UserAssignmentRow({ colab, sectors, functions, onSave }: UserAssignment
           <option value="C">Letra C</option>
           <option value="D">Letra D</option>
           <option value="E">Letra E</option>
+          <option value="ADM">ADM</option>
         </select>
       </td>
 

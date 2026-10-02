@@ -139,6 +139,7 @@ const Admin: React.FC = () => {
     vacations: true,
   });
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterGroup, setFilterGroup] = useState('all');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
@@ -941,7 +942,10 @@ const Admin: React.FC = () => {
   const filteredUsers = users.filter(user => {
     const matchesSearch = (user.displayName || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
                           (user.email || '').toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesSearch;
+    const matchesGroup = filterGroup === 'all' || 
+                         (filterGroup === 'none' && !user.group) || 
+                         (user.group === filterGroup);
+    return matchesSearch && matchesGroup;
   }).sort((a, b) => {
     const nameA = (a.displayName || a.email || '').trim().toLowerCase();
     const nameB = (b.displayName || b.email || '').trim().toLowerCase();
@@ -2096,6 +2100,24 @@ const Admin: React.FC = () => {
                 className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 transition-all text-sm font-medium outline-none"
               />
             </div>
+            
+            <div className="w-full sm:w-auto">
+              <select
+                value={filterGroup}
+                onChange={(e) => setFilterGroup(e.target.value)}
+                className="w-full sm:w-auto bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+              >
+                <option value="all">Todas as Escalas</option>
+                <option value="none">Sem Escala Definida</option>
+                <option value="A">Letra A</option>
+                <option value="B">Letra B</option>
+                <option value="C">Letra C</option>
+                <option value="D">Letra D</option>
+                <option value="E">Letra E</option>
+                <option value="ADM">ADM (Administração)</option>
+              </select>
+            </div>
+
             <button
               onClick={handleExportUsersPDF}
               className="w-full sm:w-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-sm rounded-2xl transition-all shadow-md shadow-emerald-100 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
@@ -2248,6 +2270,7 @@ const Admin: React.FC = () => {
                         <option value="C">Letra C</option>
                         <option value="D">Letra D</option>
                         <option value="E">Letra E</option>
+                        <option value="ADM">ADM</option>
                       </select>
                     </td>
                     <td className="px-6 py-4">

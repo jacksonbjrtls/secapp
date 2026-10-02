@@ -7,7 +7,7 @@ export interface UserProfile {
   displayName: string;
   role: UserRole;
   status?: UserStatus;
-  group?: 'A' | 'B' | 'C' | 'D' | 'E';
+  group?: 'A' | 'B' | 'C' | 'D' | 'E' | 'ADM' | string;
   disabled?: boolean;
   isEmailVerifiedOverride?: boolean;
   emailVerifiedInAuth?: boolean;
