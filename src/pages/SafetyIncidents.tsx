@@ -391,26 +391,31 @@ export const SafetyIncidents: React.FC = () => {
         referenceTitle = baseline.initialDescription || 'Registro inicial de referência';
       }
 
-      // Elapsed time calculation with years, days, hours, minutes and seconds
-      let years = now.getFullYear() - referenceDate.getFullYear();
-      let tempDate = new Date(referenceDate.getTime());
-      tempDate.setFullYear(referenceDate.getFullYear() + years);
+      // Start of reference calendar day and start of today
+      const startOfRef = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate(), 0, 0, 0, 0);
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
-      if (tempDate > now) {
+      // Total calendar days up to today
+      const calendarDaysToToday = Math.round((startOfToday.getTime() - startOfRef.getTime()) / (1000 * 60 * 60 * 24));
+
+      // As requested: the official count represents completed full days closed up to yesterday 23:59:59 (1 day less than today).
+      // Today is still ongoing and only counts as a completed safe day at 00:00:00 of tomorrow.
+      const totalDays = Math.max(0, calendarDaysToToday - 1);
+
+      // Current ongoing day progress (hours, minutes, seconds counting towards completing today)
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const seconds = now.getSeconds();
+
+      // Calculation of completed full years up to yesterday
+      const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
+      let years = yesterday.getFullYear() - startOfRef.getFullYear();
+      let tempYearDate = new Date(startOfRef.getFullYear() + years, startOfRef.getMonth(), startOfRef.getDate(), 0, 0, 0, 0);
+      if (tempYearDate > yesterday) {
         years--;
-        tempDate = new Date(referenceDate.getTime());
-        tempDate.setFullYear(referenceDate.getFullYear() + years);
+        tempYearDate = new Date(startOfRef.getFullYear() + years, startOfRef.getMonth(), startOfRef.getDate(), 0, 0, 0, 0);
       }
-
-      const remainingMs = Math.max(0, now.getTime() - tempDate.getTime());
-      const remainingDays = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((remainingMs / (1000 * 60 * 60)) % 24);
-      const minutes = Math.floor((remainingMs / (1000 * 60)) % 60);
-      const seconds = Math.floor((remainingMs / 1000) % 60);
-
-      // Total days since reference date (matching the total days on the board)
-      const diffMs = Math.max(0, now.getTime() - referenceDate.getTime());
-      const totalDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const remainingDays = Math.max(0, Math.round((yesterday.getTime() - tempYearDate.getTime()) / (1000 * 60 * 60 * 24)));
 
       const yearLabel = years === 1 ? '1 ano' : `${years} anos`;
       const chronometerString = years > 0
@@ -1200,12 +1205,15 @@ export const SafetyIncidents: React.FC = () => {
 
         {/* Bottom Banner as in the Photo ("ATUALIZADO ATÉ DIA DD/MM/AAAA") */}
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 relative z-10">
-          <div className="bg-slate-800/90 border border-slate-700 px-6 py-2.5 rounded-2xl shadow-lg flex items-center gap-2">
+          <div className="bg-slate-800/90 border border-slate-700 px-6 py-2.5 rounded-2xl shadow-lg flex flex-col sm:flex-row items-center gap-2 text-center">
             <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-slate-200">
               ATUALIZADO ATÉ O DIA:
             </span>
             <span className="text-xs sm:text-sm font-black text-emerald-400 font-mono">
               {formatDateBR(now)} às {now.toLocaleTimeString('pt-BR')}
+            </span>
+            <span className="text-[11px] text-slate-400 sm:border-l sm:border-slate-700 sm:pl-2">
+              (Dias completos fechados até ontem às 23:59 • Dia atual em andamento)
             </span>
           </div>
         </div>
