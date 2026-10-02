@@ -312,10 +312,11 @@ const SafetyObservations: React.FC = () => {
     }
   }, [profile, user, checklistForm.observerName]);
 
-  // Subscribe to Safety Observations from Firestore
+  // Subscribe to Safety Observations from Firestore (controlled limit based on user role)
   useEffect(() => {
+    const obsLimit = isMaster || isAdmin ? 250 : 35;
     const unsub = onSnapshot(
-      query(collection(db, 'safety_observations'), orderBy('createdAt', 'desc'), limit(250)),
+      query(collection(db, 'safety_observations'), orderBy('createdAt', 'desc'), limit(obsLimit)),
       (snap) => {
         setObservations(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SafetyObservation)));
         setLoading(false);
@@ -325,7 +326,7 @@ const SafetyObservations: React.FC = () => {
       }
     );
     return () => unsub();
-  }, []);
+  }, [isMaster, isAdmin]);
 
   // Subscribe and Seed categories for "O QUE OBSERVAR?" in Firestore
   useEffect(() => {

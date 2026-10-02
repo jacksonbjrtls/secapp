@@ -230,8 +230,9 @@ const ConsumablesControl: React.FC = () => {
       setItems(list as ConsumableItem[]);
     }, 'name');
 
+    const logsLimit = isAdmin ? 150 : 30;
     const unsubLogs = onSnapshot(
-      query(collection(db, 'consumable_logs'), orderBy('timestamp', 'desc'), limit(150)),
+      query(collection(db, 'consumable_logs'), orderBy('timestamp', 'desc'), limit(logsLimit)),
       (snap) => {
         setLogs(snap.docs.map(d => ({ 
           id: d.id, 
@@ -256,7 +257,7 @@ const ConsumablesControl: React.FC = () => {
       unsubLogs();
       unsubLines();
     };
-  }, [isApproved]);
+  }, [isApproved, isAdmin]);
 
   // Point 1: Register and update supply item properties (Characteristics included)
   const handleSaveItem = async (e: React.FormEvent) => {

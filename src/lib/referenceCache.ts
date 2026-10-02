@@ -62,25 +62,20 @@ export function invalidateReferenceCache(key?: string) {
   }
 }
 
-// Single active listeners registry to prevent duplicate onSnapshot across multiple components
-const activeListeners = new Map<string, { unsub: () => void; subscribers: Set<(data: any[]) => void> }>();
-
-export function subscribeSharedCollection(
+// Fetch reference collection safely with getDocs and caching (prevents continuous onSnapshot billing)
+export async function fetchReferenceCollection<T = any>(
   collectionName: string,
-  callback: (data: any[]) => void,
-  sortField = 'name'
-): () => void {
-  // Return cached immediately if available
-  const cached = getCachedReference<any[]>(collectionName);
-  if (cached && cached.length > 0) {
-    callback(cached);
+  sortField = 'name',
+  force = false
+): Promise<T[]> {
+  if (!force) {
+    const cached = getCachedReference<T[]>(collectionName);
+    if (cached && cached.length > 0) {
+      return cached;
+    }
   }
 
-  let entry = activeListeners.get(collectionName);
-  if (!entry) {
-    const subscribers = new Set<(data: any[]) => void>();
-    subscribers.add(callback);
-
+  try {
     let q = query(collection(db, collectionName));
     if (sortField) {
       try {
@@ -90,25 +85,50 @@ export function subscribeSharedCollection(
       }
     }
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setCachedReference(collectionName, list);
-        subscribers.forEach(cb => {
-          try {
-            cb(list);
-          } catch (err) {
-            console.warn(`Subscriber error for ${collectionName}:`, err);
-          }
-        });
-      },
-      (err) => {
-        console.warn(`Error in shared listener for ${collectionName}:`, err);
-      }
-    );
+    const snap = await getDocs(q);
+    const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as T[];
+    setCachedReference(collectionName, list);
+    return list;
+  } catch (err) {
+    console.warn(`Error fetching reference collection ${collectionName}:`, err);
+    return getCachedReference<T[]>(collectionName) || [];
+  }
+}
 
-    entry = { unsub, subscribers };
+// Single active listeners registry to prevent duplicate fetch across multiple components
+const activeListeners = new Map<string, { subscribers: Set<(data: any[]) => void> }>();
+
+export function subscribeSharedCollection(
+  collectionName: string,
+  callback: (data: any[]) => void,
+  sortField = 'name'
+): () => void {
+  // 1. Immediately return cached if available
+  const cached = getCachedReference<any[]>(collectionName);
+  if (cached && cached.length > 0) {
+    callback(cached);
+  }
+
+  // 2. Fetch fresh data if cache is empty or expired, without keeping a permanent open stream
+  if (!cached || cached.length === 0) {
+    fetchReferenceCollection(collectionName, sortField).then((data) => {
+      callback(data);
+      const entry = activeListeners.get(collectionName);
+      if (entry) {
+        entry.subscribers.forEach(cb => {
+          try {
+            cb(data);
+          } catch (e) {}
+        });
+      }
+    });
+  }
+
+  let entry = activeListeners.get(collectionName);
+  if (!entry) {
+    const subscribers = new Set<(data: any[]) => void>();
+    subscribers.add(callback);
+    entry = { subscribers };
     activeListeners.set(collectionName, entry);
   } else {
     entry.subscribers.add(callback);
@@ -119,9 +139,9 @@ export function subscribeSharedCollection(
     if (current) {
       current.subscribers.delete(callback);
       if (current.subscribers.size === 0) {
-        current.unsub();
         activeListeners.delete(collectionName);
       }
     }
   };
 }
+

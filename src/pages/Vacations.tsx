@@ -513,8 +513,9 @@ export default function Vacations() {
       setFunctions(combinedFunctions.filter(f => f.active !== false));
     }, 'name');
 
-    // 3. Live vacation requests (limited to 200)
-    const unsubReqs = onSnapshot(query(collection(db, 'vacation_requests'), orderBy('createdAt', 'desc'), limit(200)), (snapshot) => {
+    // 3. Live vacation requests (controlled limit based on user role)
+    const reqLimit = isMaster || isAdmin ? 200 : 40;
+    const unsubReqs = onSnapshot(query(collection(db, 'vacation_requests'), orderBy('createdAt', 'desc'), limit(reqLimit)), (snapshot) => {
       const reqList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VacationRequest));
       setRequests(reqList);
       if (user) {
@@ -522,8 +523,9 @@ export default function Vacations() {
       }
     });
 
-    // 4. Live priority queue (limited to 200)
-    const unsubQueue = onSnapshot(query(collection(db, 'vacation_queue'), orderBy('position', 'asc'), limit(200)), (snapshot) => {
+    // 4. Live priority queue (controlled limit based on user role)
+    const queueLimit = isMaster || isAdmin ? 200 : 50;
+    const unsubQueue = onSnapshot(query(collection(db, 'vacation_queue'), orderBy('position', 'asc'), limit(queueLimit)), (snapshot) => {
       const qList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VacationQueueItem));
       setQueueItems(qList);
     });
@@ -541,7 +543,7 @@ export default function Vacations() {
       unsubQueue();
       unsubUsers();
     };
-  }, [user]);
+  }, [user, isMaster, isAdmin]);
 
   // Synchronize queueCargoId when sector changes or functions load
   useEffect(() => {

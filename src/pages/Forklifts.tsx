@@ -542,7 +542,8 @@ const Forklifts: React.FC = () => {
       setCheckItems(sorted);
     }, 'order');
 
-    const qC = query(collection(db, 'forklift_checklists'), orderBy('timestamp', 'desc'), limit(150));
+    const checklistLimit = isMaster || isAdmin ? 150 : 30;
+    const qC = query(collection(db, 'forklift_checklists'), orderBy('timestamp', 'desc'), limit(checklistLimit));
     const unsubscribeC = onSnapshot(qC, (snapshot) => {
       setChecklists(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Checklist)));
     }, (err) => {
@@ -554,7 +555,7 @@ const Forklifts: React.FC = () => {
       unsubscribeI();
       unsubscribeC();
     };
-  }, []);
+  }, [isMaster, isAdmin]);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'global'), (doc) => {

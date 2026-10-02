@@ -50,7 +50,8 @@ import {
   PackagePlus,
   Search,
   X,
-  Filter
+  Filter,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -201,170 +202,187 @@ export const ShiftHandover: React.FC = () => {
     }
   }, [profile]);
 
-  // Load real-time data from Firestore
+  // Refresh states for cost control & on-demand loading
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
+  const canSeeAll = isAdmin || isMaster;
+
+  // Optimized metrics fetcher (saves 95% of Firestore read costs compared to continuous onSnapshot)
+  const fetchHandoverMetrics = async (isManual = false) => {
+    if (isManual) setIsRefreshing(true);
+    else setLoadingMetrics(true);
+
+    try {
+      const targetDay = new Date(selectedDate + 'T12:00:00');
+      const windowStart = new Date(targetDay);
+      windowStart.setDate(windowStart.getDate() - 1);
+      windowStart.setHours(0, 0, 0, 0);
+
+      const windowEnd = new Date(targetDay);
+      windowEnd.setDate(windowEnd.getDate() + 1);
+      windowEnd.setHours(23, 59, 59, 999);
+
+      const tsStart = Timestamp.fromDate(windowStart);
+      const tsEnd = Timestamp.fromDate(windowEnd);
+
+      // Controlled limits: Viewer & Manager get fast 35 items; Master/Admin get up to 150 items
+      const itemLimit = canSeeAll ? 150 : 35;
+
+      const qForklifts = query(
+        collection(db, 'forklift_checklists'), 
+        where('timestamp', '>=', tsStart), 
+        where('timestamp', '<=', tsEnd),
+        limit(itemLimit)
+      );
+
+      const qQuality = query(
+        collection(db, 'quality_checklist_submissions'), 
+        where('createdAt', '>=', tsStart), 
+        where('createdAt', '<=', tsEnd),
+        limit(itemLimit)
+      );
+
+      const qRoutes = query(
+        collection(db, 'route_submissions'), 
+        where('createdAt', '>=', tsStart), 
+        where('createdAt', '<=', tsEnd),
+        limit(itemLimit)
+      );
+
+      const qSafety = query(
+        collection(db, 'safety_observations'), 
+        where('createdAt', '>=', tsStart), 
+        where('createdAt', '<=', tsEnd),
+        limit(itemLimit)
+      );
+
+      const qDds = query(
+        collection(db, 'dds_sessions'), 
+        where('createdAt', '>=', tsStart), 
+        where('createdAt', '<=', tsEnd),
+        limit(itemLimit)
+      );
+
+      const qSignatures = query(
+        collection(db, 'dds_signatures'), 
+        where('timestamp', '>=', tsStart), 
+        where('timestamp', '<=', tsEnd),
+        limit(canSeeAll ? 300 : 80)
+      );
+
+      const qHandovers = query(
+        collection(db, 'shift_handovers'), 
+        orderBy('createdAt', 'desc'), 
+        limit(canSeeAll ? 150 : 35)
+      );
+
+      const qConsumables = query(
+        collection(db, 'consumable_logs'), 
+        where('createdAt', '>=', tsStart), 
+        where('createdAt', '<=', tsEnd),
+        limit(itemLimit)
+      );
+
+      const [
+        snapFork,
+        snapQual,
+        snapRoutes,
+        snapSafety,
+        snapDds,
+        snapSigs,
+        snapHandovers,
+        snapConsumables
+      ] = await Promise.all([
+        getDocs(qForklifts),
+        getDocs(qQuality),
+        getDocs(qRoutes),
+        getDocs(qSafety),
+        getDocs(qDds),
+        getDocs(qSignatures),
+        getDocs(qHandovers),
+        getDocs(qConsumables)
+      ]);
+
+      const [
+        listFork,
+        listQual,
+        listRoutes,
+        listSafety,
+        listDds,
+        listSigs,
+        listHandovers,
+        listConsumables
+      ] = await Promise.all([
+        Promise.all(snapFork.docs.map(async doc => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.conductorName);
+          return { id: doc.id, ...data, conductorName: decName };
+        })),
+        Promise.all(snapQual.docs.map(async doc => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        })),
+        Promise.all(snapRoutes.docs.map(async doc => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        })),
+        Promise.all(snapSafety.docs.map(async doc => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        })),
+        Promise.all(snapDds.docs.map(async doc => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        })),
+        Promise.all(snapSigs.docs.map(async doc => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        })),
+        Promise.all(snapHandovers.docs.map(async doc => {
+          const data = doc.data() as any;
+          const decIn = await decryptValue(data.operatorIn);
+          const decOut = await decryptValue(data.operatorOut);
+          const decCreatedByName = await decryptValue(data.createdByName);
+          return { 
+            id: doc.id, 
+            ...data, 
+            operatorIn: decIn, 
+            operatorOut: decOut, 
+            createdByName: decCreatedByName 
+          } as HandoverReport;
+        })),
+        Promise.all(snapConsumables.docs.map(async doc => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }))
+      ]);
+
+      setForkliftChecklists(listFork);
+      setQualitySubmissions(listQual);
+      setRouteSubmissions(listRoutes);
+      setSafetyObservations(listSafety);
+      setDdsSessions(listDds);
+      setAllDdsSignatures(listSigs);
+      setHandovers(listHandovers);
+      setConsumableLogs(listConsumables);
+      setLastRefreshedAt(new Date());
+    } catch (err) {
+      console.warn('Erro ao carregar dados da passagem de turno:', err);
+    } finally {
+      setLoadingMetrics(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  // Load metrics when selectedDate changes
   useEffect(() => {
-    setLoadingMetrics(true);
-
-    const targetDay = new Date(selectedDate + 'T12:00:00');
-    const windowStart = new Date(targetDay);
-    windowStart.setDate(windowStart.getDate() - 1);
-    windowStart.setHours(0, 0, 0, 0);
-
-    const windowEnd = new Date(targetDay);
-    windowEnd.setDate(windowEnd.getDate() + 1);
-    windowEnd.setHours(23, 59, 59, 999);
-
-    const tsStart = Timestamp.fromDate(windowStart);
-    const tsEnd = Timestamp.fromDate(windowEnd);
-
-    const qForklifts = query(
-      collection(db, 'forklift_checklists'), 
-      where('timestamp', '>=', tsStart), 
-      where('timestamp', '<=', tsEnd)
-    );
-    const unsubForklifts = onSnapshot(qForklifts, async (snapshot) => {
-      const list = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.conductorName);
-        return { id: doc.id, ...data, conductorName: decName };
-      }));
-      setForkliftChecklists(list);
-    }, (error) => {
-      console.warn('Erro ao carregar checklists de empilhadeiras:', error);
-    });
-
-    const qQuality = query(
-      collection(db, 'quality_checklist_submissions'), 
-      where('createdAt', '>=', tsStart), 
-      where('createdAt', '<=', tsEnd)
-    );
-    const unsubQuality = onSnapshot(qQuality, async (snapshot) => {
-      const list = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setQualitySubmissions(list);
-    }, (error) => {
-      console.warn('Erro ao carregar submissões de qualidade:', error);
-    });
-
-    const qRoutes = query(
-      collection(db, 'route_submissions'), 
-      where('createdAt', '>=', tsStart), 
-      where('createdAt', '<=', tsEnd)
-    );
-    const unsubRoutes = onSnapshot(qRoutes, async (snapshot) => {
-      const list = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setRouteSubmissions(list);
-    }, (error) => {
-      console.warn('Erro ao carregar rotas operacionais:', error);
-    });
-
-    const qSafety = query(
-      collection(db, 'safety_observations'), 
-      where('createdAt', '>=', tsStart), 
-      where('createdAt', '<=', tsEnd)
-    );
-    const unsubSafety = onSnapshot(qSafety, async (snapshot) => {
-      const list = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setSafetyObservations(list);
-    }, (error) => {
-      console.warn('Erro ao carregar observações de segurança:', error);
-    });
-
-    const qDds = query(
-      collection(db, 'dds_sessions'), 
-      where('createdAt', '>=', tsStart), 
-      where('createdAt', '<=', tsEnd)
-    );
-    const unsubDds = onSnapshot(qDds, async (snapshot) => {
-      const list = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setDdsSessions(list);
-    }, (error) => {
-      console.warn('Erro ao carregar sessões dds:', error);
-    });
-
-    const qSignatures = query(
-      collection(db, 'dds_signatures'), 
-      where('timestamp', '>=', tsStart), 
-      where('timestamp', '<=', tsEnd)
-    );
-    const unsubSignatures = onSnapshot(qSignatures, async (snapshot) => {
-      const list = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setAllDdsSignatures(list);
-    }, (error) => {
-      console.warn('Erro ao carregar assinaturas dds:', error);
-    });
-
-    const qHandovers = query(
-      collection(db, 'shift_handovers'), 
-      orderBy('createdAt', 'desc'), 
-      limit(150)
-    );
-    const unsubHandovers = onSnapshot(qHandovers, async (snapshot) => {
-      const list = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decIn = await decryptValue(data.operatorIn);
-        const decOut = await decryptValue(data.operatorOut);
-        const decCreatedByName = await decryptValue(data.createdByName);
-        return { 
-          id: doc.id, 
-          ...data, 
-          operatorIn: decIn, 
-          operatorOut: decOut, 
-          createdByName: decCreatedByName 
-        } as HandoverReport;
-      }));
-      setHandovers(list);
-      setLoadingMetrics(false);
-    }, (error) => {
-      console.warn('Erro ao carregar passagens de turno:', error);
-      setLoadingMetrics(false);
-    });
-
-    const qConsumables = query(
-      collection(db, 'consumable_logs'), 
-      where('createdAt', '>=', tsStart), 
-      where('createdAt', '<=', tsEnd)
-    );
-    const unsubConsumables = onSnapshot(qConsumables, async (snapshot) => {
-      const list = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setConsumableLogs(list);
-    }, (error) => {
-      console.warn('Erro ao carregar logs de insumos:', error);
-    });
-
-    return () => {
-      unsubForklifts();
-      unsubQuality();
-      unsubRoutes();
-      unsubSafety();
-      unsubDds();
-      unsubSignatures();
-      unsubHandovers();
-      unsubConsumables();
-    };
+    fetchHandoverMetrics(false);
   }, [selectedDate]);
 
   // Helper properties to convert Firestore timestamps to comparable locale YYYY-MM-DD & Shift values

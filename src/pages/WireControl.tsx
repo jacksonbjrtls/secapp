@@ -148,11 +148,14 @@ const WireControl: React.FC = () => {
       setStorageBays(list as WireStorageBay[]);
     }, 'name');
 
-    const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(150)), (snap) => {
+    const batchLimit = isMaster || isAdmin ? 150 : 30;
+    const coilLimit = isMaster || isAdmin ? 200 : 50;
+
+    const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(batchLimit)), (snap) => {
       setBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireBatch)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_batches'));
 
-    const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), orderBy('receivedAt', 'desc'), limit(200)), (snap) => {
+    const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), orderBy('receivedAt', 'desc'), limit(coilLimit)), (snap) => {
       setCoils(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireCoil)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_coils'));
     
@@ -169,7 +172,7 @@ const WireControl: React.FC = () => {
       unsubCoils();
       unsubProd();
     };
-  }, [isApproved]);
+  }, [isApproved, isMaster, isAdmin]);
 
   if (!isApproved) {
     return (

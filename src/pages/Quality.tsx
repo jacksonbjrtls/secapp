@@ -2041,7 +2041,8 @@ const Quality: React.FC = () => {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_options'));
 
     const baseSubQuery = collection(db, 'quality_checklist_submissions');
-    const subQuery = query(baseSubQuery, orderBy('createdAt', 'desc'), limit(350));
+    const subLimit = isMaster || isAdmin ? 350 : 35;
+    const subQuery = query(baseSubQuery, orderBy('createdAt', 'desc'), limit(subLimit));
 
     const unsubSubmissions = onSnapshot(subQuery, async (snapshot) => {
       const mapped = await Promise.all(snapshot.docs.map(async (doc) => {
@@ -2067,7 +2068,8 @@ const Quality: React.FC = () => {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'quality_checklist_submissions'));
 
     const baseOmQuery = collection(db, 'quality_checklist_omissions');
-    const omQuery = query(baseOmQuery, orderBy('createdAt', 'desc'), limit(150));
+    const omLimit = isMaster || isAdmin ? 150 : 35;
+    const omQuery = query(baseOmQuery, orderBy('createdAt', 'desc'), limit(omLimit));
 
     const unsubOmissions = onSnapshot(omQuery, async (snapshot) => {
       const mapped = await Promise.all(snapshot.docs.map(async (doc) => {
@@ -2135,7 +2137,7 @@ const Quality: React.FC = () => {
       unsubSettings();
       unsubGlobalSettings();
     };
-  }, [user, seedingLoading, seedingConfig]);
+  }, [user, seedingLoading, seedingConfig, isMaster, isAdmin]);
 
   const handleUpdateGlobalSettings = async (updates: Partial<{
     autoNotifyNonConformity: boolean;

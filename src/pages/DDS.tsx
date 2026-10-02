@@ -459,11 +459,12 @@ const DDS: React.FC = () => {
   }, [searchParams]);
 
   useEffect(() => {
-    // Listen to recent sessions across dates
+    // Listen to recent sessions across dates (controlled limit based on user role)
+    const recentLimit = isMaster || isAdmin ? 150 : 35;
     const q = query(
       collection(db, 'dds_sessions'),
       orderBy('createdAt', 'desc'),
-      limit(150)
+      limit(recentLimit)
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -559,18 +560,24 @@ const DDS: React.FC = () => {
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
     
+    // Controlled limits to prevent runaway Firestore reads
+    const sessionsLimit = isMaster || isAdmin ? 200 : 50;
+    const sigsLimit = isMaster || isAdmin ? 400 : 100;
+
     // Sessions Query
     const qSessions = query(
       collection(db, 'dds_sessions'),
       where('createdAt', '>=', Timestamp.fromDate(firstDay)),
-      orderBy('createdAt', 'asc')
+      orderBy('createdAt', 'asc'),
+      limit(sessionsLimit)
     );
 
     // Signatures Query
     const qSignatures = query(
       collection(db, 'dds_signatures'),
       where('timestamp', '>=', Timestamp.fromDate(firstDay)),
-      orderBy('timestamp', 'asc')
+      orderBy('timestamp', 'asc'),
+      limit(sigsLimit)
     );
 
     const unsubSessions = onSnapshot(qSessions, (snapshot) => {

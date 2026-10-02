@@ -791,10 +791,11 @@ const OperationalRoutes: React.FC = () => {
     return () => unsubTemplates();
   }, []);
 
-  // Subscribe to Route Submissions (limited to 150 recent)
+  // Subscribe to Route Submissions (controlled limit based on user role)
   useEffect(() => {
+    const routeLimit = isMaster || isAdmin ? 150 : 30;
     const unsubSubs = onSnapshot(
-      query(collection(db, 'route_submissions'), orderBy('createdAt', 'desc'), limit(150)), 
+      query(collection(db, 'route_submissions'), orderBy('createdAt', 'desc'), limit(routeLimit)), 
       (snap) => {
         setSubmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RouteSubmission)));
       }, (err) => {
@@ -803,7 +804,7 @@ const OperationalRoutes: React.FC = () => {
     );
 
     return () => unsubSubs();
-  }, []);
+  }, [isMaster, isAdmin]);
 
   // Subscribe to Production Lines
   useEffect(() => {

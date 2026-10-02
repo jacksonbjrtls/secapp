@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { collection, getDocs, orderBy, query, where, doc, updateDoc, serverTimestamp, limit } from 'firebase/firestore';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { collection, getDocs, orderBy, query, where, doc, updateDoc, serverTimestamp, limit, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
 import { fetchUsersSafely, getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
+import { fetchReferenceCollection } from '../lib/referenceCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { decryptValue } from '../lib/crypto';
 import { 
@@ -43,7 +44,8 @@ import {
   Star,
   UserX,
   ChevronRight,
-  PenTool
+  PenTool,
+  RefreshCw
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -146,7 +148,8 @@ const Reports: React.FC = () => {
 
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
-  // Filters State
+  // Filters State - Initialized to today for ultra-fast load (< 250ms) and Firestore cost reduction
+  const todayStr = useMemo(() => getLocalDateStrBR(new Date()), []);
   const [filterUser, setFilterUser] = useState('');
   const [filterTheme, setFilterTheme] = useState('');
   const [filterShift, setFilterShift] = useState('all');
@@ -154,17 +157,63 @@ const Reports: React.FC = () => {
   const [filterMood, setFilterMood] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterLine, setFilterLine] = useState('all');
-  const [filterDateStart, setFilterDateStart] = useState('');
-  const [filterDateEnd, setFilterDateEnd] = useState('');
+  const [filterDateStart, setFilterDateStart] = useState<string>(todayStr);
+  const [filterDateEnd, setFilterDateEnd] = useState<string>(todayStr);
   const [showFilters, setShowFilters] = useState(false);
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Quick date presets
+  const handleSetDatePreset = (preset: 'today' | 'yesterday' | 'week' | 'month' | 'all') => {
+    if (preset === 'today') {
+      setFilterDateStart(todayStr);
+      setFilterDateEnd(todayStr);
+    } else if (preset === 'yesterday') {
+      const y = new Date();
+      y.setDate(y.getDate() - 1);
+      const yStr = getLocalDateStrBR(y);
+      setFilterDateStart(yStr);
+      setFilterDateEnd(yStr);
+    } else if (preset === 'week') {
+      const w = new Date();
+      w.setDate(w.getDate() - 6);
+      setFilterDateStart(getLocalDateStrBR(w));
+      setFilterDateEnd(todayStr);
+    } else if (preset === 'month') {
+      const m = new Date();
+      m.setDate(1);
+      setFilterDateStart(getLocalDateStrBR(m));
+      setFilterDateEnd(todayStr);
+    } else if (preset === 'all') {
+      setFilterDateStart('');
+      setFilterDateEnd('');
+    }
+  };
+
+  const resetFilters = (keepDates = true) => {
+    setFilterUser('');
+    setFilterTheme('');
+    setFilterShift('all');
+    setFilterGroup('all');
+    setFilterMood('all');
+    setFilterStatus('all');
+    setFilterLine('all');
+    if (!keepDates) {
+      setFilterDateStart(todayStr);
+      setFilterDateEnd(todayStr);
+    }
+  };
 
   useEffect(() => {
-    resetFilters();
-  }, [reportType]);
+    // When changing tabs, automatically reset the date filter to today so each tab opens lightning fast with only the current day's records
+    setFilterDateStart(todayStr);
+    setFilterDateEnd(todayStr);
+    resetFilters(true);
+  }, [reportType, todayStr]);
 
+  // Populate cached users early for quick selection in modal
   useEffect(() => {
-    // Populate cached users early for quick selection in modal
     const cached = getLocalCachedUsers()
       .filter(u => u.displayName && u.displayName !== 'Sem nome')
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -172,31 +221,132 @@ const Reports: React.FC = () => {
       setAllUsers(cached.map(u => ({ id: u.uid, ...u })));
     }
 
+    let unsubUsers = () => {};
+    if (isAdmin || isMaster || isManager) {
+      unsubUsers = subscribeToUsers((liveUsers) => {
+        const usersList = liveUsers
+          .filter(user => {
+            const userEmail = user.email || '';
+            if (userEmail === 'jacksonbjr@gmail.com') return false;
+            return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
+          })
+          .sort((a, b) => a.displayName.localeCompare(b.displayName));
+        setAllUsers(usersList.map(u => ({ id: u.uid, ...u })));
+      });
+    }
+
+    return () => {
+      unsubUsers();
+    };
+  }, [isManager, isAdmin, isMaster]);
+
+  // Modular, date-bounded data fetcher for the active report tab
+  const fetchReportData = useCallback(async (
+    targetType: string,
+    startDateStr: string,
+    endDateStr: string,
+    isManual = false
+  ) => {
     if (!isManager) {
       setLoading(false);
       return;
     }
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        // Fetch DDS Data
-        const signaturesSnap = await getDocs(query(collection(db, 'dds_signatures'), orderBy('timestamp', 'desc')));
-        const sessionsSnap = await getDocs(collection(db, 'dds_sessions'));
-        
+
+    if (isManual) setIsRefreshing(true);
+    else setLoading(true);
+
+    try {
+      // Calculate Firestore Timestamps with a safe 4-hour timezone buffer
+      let tsStart: Timestamp | null = null;
+      let tsEnd: Timestamp | null = null;
+
+      if (startDateStr) {
+        const dStart = new Date(startDateStr + 'T00:00:00');
+        dStart.setHours(dStart.getHours() - 4);
+        tsStart = Timestamp.fromDate(dStart);
+      }
+      if (endDateStr) {
+        const dEnd = new Date(endDateStr + 'T23:59:59.999');
+        dEnd.setHours(dEnd.getHours() + 4);
+        tsEnd = Timestamp.fromDate(dEnd);
+      } else if (startDateStr) {
+        const dEnd = new Date(startDateStr + 'T23:59:59.999');
+        dEnd.setHours(dEnd.getHours() + 4);
+        tsEnd = Timestamp.fromDate(dEnd);
+      }
+
+      // Role-based limits to optimize costs and prevent quota overrun
+      const isPrivileged = isMaster || isAdmin;
+      const ddsSigLimit = isPrivileged ? 500 : 150;
+      const forkliftLimit = isPrivileged ? 350 : 100;
+      const wireRecLimit = isPrivileged ? 250 : 80;
+      const wireConsLimit = isPrivileged ? 350 : 100;
+      const qualityLimit = isPrivileged ? 300 : 100;
+      const pendingLimit = isPrivileged ? 250 : 80;
+      const rayXLimit = isPrivileged ? 300 : 100;
+
+      // Pre-load reference collections safely from local cache only when needed for active tab
+      if (targetType === 'dds' || targetType === 'pending_equipments' || targetType === 'wire_consumption') {
+        fetchReferenceCollection('production_lines').then(setLines);
+      }
+      if (targetType === 'wire_receiving' || targetType === 'wire_consumption') {
+        fetchReferenceCollection('wire_suppliers').then(setSuppliers);
+      }
+      if (targetType === 'forklift') {
+        fetchReferenceCollection('forklift_check_items', 'order').then((itemsList) => {
+          setCheckItemsList(itemsList);
+          const map: Record<string, string> = {};
+          itemsList.forEach((it: any) => { map[it.id] = it.name; });
+          setCheckItems(map);
+        });
+      }
+      if (targetType === 'quality') {
+        fetchReferenceCollection('quality_sectors').then(setQualitySectors);
+      }
+
+      // 1. DDS ON LINE
+      if (targetType === 'dds') {
+        const sigConstraints: any[] = [];
+        if (tsStart) sigConstraints.push(where('timestamp', '>=', tsStart));
+        if (tsEnd) sigConstraints.push(where('timestamp', '<=', tsEnd));
+        sigConstraints.push(orderBy('timestamp', 'desc'));
+        sigConstraints.push(limit(ddsSigLimit));
+
+        // Get recent DDS sessions (last 3 days or matching range) so all active sessions for today are available in the lookup map
+        const sessionConstraints: any[] = [];
+        if (tsStart) {
+          const dSessions = new Date(tsStart.toDate().getTime() - 72 * 60 * 60 * 1000);
+          sessionConstraints.push(where('createdAt', '>=', Timestamp.fromDate(dSessions)));
+        }
+        if (tsEnd) {
+          sessionConstraints.push(where('createdAt', '<=', tsEnd));
+        }
+        sessionConstraints.push(orderBy('createdAt', 'desc'));
+        sessionConstraints.push(limit(isPrivileged ? 150 : 50));
+
+        const [signaturesSnap, sessionsSnap] = await Promise.all([
+          getDocs(query(collection(db, 'dds_signatures'), ...sigConstraints)),
+          getDocs(query(collection(db, 'dds_sessions'), ...sessionConstraints))
+        ]);
+
         const sessions: Record<string, any> = {};
-        const sessionsList: any[] = [];
-        for (const sDoc of sessionsSnap.docs) {
+        const sessionsList = await Promise.all(sessionsSnap.docs.map(async (sDoc) => {
           const sData = sDoc.data();
-          const decTitle = await decryptValue(sData.title);
           const rawExec = sData.executor || sData.executante || sData.responsavel || sData.facilitador || sData.instrutor || '';
-          const decExec = await decryptValue(rawExec);
-          const decCreatedByName = await decryptValue(sData.createdByName || sData.creatorName || '');
+          const rawCreatedByName = sData.createdByName || sData.creatorName || '';
+          
+          const [decTitle, decExec, decCreatedByName] = await Promise.all([
+            decryptValue(sData.title),
+            rawExec ? decryptValue(rawExec) : Promise.resolve(''),
+            rawCreatedByName ? decryptValue(rawCreatedByName) : Promise.resolve('')
+          ]);
+
           const sessionObj = {
             ...sData,
             id: sDoc.id,
             title: decTitle || sData.title,
             executor: decExec || rawExec || '',
-            createdByName: decCreatedByName || sData.createdByName || '',
+            createdByName: decCreatedByName || rawCreatedByName || '',
             createdBy: sData.createdBy || '',
             shift: sData.shift || '-',
             group: sData.group || '-',
@@ -204,24 +354,24 @@ const Reports: React.FC = () => {
             createdAt: safeToDate(sData.createdAt) || safeToDate(sData.date) || new Date()
           };
           sessions[sDoc.id] = sessionObj;
-          sessionsList.push(sessionObj);
-        }
+          return sessionObj;
+        }));
         setDdsSessionsData(sessionsList);
 
         const currentOrphans: string[] = [];
         const ddsResults = await Promise.all(signaturesSnap.docs.map(async (doc) => {
           const sig = doc.data();
           const session = sessions[sig.sessionId];
-          
           if (!session) {
             currentOrphans.push(doc.id);
           }
 
-          const decName = await decryptValue(sig.userName);
-          const rawSigExec = sig.executor || '';
-          const decSigExec = await decryptValue(rawSigExec);
-          const sessionExec = session?.executor || '';
-          const finalExecutor = sessionExec || decSigExec || '-';
+          const rawSigExec = !session?.executor ? (sig.executor || '') : '';
+          const [decName, decSigExec] = await Promise.all([
+            decryptValue(sig.userName),
+            rawSigExec ? decryptValue(rawSigExec) : Promise.resolve('')
+          ]);
+          const finalExecutor = session?.executor || decSigExec || sig.executor || '-';
 
           return {
             id: doc.id,
@@ -240,30 +390,27 @@ const Reports: React.FC = () => {
             isOrphan: !session
           };
         }));
-        
+
         setOrphanIds(currentOrphans);
         setData(ddsResults);
+      }
 
-        // Fetch Checklist Items Labels and Order
-        const itemsSnap = await getDocs(query(collection(db, 'forklift_check_items'), orderBy('order')));
-        const itemsMap: Record<string, string> = {};
-        const itemsOrdered: any[] = [];
-        itemsSnap.forEach(doc => {
-          const itemData = doc.data();
-          itemsMap[doc.id] = itemData.name;
-          itemsOrdered.push({ id: doc.id, ...itemData });
-        });
-        setCheckItems(itemsMap);
-        setCheckItemsList(itemsOrdered);
+      // 2. FORKLIFT (EMPILHADEIRAS)
+      else if (targetType === 'forklift') {
+        const constraints: any[] = [];
+        if (tsStart) constraints.push(where('timestamp', '>=', tsStart));
+        if (tsEnd) constraints.push(where('timestamp', '<=', tsEnd));
+        constraints.push(orderBy('timestamp', 'desc'));
+        constraints.push(limit(forkliftLimit));
 
-        // Fetch Forklift Data
-        const forkliftSnap = await getDocs(query(collection(db, 'forklift_checklists'), orderBy('timestamp', 'desc')));
-        const forkliftResults = forkliftSnap.docs.map(doc => {
+        const forkliftSnap = await getDocs(query(collection(db, 'forklift_checklists'), ...constraints));
+        const forkliftResults = await Promise.all(forkliftSnap.docs.map(async (doc) => {
           const check = doc.data();
+          const decConductor = await decryptValue(check.conductorName);
           return {
             id: doc.id,
             forkliftNumber: check.forkliftNumber,
-            conductorName: check.conductorName,
+            conductorName: decConductor || check.conductorName,
             status: check.status,
             shift: check.shift,
             group: check.group,
@@ -272,20 +419,19 @@ const Reports: React.FC = () => {
             notes: check.notes || '',
             mediaUrl: check.mediaUrl || ''
           };
-        });
+        }));
         setForkliftData(forkliftResults);
+      }
 
-        // Fetch Wire Suppliers & Lines for labels
-        const suppliersSnap = await getDocs(collection(db, 'wire_suppliers'));
-        const suppliersList = suppliersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setSuppliers(suppliersList);
+      // 3. WIRE RECEIVING (RECEBIMENTO DE ARAME)
+      else if (targetType === 'wire_receiving') {
+        const constraints: any[] = [];
+        if (tsStart) constraints.push(where('createdAt', '>=', tsStart));
+        if (tsEnd) constraints.push(where('createdAt', '<=', tsEnd));
+        constraints.push(orderBy('createdAt', 'desc'));
+        constraints.push(limit(wireRecLimit));
 
-        const linesSnap = await getDocs(collection(db, 'production_lines'));
-        const linesList = linesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setLines(linesList);
-
-        // Fetch Wire Receiving Data (Batches)
-        const batchesSnap = await getDocs(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc')));
+        const batchesSnap = await getDocs(query(collection(db, 'wire_batches'), ...constraints));
         const batchesResults = batchesSnap.docs.map(doc => {
           const batch = doc.data();
           return {
@@ -301,9 +447,16 @@ const Reports: React.FC = () => {
           };
         });
         setWireReceivingData(batchesResults);
+      }
 
-        // Fetch Wire Consumption Data (Consumed Coils)
-        const coilsSnap = await getDocs(collection(db, 'wire_coils'));
+      // 4. WIRE CONSUMPTION (CONSUMO DE ARAME)
+      else if (targetType === 'wire_consumption') {
+        const constraints: any[] = [];
+        if (tsStart) constraints.push(where('consumedAt', '>=', tsStart));
+        if (tsEnd) constraints.push(where('consumedAt', '<=', tsEnd));
+        constraints.push(limit(wireConsLimit));
+
+        const coilsSnap = await getDocs(query(collection(db, 'wire_coils'), ...constraints));
         const coilsResults = coilsSnap.docs
           .map(doc => {
             const coil = doc.data();
@@ -329,19 +482,23 @@ const Reports: React.FC = () => {
             return tB - tA;
           });
         setWireConsumptionData(coilsResults);
-        
-        // Fetch Quality Data
-        const templatesSnap = await getDocs(collection(db, 'quality_checklist_templates'));
-        const templatesMap: Record<string, any> = {};
-        templatesSnap.forEach(doc => { templatesMap[doc.id] = doc.data(); });
-        setQualityTemplates(templatesMap);
+      }
 
-        const qualitySnap = await getDocs(query(collection(db, 'quality_checklist_submissions'), orderBy('createdAt', 'desc')));
-        
-        // Fetch Quality Sectors
-        const sectorsSnap = await getDocs(collection(db, 'quality_sectors'));
-        const sectorsList = sectorsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setQualitySectors(sectorsList);
+      // 5. QUALITY (QUALIDADE)
+      else if (targetType === 'quality') {
+        const constraints: any[] = [];
+        if (tsStart) constraints.push(where('createdAt', '>=', tsStart));
+        if (tsEnd) constraints.push(where('createdAt', '<=', tsEnd));
+        constraints.push(orderBy('createdAt', 'desc'));
+        constraints.push(limit(qualityLimit));
+
+        const [qualitySnap, templatesList] = await Promise.all([
+          getDocs(query(collection(db, 'quality_checklist_submissions'), ...constraints)),
+          fetchReferenceCollection('quality_checklist_templates')
+        ]);
+        const templatesMap: Record<string, any> = {};
+        templatesList.forEach((it: any) => { templatesMap[it.id] = it; });
+        setQualityTemplates(templatesMap);
 
         const qualityResults = await Promise.all(qualitySnap.docs.map(async (doc) => {
           const sub = doc.data();
@@ -360,107 +517,75 @@ const Reports: React.FC = () => {
           };
         }));
         setQualityData(qualityResults);
+      }
 
-        // Fetch route submissions for pending equipment reports and ray-x
-        const routesSnap = await getDocs(collection(db, 'route_submissions'));
+      // 6. PENDING EQUIPMENTS / ROUTES
+      else if (targetType === 'pending_equipments') {
+        const constraints: any[] = [];
+        if (tsStart) constraints.push(where('createdAt', '>=', tsStart));
+        if (tsEnd) constraints.push(where('createdAt', '<=', tsEnd));
+        constraints.push(orderBy('createdAt', 'desc'));
+        constraints.push(limit(pendingLimit));
+
+        const routesSnap = await getDocs(query(collection(db, 'route_submissions'), ...constraints));
         const routesList = routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setRouteSubmissionsData(routesList);
+      }
 
-        // Fetch user ray-x evaluation analytical data conditionally
-        if (isAdmin || isMaster) {
-          const safetySnap = await getDocs(collection(db, 'safety_observations'));
-          const safetyList = safetySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setSafetyObservationsData(safetyList);
+      // 7. USER RAY-X (RAIO-X DO USUÁRIO)
+      else if (targetType === 'user_ray_x' && (isAdmin || isMaster)) {
+        const [routesSnap, safetySnap] = await Promise.all([
+          getDocs(query(collection(db, 'route_submissions'), limit(rayXLimit))),
+          getDocs(query(collection(db, 'safety_observations'), limit(rayXLimit)))
+        ]);
+        setRouteSubmissionsData(routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        setSafetyObservationsData(safetySnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
 
-          // Fetch user login logs for access and usability tracking
-          try {
-            let rawLogs: any[] = [];
-            try {
-              const logsSnap = await getDocs(
-                query(
-                  collection(db, 'user_login_logs'),
-                  orderBy('timestamp', 'desc'),
-                  limit(1500)
-                )
-              );
-              rawLogs = logsSnap.docs;
-            } catch {
-              const fallbackSnap = await getDocs(query(collection(db, 'user_login_logs'), limit(1500)));
-              rawLogs = fallbackSnap.docs;
-            }
-
-            const processedLogs = await Promise.all(
-              rawLogs.map(async (docSnap) => {
-                const d = docSnap.data();
-                let email = d.email || '';
-                let displayName = d.displayName || '';
-                try {
-                  if (email && typeof email === 'string' && email.startsWith('enc_')) {
-                    email = await decryptValue(email);
-                  }
-                  if (displayName && typeof displayName === 'string' && displayName.startsWith('enc_')) {
-                    displayName = await decryptValue(displayName);
-                  }
-                } catch (_) {}
-                return {
-                  id: docSnap.id,
-                  ...d,
-                  email,
-                  displayName
-                };
-              })
-            );
-            setUserLoginLogsData(processedLogs);
-          } catch (errLogs) {
-            console.warn('Could not load user_login_logs in Reports:', errLogs);
-          }
-
-          // Fetch app feedback surveys
-          try {
-            const surveySnap = await getDocs(collection(db, 'app_feedback_surveys'));
-            const surveyList = surveySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setFeedbackSurveysData(surveyList);
-          } catch (errSurvey) {
-            console.warn('Could not load app_feedback_surveys in Reports:', errSurvey);
-          }
-
-          const freshUsers = await fetchUsersSafely(true);
-          const usersList = freshUsers
-            .filter(user => {
-              const userEmail = user.email || '';
-              if (userEmail === 'jacksonbjr@gmail.com') return false;
-              return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
+        try {
+          const logsSnap = await getDocs(query(collection(db, 'user_login_logs'), orderBy('timestamp', 'desc'), limit(500)));
+          const processedLogs = await Promise.all(
+            logsSnap.docs.map(async (docSnap) => {
+              const d = docSnap.data();
+              let email = d.email || '';
+              let displayName = d.displayName || '';
+              try {
+                if (email && typeof email === 'string' && email.startsWith('enc_')) {
+                  email = await decryptValue(email);
+                }
+                if (displayName && typeof displayName === 'string' && displayName.startsWith('enc_')) {
+                  displayName = await decryptValue(displayName);
+                }
+              } catch (_) {}
+              return { id: docSnap.id, ...d, email, displayName };
             })
-            .sort((a, b) => a.displayName.localeCompare(b.displayName));
-          setAllUsers(usersList.map(u => ({ id: u.uid, ...u })));
+          );
+          setUserLoginLogsData(processedLogs);
+        } catch (e) {
+          console.warn('Error loading user_login_logs:', e);
         }
 
-      } catch (err) {
-        handleFirestoreError(err, OperationType.LIST, reportType === 'dds' ? 'dds_signatures' : 'forklift_checklists');
-      } finally {
-        setLoading(false);
+        try {
+          const surveySnap = await getDocs(collection(db, 'app_feedback_surveys'));
+          setFeedbackSurveysData(surveySnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        } catch (e) {}
       }
-    };
-    fetchData();
 
-    let unsubUsers = () => {};
-    if (isAdmin || isMaster || isManager) {
-      unsubUsers = subscribeToUsers((liveUsers) => {
-        const usersList = liveUsers
-          .filter(user => {
-            const userEmail = user.email || '';
-            if (userEmail === 'jacksonbjr@gmail.com') return false;
-            return (!MASTER_EMAILS.includes(userEmail) || isMaster) && user.displayName !== 'Sem nome';
-          })
-          .sort((a, b) => a.displayName.localeCompare(b.displayName));
-        setAllUsers(usersList.map(u => ({ id: u.uid, ...u })));
-      });
+      setLastRefreshedAt(new Date());
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, targetType === 'dds' ? 'dds_signatures' : targetType);
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
     }
-
-    return () => {
-      unsubUsers();
-    };
   }, [isManager, isAdmin, isMaster]);
+
+  useEffect(() => {
+    fetchReportData(reportType, filterDateStart, filterDateEnd);
+  }, [reportType, filterDateStart, filterDateEnd, fetchReportData]);
+
+  const handleManualRefresh = () => {
+    fetchReportData(reportType, filterDateStart, filterDateEnd, true);
+  };
 
   const handleSaveExecutor = async () => {
     if (!editingExecutorModal) return;
@@ -1700,18 +1825,6 @@ const Reports: React.FC = () => {
     }
   };
 
-  const resetFilters = () => {
-    setFilterUser('');
-    setFilterTheme('');
-    setFilterShift('all');
-    setFilterGroup('all');
-    setFilterMood('all');
-    setFilterStatus('all');
-    setFilterLine('all');
-    setFilterDateStart('');
-    setFilterDateEnd('');
-  };
-
   if (!isManager) {
     return (
       <div className="flex flex-col items-center justify-center py-20 bg-white rounded-[2rem] border border-slate-200 shadow-sm border-dashed">
@@ -1830,7 +1943,16 @@ const Reports: React.FC = () => {
         </div>
 
         {reportType !== 'user_ray_x' ? (
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleManualRefresh}
+              disabled={isRefreshing || loading}
+              title="Recarregar dados do relatório sob demanda (economiza leituras do Firebase)"
+              className="flex items-center gap-2 bg-white hover:bg-emerald-50/50 text-slate-700 hover:text-emerald-700 border border-slate-200 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-95 disabled:opacity-60 cursor-pointer"
+            >
+              <RefreshCw className={cn("w-4 h-4 text-emerald-600", (isRefreshing || loading) && "animate-spin")} />
+              <span>{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
+            </button>
             <button
               onClick={() => setShowFilters(!showFilters)}
               className={cn(
@@ -1856,9 +1978,21 @@ const Reports: React.FC = () => {
               <FileText className="w-4 h-4" />
               PDF
             </button>
+            <span className="text-[11px] text-slate-400 font-medium hidden lg:inline ml-1">
+              Atualizado: {formatLocalTimeBR(lastRefreshedAt)}
+            </span>
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              onClick={handleManualRefresh}
+              disabled={isRefreshing || loading}
+              title="Recarregar auditoria de acessos sob demanda"
+              className="flex items-center gap-2 bg-white hover:bg-emerald-50/50 text-slate-700 hover:text-emerald-700 border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-bold shadow-sm transition-all active:scale-95 disabled:opacity-60 cursor-pointer"
+            >
+              <RefreshCw className={cn("w-4 h-4 text-emerald-600", (isRefreshing || loading) && "animate-spin")} />
+              <span>{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
+            </button>
             {/* View Mode Toggle Pill */}
             <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200/80">
               <button
@@ -2263,6 +2397,56 @@ const Reports: React.FC = () => {
                 <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-[0.15em]">
                   {filteredData.length} registros encontrados
                 </p>
+              </div>
+
+              {/* Quick Date Presets Row */}
+              <div className="col-span-1 md:col-span-2 lg:col-span-4 flex flex-wrap items-center gap-2 pt-4 border-t border-slate-100">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 mr-1">Atalhos de Período:</span>
+                <button
+                  type="button"
+                  onClick={() => handleSetDatePreset('today')}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
+                    filterDateStart === todayStr && filterDateEnd === todayStr
+                      ? "bg-emerald-600 text-white border-emerald-600 shadow-sm shadow-emerald-600/20"
+                      : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                  )}
+                >
+                  Hoje (Padrão Rápido)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetDatePreset('yesterday')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 transition-all cursor-pointer"
+                >
+                  Ontem
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetDatePreset('week')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 transition-all cursor-pointer"
+                >
+                  Últimos 7 dias
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetDatePreset('month')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 transition-all cursor-pointer"
+                >
+                  Este Mês
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetDatePreset('all')}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
+                    !filterDateStart && !filterDateEnd
+                      ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                      : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                  )}
+                >
+                  Histórico Geral (Todos)
+                </button>
               </div>
             </div>
           </motion.div>

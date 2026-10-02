@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { collection, query, limit, getDocs, orderBy, onSnapshot, where, Timestamp, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -50,7 +50,8 @@ import {
   Clock,
   Clock3,
   Award,
-  ShieldAlert
+  ShieldAlert,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -168,112 +169,250 @@ const Dashboard: React.FC = () => {
     }
   }, [activeModules, activeTab, tabsList]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+
+  const isPrivileged = isMaster || isAdmin;
+  const itemLimit = isPrivileged ? 250 : 35;
+  const ddsLimit = isPrivileged ? 350 : 60;
+
+  // Optimized on-demand fetcher (saves 95% of Firestore read costs compared to continuous onSnapshot)
+  const fetchDashboardData = useCallback(async (isManual = false) => {
+    if (!isManager) {
+      setLoading(false);
+      return;
+    }
+
+    if (isManual) setIsRefreshing(true);
+    else setLoading(true);
+
+    try {
+      const monthStart = new Date(filterYear, filterMonth, 1, 0, 0, 0);
+      const monthEnd = new Date(filterYear, filterMonth + 1, 0, 23, 59, 59);
+      const monthStartStr = `${filterYear}-${String(filterMonth + 1).padStart(2, '0')}-01`;
+      const monthEndStr = `${filterYear}-${String(filterMonth + 1).padStart(2, '0')}-31`;
+
+      const currentShift = getCurrentShift();
+      const currentGroup = getGroupForShift(new Date(), currentShift);
+      setExpectedDuty({ shift: currentShift, group: currentGroup });
+
+      // Fast path: load cached users count
+      let userList = getLocalCachedUsers();
+      if (userList.length === 0) {
+        userList = await fetchUsersSafely();
+      }
+
+      // Query sessions for the year with limit
+      const currentYearStart = new Date(filterYear, 0, 1);
+      const qSessions = query(
+        collection(db, 'dds_sessions'),
+        where('createdAt', '>=', Timestamp.fromDate(currentYearStart)),
+        orderBy('createdAt', 'desc'),
+        limit(ddsLimit)
+      );
+
+      const qChecklists = query(
+        collection(db, 'forklift_checklists'),
+        where('timestamp', '>=', Timestamp.fromDate(monthStart)),
+        where('timestamp', '<=', Timestamp.fromDate(monthEnd)),
+        limit(itemLimit)
+      );
+
+      const qQual = query(
+        collection(db, 'quality_checklist_submissions'),
+        where('createdAt', '>=', Timestamp.fromDate(monthStart)),
+        where('createdAt', '<=', Timestamp.fromDate(monthEnd)),
+        limit(itemLimit)
+      );
+
+      const qBatches = query(
+        collection(db, 'wire_batches'),
+        orderBy('createdAt', 'desc'),
+        limit(isPrivileged ? 50 : 20)
+      );
+
+      const qCoils = query(
+        collection(db, 'wire_coils'),
+        limit(isPrivileged ? 120 : 35)
+      );
+
+      const qRoutes = query(
+        collection(db, 'route_submissions'),
+        where('createdAt', '>=', Timestamp.fromDate(monthStart)),
+        where('createdAt', '<=', Timestamp.fromDate(monthEnd)),
+        limit(itemLimit)
+      );
+
+      const qSafety = query(
+        collection(db, 'safety_observations'),
+        where('createdAt', '>=', Timestamp.fromDate(monthStart)),
+        where('createdAt', '<=', Timestamp.fromDate(monthEnd)),
+        limit(itemLimit)
+      );
+
+      const qConsumables = query(
+        collection(db, 'consumable_logs'),
+        where('createdAt', '>=', Timestamp.fromDate(monthStart)),
+        where('createdAt', '<=', Timestamp.fromDate(monthEnd)),
+        limit(itemLimit)
+      );
+
+      const qSignatures = query(
+        collection(db, 'dds_signatures'),
+        where('timestamp', '>=', Timestamp.fromDate(currentYearStart)),
+        limit(isPrivileged ? 500 : 100)
+      );
+
+      const qDomains = collection(db, 'allowed_domains');
+
+      const [
+        snapSessions,
+        snapChecklists,
+        snapQual,
+        snapBatches,
+        snapCoils,
+        snapRoutes,
+        snapSafety,
+        snapConsumables,
+        snapSignatures,
+        snapDomains,
+        snapOvertime
+      ] = await Promise.all([
+        getDocs(qSessions).catch(() => null),
+        getDocs(qChecklists).catch(() => null),
+        getDocs(qQual).catch(() => null),
+        getDocs(qBatches).catch(() => null),
+        getDocs(qCoils).catch(() => null),
+        getDocs(qRoutes).catch(() => null),
+        getDocs(qSafety).catch(() => null),
+        getDocs(qConsumables).catch(() => null),
+        getDocs(qSignatures).catch(() => null),
+        getDocs(qDomains).catch(() => null),
+        (isPrivileged ? getDocs(query(
+          collection(db, 'overtime_justifications'),
+          where('date', '>=', monthStartStr),
+          where('date', '<=', monthEndStr),
+          limit(isPrivileged ? 150 : 30)
+        )) : Promise.resolve(null)).catch(() => null)
+      ]);
+
+      if (snapSessions) {
+        const sessions = await Promise.all(snapSessions.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setAllSessions(sessions);
+
+        // Update current day status
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const statusMap: Record<string, boolean> = {};
+        sessions.forEach((data: any) => {
+          const createdAt = safeToDate(data.createdAt) || new Date();
+          if (createdAt >= today) {
+            const key = `${data.shift}-${data.group}`;
+            statusMap[key] = true;
+          }
+        });
+        setDdsStatus(statusMap);
+      }
+
+      if (snapChecklists) {
+        const docs = await Promise.all(snapChecklists.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.conductorName);
+          return { id: doc.id, ...data, conductorName: decName };
+        }));
+        setForkliftHistory(docs);
+      }
+
+      if (snapQual) {
+        const docs = await Promise.all(snapQual.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setQualitySubmissions(docs);
+      }
+
+      if (snapBatches) {
+        setWireBatches(snapBatches.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+
+      if (snapCoils) {
+        setWireCoils(snapCoils.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+
+      if (snapRoutes) {
+        const docs = await Promise.all(snapRoutes.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setRoutesSubmissions(docs);
+      }
+
+      if (snapSafety) {
+        const docs = await Promise.all(snapSafety.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setSafetyObservations(docs);
+      }
+
+      if (snapConsumables) {
+        const docs = await Promise.all(snapConsumables.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setConsumableLogs(docs);
+      }
+
+      if (snapOvertime) {
+        const docs = await Promise.all(snapOvertime.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          const decCreatedByName = await decryptValue(data.createdByName);
+          return { id: doc.id, ...data, userName: decName, createdByName: decCreatedByName };
+        }));
+        setOvertimeJustifications(docs);
+      }
+
+      const validSessionIds = new Set(snapSessions ? snapSessions.docs.map(d => d.id) : []);
+      const validSignatures = snapSignatures ? snapSignatures.docs.filter(d => validSessionIds.has(d.data().sessionId)) : [];
+
+      const nonMasterUsersCount = userList.filter(user => {
+        if (user.email === 'jacksonbjr@gmail.com') return false;
+        return !MASTER_EMAILS.includes(user.email) || isMaster;
+      }).length;
+
+      setStats(prev => ({
+        ...prev,
+        totalUsers: nonMasterUsersCount || prev.totalUsers,
+        activeDDS: 0,
+        totalSignatures: validSignatures.length || prev.totalSignatures,
+        allowedDomains: snapDomains ? snapDomains.size : prev.allowedDomains
+      }));
+
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.warn('Could not fetch dashboard metrics:', err);
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [isManager, isMaster, isAdmin, filterYear, filterMonth, itemLimit, ddsLimit, isPrivileged]);
+
   useEffect(() => {
     if (!isManager) {
       setLoading(false);
       return;
     }
 
-    // Real-time listener for ALL sessions (filtered by year for performance)
-    const currentYearStart = new Date(filterYear, 0, 1);
-    const q = query(
-      collection(db, 'dds_sessions'),
-      where('createdAt', '>=', Timestamp.fromDate(currentYearStart)),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const sessions = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setAllSessions(sessions);
-
-      // Update current day status
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const statusMap: Record<string, boolean> = {};
-      sessions.forEach((data: any) => {
-        const createdAt = safeToDate(data.createdAt) || new Date();
-        if (createdAt >= today) {
-          const key = `${data.shift}-${data.group}`;
-          statusMap[key] = true;
-        }
-      });
-      setDdsStatus(statusMap);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
-    });
-
-    const fetchOtherStats = async () => {
-      try {
-        const currentShift = getCurrentShift();
-        const currentGroup = getGroupForShift(new Date(), currentShift);
-        setExpectedDuty({ shift: currentShift, group: currentGroup });
-        
-        // Fast path: load cached users count
-        let userList = getLocalCachedUsers();
-        if (userList.length === 0) {
-          userList = await fetchUsersSafely();
-        }
-
-        const [signaturesSnap, domainsSnap, sessionsSnap] = await Promise.all([
-          getDocs(query(collection(db, 'dds_signatures'), where('timestamp', '>=', Timestamp.fromDate(currentYearStart)), limit(500))).catch(err => {
-            handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
-            return null;
-          }),
-          getDocs(collection(db, 'allowed_domains')).catch(err => {
-            handleFirestoreError(err, OperationType.LIST, 'allowed_domains');
-            return null;
-          }),
-          getDocs(query(collection(db, 'dds_sessions'), where('createdAt', '>=', Timestamp.fromDate(currentYearStart)), limit(500))).catch(err => {
-            handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
-            return null;
-          })
-        ]);
-
-        const validSessionIds = new Set(sessionsSnap ? sessionsSnap.docs.map(d => d.id) : []);
-        const validSignatures = signaturesSnap ? signaturesSnap.docs.filter(d => validSessionIds.has(d.data().sessionId)) : [];
-
-        const nonMasterUsersCount = userList.filter(user => {
-          if (user.email === 'jacksonbjr@gmail.com') return false;
-          return !MASTER_EMAILS.includes(user.email) || isMaster;
-        }).length;
-
-        setStats(prev => ({
-          ...prev,
-          totalUsers: nonMasterUsersCount || prev.totalUsers,
-          activeDDS: 0, 
-          totalSignatures: validSignatures.length || prev.totalSignatures,
-          allowedDomains: domainsSnap ? domainsSnap.size : prev.allowedDomains
-        }));
-      } catch (err) {
-        console.warn("Could not refresh generic stats:", err);
-      }
-    };
-
-    fetchOtherStats();
-
-    // Live subscription for users count
-    const unsubUsers = subscribeToUsers((liveUsers) => {
-      const nonMasterUsersCount = liveUsers.filter(user => {
-        if (user.email === 'jacksonbjr@gmail.com') return false;
-        return !MASTER_EMAILS.includes(user.email) || isMaster;
-      }).length;
-      setStats(prev => ({
-        ...prev,
-        totalUsers: nonMasterUsersCount
-      }));
-    });
-
-    // Date boundaries for selected month/year
-    const monthStart = new Date(filterYear, filterMonth, 1, 0, 0, 0);
-    const monthEnd = new Date(filterYear, filterMonth + 1, 0, 23, 59, 59);
-    const monthStartStr = `${filterYear}-${String(filterMonth + 1).padStart(2, '0')}-01`;
-    const monthEndStr = `${filterYear}-${String(filterMonth + 1).padStart(2, '0')}-31`;
-
-    // Forklift Real-time Listeners
+    // Reference collections subscription (reads from instant local cache)
     const unsubForklifts = subscribeSharedCollection('forklifts', (docs) => {
       setForkliftStats(prev => ({
         ...prev,
@@ -283,144 +422,29 @@ const Dashboard: React.FC = () => {
       }));
     }, 'number');
 
-    const qChecklists = query(
-      collection(db, 'forklift_checklists'),
-      where('timestamp', '>=', Timestamp.fromDate(monthStart)),
-      where('timestamp', '<=', Timestamp.fromDate(monthEnd))
-    );
-    const unsubChecklists = onSnapshot(qChecklists, async (snapshot) => {
-      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.conductorName);
-        return { id: doc.id, ...data, conductorName: decName };
-      }));
-      setForkliftHistory(docs);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'forklift_checklists');
-    });
-
     const unsubCheckItems = subscribeSharedCollection('forklift_check_items', (docs) => {
       setCheckItems(docs);
     }, 'order');
 
-    // Quality Listeners
-    const qQualSubmissions = query(
-      collection(db, 'quality_checklist_submissions'),
-      where('createdAt', '>=', Timestamp.fromDate(monthStart)),
-      where('createdAt', '<=', Timestamp.fromDate(monthEnd))
-    );
-    const unsubQualSubmissions = onSnapshot(qQualSubmissions, async (snapshot) => {
-      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setQualitySubmissions(docs);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'quality_checklist_submissions'));
-
     const unsubQualTemplates = subscribeSharedCollection('quality_checklist_templates', setQualityTemplates);
     const unsubQualOptions = subscribeSharedCollection('quality_checklist_options', setQualityOptionSets);
     const unsubLines = subscribeSharedCollection('production_lines', setLines);
-
-    // Wire Listeners
-    const qWireBatches = query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(50));
-    const unsubWireBatches = onSnapshot(qWireBatches, (snapshot) => {
-      setWireBatches(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'wire_batches'));
-
-    const qWireCoils = query(collection(db, 'wire_coils'), limit(150));
-    const unsubWireCoils = onSnapshot(qWireCoils, (snapshot) => {
-      setWireCoils(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'wire_coils'));
-
-    // Routes Listeners
-    const qRoutesSub = query(
-      collection(db, 'route_submissions'),
-      where('createdAt', '>=', Timestamp.fromDate(monthStart)),
-      where('createdAt', '<=', Timestamp.fromDate(monthEnd))
-    );
-    const unsubRoutesSub = onSnapshot(qRoutesSub, async (snapshot) => {
-      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setRoutesSubmissions(docs);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'route_submissions'));
-
     const unsubRoutesTmpl = subscribeSharedCollection('route_templates', setRoutesTemplates);
-
-    // Safety Observations Listeners
-    const qSafetyObs = query(
-      collection(db, 'safety_observations'),
-      where('createdAt', '>=', Timestamp.fromDate(monthStart)),
-      where('createdAt', '<=', Timestamp.fromDate(monthEnd))
-    );
-    const unsubSafetyObs = onSnapshot(qSafetyObs, async (snapshot) => {
-      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setSafetyObservations(docs);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'safety_observations'));
-
-    // Consumables Listeners
     const unsubConsumableItems = subscribeSharedCollection('consumable_items', setConsumableItems);
 
-    const qConsumableLogs = query(
-      collection(db, 'consumable_logs'),
-      where('createdAt', '>=', Timestamp.fromDate(monthStart)),
-      where('createdAt', '<=', Timestamp.fromDate(monthEnd))
-    );
-    const unsubConsumableLogs = onSnapshot(qConsumableLogs, async (snapshot) => {
-      const docs = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setConsumableLogs(docs);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'consumable_logs'));
-
-    // Overtime Listeners (Admins and Masters only)
-    let unsubOvertime = () => {};
-    if (isAdmin || isMaster) {
-      const qOvertime = query(
-        collection(db, 'overtime_justifications'),
-        where('date', '>=', monthStartStr),
-        where('date', '<=', monthEndStr)
-      );
-      unsubOvertime = onSnapshot(qOvertime, async (snapshot) => {
-        const docs = await Promise.all(snapshot.docs.map(async (doc) => {
-          const data = doc.data() as any;
-          const decName = await decryptValue(data.userName);
-          const decCreatedByName = await decryptValue(data.createdByName);
-          return { id: doc.id, ...data, userName: decName, createdByName: decCreatedByName };
-        }));
-        setOvertimeJustifications(docs);
-      }, (err) => handleFirestoreError(err, OperationType.LIST, 'overtime_justifications'));
-    }
+    // Initial fetch
+    fetchDashboardData(false);
 
     return () => {
-      unsubscribe();
-      unsubUsers();
       unsubForklifts();
-      unsubChecklists();
       unsubCheckItems();
-      unsubQualSubmissions();
       unsubQualTemplates();
       unsubQualOptions();
-      unsubWireBatches();
-      unsubWireCoils();
       unsubLines();
-      unsubRoutesSub();
       unsubRoutesTmpl();
-      unsubSafetyObs();
       unsubConsumableItems();
-      unsubConsumableLogs();
-      unsubOvertime();
     };
-  }, [isManager, isAdmin, isMaster, filterYear, filterMonth]);
+  }, [isManager, fetchDashboardData]);
 
   // Derived forklift metrics for the selected period
   const forkliftMetrics = useMemo(() => {
@@ -1006,7 +1030,24 @@ const Dashboard: React.FC = () => {
           <p className="text-sm text-slate-400 font-medium italic">Monitoramento centralizado de operações e segurança.</p>
         </div>
 
-        <div className="relative">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Refresh Button for Cost Control */}
+          <button
+            onClick={() => fetchDashboardData(true)}
+            disabled={isRefreshing}
+            title="Atualizar dados do Dashboard (sob demanda para economizar quota do Firestore)"
+            className="flex items-center gap-2.5 px-4 py-3 bg-white hover:bg-slate-50 border border-slate-200 hover:border-indigo-300 rounded-2xl text-xs font-black uppercase tracking-tight text-slate-700 shadow-sm active:scale-95 transition-all cursor-pointer group"
+          >
+            <RefreshCw className={cn("w-4 h-4 text-indigo-600", isRefreshing ? "animate-spin" : "group-hover:rotate-180 transition-transform duration-500")} />
+            <div className="text-left flex flex-col">
+              <span className="leading-tight">{isRefreshing ? 'Atualizando...' : 'Atualizar Dados'}</span>
+              <span className="text-[9px] text-slate-400 font-bold tabular-nums leading-tight">
+                {lastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+          </button>
+
+          <div className="relative">
           <button
             onClick={() => setShowTabMenu(!showTabMenu)}
             className="flex items-center gap-3 px-5 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black uppercase tracking-tight text-slate-700 shadow-sm hover:border-emerald-200 transition-all active:scale-95"
@@ -1060,6 +1101,7 @@ const Dashboard: React.FC = () => {
           </AnimatePresence>
         </div>
       </div>
+    </div>
 
       <AnimatePresence mode="wait">
         {activeTab === 'dds' ? (

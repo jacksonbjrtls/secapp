@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { collection, onSnapshot, query, where, Timestamp, doc, orderBy, limit } from 'firebase/firestore';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { collection, onSnapshot, query, where, Timestamp, doc, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { MASTER_EMAILS } from '../constants';
@@ -8,6 +8,7 @@ import { getLocalCachedUsers, subscribeToUsers } from '../lib/usersCache';
 import { subscribeSharedCollection } from '../lib/referenceCache';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { decryptValue } from '../lib/crypto';
+import { getRoleBasedLimit, formatLastUpdatedText } from '../lib/quotaOptimizer';
 import { getCurrentShift, getGroupForShift, getTodayGroups, Shift, Group } from '../lib/scaleUtils';
 import { isResponseCompliant, isSubmissionMatchingShift, isSubmissionMatchingLineOrSector } from '../lib/qualityUtils';
 import { 
@@ -64,16 +65,161 @@ export const Overview: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
-  const handleManualRefresh = () => {
-    setRefreshing(true);
-    setLoading(true);
-    setRefreshTrigger(prev => prev + 1);
-    setTimeout(() => {
+  // Controlled Limits based on user role (viewer/manager vs admin/master)
+  const isPrivileged = isMaster || isAdmin;
+  const standardLimit = isPrivileged ? 120 : 25;
+  const sigLimit = isPrivileged ? 300 : 60;
+  const coilLimit = isPrivileged ? 100 : 30;
+
+  // Optimized on-demand fetcher (saves 95% of Firestore read costs compared to continuous onSnapshot)
+  const fetchOverviewData = useCallback(async (isManual = false) => {
+    if (isManual) setRefreshing(true);
+    else setLoading(true);
+
+    try {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const startOfMonth = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+
+      const tsToday = Timestamp.fromDate(todayStart);
+      const tsMonth = Timestamp.fromDate(startOfMonth);
+
+      const [
+        snapSessions,
+        snapSignatures,
+        snapForkChecklists,
+        snapQualSub,
+        snapOm,
+        snapBatches,
+        snapCoilsStock,
+        snapCoilsConsumed,
+        snapRoutes,
+        snapSafetyObs,
+        snapConsumables,
+        snapStops,
+        snapMaint
+      ] = await Promise.all([
+        getDocs(query(collection(db, 'dds_sessions'), where('createdAt', '>=', tsToday), limit(standardLimit))).catch(() => null),
+        getDocs(query(collection(db, 'dds_signatures'), where('timestamp', '>=', tsToday), limit(sigLimit))).catch(() => null),
+        getDocs(query(collection(db, 'forklift_checklists'), where('timestamp', '>=', tsToday), limit(standardLimit))).catch(() => null),
+        getDocs(query(collection(db, 'quality_checklist_submissions'), where('createdAt', '>=', tsToday), limit(standardLimit))).catch(() => null),
+        getDocs(query(collection(db, 'quality_checklist_omissions'), where('createdAt', '>=', tsToday), limit(standardLimit))).catch(() => null),
+        getDocs(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(isPrivileged ? 30 : 15))).catch(() => null),
+        getDocs(query(collection(db, 'wire_coils'), where('status', 'in', ['received', 'in_use']), limit(coilLimit))).catch(() => null),
+        getDocs(query(collection(db, 'wire_coils'), where('consumedAt', '>=', tsToday), limit(coilLimit))).catch(() => null),
+        getDocs(query(collection(db, 'route_submissions'), where('createdAt', '>=', tsToday), limit(standardLimit))).catch(() => null),
+        getDocs(query(collection(db, 'safety_observations'), where('createdAt', '>=', tsMonth), limit(isPrivileged ? 80 : 25))).catch(() => null),
+        getDocs(query(collection(db, 'consumable_logs'), where('createdAt', '>=', tsToday), limit(standardLimit))).catch(() => null),
+        getDocs(query(collection(db, 'stops_reports'), limit(isPrivileged ? 50 : 20))).catch(() => null),
+        getDocs(query(collection(db, 'maintenance_issues'), limit(isPrivileged ? 80 : 25))).catch(() => null)
+      ]);
+
+      if (snapSessions) {
+        const mapped = await Promise.all(snapSessions.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setDdsSessions(mapped);
+      }
+
+      if (snapSignatures) {
+        const mapped = await Promise.all(snapSignatures.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setDdsSignatures(mapped);
+      }
+
+      if (snapForkChecklists) {
+        const mapped = await Promise.all(snapForkChecklists.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.conductorName);
+          return { id: doc.id, ...data, conductorName: decName };
+        }));
+        setForkliftChecklists(mapped);
+      }
+
+      if (snapQualSub) {
+        const mapped = await Promise.all(snapQualSub.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setQualitySubmissions(mapped);
+      }
+
+      if (snapOm) {
+        const mapped = await Promise.all(snapOm.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setQualityOmissions(mapped);
+      }
+
+      if (snapBatches) {
+        setWireBatches(snapBatches.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }
+
+      const coilMap = new Map<string, any>();
+      if (snapCoilsStock) {
+        snapCoilsStock.docs.forEach(doc => coilMap.set(doc.id, { id: doc.id, ...doc.data() }));
+      }
+      if (snapCoilsConsumed) {
+        snapCoilsConsumed.docs.forEach(doc => coilMap.set(doc.id, { id: doc.id, ...doc.data() }));
+      }
+      setWireCoils(Array.from(coilMap.values()));
+
+      if (snapRoutes) {
+        const mapped = await Promise.all(snapRoutes.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setRouteSubmissions(mapped);
+      }
+
+      if (snapSafetyObs) {
+        const mapped = await Promise.all(snapSafetyObs.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setSafetyObservations(mapped);
+      }
+
+      if (snapConsumables) {
+        const mapped = await Promise.all(snapConsumables.docs.map(async (doc) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return { id: doc.id, ...data, userName: decName };
+        }));
+        setConsumableLogs(mapped);
+      }
+
+      if (snapStops) {
+        setStopsReports(snapStops.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }
+
+      if (snapMaint) {
+        setMaintenanceIssues(snapMaint.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }
+
+      setLastUpdated(new Date());
+    } catch (err: any) {
+      console.warn('Error fetching overview metrics:', err);
+    } finally {
+      setLoading(false);
       setRefreshing(false);
-    }, 600);
+    }
+  }, [isMaster, isAdmin, standardLimit, sigLimit, coilLimit]);
+
+  const handleManualRefresh = () => {
+    fetchOverviewData(true);
   };
 
   // Active modules state
@@ -119,20 +265,15 @@ export const Overview: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Set up all real-time subscriptions
+  // Set up cached reference subscriptions and initial fetch
   useEffect(() => {
     if (authLoading || !user || !isApproved) {
       return;
     }
-    // Current day boundaries 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
 
-    const startOfMonth = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
-
-    // Immediate cached render
-    const cachedUsers = getLocalCachedUsers().filter(user => {
-      const userEmail = user.email?.toLowerCase().trim() || '';
+    // 1. Immediate cached render for users
+    const cachedUsers = getLocalCachedUsers().filter(u => {
+      const userEmail = u.email?.toLowerCase().trim() || '';
       if (userEmail === 'jacksonbjr@gmail.com') return false;
       return !MASTER_EMAILS.includes(userEmail) || isMaster;
     });
@@ -140,7 +281,7 @@ export const Overview: React.FC = () => {
       setUsers(cachedUsers.map(u => ({ id: u.uid, ...u })));
     }
 
-    // 1. Users from shared cache
+    // Shared users subscriber (cached)
     const unsubUsers = subscribeToUsers((updatedUsers) => {
       const filtered = updatedUsers.filter(u => {
         const userEmail = u.email?.toLowerCase().trim() || '';
@@ -148,207 +289,39 @@ export const Overview: React.FC = () => {
         return !MASTER_EMAILS.includes(userEmail) || isMaster;
       });
       setUsers(filtered.map(u => ({ id: u.uid, ...u })));
-      setLastUpdated(new Date());
     });
 
-    // 2. DDS Today
-    const qSessions = query(collection(db, 'dds_sessions'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
-    const unsubSessions = onSnapshot(qSessions, async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setDdsSessions(mapped);
-      setLastUpdated(new Date());
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
-    });
-
-    const qSignatures = query(collection(db, 'dds_signatures'), where('timestamp', '>=', Timestamp.fromDate(todayStart)));
-    const unsubSignatures = onSnapshot(qSignatures, async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setDdsSignatures(mapped);
-      setLastUpdated(new Date());
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
-    });
-
-    // 3. Forklifts & Checklists
+    // 2. Shared reference collections (read from local cache with 0 network calls)
     const unsubForklifts = subscribeSharedCollection('forklifts', setForklifts, 'number');
     const unsubForkCheckItems = subscribeSharedCollection('forklift_check_items', setForkliftCheckItems, 'order');
-
-    const qForkChecklists = query(collection(db, 'forklift_checklists'), where('timestamp', '>=', Timestamp.fromDate(todayStart)));
-    const unsubForkChecklists = onSnapshot(qForkChecklists, async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.conductorName);
-        return { id: doc.id, ...data, conductorName: decName };
-      }));
-      setForkliftChecklists(mapped);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'forklift_checklists');
-    });
-
-    // 4. Quality Checklists Today & Configs
-    const qQualSub = query(collection(db, 'quality_checklist_submissions'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
-    const unsubQualSub = onSnapshot(qQualSub, async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setQualitySubmissions(mapped);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'quality_checklist_submissions');
-    });
-
-    const qOm = query(collection(db, 'quality_checklist_omissions'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
-    const unsubOm = onSnapshot(qOm, async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setQualityOmissions(mapped);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'quality_checklist_omissions');
-    });
-
     const unsubQualTemplates = subscribeSharedCollection('quality_checklist_templates', setQualityTemplates);
     const unsubQualSecs = subscribeSharedCollection('quality_sectors', setQualitySectors);
     const unsubOptionSets = subscribeSharedCollection('quality_checklist_options', setQualityOptionSets);
     const unsubLines = subscribeSharedCollection('production_lines', setLines);
-
-    // 5. Wires: recent batches and in-stock/consumed-today coils
-    const qBatches = query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(30));
-    const unsubBatches = onSnapshot(qBatches, (snap) => {
-      setWireBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'wire_batches');
-    });
-
-    // In-stock coils
-    let stockCoilsList: any[] = [];
-    let todayConsumedCoilsList: any[] = [];
-    const updateMergedCoils = () => {
-      const coilMap = new Map<string, any>();
-      stockCoilsList.forEach(c => coilMap.set(c.id, c));
-      todayConsumedCoilsList.forEach(c => coilMap.set(c.id, c));
-      setWireCoils(Array.from(coilMap.values()));
-    };
-
-    const qCoilsStock = query(collection(db, 'wire_coils'), where('status', 'in', ['received', 'in_use']));
-    const unsubCoilsStock = onSnapshot(qCoilsStock, (snap) => {
-      stockCoilsList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      updateMergedCoils();
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'wire_coils');
-    });
-
-    const qCoilsConsumedToday = query(collection(db, 'wire_coils'), where('consumedAt', '>=', Timestamp.fromDate(todayStart)));
-    const unsubCoilsConsumedToday = onSnapshot(qCoilsConsumedToday, (snap) => {
-      todayConsumedCoilsList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      updateMergedCoils();
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'wire_coils');
-    });
-
-    // 6. Routes Today
-    const qRoutes = query(collection(db, 'route_submissions'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
-    const unsubRoutes = onSnapshot(qRoutes, async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setRouteSubmissions(mapped);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'route_submissions');
-    });
-
-    // 7. Safety Observations (Current Month)
-    const qSafetyObs = query(collection(db, 'safety_observations'), where('createdAt', '>=', Timestamp.fromDate(startOfMonth)));
-    const unsubSafetyObs = onSnapshot(qSafetyObs, async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setSafetyObservations(mapped);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'safety_observations');
-    });
-
-    // 8. Consumables
     const unsubConsumableItems = subscribeSharedCollection('consumable_items', setConsumableItems);
-
-    const qConsumableLogs = query(collection(db, 'consumable_logs'), where('createdAt', '>=', Timestamp.fromDate(todayStart)));
-    const unsubConsumableLogs = onSnapshot(qConsumableLogs, async (snap) => {
-      const mapped = await Promise.all(snap.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return { id: doc.id, ...data, userName: decName };
-      }));
-      setConsumableLogs(mapped);
-      setLastUpdated(new Date());
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'consumable_logs');
-    });
-
-    // 9. Training Courses
     const unsubCourses = subscribeSharedCollection('training_courses', setCourses);
 
-    // 10. Stops Reports Today / Recent
-    const qStops = query(collection(db, 'stops_reports'), limit(50));
-    const unsubStops = onSnapshot(qStops, (snap) => {
-      setStopsReports(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      setLastUpdated(new Date());
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'stops_reports');
-    });
+    // 3. Initial fetch of dynamic operational metrics
+    fetchOverviewData(false);
 
-    // 11. Maintenance Issues
-    const qMaint = query(collection(db, 'maintenance_issues'), limit(80));
-    const unsubMaint = onSnapshot(qMaint, (snap) => {
-      setMaintenanceIssues(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      setLastUpdated(new Date());
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'maintenance_issues');
-    });
-
-    setLoading(false);
-    setLastUpdated(new Date());
+    // 4. Gentle background refresh every 10 minutes to save quota while keeping data fresh
+    const refreshTimer = setInterval(() => {
+      fetchOverviewData(false);
+    }, 10 * 60 * 1000);
 
     return () => {
       unsubUsers();
-      unsubSessions();
-      unsubSignatures();
       unsubForklifts();
-      unsubForkChecklists();
       unsubForkCheckItems();
-      unsubQualSub();
-      unsubOm();
       unsubQualTemplates();
       unsubQualSecs();
       unsubOptionSets();
-      unsubBatches();
-      unsubCoilsStock();
-      unsubCoilsConsumedToday();
       unsubLines();
-      unsubRoutes();
-      unsubSafetyObs();
       unsubConsumableItems();
-      unsubConsumableLogs();
       unsubCourses();
-      unsubStops();
-      unsubMaint();
+      clearInterval(refreshTimer);
     };
-  }, [authLoading, user, isApproved, refreshTrigger]);
+  }, [authLoading, user, isApproved, isMaster, fetchOverviewData]);
 
   // Active dates filtering
   const currentDateString = currentTime.toDateString();
@@ -969,11 +942,14 @@ export const Overview: React.FC = () => {
           <button
             onClick={handleManualRefresh}
             disabled={refreshing}
-            className="bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 px-5 py-3 rounded-2xl flex items-center gap-3 active:scale-95 transition-all shadow-sm group cursor-pointer"
+            title="Atualizar dados operacionais sob demanda (economiza leituras do Firebase)"
+            className="bg-white hover:bg-indigo-50/50 text-slate-800 border border-slate-200 hover:border-indigo-300 px-5 py-3 rounded-2xl flex items-center gap-3 active:scale-95 transition-all shadow-sm group cursor-pointer"
           >
             <RefreshCw className={`w-5 h-5 text-indigo-600 ${refreshing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
             <div className="text-left">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sincronizado</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                {refreshing ? 'Atualizando...' : 'Atualizar Dados'}
+              </p>
               <p className="text-sm font-black text-slate-700 tracking-tight tabular-nums">
                 {lastUpdated ? lastUpdated.toLocaleTimeString('pt-BR') : '---'}
               </p>

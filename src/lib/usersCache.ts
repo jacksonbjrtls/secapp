@@ -25,13 +25,16 @@ export interface CachedUserItem {
 }
 
 const STORAGE_KEY = 'app_cached_users_list_v1';
+const STORAGE_TIME_KEY = 'app_cached_users_time_v1';
+const USERS_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes TTL
+
 let inMemoryUsersCache: CachedUserItem[] | null = null;
 let lastFetchPromise: Promise<CachedUserItem[]> | null = null;
+let lastFetchTime = 0;
 
-// Real-time subscribers list
+// Subscribers list
 type UsersSubscriber = (users: CachedUserItem[]) => void;
 const subscribers = new Set<UsersSubscriber>();
-let activeUnsub: (() => void) | null = null;
 
 function notifySubscribers(users: CachedUserItem[]) {
   subscribers.forEach((cb) => {
@@ -41,6 +44,22 @@ function notifySubscribers(users: CachedUserItem[]) {
       console.warn('Error in users subscriber callback', e);
     }
   });
+}
+
+export function isUsersCacheFresh(): boolean {
+  if (inMemoryUsersCache && inMemoryUsersCache.length > 0 && Date.now() - lastFetchTime < USERS_CACHE_TTL_MS) {
+    return true;
+  }
+  try {
+    const rawTime = localStorage.getItem(STORAGE_TIME_KEY);
+    if (rawTime) {
+      const savedTime = parseInt(rawTime, 10);
+      if (Date.now() - savedTime < USERS_CACHE_TTL_MS) {
+        return true;
+      }
+    }
+  } catch (e) {}
+  return false;
 }
 
 export function getLocalCachedUsers(): CachedUserItem[] {
@@ -64,8 +83,10 @@ export function getLocalCachedUsers(): CachedUserItem[] {
 
 export function setLocalCachedUsers(users: CachedUserItem[]) {
   inMemoryUsersCache = users;
+  lastFetchTime = Date.now();
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+    localStorage.setItem(STORAGE_TIME_KEY, String(lastFetchTime));
   } catch (e) {
     console.warn('Failed to write cached users to localStorage', e);
   }
@@ -73,83 +94,35 @@ export function setLocalCachedUsers(users: CachedUserItem[]) {
 }
 
 /**
- * Start or ensure the active real-time Firestore listener on the users collection.
+ * Controlled fetch of users without keeping permanent onSnapshot connections open.
  */
 export function ensureUsersLiveSync(): () => void {
-  if (activeUnsub) {
-    return activeUnsub;
+  // If cache is not fresh, fetch users safely
+  if (!isUsersCacheFresh() || getLocalCachedUsers().length === 0) {
+    fetchUsersSafely();
   }
-
-  try {
-    const q = collection(db, 'users');
-    activeUnsub = onSnapshot(
-      q,
-      async (snapshot) => {
-        try {
-          const decryptedUsersList: CachedUserItem[] = await Promise.all(
-            snapshot.docs.map(async (d) => {
-              const data = d.data();
-              const decName = await decryptValue(data.displayName);
-              const decEmail = await decryptValue(data.email);
-              return {
-                uid: d.id,
-                displayName: decName || 'Sem nome',
-                email: (decEmail || '').toLowerCase().trim(),
-                role: data.role || 'viewer',
-                status: data.status || 'approved',
-                group: data.group || '',
-                sectorId: data.sectorId || '',
-                sectorName: data.sectorName || '',
-                cargoId: data.cargoId || '',
-                cargoName: data.cargoName || '',
-                birthDate: data.birthDate || '',
-                tshirtSize: data.tshirtSize || '',
-                registration: data.registration || '',
-                isMaster: !!data.isMaster,
-                mustChangePassword: !!data.mustChangePassword,
-                createdAt: data.createdAt,
-                updatedAt: data.updatedAt,
-              };
-            })
-          );
-
-          const validList = decryptedUsersList.filter(u => u.displayName !== 'Sem nome');
-          setLocalCachedUsers(validList);
-        } catch (err: any) {
-          console.warn('Real-time decryption of users failed:', err);
-        }
-      },
-      (err) => {
-        const errMsg = err?.message || String(err);
-        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('resource-exhausted')) {
-          notifyQuotaExceeded();
-        }
-        console.warn('Real-time users snapshot error (keeping local cache):', errMsg);
-      }
-    );
-  } catch (e) {
-    console.warn('Could not initialize users live sync:', e);
-  }
-
-  return () => {
-    if (activeUnsub) {
-      activeUnsub();
-      activeUnsub = null;
-    }
-  };
+  return () => {};
 }
 
 /**
- * Subscribe to real-time user list changes.
+ * Subscribe to user list changes.
  */
 export function subscribeToUsers(callback: UsersSubscriber): () => void {
   subscribers.add(callback);
-  ensureUsersLiveSync();
 
   // Immediately invoke with existing cached users if available
   const initial = getLocalCachedUsers();
   if (initial.length > 0) {
     callback(initial);
+  }
+
+  // If cache is stale or missing, fetch in background
+  if (!isUsersCacheFresh() || initial.length === 0) {
+    fetchUsersSafely().then((fresh) => {
+      if (fresh && fresh.length > 0) {
+        callback(fresh);
+      }
+    });
   }
 
   return () => {
