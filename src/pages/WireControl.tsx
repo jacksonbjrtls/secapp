@@ -148,15 +148,21 @@ const WireControl: React.FC = () => {
       setStorageBays(list as WireStorageBay[]);
     }, 'name');
 
-    const batchLimit = isMaster || isAdmin ? 150 : 30;
-    const coilLimit = isMaster || isAdmin ? 200 : 50;
+    const batchLimit = isMaster || isAdmin ? 1000 : 500;
+    const coilLimit = isMaster || isAdmin ? 4000 : 2500;
 
     const unsubBatches = onSnapshot(query(collection(db, 'wire_batches'), orderBy('createdAt', 'desc'), limit(batchLimit)), (snap) => {
       setBatches(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireBatch)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_batches'));
 
-    const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), orderBy('receivedAt', 'desc'), limit(coilLimit)), (snap) => {
-      setCoils(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireCoil)));
+    const unsubCoils = onSnapshot(query(collection(db, 'wire_coils'), limit(coilLimit)), (snap) => {
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WireCoil));
+      list.sort((a, b) => {
+        const timeA = new Date(a.receivedAt || (a.createdAt as any)?.toDate?.() || 0).getTime();
+        const timeB = new Date(b.receivedAt || (b.createdAt as any)?.toDate?.() || 0).getTime();
+        return timeB - timeA;
+      });
+      setCoils(list);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'wire_coils'));
     
     const unsubProd = subscribeSharedCollection('monthly_production', (list) => {

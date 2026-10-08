@@ -862,7 +862,14 @@ const Dashboard: React.FC = () => {
       if (itemYear !== filterYear) return false;
       if (itemMonth !== filterMonth) return false;
 
-      if (overtimeFilterGroup !== 'all' && item.group !== overtimeFilterGroup) return false;
+      if (overtimeFilterGroup !== 'all') {
+        const itemGrp = (item.group || '').toUpperCase();
+        if (overtimeFilterGroup === 'ADM') {
+          if (itemGrp !== 'ADM' && !itemGrp.startsWith('ADM') && itemGrp !== 'GERAL') return false;
+        } else if (item.group !== overtimeFilterGroup) {
+          return false;
+        }
+      }
       if (overtimeFilterArea !== 'all' && item.area !== overtimeFilterArea) return false;
       if (overtimeFilterShift !== 'all' && item.shift !== overtimeFilterShift) return false;
 
@@ -2661,7 +2668,7 @@ const Dashboard: React.FC = () => {
                     <option value="C">Letra C</option>
                     <option value="D">Letra D</option>
                     <option value="E">Letra E</option>
-                    <option value="Geral">Geral / ADM</option>
+                    <option value="ADM">ADM</option>
                   </select>
                 </div>
 

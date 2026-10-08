@@ -486,10 +486,23 @@ export default function Overtime() {
       }
 
       // 2. Group/Letra
-      if (filterGroup !== 'all' && item.group !== filterGroup) return false;
+      if (filterGroup !== 'all') {
+        const itemGrp = (item.group || '').toUpperCase();
+        if (filterGroup === 'ADM') {
+          if (itemGrp !== 'ADM' && !itemGrp.startsWith('ADM') && itemGrp !== 'GERAL') return false;
+        } else if (item.group !== filterGroup) {
+          return false;
+        }
+      }
 
       // 3. Shift
-      if (filterShiftOption !== 'all' && item.shift !== filterShiftOption) return false;
+      if (filterShiftOption !== 'all') {
+        if (filterShiftOption === 'ADM') {
+          if (item.shift !== 'ADM' && item.shift !== 'ADM / Geral') return false;
+        } else if (item.shift !== filterShiftOption) {
+          return false;
+        }
+      }
 
       // 4. Area
       if (filterArea !== 'all' && item.area !== filterArea) return false;
@@ -911,8 +924,8 @@ export default function Overtime() {
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800"
                     >
                       <option value="">Selecione...</option>
-                      {['A', 'B', 'C', 'D', 'E', 'ADM', 'Geral'].map((g, gIdx) => (
-                        <option key={`ot-form-group-${g}-${gIdx}`} value={g}>{g === 'ADM' ? 'ADM' : g === 'Geral' ? 'Geral' : `Letra ${g}`}</option>
+                      {['A', 'B', 'C', 'D', 'E', 'ADM'].map((g, gIdx) => (
+                        <option key={`ot-form-group-${g}-${gIdx}`} value={g}>{g === 'ADM' ? 'ADM' : `Letra ${g}`}</option>
                       ))}
                     </select>
                   </div>
@@ -995,7 +1008,7 @@ export default function Overtime() {
                       <option value="Turno 1">Turno 1 (00:00 - 08:00)</option>
                       <option value="Turno 2">Turno 2 (08:00 - 16:00)</option>
                       <option value="Turno 3">Turno 3 (16:00 - 00:00)</option>
-                      <option value="ADM">ADM / Geral</option>
+                      <option value="ADM">ADM</option>
                     </select>
                   </div>
 
@@ -1335,8 +1348,8 @@ export default function Overtime() {
                     className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                   >
                     <option value="all">Todas as Letras</option>
-                    {['A', 'B', 'C', 'D', 'E', 'ADM', 'Geral'].map((g, gIdx) => (
-                      <option key={`ot-filter-group-${g}-${gIdx}`} value={g}>{g === 'ADM' ? 'ADM' : g === 'Geral' ? 'Geral' : `Letra ${g}`}</option>
+                    {['A', 'B', 'C', 'D', 'E', 'ADM'].map((g, gIdx) => (
+                      <option key={`ot-filter-group-${g}-${gIdx}`} value={g}>{g === 'ADM' ? 'ADM' : `Letra ${g}`}</option>
                     ))}
                   </select>
                 </div>
@@ -1421,7 +1434,7 @@ export default function Overtime() {
                     <option value="Turno 1">Turno 1 (00:00 - 08:00)</option>
                     <option value="Turno 2">Turno 2 (08:00 - 16:00)</option>
                     <option value="Turno 3">Turno 3 (16:00 - 00:00)</option>
-                    <option value="ADM">ADM / Geral</option>
+                    <option value="ADM">ADM</option>
                   </select>
                 </div>
               </div>

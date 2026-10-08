@@ -5,6 +5,7 @@ import {
   where, 
   getDocs, 
   updateDoc, 
+  setDoc,
   doc, 
   serverTimestamp,
   orderBy,
@@ -33,6 +34,7 @@ import {
   Users,
   Filter,
   Weight,
+  RotateCcw,
   CalendarDays
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -105,6 +107,7 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [consumedCoilFound, setConsumedCoilFound] = useState<WireCoil | null>(null);
 
   // Available coils in stock for real-time manual search autocomplete suggestions
   const [availableCoils, setAvailableCoils] = useState<WireCoil[]>([]);
@@ -268,11 +271,76 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
     return ['Amarradeira 1', 'Amarradeira 2', 'Unitizadora', 'Big Bale'];
   }, [foundCoil, selectedLine]);
 
+  const handleReactivateConsumedCoil = async (coil: WireCoil) => {
+    setLoading(true);
+    try {
+      const coilRef = doc(db, 'wire_coils', coil.id);
+      const noteStr = `Reativação via Consumo: Baixa revertida por ${profile?.displayName || 'Operador'}`;
+      await updateDoc(coilRef, {
+        status: 'received',
+        consumedAt: null,
+        consumedBy: null,
+        consumedShift: null,
+        consumedIn: null,
+        consumedByGroup: null,
+        currentLineId: null,
+        isAuditWriteOff: false,
+        auditReason: null,
+        notes: noteStr,
+        updatedBy: profile?.displayName || 'Operador',
+        updatedAt: serverTimestamp()
+      });
+
+      try {
+        const logRef = doc(collection(db, 'wire_audit_logs'));
+        await setDoc(logRef, {
+          action: 'WIRE_COIL_STATUS_CHANGED',
+          batchId: coil.batchId || '',
+          coilId: coil.id,
+          coilNumber: coil.coilNumber,
+          previousStatus: 'consumed',
+          newStatus: 'received',
+          weight: coil.weight,
+          diameter: coil.diameter,
+          supplierId: coil.supplierId || '',
+          managerId: profile?.id || 'user',
+          managerName: profile?.displayName || 'Operador',
+          managerEmail: profile?.email || '',
+          details: {
+            reason: noteStr,
+            origin: 'Consumo de Arames'
+          },
+          timestamp: serverTimestamp()
+        });
+      } catch (logErr) {
+        console.warn("Could not write audit log entry:", logErr);
+      }
+
+      const reactivated: WireCoil = {
+        ...coil,
+        status: 'received',
+        consumedAt: null as any,
+        isAuditWriteOff: false,
+        auditReason: null as any
+      };
+      setConsumedCoilFound(null);
+      setFoundCoil(reactivated);
+      setError('');
+      setSuccess(`Bobina #${coil.coilNumber} (${coil.diameter}mm - ${coil.weight}kg) REATIVADA com sucesso e devolvida ao estoque! Agora você pode registrar o consumo.`);
+    } catch (err) {
+      console.error(err);
+      setError('Erro ao reativar bobina no Firestore. Verifique permissões.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const searchCoil = async (term: string) => {
     setLoading(true);
     setError('');
     setSuccess('');
     setFoundCoil(null);
+    setConsumedCoilFound(null);
 
     const parsed = parseWireQRCode(term);
     const searchTerm = parsed ? parsed.coilNumber : term;
@@ -290,7 +358,6 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
       let matchedDoc: WireCoil | null = null;
 
       // 2. Busca pelas 400 bobinas mais recentes no Firestore para rodar match local flexível
-      // Esta busca é 100% segura contra erros de índice no Firestore (usa apenas ordenação simples)
       try {
         const qRecent = query(
           collection(db, 'wire_coils'),
@@ -306,7 +373,6 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
         }
       } catch (errRecent) {
         console.warn("Index warning querying recent by date, trying safe standard query...", errRecent);
-        // Fallback para uma busca simples sem limites de ordenação caso o banco esteja limpo ou sem campo recebimento
         const qAll = query(collection(db, 'wire_coils'), limit(150));
         const snapAll = await getDocs(qAll);
         const foundAll = snapAll.docs
@@ -319,11 +385,21 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
 
       // 3. Fallback: Busca direta de termos exatos no Firestore para cobrir itens históricos que excederam os limites flexíveis
       if (!matchedDoc) {
+        const parsedWire = parseWireQRCode(term);
+        const rawNums = term.match(/[0-9]{6,25}/g) || [];
+        const gdNums = term.match(/GD[0-9]{10,25}/gi) || [];
         const queryTerms = Array.from(new Set([
           term.trim(),
           searchTerm.trim(),
-          term.trim().replace(/\s+/g, ' ')
-        ]));
+          parsedWire?.coilNumber || '',
+          parsedWire?.coilNumber ? parsedWire.coilNumber.replace(/^GD/i, '') : '',
+          term.trim().replace(/\s+/g, ' '),
+          term.trim().replace(/\s+/g, ''),
+          ...term.trim().split(/\s+/).filter(p => p.length >= 4),
+          ...gdNums,
+          ...rawNums,
+          ...(parsedWire?.coilNumber ? [parsedWire.coilNumber.slice(-6), parsedWire.coilNumber.slice(-8), parsedWire.coilNumber.slice(-14)] : [])
+        ])).filter(Boolean);
 
         for (const qTerm of queryTerms) {
           if (!qTerm) continue;
@@ -361,7 +437,7 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
           const qConsumed = query(
             collection(db, 'wire_coils'),
             orderBy('consumedAt', 'desc'),
-            limit(150)
+            limit(250)
           );
           const consumedSnap = await getDocs(qConsumed);
           const foundConsumed = consumedSnap.docs
@@ -376,19 +452,21 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
       }
 
       if (!matchedDoc) {
-        setError('Bobina não encontrada no sistema. Verifique o recebimento.');
+        setError('Bobina não encontrada no sistema. Verifique o código ou a carga de recebimento.');
       } else {
         if (matchedDoc.status === 'consumed') {
           const consumedDate = matchedDoc.consumedAt?.seconds 
-            ? new Date(matchedDoc.consumedAt.seconds * 1000).toLocaleString()
+            ? new Date(matchedDoc.consumedAt.seconds * 1000).toLocaleString('pt-BR')
             : 'data desconhecida';
           
+          setConsumedCoilFound(matchedDoc);
           if (matchedDoc.isAuditWriteOff) {
-            setError(`Esta bobina recebeu BAIXA VIA AUDITORIA em ${consumedDate} (Motivo: ${matchedDoc.auditReason || 'Divergência de Auditoria'}). Não está disponível para consumo.`);
+            setError(`Esta bobina recebeu BAIXA VIA AUDITORIA em ${consumedDate} (Motivo: ${matchedDoc.auditReason || 'Divergência de Auditoria'}). Você pode reativá-la imediatamente abaixo para devolvê-la ao estoque.`);
           } else {
-            setError(`Esta bobina já foi consumida em ${consumedDate}.`);
+            setError(`Esta bobina consta como consumida em ${consumedDate}. Você pode reativá-la abaixo se a baixa foi dada incorretamente.`);
           }
         } else {
+          setConsumedCoilFound(null);
           setFoundCoil(matchedDoc);
           setSuccess('Bobina localizada!');
         }
@@ -665,6 +743,48 @@ export const ConsumptionTab: React.FC<ConsumptionTabProps> = ({ lines }) => {
                     {error}
                   </motion.div>
                 )}
+
+                {consumedCoilFound && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="mt-4 p-6 bg-amber-50/80 border-2 border-amber-200/80 rounded-3xl space-y-4 shadow-md"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center shrink-0">
+                          <RotateCcw className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black uppercase tracking-wider text-amber-800">Bobina Localizada com Baixa Registrada</span>
+                            {consumedCoilFound.isAuditWriteOff && (
+                              <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black uppercase">
+                                Baixa via Auditoria
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-mono text-xl sm:text-2xl font-black text-slate-900 mt-1">#{consumedCoilFound.coilNumber}</h4>
+                          <p className="text-xs text-slate-600 font-bold mt-1">
+                            Bitola: <span className="text-slate-800 font-black">{consumedCoilFound.diameter} mm</span> • Peso: <span className="text-slate-800 font-black">{consumedCoilFound.weight} kg</span> • Motivo: <span className="text-amber-800 font-black">{consumedCoilFound.auditReason || consumedCoilFound.notes || 'Divergência / Baixa anterior'}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleReactivateConsumedCoil(consumedCoilFound)}
+                        disabled={loading}
+                        className="px-6 py-4 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                      >
+                        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                        Reativar e Devolver ao Estoque
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
                 {success && (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}

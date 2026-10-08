@@ -11,13 +11,14 @@ import {
   orderBy,
   limit,
   writeBatch,
-  serverTimestamp
+  serverTimestamp,
+  setDoc
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { WireBatch, WireCoil, WireSupplier, ProductionLine, WireStorageBay } from '../../types';
 import { useAuth } from '../../hooks/useAuth';
 import { QRCameraScanner } from './QRCameraScanner';
-import { parseWireQRCode } from '../../lib/wireUtils';
+import { parseWireQRCode, isCoilMatch } from '../../lib/wireUtils';
 import { 
   History, 
   Search, 
@@ -33,6 +34,7 @@ import {
   ChevronDown,
   Package,
   Save,
+  RotateCcw,
   Loader2,
   User,
   Barcode,
@@ -184,7 +186,11 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
       batch.supplierName.toLowerCase().includes(term);
     
     const matchesCoil = Boolean(
-      term && coils && coils.some(c => c.batchId === batch.id && c.coilNumber.toLowerCase().includes(term))
+      term && coils && coils.some(c => c.batchId === batch.id && (
+        isCoilMatch(c.coilNumber, term) ||
+        c.coilNumber.toLowerCase().includes(term) ||
+        term.includes(c.coilNumber.toLowerCase().replace(/\s+/g, ''))
+      ))
     );
 
     if (!matchesBatch && !matchesCoil) return false;
@@ -203,8 +209,12 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
   });
 
   const filteredConsumptions = consumptionHistory.filter(coil => {
-    const matchesSearch = coil.coilNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (coil.consumedBy || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const term = searchTerm.trim().toLowerCase();
+    const matchesSearch = !term ||
+      isCoilMatch(coil.coilNumber, term) ||
+      coil.coilNumber.toLowerCase().includes(term) ||
+      term.includes(coil.coilNumber.toLowerCase().replace(/\s+/g, '')) ||
+      (coil.consumedBy || '').toLowerCase().includes(term);
     const matchesDiameter = !filterDiameter || coil.diameter.toString() === filterDiameter;
     return matchesSearch && matchesDiameter;
   });
@@ -511,6 +521,88 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
     }
   };
 
+  const handleReactivateCoil = (coil: WireCoil) => {
+    setModalConfig({
+      isOpen: true,
+      title: 'Reativar Bobina no Estoque',
+      message: `Deseja realmente reativar a bobina #${coil.coilNumber} (${coil.diameter}mm - ${coil.weight}kg)? O status de baixa/consumo será desfeito e a bobina retornará ao status "Recebida" no estoque ativo disponível para novos consumos e auditoria.`,
+      type: 'info',
+      showConfirmButton: true,
+      onConfirm: () => executeReactivateCoil(coil)
+    });
+  };
+
+  const executeReactivateCoil = async (coil: WireCoil) => {
+    setLoading(true);
+    try {
+      const managerName = profile?.displayName || user?.displayName || user?.email || 'Gestor/Admin';
+      const coilRef = doc(db, 'wire_coils', coil.id);
+
+      await updateDoc(coilRef, {
+        status: 'received',
+        consumedAt: null,
+        consumedBy: null,
+        consumedShift: null,
+        consumedIn: null,
+        consumedByGroup: null,
+        currentLineId: null,
+        isAuditWriteOff: false,
+        auditReason: null,
+        notes: `Reativação via Histórico por ${managerName}`,
+        updatedBy: managerName,
+        updatedAt: serverTimestamp()
+      });
+
+      try {
+        const auditDocRef = doc(collection(db, 'wire_audit_logs'));
+        await setDoc(auditDocRef, {
+          action: 'WIRE_COIL_STATUS_CHANGED',
+          batchId: coil.batchId || '',
+          coilId: coil.id,
+          coilNumber: coil.coilNumber,
+          previousStatus: 'consumed',
+          newStatus: 'received',
+          weight: coil.weight,
+          diameter: coil.diameter,
+          supplierId: coil.supplierId || '',
+          managerName: managerName,
+          details: {
+            reason: `Reativação via Histórico por ${managerName}`,
+            origin: 'Histórico de Lotes'
+          },
+          timestamp: serverTimestamp()
+        });
+      } catch (logErr) {
+        console.warn('Audit log write error:', logErr);
+      }
+
+      if (selectedBatchDetails) {
+        setSelectedBatchDetails(prev => 
+          prev ? prev.map(c => c.id === coil.id ? { ...c, status: 'received' as const, consumedAt: undefined, isAuditWriteOff: false } : c) : null
+        );
+      }
+
+      setConsumptionHistory(prev => prev.filter(c => c.id !== coil.id));
+
+      setModalConfig({
+        isOpen: true,
+        title: 'Bobina Reativada com Sucesso!',
+        message: `A bobina #${coil.coilNumber} (${coil.weight} kg) foi reativada com sucesso e retornou ao estoque disponível.`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error('Erro ao reativar bobina:', err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Erro na Reativação',
+        message: `Ocorreu um erro ao reativar a bobina: ${err?.message || 'Falha de comunicação.'}`,
+        type: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleOpenAddCoils = async (batch: WireBatch) => {
     setAddCoilsTargetBatch(batch);
     setPendingNewCoils([]);
@@ -781,37 +873,37 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           <div className="md:col-span-8 relative group">
-            <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors">
-               <Search className="w-6 h-6" />
+            <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors">
+               <Search className="w-5 h-5" />
             </div>
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder={viewMode === 'batches' ? "Buscar por NF, fornecedor ou código da bobina..." : "Filtrar por ID da bobina, operador ou observação..."}
-              className="w-full pl-14 pr-6 py-5 bg-slate-50 border-2 border-transparent focus:border-blue-500 focus:bg-white rounded-2xl text-lg font-bold placeholder:text-slate-300 transition-all shadow-inner outline-none"
+              className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 focus:border-blue-500 focus:bg-white rounded-2xl text-sm font-bold placeholder:text-slate-400 transition-all shadow-xs outline-none"
             />
           </div>
           
           {viewMode === 'consumptions' && (
             <div className="md:col-span-4 relative group">
-              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-500 transition-colors">
-                 <Weight className="w-6 h-6" />
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-500 transition-colors">
+                 <Weight className="w-5 h-5" />
               </div>
               <select
                 value={filterDiameter}
                 onChange={(e) => setFilterDiameter(e.target.value)}
-                className="w-full pl-14 pr-12 py-5 bg-slate-50 border-2 border-transparent focus:border-emerald-500 focus:bg-white rounded-2xl text-lg font-black appearance-none text-slate-700 outline-none transition-all shadow-sm"
+                className="w-full pl-12 pr-10 py-3.5 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white rounded-2xl text-sm font-black appearance-none text-slate-700 outline-none transition-all shadow-xs"
               >
                 <option value="">Todas as Bitolas</option>
                 {Array.from(new Set(consumptionHistory.map(c => c.diameter))).sort((a,b) => Number(a)-Number(b)).map(d => (
                   <option key={d} value={d.toString()}>{d} mm</option>
                 ))}
               </select>
-              <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                 <ChevronRight className="w-5 h-5 rotate-90" />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                 <ChevronRight className="w-4 h-4 rotate-90" />
               </div>
             </div>
           )}
@@ -822,115 +914,115 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
       <div className="space-y-6">
         {/* Batch List (Recebimento) */}
         {viewMode === 'batches' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {filteredBatches.map(batch => (
               <motion.div
                 layout
                 key={`batch-${batch.id}`}
                 className={cn(
-                  "bg-white border-2 rounded-3xl sm:rounded-[2.5rem] transition-all overflow-hidden flex flex-col",
-                  isViewingDetails === batch.id ? "border-blue-500 shadow-2xl shadow-blue-50" : "border-slate-100 hover:border-blue-100 hover:shadow-md"
+                  "bg-white border-2 rounded-2xl sm:rounded-3xl transition-all overflow-hidden flex flex-col shadow-xs",
+                  isViewingDetails === batch.id ? "border-blue-500 shadow-xl shadow-blue-50/50" : "border-slate-150 hover:border-blue-200 hover:shadow-md"
                 )}
               >
-                <div className="p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6 lg:space-y-8 flex-1">
+                <div className="p-4 sm:p-5 lg:p-6 space-y-3.5 sm:space-y-4 flex-1">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-                    <div className="flex items-center gap-3 sm:gap-4">
-                       <div className="w-12 h-12 sm:w-14 sm:h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shadow-xs shrink-0">
-                          <FileText className="w-6 h-6 sm:w-7 sm:h-7" />
+                    <div className="flex items-center gap-3">
+                       <div className="w-10 h-10 sm:w-11 sm:h-11 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shadow-xs shrink-0">
+                          <FileText className="w-5 h-5 sm:w-6 sm:h-6" />
                        </div>
                        <div className="min-w-0">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1 sm:mb-2">Nota Fiscal</p>
-                          <h3 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tighter truncate">#{batch.nfNumber}</h3>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Nota Fiscal</p>
+                          <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">#{batch.nfNumber}</h3>
                        </div>
                     </div>
                     
-                    <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-between sm:justify-end w-full sm:w-auto">
+                    <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap justify-between sm:justify-end w-full sm:w-auto">
                        <button
                          type="button"
                          disabled={generatingPdfBatchId === batch.id}
                          onClick={() => handleGenerateBatchPdf(batch)}
-                         className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 rounded-xl font-black text-xs transition-all active:scale-95 border border-blue-200/70 shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                         className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 rounded-xl font-black text-xs transition-all active:scale-95 border border-blue-200/70 shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                          title="Gerar e baixar PDF completo deste Lote de Arames"
                        >
                          {generatingPdfBatchId === batch.id ? (
-                           <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin shrink-0" />
+                           <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                          ) : (
-                           <FileDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-blue-600" />
+                           <FileDown className="w-3.5 h-3.5 shrink-0 text-blue-600" />
                          )}
                          <span className="text-[11px] sm:text-xs">
-                           {generatingPdfBatchId === batch.id ? 'Gerando...' : 'PDF do Lote'}
+                           {generatingPdfBatchId === batch.id ? 'Gerando...' : 'PDF'}
                          </span>
                        </button>
 
                        {(isAdmin || isManager) && (
-                         <div className="flex items-center gap-1 p-1 bg-slate-50 border border-slate-200/60 rounded-xl shrink-0">
+                         <div className="flex items-center gap-1 p-0.5 bg-slate-50 border border-slate-200/60 rounded-xl shrink-0">
                            <button
                              type="button"
                              onClick={() => handleOpenAddCoils(batch)}
-                             className="flex items-center gap-1.5 px-2.5 sm:px-3 py-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 rounded-lg font-black text-xs transition-all active:scale-95 border border-emerald-200/60 shadow-2xs cursor-pointer"
+                             className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 rounded-lg font-black text-xs transition-all active:scale-95 border border-emerald-200/60 shadow-2xs cursor-pointer"
                              title="Adicionar bobinas a este lote"
                            >
-                             <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                             <span className="text-[11px] sm:text-xs">Add Bobina</span>
+                             <Plus className="w-3.5 h-3.5" />
+                             <span className="text-[11px]">+ Bobina</span>
                            </button>
                            <button
                              onClick={() => setEditingBatch(batch)}
-                             className="p-2 sm:p-2.5 text-amber-500 hover:bg-white hover:text-amber-600 rounded-lg transition-all cursor-pointer"
+                             className="p-1.5 text-amber-500 hover:bg-white hover:text-amber-600 rounded-lg transition-all cursor-pointer"
                              title="Editar Lote"
                            >
-                             <Edit2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                             <Edit2 className="w-3.5 h-3.5" />
                            </button>
                            <button
                              onClick={() => handleDeleteBatch(batch)}
-                             className="p-2 sm:p-2.5 text-rose-400 hover:bg-white hover:text-rose-600 rounded-lg transition-all cursor-pointer"
+                             className="p-1.5 text-rose-400 hover:bg-white hover:text-rose-600 rounded-lg transition-all cursor-pointer"
                              title="Excluir Lote e Bobinas"
                            >
-                             <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                             <Trash2 className="w-3.5 h-3.5" />
                            </button>
                          </div>
                        )}
                        <button
                          onClick={() => fetchBatchDetails(batch.id)}
                          className={cn(
-                           "flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3.5 sm:px-5 lg:px-6 py-2.5 sm:py-3.5 rounded-xl font-black text-xs sm:text-sm transition-all active:scale-95 whitespace-nowrap cursor-pointer shadow-xs",
-                           isViewingDetails === batch.id ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "bg-white border-2 border-slate-150 text-slate-700 hover:bg-blue-50 hover:border-blue-100 hover:text-blue-600"
+                           "flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl font-black text-xs transition-all active:scale-95 whitespace-nowrap cursor-pointer shadow-xs",
+                           isViewingDetails === batch.id ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "bg-white border border-slate-200 text-slate-700 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600"
                          )}
                          title="Clique para ver ou ocultar as bobinas deste lote"
                        >
-                         <Package className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                         <Package className="w-3.5 h-3.5 shrink-0" />
                          <span>{batch.coilsCount} Bobinas</span>
-                         <ChevronDown className={cn("w-3.5 h-3.5 sm:w-4 sm:h-4 transition-transform duration-200 opacity-70", isViewingDetails === batch.id && "rotate-180")} />
+                         <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-200 opacity-70", isViewingDetails === batch.id && "rotate-180")} />
                        </button>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
-                    <div className="space-y-1.5 p-3 sm:p-4 bg-slate-50/50 rounded-xl sm:rounded-2xl border border-slate-100">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 sm:gap-2">
-                        <Truck className="w-3 h-3" /> Fornecedor
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl sm:rounded-2xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1 truncate">
+                        <Truck className="w-3.5 h-3.5 shrink-0 text-slate-400" /> Fornecedor
                       </p>
-                      <p className="text-sm sm:text-lg font-black text-slate-800 tracking-tight leading-snug truncate">{batch.supplierName}</p>
+                      <p className="text-xs sm:text-sm font-extrabold text-slate-800 tracking-tight leading-snug truncate" title={batch.supplierName}>{batch.supplierName}</p>
                     </div>
 
-                    <div className="space-y-1.5 p-3 sm:p-4 bg-slate-50/50 rounded-xl sm:rounded-2xl border border-slate-100">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 sm:gap-2">
-                        <Calendar className="w-3 h-3" /> Data Carga
+                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl sm:rounded-2xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1 truncate">
+                        <Calendar className="w-3.5 h-3.5 shrink-0 text-slate-400" /> Data Carga
                       </p>
-                      <p className="text-sm sm:text-lg font-black text-slate-800">{formatDateBR(batch.date)}</p>
+                      <p className="text-xs sm:text-sm font-extrabold text-slate-800 leading-snug">{formatDateBR(batch.date)}</p>
                     </div>
 
-                    <div className="space-y-1.5 p-3 sm:p-4 bg-slate-50/50 rounded-xl sm:rounded-2xl border border-slate-100">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 sm:gap-2">
-                        <MapPin className="w-3 h-3 text-emerald-600" /> Baia / Local
+                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl sm:rounded-2xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1 truncate">
+                        <MapPin className="w-3.5 h-3.5 shrink-0 text-emerald-600" /> Baia / Local
                       </p>
-                      <p className="text-sm sm:text-lg font-black text-slate-800 truncate">{batch.storageBayName || 'Geral'}</p>
+                      <p className="text-xs sm:text-sm font-extrabold text-slate-800 truncate leading-snug" title={batch.storageBayName || 'Geral'}>{batch.storageBayName || 'Geral'}</p>
                     </div>
 
-                    <div className="space-y-1.5 p-3 sm:p-4 bg-blue-50/30 rounded-xl sm:rounded-2xl border border-blue-100/50">
-                      <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1.5 sm:gap-2">
-                        <Weight className="w-3 h-3" /> Massa Real
+                    <div className="p-2.5 sm:p-3 bg-blue-50/40 rounded-xl sm:rounded-2xl border border-blue-100/60 flex flex-col justify-between min-w-0 shadow-2xs">
+                      <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1 truncate">
+                        <Weight className="w-3.5 h-3.5 shrink-0 text-blue-500" /> Massa Real
                       </p>
-                      <p className="text-base sm:text-xl font-black text-blue-600 font-mono">{batch.totalWeight.toLocaleString()} <span className="text-[10px] font-bold">kg</span></p>
+                      <p className="text-xs sm:text-sm font-black text-blue-700 font-mono leading-snug truncate">{batch.totalWeight.toLocaleString()} <span className="text-[10px] font-semibold text-blue-500">kg</span></p>
                     </div>
                   </div>
 
@@ -938,7 +1030,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                   {searchTerm.trim() && coils && (
                     (() => {
                       const term = searchTerm.trim().toLowerCase();
-                      const matchingCoils = coils.filter(c => c.batchId === batch.id && c.coilNumber.toLowerCase().includes(term));
+                      const matchingCoils = coils.filter(c => c.batchId === batch.id && isCoilMatch(c.coilNumber, term));
                       if (matchingCoils.length > 0) {
                         return (
                           <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
@@ -1024,25 +1116,38 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5 gap-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5 gap-2.5">
                         {selectedBatchDetails.map((coil, idx) => {
                           const isSearchMatch = Boolean(
-                            searchTerm.trim() && coil.coilNumber.toLowerCase().includes(searchTerm.trim().toLowerCase())
+                            searchTerm.trim() && isCoilMatch(coil.coilNumber, searchTerm.trim())
                           );
 
                           return (
                             <div 
                               key={`detail-${coil.id}-${idx}`} 
                               className={cn(
-                                "group bg-white p-4 rounded-2xl border shadow-sm relative transition-all",
+                                "group bg-white p-3 rounded-xl border shadow-2xs relative transition-all",
                                 isSearchMatch 
                                   ? "border-emerald-500 ring-2 ring-emerald-400 bg-emerald-50/25 shadow-md" 
-                                  : "border-slate-200 hover:border-blue-400 hover:shadow-md",
-                                coil.status === 'consumed' && "opacity-60 bg-slate-50"
+                                  : "border-slate-200 hover:border-blue-400 hover:shadow-xs",
+                                coil.status === 'consumed' && "opacity-75 bg-slate-50/80"
                               )}
                             >
                               {(isAdmin || isManager) && (
-                                <div className="absolute -top-2.5 -right-2.5 flex items-center gap-1 z-20">
+                                <div className="absolute -top-2 -right-2 flex items-center gap-1 z-20">
+                                  {coil.status === 'consumed' && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleReactivateCoil(coil);
+                                      }}
+                                      title="Reativar bobina e devolver ao estoque ativo"
+                                      className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer"
+                                    >
+                                      <RotateCcw className="w-3 h-3 stroke-[2.5]" />
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -1050,9 +1155,9 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                                       setEditingCoil(coil);
                                     }}
                                     title="Editar Bobina"
-                                    className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm transition-all active:scale-95"
+                                    className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer"
                                   >
-                                    <Edit2 className="w-3.5 h-3.5" />
+                                    <Edit2 className="w-3 h-3" />
                                   </button>
                                   <button
                                     type="button"
@@ -1061,13 +1166,13 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                                       handleDeleteCoil(coil);
                                     }}
                                     title="Excluir Bobina do Lote"
-                                    className="p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg shadow-sm transition-all active:scale-95"
+                                    className="p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer"
                                   >
-                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <Trash2 className="w-3 h-3" />
                                   </button>
                                 </div>
                               )}
-                              <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center justify-between mb-2">
                                  <span className="text-[9px] font-black text-slate-300 uppercase"># {idx + 1}</span>
                                  <div className="flex items-center gap-1">
                                    {isSearchMatch && (
@@ -1076,22 +1181,22 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                                      </span>
                                    )}
                                    <span className={cn(
-                                     "text-[8px] px-2 py-0.5 rounded-md font-black uppercase",
-                                     coil.status === 'consumed' ? "bg-rose-50 text-rose-500" : "bg-emerald-50 text-emerald-600"
+                                     "text-[8px] px-1.5 py-0.5 rounded font-black uppercase",
+                                     coil.status === 'consumed' ? "bg-rose-50 text-rose-600 border border-rose-200" : "bg-emerald-50 text-emerald-600 border border-emerald-200"
                                    )}>
-                                     {coil.status === 'consumed' ? 'Baixado' : 'Patio'}
+                                     {coil.status === 'consumed' ? 'Baixado' : 'Estoque'}
                                    </span>
                                  </div>
                               </div>
-                              <p className="font-black text-slate-900 text-sm tracking-tight truncate mb-4">{coil.coilNumber}</p>
-                              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                                 <div className="flex items-center gap-1.5">
-                                   <Weight className="w-3 h-3 text-slate-300" />
-                                   <span className="text-[10px] font-black text-slate-600">{coil.weight?.toLocaleString()}kg</span>
+                              <p className="font-mono font-bold text-slate-900 text-xs sm:text-sm tracking-tight truncate mb-2.5" title={coil.coilNumber}>#{coil.coilNumber}</p>
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                                 <div className="flex items-center gap-1">
+                                   <Weight className="w-3 h-3 text-slate-400" />
+                                   <span className="text-[11px] font-black text-slate-700">{coil.weight?.toLocaleString()}kg</span>
                                  </div>
-                                 <div className="flex items-center gap-1.5">
+                                 <div className="flex items-center gap-1">
                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                                   <span className="text-[10px] font-black text-slate-600">{coil.diameter?.toFixed(2)}mm</span>
+                                   <span className="text-[11px] font-bold text-slate-600">{coil.diameter?.toFixed(2)}mm</span>
                                  </div>
                               </div>
                             </div>
@@ -1134,70 +1239,89 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
               <motion.div
                 layout
                 key={`consumption-${coil.id}`}
-                className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm hover:border-emerald-200 hover:shadow-xl transition-all group overflow-hidden relative"
+                className="bg-white p-5 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs hover:border-emerald-200 hover:shadow-lg transition-all group overflow-hidden relative"
               >
-                <div className="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity rotate-12 scale-150">
-                   <Barcode className="w-32 h-32" />
+                <div className="absolute top-0 right-0 p-6 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity rotate-12 scale-150">
+                   <Barcode className="w-24 h-24" />
                 </div>
 
-                <div className="relative z-10 space-y-8">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-4">
-                       <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform">
-                          <Barcode className="w-7 h-7" />
+                <div className="relative z-10 space-y-4 sm:space-y-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                       <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform shrink-0">
+                          <Barcode className="w-5 h-5 sm:w-6 sm:h-6" />
                        </div>
-                       <div>
-                          <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-100 px-2 py-0.5 rounded-full">Consumido</span>
-                          <h3 className="text-2xl font-black text-slate-900 tracking-tight mt-1">{coil.coilNumber}</h3>
+                       <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[9px] font-black text-emerald-600 uppercase tracking-wider bg-emerald-100 px-2 py-0.5 rounded-full">Consumido</span>
+                            {coil.isAuditWriteOff && (
+                              <span className="text-[9px] font-black text-amber-700 uppercase tracking-wider bg-amber-100 px-2 py-0.5 rounded-full">Baixa Auditoria</span>
+                            )}
+                          </div>
+                          <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight mt-0.5 truncate font-mono">#{coil.coilNumber}</h3>
                        </div>
                     </div>
-                    <div className="flex flex-col items-end text-right">
-                       <span className="text-[9px] font-black text-slate-300 uppercase mb-1">Massa Consumida</span>
-                       <p className="text-2xl font-black text-slate-900">{coil.weight?.toLocaleString()} <span className="text-[10px] text-slate-400 uppercase">kg</span></p>
+                    <div className="flex flex-col items-end text-right shrink-0">
+                       <span className="text-[9px] font-black text-slate-400 uppercase mb-0.5">Massa</span>
+                       <p className="text-base sm:text-lg font-black text-slate-900 font-mono">{coil.weight?.toLocaleString()} <span className="text-[10px] text-slate-400 uppercase">kg</span></p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                       <p className="text-[9px] font-black text-slate-400 uppercase mb-1 flex items-center gap-2">
-                          <Factory className="w-3 h-3" /> Linha Destino
+                  <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl border border-slate-100 min-w-0">
+                       <p className="text-[10px] font-bold text-slate-400 uppercase mb-1 flex items-center gap-1.5 truncate">
+                          <Factory className="w-3.5 h-3.5 shrink-0" /> Linha Destino
                        </p>
-                       <p className="text-sm font-black text-slate-800 truncate">
+                       <p className="text-xs sm:text-sm font-extrabold text-slate-800 truncate">
                          {lines.find(l => l.id === coil.currentLineId)?.name || 'N/A'}
                        </p>
                     </div>
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                       <p className="text-[9px] font-black text-slate-400 uppercase mb-1 flex items-center gap-2">
-                          <Package className="w-3 h-3" /> Equipamento
+                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl border border-slate-100 min-w-0">
+                       <p className="text-[10px] font-bold text-slate-400 uppercase mb-1 flex items-center gap-1.5 truncate">
+                          <Package className="w-3.5 h-3.5 shrink-0" /> Equipamento
                        </p>
-                       <p className="text-sm font-black text-slate-800 truncate">
+                       <p className="text-xs sm:text-sm font-extrabold text-slate-800 truncate">
                          {coil.consumedIn || 'N/A'}
                        </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-4 border-t border-slate-50">
-                    <div className="flex flex-col">
-                       <span className="text-[9px] font-black text-slate-300 uppercase mb-1">Escala / Turno</span>
-                       <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100 gap-2">
+                    <div className="flex flex-col min-w-0">
+                       <span className="text-[9px] font-black text-slate-400 uppercase mb-0.5">Escala / Turno</span>
+                       <div className="flex items-center gap-1.5 truncate">
                          <div className={cn(
-                           "w-2 h-2 rounded-full",
+                           "w-2 h-2 rounded-full shrink-0",
                            coil.consumedShift === '1' ? "bg-amber-500" :
                            coil.consumedShift === '2' ? "bg-blue-500" :
                            "bg-indigo-500"
                          )} />
-                         <span className="text-xs font-black text-slate-600 truncate uppercase">
+                         <span className="text-[11px] sm:text-xs font-bold text-slate-600 truncate uppercase">
                            Turno {coil.consumedShift} • Letra {coil.consumedByGroup && coil.consumedByGroup !== '-' ? coil.consumedByGroup : getScheduledLetter(coil.consumedShift || '1', safeToDate(coil.consumedAt) || new Date())} • {coil.consumedBy?.split(' ')[0]}
                          </span>
                        </div>
                     </div>
-                    <div className="flex flex-col items-end text-right">
-                       <span className="text-[10px] font-black text-blue-500 bg-blue-50 px-2 py-0.5 rounded-lg mb-1">{coil.diameter?.toFixed(2)} mm</span>
-                       <span className="text-[10px] font-bold text-slate-300">
+                    <div className="flex flex-col items-end text-right shrink-0">
+                       <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg mb-0.5">{coil.diameter?.toFixed(2)} mm</span>
+                       <span className="text-[10px] font-medium text-slate-400">
                          {coil.consumedAt ? safeToDate(coil.consumedAt)?.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '---'}
                        </span>
                     </div>
                   </div>
+
+                  {(isAdmin || isManager) && (
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleReactivateCoil(coil)}
+                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-700 border border-emerald-200/80 rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                        title="Reativar bobina e devolver ao estoque disponível"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>Reativar no Estoque</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             ))}

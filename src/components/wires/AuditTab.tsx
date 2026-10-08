@@ -20,12 +20,23 @@ import {
   Trash,
   RotateCcw
 } from 'lucide-react';
-import { updateDoc, doc, serverTimestamp, collection, setDoc } from 'firebase/firestore';
+import { 
+  updateDoc, 
+  doc, 
+  serverTimestamp, 
+  collection, 
+  setDoc,
+  getDocs,
+  query,
+  where,
+  limit,
+  orderBy
+} from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { WireCoil, WireSupplier, WireStorageBay } from '../../types';
 import { QRCameraScanner } from './QRCameraScanner';
-import { isCoilMatch } from '../../lib/wireUtils';
+import { isCoilMatch, parseWireQRCode } from '../../lib/wireUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
 
@@ -114,12 +125,99 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
   });
   const [isReactivating, setIsReactivating] = useState(false);
 
+  // Dedicated Search & Reactivate modal
+  const [searchReactivateModalOpen, setSearchReactivateModalOpen] = useState(false);
+  const [searchReactivateInput, setSearchReactivateInput] = useState('');
+  const [searchReactivateLoading, setSearchReactivateLoading] = useState(false);
+  const [searchReactivateFound, setSearchReactivateFound] = useState<WireCoil | null>(null);
+  const [searchReactivateError, setSearchReactivateError] = useState('');
+  const [searchReactivateSuccess, setSearchReactivateSuccess] = useState('');
+
   const openReactivateModal = (targetCoils: WireCoil[]) => {
     setReactivateModal({
       isOpen: true,
       coils: targetCoils,
       customNote: 'Baixa indevida desfeita via Auditoria'
     });
+  };
+
+  const handleDeepSearchForReactivation = async (searchTermToSearch: string) => {
+    const trimmed = searchTermToSearch.trim();
+    if (!trimmed) return;
+    setSearchReactivateLoading(true);
+    setSearchReactivateError('');
+    setSearchReactivateSuccess('');
+    setSearchReactivateFound(null);
+
+    // 1. Check local coils
+    let found = coils.find(c => isCoilMatch(c.coilNumber, trimmed));
+    if (found) {
+      setSearchReactivateFound(found);
+      setSearchReactivateLoading(false);
+      return;
+    }
+
+    // 2. Query Firestore directly
+    try {
+      const parsed = parseWireQRCode(trimmed);
+      const rawDigits = trimmed.match(/[0-9]{6,25}/g) || [];
+      const gdCodes = trimmed.match(/GD[0-9]{10,25}/gi) || [];
+      const searchCandidates = Array.from(new Set([
+        trimmed,
+        parsed?.coilNumber || '',
+        parsed?.coilNumber ? parsed.coilNumber.replace(/^GD/i, '') : '',
+        trimmed.replace(/\s+/g, ' '),
+        trimmed.replace(/\s+/g, ''),
+        ...trimmed.split(/\s+/).filter(p => p.length >= 4),
+        ...gdCodes,
+        ...rawDigits,
+        ...(parsed?.coilNumber ? [parsed.coilNumber.slice(-6), parsed.coilNumber.slice(-8), parsed.coilNumber.slice(-14)] : [])
+      ])).filter(Boolean);
+
+      for (const candidate of searchCandidates) {
+        const qDirect = query(collection(db, 'wire_coils'), where('coilNumber', '==', candidate), limit(1));
+        const snap = await getDocs(qDirect);
+        if (!snap.empty) {
+          found = { id: snap.docs[0].id, ...snap.docs[0].data() } as WireCoil;
+          break;
+        }
+      }
+
+      if (!found) {
+        try {
+          const qConsumed = query(collection(db, 'wire_coils'), where('status', '==', 'consumed'), limit(500));
+          const snapConsumed = await getDocs(qConsumed);
+          found = snapConsumed.docs
+            .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+            .find(c => isCoilMatch(c.coilNumber, trimmed)) || null;
+        } catch (e) {
+          console.warn("Consumed deep search warning:", e);
+        }
+      }
+
+      if (!found) {
+        try {
+          const qRecent = query(collection(db, 'wire_coils'), limit(1000));
+          const snapRecent = await getDocs(qRecent);
+          found = snapRecent.docs
+            .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+            .find(c => isCoilMatch(c.coilNumber, trimmed)) || null;
+        } catch (e) {
+          console.warn("Recent fallback deep search warning:", e);
+        }
+      }
+
+      if (found) {
+        setSearchReactivateFound(found);
+      } else {
+        setSearchReactivateError(`Bobina "${trimmed}" não foi localizada no banco de dados. Verifique a numeração.`);
+      }
+    } catch (err) {
+      console.error(err);
+      setSearchReactivateError('Erro ao consultar banco de dados.');
+    } finally {
+      setSearchReactivateLoading(false);
+    }
   };
 
   // Bulk selection state for pending and written-off coils
@@ -178,11 +276,13 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
     if (!term) return [];
     return enrichedCoils
       .filter(c => 
+        isCoilMatch(c.coilNumber, term) ||
         c.coilNumber.toLowerCase().includes(term) ||
+        term.includes(c.coilNumber.toLowerCase().replace(/\s+/g, '')) ||
         c.supplierName.toLowerCase().includes(term) ||
         (c.storageBayName && c.storageBayName.toLowerCase().includes(term))
       )
-      .slice(0, 10);
+      .slice(0, 15);
   }, [qrInput, enrichedCoils]);
 
   // Effective unified search term (auto-filters the whole table as user types)
@@ -190,12 +290,26 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
     return (qrInput.trim() || searchFilter.trim()).toLowerCase();
   }, [qrInput, searchFilter]);
 
+  // Detect if the searched coil is consumed/written-off while the user is looking at another sub-tab
+  const matchedConsumedInOtherTab = useMemo(() => {
+    if (!effectiveSearchTerm || subTab === 'written_off') return null;
+    return enrichedCoils.find(c => 
+      c.status === 'consumed' && (
+        isCoilMatch(c.coilNumber, effectiveSearchTerm) ||
+        c.coilNumber.toLowerCase().includes(effectiveSearchTerm) ||
+        effectiveSearchTerm.includes(c.coilNumber.toLowerCase().replace(/\s+/g, ''))
+      )
+    );
+  }, [effectiveSearchTerm, subTab, enrichedCoils]);
+
   // Filter lists based on three primary sub-tabs and real-time typed search
   const filteredList = useMemo(() => {
     return enrichedCoils.filter(c => {
       // Basic core filters with real-time automatic matching
       const matchesSearch = !effectiveSearchTerm || 
+        isCoilMatch(c.coilNumber, effectiveSearchTerm) ||
         c.coilNumber.toLowerCase().includes(effectiveSearchTerm) ||
+        effectiveSearchTerm.includes(c.coilNumber.toLowerCase().replace(/\s+/g, '')) ||
         c.supplierName.toLowerCase().includes(effectiveSearchTerm) ||
         (c.bayName && c.bayName.toLowerCase().includes(effectiveSearchTerm));
       const matchesSupplier = !supplierFilter || c.supplierId === supplierFilter;
@@ -284,11 +398,11 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
   };
 
   // Perform a barcode confirmation check
-  const handleConfirmCoilByCode = (code: string) => {
+  const handleConfirmCoilByCode = async (code: string) => {
     const trimmedInput = code.trim();
     if (!trimmedInput) return;
 
-    // Find in our list of active (non-consumed) coils
+    // 1. Find in our list of active (non-consumed) coils
     const matchedCoils = enrichedCoils.filter(c => c.status !== 'consumed');
     const matched = matchedCoils.find(c => isCoilMatch(c.coilNumber, trimmedInput));
 
@@ -304,16 +418,93 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
       }
       setQrInput('');
       setShowSuggestions(false);
-    } else {
-      // Check if it belongs to consumed
-      const isConsumed = coils.find(c => c.status === 'consumed' && isCoilMatch(c.coilNumber, trimmedInput));
-      if (isConsumed) {
-        openReactivateModal([isConsumed]);
-        triggerNotification('info', `A bobina #${isConsumed.coilNumber} consta como BAIXADA. Verifique e confirme a reativação abaixo para devolvê-la ao estoque.`);
-      } else {
-        triggerNotification('error', `Bobina "${trimmedInput}" não localizada na lista de estoque.`);
-      }
+      return;
     }
+
+    // 2. Check if it belongs to consumed in local memory
+    const isConsumed = coils.find(c => c.status === 'consumed' && isCoilMatch(c.coilNumber, trimmedInput));
+    if (isConsumed) {
+      openReactivateModal([isConsumed]);
+      triggerNotification('info', `A bobina #${isConsumed.coilNumber} consta como BAIXADA ${isConsumed.isAuditWriteOff ? 'via Auditoria' : ''}. Verifique e confirme a reativação abaixo para devolvê-la ao estoque.`);
+      setQrInput('');
+      setShowSuggestions(false);
+      return;
+    }
+
+    // 3. Fallback: Deep query directly in Firestore for historic/unloaded coils
+    try {
+      let remoteDoc: WireCoil | null = null;
+      const parsed = parseWireQRCode(trimmedInput);
+      const rawDigits = trimmedInput.match(/[0-9]{6,25}/g) || [];
+      const gdCodes = trimmedInput.match(/GD[0-9]{10,25}/gi) || [];
+      const searchCandidates = Array.from(new Set([
+        trimmedInput,
+        parsed?.coilNumber || '',
+        parsed?.coilNumber ? parsed.coilNumber.replace(/^GD/i, '') : '',
+        trimmedInput.replace(/\s+/g, ' '),
+        trimmedInput.replace(/\s+/g, ''),
+        ...trimmedInput.split(/\s+/).filter(p => p.length >= 4),
+        ...gdCodes,
+        ...rawDigits,
+        ...(parsed?.coilNumber ? [parsed.coilNumber.slice(-6), parsed.coilNumber.slice(-8), parsed.coilNumber.slice(-14)] : [])
+      ])).filter(Boolean);
+
+      for (const candidate of searchCandidates) {
+        const qDirect = query(collection(db, 'wire_coils'), where('coilNumber', '==', candidate), limit(1));
+        const snap = await getDocs(qDirect);
+        if (!snap.empty) {
+          remoteDoc = { id: snap.docs[0].id, ...snap.docs[0].data() } as WireCoil;
+          break;
+        }
+      }
+
+      if (!remoteDoc) {
+        try {
+          const qConsumed = query(collection(db, 'wire_coils'), where('status', '==', 'consumed'), limit(500));
+          const snapConsumed = await getDocs(qConsumed);
+          remoteDoc = snapConsumed.docs
+            .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+            .find(c => isCoilMatch(c.coilNumber, trimmedInput)) || null;
+        } catch (e) {
+          console.warn("Consumed query warning:", e);
+        }
+      }
+
+      if (!remoteDoc) {
+        try {
+          const qRecent = query(collection(db, 'wire_coils'), limit(1000));
+          const snapRecent = await getDocs(qRecent);
+          remoteDoc = snapRecent.docs
+            .map(d => ({ id: d.id, ...d.data() } as WireCoil))
+            .find(c => isCoilMatch(c.coilNumber, trimmedInput)) || null;
+        } catch (e) {
+          console.warn("Recent fallback warning:", e);
+        }
+      }
+
+      if (remoteDoc) {
+        if (remoteDoc.status === 'consumed') {
+          openReactivateModal([remoteDoc]);
+          triggerNotification('info', `A bobina #${remoteDoc.coilNumber} foi localizada no banco de dados e consta como BAIXADA ${remoteDoc.isAuditWriteOff ? 'via Auditoria' : ''}. Confirme a reativação abaixo para devolvê-la ao estoque.`);
+          setQrInput('');
+          setShowSuggestions(false);
+          return;
+        } else {
+          setSession(prev => ({
+            ...prev,
+            confirmedIds: Array.from(new Set([...prev.confirmedIds, remoteDoc!.id]))
+          }));
+          triggerNotification('success', `Bobina encontrada no banco de dados! #${remoteDoc.coilNumber} (${remoteDoc.diameter}mm - ${remoteDoc.weight}kg) confirmada como presente.`);
+          setQrInput('');
+          setShowSuggestions(false);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("Firestore deep search error:", err);
+    }
+
+    triggerNotification('error', `Bobina "${trimmedInput}" não localizada no sistema. Verifique a numeração.`);
   };
 
   // Mark/unmark presence manually for row item
@@ -525,14 +716,32 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
 
           <div className="flex flex-wrap items-center gap-3">
             <button
+              onClick={() => {
+                setSearchReactivateModalOpen(true);
+                const initVal = qrInput.trim() || searchFilter.trim();
+                setSearchReactivateInput(initVal);
+                setSearchReactivateFound(null);
+                setSearchReactivateError('');
+                setSearchReactivateSuccess('');
+                if (initVal) {
+                  handleDeepSearchForReactivation(initVal);
+                }
+              }}
+              className="px-5 py-3 bg-amber-500/20 hover:bg-amber-500/30 active:scale-95 text-amber-200 border border-amber-500/40 text-xs font-black uppercase tracking-widest rounded-2xl transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+              title="Buscar e reativar qualquer bobina baixada no sistema"
+            >
+              <RotateCcw className="w-4 h-4 text-amber-400 stroke-[2.5]" />
+              Localizar / Reativar Bobina
+            </button>
+            <button
               onClick={handleResetSession}
-              className="px-5 py-3 bg-white/10 hover:bg-white/15 active:scale-95 text-white border border-white/15 text-xs font-black uppercase tracking-widest rounded-2xl transition-all shadow-sm"
+              className="px-5 py-3 bg-white/10 hover:bg-white/15 active:scale-95 text-white border border-white/15 text-xs font-black uppercase tracking-widest rounded-2xl transition-all shadow-sm cursor-pointer"
             >
               Reiniciar Auditoria
             </button>
             <button
               onClick={() => setIsCameraOpen(true)}
-              className="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 text-xs font-black uppercase tracking-widest rounded-2xl transition-all flex items-center gap-2.5 shadow-lg shadow-emerald-500/20"
+              className="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 text-xs font-black uppercase tracking-widest rounded-2xl transition-all flex items-center gap-2.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
             >
               <Camera className="w-4 h-4 text-slate-950 stroke-[2.5]" />
               Escanear QR Code
@@ -815,6 +1024,49 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
       {/* Control Workspace: Multi-Lists / Filter Toolbar */}
       <div className="space-y-6">
         
+        {/* Banner: Coil found in other tab as Consumed/Written-off */}
+        {matchedConsumedInOtherTab && (
+          <div className="bg-amber-50/90 border-2 border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-200 text-amber-800 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-amber-900">
+                  Bobina localizada no sistema, mas consta como BAIXADA
+                </p>
+                <p className="text-sm font-bold text-slate-800 mt-0.5">
+                  <span className="font-mono font-black text-slate-900">#{matchedConsumedInOtherTab.coilNumber}</span> ({matchedConsumedInOtherTab.supplierName} • {matchedConsumedInOtherTab.diameter}mm • {matchedConsumedInOtherTab.weight}kg)
+                  {matchedConsumedInOtherTab.isAuditWriteOff ? ' • Baixada via Auditoria' : ''}
+                </p>
+                {matchedConsumedInOtherTab.notes && (
+                  <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                    {matchedConsumedInOtherTab.notes}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSubTab('written_off')}
+                className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-black text-xs uppercase tracking-wider rounded-xl border border-slate-200 transition-all cursor-pointer shadow-xs"
+              >
+                Ver na Aba Baixadas
+              </button>
+              <button
+                type="button"
+                onClick={() => openReactivateModal([matchedConsumedInOtherTab])}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Reativar Bobina
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Sub-tab Selectors */}
         <div className="flex items-center border-b border-slate-200">
           <button
@@ -1356,6 +1608,144 @@ export const AuditTab: React.FC<AuditTabProps> = ({ coils, suppliers, storageBay
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Localizar e Reativar Qualquer Bobina no Sistema */}
+      {searchReactivateModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[95]">
+          <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden w-full max-w-xl shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="bg-slate-950 p-6 text-white border-b border-amber-950 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-black tracking-tight flex items-center gap-2">
+                  <RotateCcw className="w-5 h-5 text-amber-400" />
+                  Localizar e Reativar Bobina
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">Busca profunda no banco de dados para desfazer baixas indevidas</p>
+              </div>
+              <button
+                onClick={() => setSearchReactivateModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-white transition-all rounded-full cursor-pointer"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-5">
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleDeepSearchForReactivation(searchReactivateInput);
+                }}
+                className="space-y-3"
+              >
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest">
+                  Código ou QR Code da Bobina
+                </label>
+                <div className="flex gap-2">
+                  <div className="flex-1 relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={searchReactivateInput}
+                      onChange={(e) => setSearchReactivateInput(e.target.value)}
+                      placeholder="Cole o código completo da etiqueta ou o código GD..."
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={searchReactivateLoading || !searchReactivateInput.trim()}
+                    className="px-5 py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 cursor-pointer shrink-0"
+                  >
+                    {searchReactivateLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                    Pesquisar
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium">
+                  Exemplo: <span className="font-mono text-slate-600 font-bold">0002882003058253 O577000 GD03040000211162...</span> ou <span className="font-mono text-slate-600 font-bold">GD03040000211162</span>
+                </p>
+              </form>
+
+              {searchReactivateError && (
+                <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-3 text-rose-700 text-xs font-bold">
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+                  <span>{searchReactivateError}</span>
+                </div>
+              )}
+
+              {searchReactivateFound && (
+                <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black uppercase text-slate-400">Status Atual:</span>
+                        {searchReactivateFound.status === 'consumed' ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700 font-black text-[10px] uppercase">
+                            Baixada / Fora de Estoque
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-black text-[10px] uppercase">
+                            Em Estoque Ativo ({searchReactivateFound.status})
+                          </span>
+                        )}
+                        {searchReactivateFound.isAuditWriteOff && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-black text-[9px] uppercase">
+                            Via Auditoria
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="font-mono text-xl font-black text-slate-900 mt-1">
+                        #{searchReactivateFound.coilNumber}
+                      </h4>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="text-xs font-black text-slate-900 font-mono">{searchReactivateFound.weight} kg</span>
+                      <p className="text-[10px] text-slate-400 font-bold">{searchReactivateFound.diameter} mm</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="p-3 bg-white rounded-xl border border-slate-100">
+                      <span className="text-[10px] font-black uppercase text-slate-400 block">Fornecedor</span>
+                      <span className="font-bold text-slate-700">{supplierMap.get(searchReactivateFound.supplierId) || 'Morlan / Belgo'}</span>
+                    </div>
+                    <div className="p-3 bg-white rounded-xl border border-slate-100">
+                      <span className="text-[10px] font-black uppercase text-slate-400 block">Última Baixa / Motivo</span>
+                      <span className="font-bold text-slate-700 truncate block">
+                        {searchReactivateFound.auditReason || searchReactivateFound.notes || (searchReactivateFound.status === 'consumed' ? 'Consumido / Baixado' : 'Disponível')}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-end gap-3 border-t border-slate-200">
+                    {searchReactivateFound.status === 'consumed' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchReactivateModalOpen(false);
+                          openReactivateModal([searchReactivateFound]);
+                        }}
+                        className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <RotateCcw className="w-4 h-4 stroke-[2.5]" />
+                        Reativar Esta Bobina e Voltar ao Estoque
+                      </button>
+                    ) : (
+                      <div className="text-emerald-700 font-bold text-xs flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Esta bobina já se encontra ativa no estoque!
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

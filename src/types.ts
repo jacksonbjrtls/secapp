@@ -206,6 +206,8 @@ export interface WireCoil {
   storageBayName?: string;
   isAuditWriteOff?: boolean;
   auditReason?: string;
+  notes?: string;
+  createdAt?: any;
 }
 
 export interface WireReceivingDraft {

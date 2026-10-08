@@ -969,7 +969,14 @@ const Reports: React.FC = () => {
       }
       if (rayXAccessFilter === 'accessed' && !item.hasAccessed) return false;
       if (rayXAccessFilter === 'never_accessed' && item.hasAccessed) return false;
-      if (rayXShiftFilter !== 'all' && item.group !== rayXShiftFilter) return false;
+      if (rayXShiftFilter !== 'all') {
+        const itemGroup = (item.group || '').toUpperCase();
+        if (rayXShiftFilter === 'ADM') {
+          if (itemGroup !== 'ADM' && !itemGroup.startsWith('ADM') && itemGroup !== 'ADMINISTRATIVO') return false;
+        } else if (item.group !== rayXShiftFilter && !itemGroup.includes(rayXShiftFilter.toUpperCase())) {
+          return false;
+        }
+      }
       return true;
     });
   }, [teamRayXSummary, rayXSearchTerm, rayXAccessFilter, rayXShiftFilter]);
@@ -2642,8 +2649,8 @@ const Reports: React.FC = () => {
                     <option value="Grupo B">Grupo B</option>
                     <option value="Grupo C">Grupo C</option>
                     <option value="Grupo D">Grupo D</option>
-                    <option value="Geral">Geral</option>
-                    <option value="Administrativo">Administrativo</option>
+                    <option value="Grupo E">Grupo E</option>
+                    <option value="ADM">ADM</option>
                   </select>
 
                   <span className="text-[11px] font-bold text-slate-500 ml-1">
