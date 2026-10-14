@@ -930,99 +930,99 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                        <div className="w-10 h-10 sm:w-11 sm:h-11 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shadow-xs shrink-0">
                           <FileText className="w-5 h-5 sm:w-6 sm:h-6" />
                        </div>
-                       <div className="min-w-0">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Nota Fiscal</p>
-                          <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">#{batch.nfNumber}</h3>
-                       </div>
+                        <div className="min-w-0">
+                          <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Nota Fiscal</p>
+                          <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight truncate">#{batch.nfNumber}</h3>
+                        </div>
                     </div>
                     
                     <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap justify-between sm:justify-end w-full sm:w-auto">
-                       <button
-                         type="button"
-                         disabled={generatingPdfBatchId === batch.id}
-                         onClick={() => handleGenerateBatchPdf(batch)}
-                         className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 rounded-xl font-black text-xs transition-all active:scale-95 border border-blue-200/70 shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                         title="Gerar e baixar PDF completo deste Lote de Arames"
-                       >
-                         {generatingPdfBatchId === batch.id ? (
-                           <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                         ) : (
-                           <FileDown className="w-3.5 h-3.5 shrink-0 text-blue-600" />
-                         )}
-                         <span className="text-[11px] sm:text-xs">
-                           {generatingPdfBatchId === batch.id ? 'Gerando...' : 'PDF'}
-                         </span>
-                       </button>
+                        <button
+                          type="button"
+                          disabled={generatingPdfBatchId === batch.id}
+                          onClick={() => handleGenerateBatchPdf(batch)}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 rounded-xl font-black text-xs transition-all active:scale-95 border border-blue-200/70 shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Gerar e baixar PDF completo deste Lote de Arames"
+                        >
+                          {generatingPdfBatchId === batch.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                          ) : (
+                            <FileDown className="w-3.5 h-3.5 shrink-0 text-blue-600" />
+                          )}
+                          <span className="text-[11px] sm:text-xs">
+                            {generatingPdfBatchId === batch.id ? 'Gerando...' : 'PDF'}
+                          </span>
+                        </button>
 
-                       {(isAdmin || isManager) && (
-                         <div className="flex items-center gap-1 p-0.5 bg-slate-50 border border-slate-200/60 rounded-xl shrink-0">
-                           <button
-                             type="button"
-                             onClick={() => handleOpenAddCoils(batch)}
-                             className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 rounded-lg font-black text-xs transition-all active:scale-95 border border-emerald-200/60 shadow-2xs cursor-pointer"
-                             title="Adicionar bobinas a este lote"
-                           >
-                             <Plus className="w-3.5 h-3.5" />
-                             <span className="text-[11px]">+ Bobina</span>
-                           </button>
-                           <button
-                             onClick={() => setEditingBatch(batch)}
-                             className="p-1.5 text-amber-500 hover:bg-white hover:text-amber-600 rounded-lg transition-all cursor-pointer"
-                             title="Editar Lote"
-                           >
-                             <Edit2 className="w-3.5 h-3.5" />
-                           </button>
-                           <button
-                             onClick={() => handleDeleteBatch(batch)}
-                             className="p-1.5 text-rose-400 hover:bg-white hover:text-rose-600 rounded-lg transition-all cursor-pointer"
-                             title="Excluir Lote e Bobinas"
-                           >
-                             <Trash2 className="w-3.5 h-3.5" />
-                           </button>
-                         </div>
-                       )}
-                       <button
-                         onClick={() => fetchBatchDetails(batch.id)}
-                         className={cn(
-                           "flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl font-black text-xs transition-all active:scale-95 whitespace-nowrap cursor-pointer shadow-xs",
-                           isViewingDetails === batch.id ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "bg-white border border-slate-200 text-slate-700 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600"
-                         )}
-                         title="Clique para ver ou ocultar as bobinas deste lote"
-                       >
-                         <Package className="w-3.5 h-3.5 shrink-0" />
-                         <span>{batch.coilsCount} Bobinas</span>
-                         <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-200 opacity-70", isViewingDetails === batch.id && "rotate-180")} />
-                       </button>
+                        {(isAdmin || isManager) && (
+                          <div className="flex items-center gap-1 p-0.5 bg-slate-50 border border-slate-200/60 rounded-xl shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddCoils(batch)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 rounded-lg font-black text-xs transition-all active:scale-95 border border-emerald-200/60 shadow-2xs cursor-pointer"
+                              title="Adicionar bobinas a este lote"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span className="text-[11px]">+ Bobina</span>
+                            </button>
+                            <button
+                              onClick={() => setEditingBatch(batch)}
+                              className="p-1.5 text-amber-500 hover:bg-white hover:text-amber-600 rounded-lg transition-all cursor-pointer"
+                              title="Editar Lote"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteBatch(batch)}
+                              className="p-1.5 text-rose-400 hover:bg-white hover:text-rose-600 rounded-lg transition-all cursor-pointer"
+                              title="Excluir Lote e Bobinas"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                        <button
+                          onClick={() => fetchBatchDetails(batch.id)}
+                          className={cn(
+                            "flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl font-black text-xs transition-all active:scale-95 whitespace-nowrap cursor-pointer shadow-xs",
+                            isViewingDetails === batch.id ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "bg-white border border-slate-200 text-slate-700 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600"
+                          )}
+                          title="Clique para ver ou ocultar as bobinas deste lote"
+                        >
+                          <Package className="w-3.5 h-3.5 shrink-0" />
+                          <span>{batch.coilsCount} Bobinas</span>
+                          <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-200 opacity-70", isViewingDetails === batch.id && "rotate-180")} />
+                        </button>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
-                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl sm:rounded-2xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1 truncate">
-                        <Truck className="w-3.5 h-3.5 shrink-0 text-slate-400" /> Fornecedor
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5">
+                    <div className="p-2 sm:p-2.5 bg-slate-50/80 rounded-xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
+                      <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none mb-1 truncate">
+                        <Truck className="w-3 h-3 shrink-0 text-slate-400" /> Fornecedor
                       </p>
-                      <p className="text-xs sm:text-sm font-extrabold text-slate-800 tracking-tight leading-snug truncate" title={batch.supplierName}>{batch.supplierName}</p>
+                      <p className="text-xs sm:text-[13px] font-bold text-slate-800 tracking-tight leading-snug truncate" title={batch.supplierName}>{batch.supplierName}</p>
                     </div>
 
-                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl sm:rounded-2xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1 truncate">
-                        <Calendar className="w-3.5 h-3.5 shrink-0 text-slate-400" /> Data Carga
+                    <div className="p-2 sm:p-2.5 bg-slate-50/80 rounded-xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
+                      <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none mb-1 truncate">
+                        <Calendar className="w-3 h-3 shrink-0 text-slate-400" /> Data Carga
                       </p>
-                      <p className="text-xs sm:text-sm font-extrabold text-slate-800 leading-snug">{formatDateBR(batch.date)}</p>
+                      <p className="text-xs sm:text-[13px] font-bold text-slate-800 leading-snug truncate">{formatDateBR(batch.date)}</p>
                     </div>
 
-                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl sm:rounded-2xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1 truncate">
-                        <MapPin className="w-3.5 h-3.5 shrink-0 text-emerald-600" /> Baia / Local
+                    <div className="p-2 sm:p-2.5 bg-slate-50/80 rounded-xl border border-slate-150/70 flex flex-col justify-between min-w-0 shadow-2xs">
+                      <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none mb-1 truncate">
+                        <MapPin className="w-3 h-3 shrink-0 text-emerald-600" /> Baia / Local
                       </p>
-                      <p className="text-xs sm:text-sm font-extrabold text-slate-800 truncate leading-snug" title={batch.storageBayName || 'Geral'}>{batch.storageBayName || 'Geral'}</p>
+                      <p className="text-xs sm:text-[13px] font-bold text-slate-800 truncate leading-snug" title={batch.storageBayName || 'Geral'}>{batch.storageBayName || 'Geral'}</p>
                     </div>
 
-                    <div className="p-2.5 sm:p-3 bg-blue-50/40 rounded-xl sm:rounded-2xl border border-blue-100/60 flex flex-col justify-between min-w-0 shadow-2xs">
-                      <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1 truncate">
-                        <Weight className="w-3.5 h-3.5 shrink-0 text-blue-500" /> Massa Real
+                    <div className="p-2 sm:p-2.5 bg-blue-50/40 rounded-xl border border-blue-100/60 flex flex-col justify-between min-w-0 shadow-2xs">
+                      <p className="text-[9px] sm:text-[10px] font-bold text-blue-500 uppercase tracking-wider flex items-center gap-1 leading-none mb-1 truncate">
+                        <Weight className="w-3 h-3 shrink-0 text-blue-500" /> Massa Real
                       </p>
-                      <p className="text-xs sm:text-sm font-black text-blue-700 font-mono leading-snug truncate">{batch.totalWeight.toLocaleString()} <span className="text-[10px] font-semibold text-blue-500">kg</span></p>
+                      <p className="text-xs sm:text-[13px] font-black text-blue-700 font-mono leading-snug truncate">{batch.totalWeight.toLocaleString()} <span className="text-[9px] font-semibold text-blue-500">kg</span></p>
                     </div>
                   </div>
 
@@ -1054,12 +1054,12 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                     })()
                   )}
 
-                  <div className="flex items-center justify-between pt-2">
-                     <div className="flex items-center gap-2 text-slate-400">
-                        <User className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-black uppercase tracking-widest">{batch.responsibleName || 'Sistema'}</span>
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                     <div className="flex items-center gap-1.5 text-slate-400">
+                        <User className="w-3 h-3" />
+                        <span className="text-[9px] font-bold uppercase tracking-wider">{batch.responsibleName || 'Sistema'}</span>
                      </div>
-                     <span className="text-[10px] font-bold text-slate-300 italic">Recebido em {batch.createdAt ? new Date(batch.createdAt.seconds * 1000).toLocaleString() : '--'}</span>
+                     <span className="text-[9px] font-medium text-slate-400">Recebido em {batch.createdAt ? new Date(batch.createdAt.seconds * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '--'}</span>
                   </div>
                 </div>
 
@@ -1267,20 +1267,20 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
-                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl border border-slate-100 min-w-0">
-                       <p className="text-[10px] font-bold text-slate-400 uppercase mb-1 flex items-center gap-1.5 truncate">
-                          <Factory className="w-3.5 h-3.5 shrink-0" /> Linha Destino
+                  <div className="grid grid-cols-2 gap-2 sm:gap-2.5">
+                    <div className="p-2 sm:p-2.5 bg-slate-50/80 rounded-xl border border-slate-100 min-w-0">
+                       <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase mb-1 flex items-center gap-1 truncate">
+                          <Factory className="w-3 h-3 shrink-0 text-slate-400" /> Linha Destino
                        </p>
-                       <p className="text-xs sm:text-sm font-extrabold text-slate-800 truncate">
+                       <p className="text-xs sm:text-[13px] font-bold text-slate-800 truncate">
                          {lines.find(l => l.id === coil.currentLineId)?.name || 'N/A'}
                        </p>
                     </div>
-                    <div className="p-2.5 sm:p-3 bg-slate-50/80 rounded-xl border border-slate-100 min-w-0">
-                       <p className="text-[10px] font-bold text-slate-400 uppercase mb-1 flex items-center gap-1.5 truncate">
-                          <Package className="w-3.5 h-3.5 shrink-0" /> Equipamento
+                    <div className="p-2 sm:p-2.5 bg-slate-50/80 rounded-xl border border-slate-100 min-w-0">
+                       <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase mb-1 flex items-center gap-1 truncate">
+                          <Package className="w-3 h-3 shrink-0 text-slate-400" /> Equipamento
                        </p>
-                       <p className="text-xs sm:text-sm font-extrabold text-slate-800 truncate">
+                       <p className="text-xs sm:text-[13px] font-bold text-slate-800 truncate">
                          {coil.consumedIn || 'N/A'}
                        </p>
                     </div>

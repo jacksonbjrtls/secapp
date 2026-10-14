@@ -68,6 +68,21 @@ import {
   WorkSector
 } from '../types';
 
+// Helper to deduplicate strings case-insensitively, trim whitespace, and sort with pt-BR collation
+export const deduplicateStrings = (items: (string | undefined | null)[]): string[] => {
+  const map = new Map<string, string>();
+  for (const item of items) {
+    if (!item) continue;
+    const trimmed = String(item).trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    if (!map.has(lower)) {
+      map.set(lower, trimmed);
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+};
+
 // Default Fallbacks for first time setup
 const DEFAULT_INSPECTION_TYPES = ['Mecânica', 'Elétrica', 'Instrumentação', 'Preditiva', 'Lubrificação', 'Operacional', 'Segurança'];
 const DEFAULT_RESPONSIBLE_CENTERS = ['PCM / Manutenção Mecânica', 'Oficina Elétrica', 'Equipe de Instrumentação', 'Automação & Redes', 'Serviços Gerais / Civil', 'Equipe Operacional'];
@@ -226,16 +241,6 @@ export default function Maintenance() {
 
     const unsubInspTypes = subscribeSharedCollection('maintenance_inspection_types', (list) => {
       setInspectionTypes(list as MaintenanceInspectionType[]);
-      if (list.length === 0 && !localStorage.getItem('maint_seeded_insp_types_v2')) {
-        localStorage.setItem('maint_seeded_insp_types_v2', 'true');
-        DEFAULT_INSPECTION_TYPES.forEach(name => {
-          addDoc(collection(db, 'maintenance_inspection_types'), {
-            name,
-            active: true,
-            createdAt: serverTimestamp()
-          }).catch(console.error);
-        });
-      }
     }, 'name');
 
     const unsubInspNames = subscribeSharedCollection('maintenance_inspection_names', (list) => {
@@ -244,44 +249,14 @@ export default function Maintenance() {
 
     const unsubCenters = subscribeSharedCollection('maintenance_responsible_centers', (list) => {
       setResponsibleCenters(list as MaintenanceResponsibleCenter[]);
-      if (list.length === 0 && !localStorage.getItem('maint_seeded_centers_v2')) {
-        localStorage.setItem('maint_seeded_centers_v2', 'true');
-        DEFAULT_RESPONSIBLE_CENTERS.forEach(name => {
-          addDoc(collection(db, 'maintenance_responsible_centers'), {
-            name,
-            active: true,
-            createdAt: serverTimestamp()
-          }).catch(console.error);
-        });
-      }
     }, 'name');
 
     const unsubProgTypes = subscribeSharedCollection('maintenance_programming_types', (list) => {
       setProgrammingTypes(list as MaintenanceProgrammingType[]);
-      if (list.length === 0 && !localStorage.getItem('maint_seeded_prog_types_v2')) {
-        localStorage.setItem('maint_seeded_prog_types_v2', 'true');
-        DEFAULT_PROGRAMMING_TYPES.forEach(name => {
-          addDoc(collection(db, 'maintenance_programming_types'), {
-            name,
-            active: true,
-            createdAt: serverTimestamp()
-          }).catch(console.error);
-        });
-      }
     }, 'name');
 
     const unsubStatuses = subscribeSharedCollection('maintenance_statuses', (list) => {
       setStatuses(list as MaintenanceStatus[]);
-      if (list.length === 0 && !localStorage.getItem('maint_seeded_statuses_v2')) {
-        localStorage.setItem('maint_seeded_statuses_v2', 'true');
-        DEFAULT_STATUSES.forEach(name => {
-          addDoc(collection(db, 'maintenance_statuses'), {
-            name,
-            active: true,
-            createdAt: serverTimestamp()
-          }).catch(console.error);
-        });
-      }
     }, 'name');
 
     const unsubLines = subscribeSharedCollection('maintenance_lines', (list) => {
@@ -305,26 +280,67 @@ export default function Maintenance() {
     };
   }, [isMaster]);
 
-  // Compute lists for UI with fallback options if collections are empty
-  const availableInspectionTypes = inspectionTypes.length > 0 
-    ? inspectionTypes.map(t => t.name)
-    : DEFAULT_INSPECTION_TYPES;
+  // Compute lists for UI with fallback options if collections are empty (guaranteed unique and sorted)
+  const availableInspectionTypes = useMemo(() => {
+    const raw = inspectionTypes.length > 0 
+      ? inspectionTypes.map(t => t.name)
+      : DEFAULT_INSPECTION_TYPES;
+    return deduplicateStrings(raw);
+  }, [inspectionTypes]);
 
-  const availableResponsibleCenters = (responsibleCenters.length > 0
-    ? responsibleCenters.map(c => c.name)
-    : DEFAULT_RESPONSIBLE_CENTERS
-  ).slice().sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  const availableResponsibleCenters = useMemo(() => {
+    const raw = responsibleCenters.length > 0
+      ? responsibleCenters.map(c => c.name)
+      : DEFAULT_RESPONSIBLE_CENTERS;
+    return deduplicateStrings(raw);
+  }, [responsibleCenters]);
 
-  const availableProgrammingTypes = programmingTypes.length > 0
-    ? programmingTypes.map(p => p.name)
-    : DEFAULT_PROGRAMMING_TYPES;
+  const availableProgrammingTypes = useMemo(() => {
+    const raw = programmingTypes.length > 0
+      ? programmingTypes.map(p => p.name)
+      : DEFAULT_PROGRAMMING_TYPES;
+    return deduplicateStrings(raw);
+  }, [programmingTypes]);
 
-  const availableStatuses = statuses.length > 0
-    ? statuses.map(s => s.name)
-    : DEFAULT_STATUSES;
+  const availableStatuses = useMemo(() => {
+    const raw = statuses.length > 0
+      ? statuses.map(s => s.name)
+      : DEFAULT_STATUSES;
+    return deduplicateStrings(raw);
+  }, [statuses]);
+
+  // Unique sectors for form selection
+  const availableFormSectors = useMemo(() => {
+    const map = new Map<string, WorkSector>();
+    sectors.forEach(s => {
+      const name = (s.name || '').trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, s);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
+  }, [sectors]);
 
   // Sorted lines in alphabetical order
-  const sortedLines = [...lines].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
+  const sortedLines = useMemo(() => {
+    return [...lines].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
+  }, [lines]);
+
+  // Unique lines for form selection (filtered by chosen sector)
+  const availableFormLines = useMemo(() => {
+    const map = new Map<string, ProductionLine>();
+    sortedLines
+      .filter(l => !formSector || !l.sector || l.sector.trim().toLowerCase() === formSector.trim().toLowerCase())
+      .forEach(l => {
+        const key = `${l.name.trim().toLowerCase()}__${(l.sector || '').trim().toLowerCase()}`;
+        if (!map.has(key)) {
+          map.set(key, l);
+        }
+      });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
+  }, [sortedLines, formSector]);
 
   // Unique sorted sectors for the pendency list filter dropdown
   const uniqueFilterSectors = useMemo(() => {
@@ -397,10 +413,13 @@ export default function Maintenance() {
     }
   }, [uniqueFilterLines, filterLine]);
 
-  // Filter inspection names based on current form Inspection Type
-  const filteredInspectionNames = inspectionNames
-    .filter(n => !formInspectionType || n.inspectionTypeName === formInspectionType)
-    .map(n => n.name);
+  // Filter inspection names based on current form Inspection Type (guaranteed unique)
+  const filteredInspectionNames = useMemo(() => {
+    const raw = inspectionNames
+      .filter(n => !formInspectionType || (n.inspectionTypeName || '').trim().toLowerCase() === formInspectionType.trim().toLowerCase())
+      .map(n => n.name);
+    return deduplicateStrings(raw);
+  }, [inspectionNames, formInspectionType]);
 
   // Filtered maintenance issues list
   const filteredIssues = issues.filter(issue => {
@@ -441,8 +460,8 @@ export default function Maintenance() {
     setEditingIssue(null);
     const todayStr = getLocalDateStrBR(new Date());
     setFormDate(todayStr);
-    setFormSector(sectors[0]?.name || '');
-    setFormLine(lines[0]?.name || '');
+    setFormSector(availableFormSectors[0]?.name || '');
+    setFormLine(availableFormLines[0]?.name || '');
 
     // Auto calculate current shift and team letter based on system scale
     const currentScaleShift = getCurrentShift();
@@ -913,10 +932,15 @@ export default function Maintenance() {
   // Admin Single Add Inspection Type
   const handleAddInspectionType = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newInspTypeInput.trim()) return;
+    const val = newInspTypeInput.trim();
+    if (!val) return;
+    if (inspectionTypes.some(t => t.name.trim().toLowerCase() === val.toLowerCase())) {
+      alert('Este Tipo de Inspeção já está cadastrado!');
+      return;
+    }
     try {
       await addDoc(collection(db, 'maintenance_inspection_types'), {
-        name: newInspTypeInput.trim(),
+        name: val,
         active: true,
         createdAt: serverTimestamp()
       });
@@ -929,11 +953,16 @@ export default function Maintenance() {
   // Admin Single Add Inspection Name
   const handleAddInspectionName = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newInspNameInput.trim() || !newInspNameTypeSel) return;
+    const val = newInspNameInput.trim();
+    if (!val || !newInspNameTypeSel) return;
+    if (inspectionNames.some(n => n.name.trim().toLowerCase() === val.toLowerCase() && (n.inspectionTypeName || '').trim().toLowerCase() === newInspNameTypeSel.trim().toLowerCase())) {
+      alert('Este Nome de Inspeção já está cadastrado para este tipo!');
+      return;
+    }
     try {
       await addDoc(collection(db, 'maintenance_inspection_names'), {
         inspectionTypeName: newInspNameTypeSel,
-        name: newInspNameInput.trim(),
+        name: val,
         active: true,
         createdAt: serverTimestamp()
       });
@@ -946,10 +975,15 @@ export default function Maintenance() {
   // Admin Add Responsible Center
   const handleAddResponsibleCenter = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCenterInput.trim()) return;
+    const val = newCenterInput.trim();
+    if (!val) return;
+    if (responsibleCenters.some(c => c.name.trim().toLowerCase() === val.toLowerCase())) {
+      alert('Este Centro Responsável já está cadastrado!');
+      return;
+    }
     try {
       await addDoc(collection(db, 'maintenance_responsible_centers'), {
-        name: newCenterInput.trim(),
+        name: val,
         active: true,
         createdAt: serverTimestamp()
       });
@@ -962,10 +996,15 @@ export default function Maintenance() {
   // Admin Add Programming Type
   const handleAddProgrammingType = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProgTypeInput.trim()) return;
+    const val = newProgTypeInput.trim();
+    if (!val) return;
+    if (programmingTypes.some(p => p.name.trim().toLowerCase() === val.toLowerCase())) {
+      alert('Este Tipo de Programação já está cadastrado!');
+      return;
+    }
     try {
       await addDoc(collection(db, 'maintenance_programming_types'), {
-        name: newProgTypeInput.trim(),
+        name: val,
         active: true,
         createdAt: serverTimestamp()
       });
@@ -978,10 +1017,15 @@ export default function Maintenance() {
   // Admin Add Sector
   const handleAddSector = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSectorInput.trim()) return;
+    const val = newSectorInput.trim();
+    if (!val) return;
+    if (sectors.some(s => s.name.trim().toLowerCase() === val.toLowerCase())) {
+      alert('Este Setor já está cadastrado!');
+      return;
+    }
     try {
       await addDoc(collection(db, 'work_sectors'), {
-        name: newSectorInput.trim(),
+        name: val,
         active: true,
         createdAt: serverTimestamp()
       });
@@ -1009,11 +1053,17 @@ export default function Maintenance() {
   // Admin Add Maintenance Line
   const handleAddLine = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLineNameInput.trim()) return;
+    const val = newLineNameInput.trim();
+    const sec = newLineSectorInput.trim();
+    if (!val) return;
+    if (lines.some(l => l.name.trim().toLowerCase() === val.toLowerCase() && (l.sector || '').trim().toLowerCase() === sec.toLowerCase())) {
+      alert('Esta Linha de Produção já está cadastrada para este setor!');
+      return;
+    }
     try {
       await addDoc(collection(db, 'maintenance_lines'), {
-        name: newLineNameInput.trim(),
-        sector: newLineSectorInput.trim(),
+        name: val,
+        sector: sec,
         active: true,
         createdAt: serverTimestamp()
       });
@@ -1043,10 +1093,15 @@ export default function Maintenance() {
   // Admin Add Status
   const handleAddStatus = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStatusInput.trim()) return;
+    const val = newStatusInput.trim();
+    if (!val) return;
+    if (statuses.some(s => s.name.trim().toLowerCase() === val.toLowerCase())) {
+      alert('Este Status já está cadastrado!');
+      return;
+    }
     try {
       await addDoc(collection(db, 'maintenance_statuses'), {
-        name: newStatusInput.trim(),
+        name: val,
         active: true,
         createdAt: serverTimestamp()
       });
@@ -1377,8 +1432,8 @@ export default function Maintenance() {
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="all">Todos os Status</option>
-                  {availableStatuses.map((st, stIdx) => (
-                    <option key={`maint-filter-st-${st}-${stIdx}`} value={st}>{st}</option>
+                  {availableStatuses.map(st => (
+                    <option key={`maint-filter-st-${st}`} value={st}>{st}</option>
                   ))}
                 </select>
               </div>
@@ -1416,8 +1471,8 @@ export default function Maintenance() {
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="all">Todos os Centros</option>
-                  {availableResponsibleCenters.map((c, cIdx) => (
-                    <option key={`maint-filter-center-${c}-${cIdx}`} value={c}>{c}</option>
+                  {availableResponsibleCenters.map(c => (
+                    <option key={`maint-filter-center-${c}`} value={c}>{c}</option>
                   ))}
                 </select>
               </div>
@@ -1734,12 +1789,12 @@ export default function Maintenance() {
                       >
                         <option value="">Selecione a Linha...</option>
                         {Array.from(
-                          new Map(
+                          new Map<string, ProductionLine>(
                             sortedLines
                               .filter(l => !newEquipmentSectorInput || l.sector === newEquipmentSectorInput)
                               .map(l => [l.name.toLowerCase().trim(), l])
                           ).values()
-                        ).map(l => (
+                        ).map((l: ProductionLine) => (
                           <option key={l.id} value={l.name}>{l.name}</option>
                         ))}
                       </select>
@@ -2352,8 +2407,8 @@ export default function Maintenance() {
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="">Selecione o Setor...</option>
-                      {sectors.map(s => (
-                        <option key={s.id} value={s.name}>{s.name}</option>
+                      {availableFormSectors.map(s => (
+                        <option key={`maint-form-sec-${s.id}`} value={s.name}>{s.name}</option>
                       ))}
                     </select>
                   </div>
@@ -2374,14 +2429,8 @@ export default function Maintenance() {
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="">Selecione a Linha...</option>
-                      {Array.from(
-                        new Map(
-                          sortedLines
-                            .filter(l => !formSector || !l.sector || l.sector === formSector)
-                            .map(l => [`${l.name.toLowerCase().trim()}_${(l.sector || '').toLowerCase().trim()}`, l])
-                        ).values()
-                      ).map(l => (
-                        <option key={l.id} value={l.name}>{l.name}{l.sector ? ` (${l.sector})` : ''}</option>
+                      {availableFormLines.map(l => (
+                        <option key={`maint-form-line-${l.id}`} value={l.name}>{l.name}{l.sector ? ` (${l.sector})` : ''}</option>
                       ))}
                     </select>
                   </div>
@@ -2527,8 +2576,9 @@ export default function Maintenance() {
                       }}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
+                      <option value="">Selecione o Tipo de Inspeção...</option>
                       {availableInspectionTypes.map(it => (
-                        <option key={it} value={it}>{it}</option>
+                        <option key={`maint-opt-insp-${it}`} value={it}>{it}</option>
                       ))}
                     </select>
                   </div>
@@ -2542,7 +2592,7 @@ export default function Maintenance() {
                     >
                       <option value="">Selecione o Nome da Inspeção...</option>
                       {filteredInspectionNames.map(inName => (
-                        <option key={inName} value={inName}>{inName}</option>
+                        <option key={`maint-opt-name-${inName}`} value={inName}>{inName}</option>
                       ))}
                     </select>
                   </div>
@@ -2557,8 +2607,9 @@ export default function Maintenance() {
                       onChange={(e) => setFormResponsibleCenter(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {availableResponsibleCenters.map((rc, rcIdx) => (
-                        <option key={`maint-resp-center-${rc}-${rcIdx}`} value={rc}>{rc}</option>
+                      <option value="">Selecione o Centro Responsável...</option>
+                      {availableResponsibleCenters.map(rc => (
+                        <option key={`maint-opt-center-${rc}`} value={rc}>{rc}</option>
                       ))}
                     </select>
                   </div>
@@ -2570,8 +2621,9 @@ export default function Maintenance() {
                       onChange={(e) => setFormProgrammingType(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {availableProgrammingTypes.map((pt, ptIdx) => (
-                        <option key={`maint-prog-type-${pt}-${ptIdx}`} value={pt}>{pt}</option>
+                      <option value="">Selecione o Tipo de Programação...</option>
+                      {availableProgrammingTypes.map(pt => (
+                        <option key={`maint-opt-prog-${pt}`} value={pt}>{pt}</option>
                       ))}
                     </select>
                   </div>
@@ -2583,8 +2635,8 @@ export default function Maintenance() {
                       onChange={(e) => setFormStatus(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      {availableStatuses.map((st, stIdx) => (
-                        <option key={`maint-form-st-${st}-${stIdx}`} value={st}>{st}</option>
+                      {availableStatuses.map(st => (
+                        <option key={`maint-opt-status-${st}`} value={st}>{st}</option>
                       ))}
                     </select>
                   </div>
@@ -2867,10 +2919,10 @@ export default function Maintenance() {
                     >
                       <option value="">Selecione a Linha...</option>
                       {Array.from(
-                        new Map(
+                        new Map<string, ProductionLine>(
                           sortedLines.map(l => [l.name.toLowerCase().trim(), l])
                         ).values()
-                      ).map(l => (
+                      ).map((l: ProductionLine) => (
                         <option key={l.id} value={l.name}>{l.name}</option>
                       ))}
                     </select>
