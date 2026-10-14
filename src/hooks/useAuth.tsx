@@ -295,7 +295,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const normalizedRole = (profile?.role || '').toLowerCase().trim();
   const isAdmin = normalizedRole === 'admin' || normalizedRole === 'administrador' || isMaster;
-  const isManager = normalizedRole === 'manager' || normalizedRole === 'gerente' || isAdmin;
+  const isManager = normalizedRole === 'manager' || normalizedRole === 'gerente' || normalizedRole === 'gestor' || normalizedRole === 'coordenador' || isAdmin;
   const isViewer = (normalizedRole === 'viewer' || (!normalizedRole && !isAdmin && !isManager)) && !isMaster;
   const isApproved = profile?.status === 'approved' || isMaster;
   const isPending = profile?.status === 'pending' && !isMaster;

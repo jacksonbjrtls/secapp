@@ -169,6 +169,7 @@ export const formatSessionDisplayTitle = (session: any): string => {
 
 const DDS: React.FC = () => {
   const { profile, isAdmin, isManager, isMaster } = useAuth();
+  const canViewManagerCharts = isManager || isAdmin || isMaster || ['manager', 'gerente', 'gestor', 'coordenador', 'admin', 'master', 'administrador'].includes((profile?.role || '').toLowerCase().trim());
   const [searchParams, setSearchParams] = useSearchParams();
   const [sessions, setSessions] = useState<any[]>([]);
   const [activeSession, setActiveSession] = useState<any>(null);
@@ -317,13 +318,37 @@ const DDS: React.FC = () => {
   // Today date string in Brazilian timezone
   const todayDateStr = useMemo(() => getLocalDateStrBR(new Date()), []);
 
+  // Unified deduplicated sessions (combining monthly listener + recent sessions listener)
+  const allAvailableSessions = useMemo(() => {
+    const map = new Map<string, any>();
+    allSessionsList.forEach(s => {
+      if (s?.id) map.set(s.id, s);
+    });
+    sessions.forEach(s => {
+      if (s?.id) map.set(s.id, { ...(map.get(s.id) || {}), ...s });
+    });
+    return Array.from(map.values());
+  }, [allSessionsList, sessions]);
+
+  // Unified deduplicated signatures (combining monthly listener + active session real-time signatures)
+  const allAvailableSignatures = useMemo(() => {
+    const map = new Map<string, any>();
+    allSignaturesList.forEach(sig => {
+      if (sig?.id) map.set(sig.id, sig);
+    });
+    sessionSignatures.forEach(sig => {
+      if (sig?.id) map.set(sig.id, { ...(map.get(sig.id) || {}), ...sig });
+    });
+    return Array.from(map.values());
+  }, [allSignaturesList, sessionSignatures]);
+
   // Today's active and created sessions (timezone-safe check)
   const todaySessions = useMemo(() => {
-    return sessions.filter((s: any) => {
+    return allAvailableSessions.filter((s: any) => {
       const dStr = getLocalDateStrBR(s.createdAt || s.date);
       return dStr === todayDateStr;
     });
-  }, [sessions, todayDateStr]);
+  }, [allAvailableSessions, todayDateStr]);
 
   // Trava de Duplicidade: Verifica em tempo real se já existe um DDS registrado para o mesmo dia e turno
   const existingDdsForShift = useMemo(() => {
@@ -357,7 +382,7 @@ const DDS: React.FC = () => {
   // Signatures mapped by session ID (sorted chronologically)
   const signaturesBySession = useMemo(() => {
     const map: Record<string, any[]> = {};
-    allSignaturesList.forEach((sig: any) => {
+    allAvailableSignatures.forEach((sig: any) => {
       if (sig.sessionId) {
         if (!map[sig.sessionId]) map[sig.sessionId] = [];
         map[sig.sessionId].push(sig);
@@ -372,18 +397,18 @@ const DDS: React.FC = () => {
       });
     });
     return map;
-  }, [allSignaturesList]);
+  }, [allAvailableSignatures]);
 
   // Signatures count mapped by session ID
   const signatureCountBySession = useMemo(() => {
     const map: Record<string, number> = {};
-    allSignaturesList.forEach((sig: any) => {
+    allAvailableSignatures.forEach((sig: any) => {
       if (sig.sessionId) {
         map[sig.sessionId] = (map[sig.sessionId] || 0) + 1;
       }
     });
     return map;
-  }, [allSignaturesList]);
+  }, [allAvailableSignatures]);
 
   // Standard DDS title suggestion: "Turno X - DDS DD-MM-AAAA"
   const defaultTitleSuggestion = useMemo(() => {
@@ -460,7 +485,7 @@ const DDS: React.FC = () => {
 
   useEffect(() => {
     // Listen to recent sessions across dates (controlled limit based on user role)
-    const recentLimit = isMaster || isAdmin ? 150 : 35;
+    const recentLimit = isMaster || isAdmin || isManager ? 300 : 50;
     const q = query(
       collection(db, 'dds_sessions'),
       orderBy('createdAt', 'desc'),
@@ -556,13 +581,13 @@ const DDS: React.FC = () => {
       return;
     }
 
-    // Fetch sessions and signatures for the whole month for charts, history, and participant monitoring (All authenticated users including viewers)
+    // Fetch sessions and signatures for the whole month for charts, history, and participant monitoring
     const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
     
-    // Controlled limits to prevent runaway Firestore reads
-    const sessionsLimit = isMaster || isAdmin ? 200 : 50;
-    const sigsLimit = isMaster || isAdmin ? 400 : 100;
+    // Controlled limits to prevent runaway Firestore reads while ensuring managers/admins get full data
+    const sessionsLimit = isMaster || isAdmin || isManager ? 1000 : 250;
+    const sigsLimit = isMaster || isAdmin || isManager ? 5000 : 1500;
 
     // Sessions Query
     const qSessions = query(
@@ -588,13 +613,13 @@ const DDS: React.FC = () => {
       // We group by day and shift to avoid double counting same shift sessions
       const uniqueSessions = new Set();
       allDocs.forEach((s: any) => {
-        const d = safeToDate(s.createdAt);
+        const d = safeToDate(s.createdAt || s.date);
         const date = d ? d.toDateString() : '';
         if (date) uniqueSessions.add(`${date}_${s.shift}`);
       });
 
       const dayOfMonth = now.getDate();
-      const expectedTotal = dayOfMonth * 3;
+      const expectedTotal = Math.max(1, dayOfMonth * 3);
       const compliance = Math.min(100, Math.round((uniqueSessions.size / expectedTotal) * 100));
       setGlobalCompliance(compliance);
     }, (err) => {
@@ -628,7 +653,9 @@ const DDS: React.FC = () => {
 
   const monthlyData = useMemo(() => {
     const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth();
+    const daysInMonth = new Date(curYear, curMonth + 1, 0).getDate();
     
     // Initialize day map for the entire month dynamically to show full tracking visual rhythm
     const dayMap: { [key: string]: { name: string; sessions: number; signatures: number; idds: number } } = {};
@@ -637,46 +664,56 @@ const DDS: React.FC = () => {
       dayMap[dayStr] = { name: dayStr, sessions: 0, signatures: 0, idds: 0 };
     }
 
-    // Populate sessions
-    allSessionsList.forEach((s: any) => {
-      const d = safeToDate(s.createdAt);
-      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
-      if (date && dayMap[date]) {
-        dayMap[date].sessions += 1;
+    // Populate sessions from all available sessions (merged real-time)
+    allAvailableSessions.forEach((s: any) => {
+      const d = safeToDate(s.createdAt || s.date);
+      if (!d) return;
+      if (d.getFullYear() === curYear && d.getMonth() === curMonth) {
+        const day = d.getDate();
+        const dayStr = day < 10 ? `0${day}` : `${day}`;
+        if (dayMap[dayStr]) {
+          dayMap[dayStr].sessions += 1;
+        }
       }
     });
 
-    // Populate signatures
-    allSignaturesList.forEach((sig: any) => {
-      const d = safeToDate(sig.timestamp);
-      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
-      if (date && dayMap[date]) {
-        dayMap[date].signatures += 1;
+    // Populate signatures from all available signatures (merged real-time)
+    allAvailableSignatures.forEach((sig: any) => {
+      const d = safeToDate(sig.timestamp || sig.createdAt || sig.date);
+      if (!d) return;
+      if (d.getFullYear() === curYear && d.getMonth() === curMonth) {
+        const day = d.getDate();
+        const dayStr = day < 10 ? `0${day}` : `${day}`;
+        if (dayMap[dayStr]) {
+          dayMap[dayStr].signatures += 1;
+        }
       }
     });
 
     // Calculate IDDS logic for each day (Ratio proportional with base target 0.75)
     const sessionsByDay: { [key: string]: any[] } = {};
-    allSessionsList.forEach((s: any) => {
-      const d = safeToDate(s.createdAt);
-      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
-      if (date) {
-        if (!sessionsByDay[date]) sessionsByDay[date] = [];
-        sessionsByDay[date].push(s);
+    allAvailableSessions.forEach((s: any) => {
+      const d = safeToDate(s.createdAt || s.date);
+      if (!d) return;
+      if (d.getFullYear() === curYear && d.getMonth() === curMonth) {
+        const day = d.getDate();
+        const dayStr = day < 10 ? `0${day}` : `${day}`;
+        if (!sessionsByDay[dayStr]) sessionsByDay[dayStr] = [];
+        sessionsByDay[dayStr].push(s);
       }
     });
 
     Object.keys(dayMap).forEach((dayStr) => {
-      const sessions = sessionsByDay[dayStr] || [];
-      if (sessions.length === 0) {
+      const sList = sessionsByDay[dayStr] || [];
+      if (sList.length === 0) {
         dayMap[dayStr].idds = 0;
       } else {
         let iddsSum = 0;
-        sessions.forEach((s: any) => {
-          const sessionSigs = allSignaturesList.filter((sig: any) => sig.sessionId === s.id);
+        sList.forEach((s: any) => {
+          const sessionSigs = allAvailableSignatures.filter((sig: any) => sig.sessionId === s.id);
           const total_participantes = sessionSigs.length;
           const total_previsto = s.totalPrevisto || 9;
-          const shiftCompliance = total_participantes / total_previsto;
+          const shiftCompliance = total_previsto > 0 ? (total_participantes / total_previsto) : 0;
 
           // Se realizado conforme o esperado (meta de 75%), IDDS é 1.0 (100%)
           // Se abaixo da meta, razão proporcional com base na meta de 0.75
@@ -684,17 +721,19 @@ const DDS: React.FC = () => {
           iddsSum += idds;
         });
         
-        const dayAvgIdds = iddsSum / sessions.length;
+        const dayAvgIdds = iddsSum / sList.length;
         dayMap[dayStr].idds = Math.round(dayAvgIdds * 100);
       }
     });
 
     return Object.values(dayMap).sort((a, b) => a.name.localeCompare(b.name));
-  }, [allSessionsList, allSignaturesList]);
+  }, [allAvailableSessions, allAvailableSignatures]);
 
   const filteredMonthlyData = useMemo(() => {
     const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth();
+    const daysInMonth = new Date(curYear, curMonth + 1, 0).getDate();
     
     // Initialize day map for the entire month dynamically to show full tracking visual rhythm
     const dayMap: { [key: string]: { name: string; sessions: number; signatures: number; idds: number } } = {};
@@ -704,55 +743,65 @@ const DDS: React.FC = () => {
     }
 
     // Filter sessions by selected group letter
-    const filteredSessions = allSessionsList.filter((s: any) => {
+    const filteredGroupSessions = allAvailableSessions.filter((s: any) => {
       if (chartGroupFilter === 'all') return true;
-      return s.group?.toUpperCase() === chartGroupFilter.toUpperCase();
+      return (s.group || '').trim().toUpperCase() === chartGroupFilter.toUpperCase();
     });
 
     // Populate sessions
-    filteredSessions.forEach((s: any) => {
-      const d = safeToDate(s.createdAt);
-      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
-      if (date && dayMap[date]) {
-        dayMap[date].sessions += 1;
+    filteredGroupSessions.forEach((s: any) => {
+      const d = safeToDate(s.createdAt || s.date);
+      if (!d) return;
+      if (d.getFullYear() === curYear && d.getMonth() === curMonth) {
+        const day = d.getDate();
+        const dayStr = day < 10 ? `0${day}` : `${day}`;
+        if (dayMap[dayStr]) {
+          dayMap[dayStr].sessions += 1;
+        }
       }
     });
 
     // Filter signatures belonging to the filtered sessions
-    const sessionIds = new Set(filteredSessions.map((s: any) => s.id));
-    const filteredSignatures = allSignaturesList.filter((sig: any) => sessionIds.has(sig.sessionId));
+    const sessionIds = new Set(filteredGroupSessions.map((s: any) => s.id));
+    const filteredSignatures = allAvailableSignatures.filter((sig: any) => sessionIds.has(sig.sessionId));
 
     // Populate signatures
     filteredSignatures.forEach((sig: any) => {
-      const d = safeToDate(sig.timestamp);
-      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
-      if (date && dayMap[date]) {
-        dayMap[date].signatures += 1;
+      const d = safeToDate(sig.timestamp || sig.createdAt || sig.date);
+      if (!d) return;
+      if (d.getFullYear() === curYear && d.getMonth() === curMonth) {
+        const day = d.getDate();
+        const dayStr = day < 10 ? `0${day}` : `${day}`;
+        if (dayMap[dayStr]) {
+          dayMap[dayStr].signatures += 1;
+        }
       }
     });
 
     // Calculate IDDS logic for each day (Ratio proportional with base target 0.75) for the filtered sessions
     const sessionsByDay: { [key: string]: any[] } = {};
-    filteredSessions.forEach((s: any) => {
-      const d = safeToDate(s.createdAt);
-      const date = d ? d.toLocaleDateString('pt-BR', { day: '2-digit' }) : '';
-      if (date) {
-        if (!sessionsByDay[date]) sessionsByDay[date] = [];
-        sessionsByDay[date].push(s);
+    filteredGroupSessions.forEach((s: any) => {
+      const d = safeToDate(s.createdAt || s.date);
+      if (!d) return;
+      if (d.getFullYear() === curYear && d.getMonth() === curMonth) {
+        const day = d.getDate();
+        const dayStr = day < 10 ? `0${day}` : `${day}`;
+        if (!sessionsByDay[dayStr]) sessionsByDay[dayStr] = [];
+        sessionsByDay[dayStr].push(s);
       }
     });
 
     Object.keys(dayMap).forEach((dayStr) => {
-      const sessions = sessionsByDay[dayStr] || [];
-      if (sessions.length === 0) {
+      const sList = sessionsByDay[dayStr] || [];
+      if (sList.length === 0) {
         dayMap[dayStr].idds = 0;
       } else {
         let iddsSum = 0;
-        sessions.forEach((s: any) => {
+        sList.forEach((s: any) => {
           const sessionSigs = filteredSignatures.filter((sig: any) => sig.sessionId === s.id);
           const total_participantes = sessionSigs.length;
           const total_previsto = s.totalPrevisto || 9;
-          const shiftCompliance = total_participantes / total_previsto;
+          const shiftCompliance = total_previsto > 0 ? (total_participantes / total_previsto) : 0;
 
           // Se realizado conforme o esperado (meta de 75%), IDDS é 1.0 (100%)
           // Se abaixo da meta, razão proporcional com base na meta de 0.75
@@ -760,19 +809,19 @@ const DDS: React.FC = () => {
           iddsSum += idds;
         });
         
-        const dayAvgIdds = iddsSum / sessions.length;
+        const dayAvgIdds = iddsSum / sList.length;
         dayMap[dayStr].idds = Math.round(dayAvgIdds * 100);
       }
     });
 
     return Object.values(dayMap).sort((a, b) => a.name.localeCompare(b.name));
-  }, [allSessionsList, allSignaturesList, chartGroupFilter]);
+  }, [allAvailableSessions, allAvailableSignatures, chartGroupFilter]);
 
   const filteredSessions = useMemo(() => {
-    const list = sessions.filter((s: any) => {
+    const list = allAvailableSessions.filter((s: any) => {
       // Date filter
       if (filterDate && filterDate !== 'all') {
-        const dateStr = getLocalDateStr(s.createdAt);
+        const dateStr = getLocalDateStr(s.createdAt) || (s.date ? s.date : '');
         if (dateStr !== filterDate) return false;
       }
 
@@ -803,8 +852,8 @@ const DDS: React.FC = () => {
 
     // Sort hierarchically: Date (descending) -> Shift (Turno 1, Turno 2, Turno 3) -> CreatedAt (descending)
     return list.sort((a: any, b: any) => {
-      const dateA = getLocalDateStr(a.createdAt);
-      const dateB = getLocalDateStr(b.createdAt);
+      const dateA = getLocalDateStr(a.createdAt) || (a.date ? a.date : '');
+      const dateB = getLocalDateStr(b.createdAt) || (b.date ? b.date : '');
       if (dateA !== dateB) {
         return dateB.localeCompare(dateA); // most recent date first
       }
@@ -2802,7 +2851,7 @@ const DDS: React.FC = () => {
           </motion.div>
 
           {/* Monthly Metric Chart moved here, below Validation */}
-          {isManager && (
+          {canViewManagerCharts && (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -2913,7 +2962,7 @@ const DDS: React.FC = () => {
           )}
 
           {/* Replicated Chart: IDDS Filtering by Turn Letters */}
-          {isManager && (
+          {canViewManagerCharts && (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -2989,7 +3038,7 @@ const DDS: React.FC = () => {
           )}
 
           {/* Today's Shifts Matrix Status */}
-          {isManager && (
+          {canViewManagerCharts && (
             <div className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-sm">
               <div className="flex flex-col md:flex-row justify-between items-center mb-8 text-center md:text-left gap-4">
                 <div>
