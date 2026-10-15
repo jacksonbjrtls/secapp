@@ -45,7 +45,12 @@ import {
   UserX,
   ChevronRight,
   PenTool,
-  RefreshCw
+  RefreshCw,
+  Clock,
+  Wrench,
+  Camera,
+  Eye,
+  Layers
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -61,8 +66,66 @@ import {
   formatLocalDateTimeBR, 
   getLocalDateStrBR 
 } from '../lib/utils';
+import { StopReport } from '../types';
 
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
+
+const DEFAULT_WORK_FRONTS = [
+  'Caldeiraria',
+  'Civil',
+  'Elétrica',
+  'Hidráulica',
+  'Instrumentação',
+  'Mecânica',
+  'Operacional'
+].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+
+const formatDateToBR = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
+
+const getMinutesDiff = (start: string, end: string) => {
+  if (!start || !end) return 0;
+  const [startH, startM] = start.split(':').map(Number);
+  const [endH, endM] = end.split(':').map(Number);
+  let diff = (endH * 60 + endM) - (startH * 60 + startM);
+  if (diff < 0) diff += 24 * 60;
+  return diff;
+};
+
+const formatDurationString = (minutes: number) => {
+  if (isNaN(minutes) || minutes <= 0) return '0 min';
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours > 0 && mins > 0) return `${hours}h ${mins}min`;
+  if (hours > 0) return `${hours}h`;
+  return `${mins} min`;
+};
+
+const getStopTypeLabel = (type: string): string => {
+  switch (type) {
+    case 'programada': return 'Programada';
+    case 'geral': return 'Geral';
+    case 'emergencia': return 'Emergência';
+    case 'inspecao': return 'Inspeção';
+    default: return type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Programada';
+  }
+};
+
+const getStopTypeBadgeClass = (type: string): string => {
+  switch (type) {
+    case 'programada': return 'bg-sky-50 border-sky-200 text-sky-800';
+    case 'geral': return 'bg-amber-50 border-amber-200 text-amber-800';
+    case 'emergencia': return 'bg-rose-50 border-rose-200 text-rose-800';
+    case 'inspecao': return 'bg-purple-50 border-purple-200 text-purple-800';
+    default: return 'bg-slate-50 border-slate-200 text-slate-700';
+  }
+};
 
 const Reports: React.FC = () => {
 
@@ -91,7 +154,7 @@ const Reports: React.FC = () => {
   };
 
   const { isManager, isAdmin, isMaster } = useAuth();
-  const [reportType, setReportType] = useState<'dds' | 'forklift' | 'wire_receiving' | 'wire_consumption' | 'quality' | 'user_ray_x' | 'pending_equipments'>('dds');
+  const [reportType, setReportType] = useState<'dds' | 'forklift' | 'wire_receiving' | 'wire_consumption' | 'quality' | 'user_ray_x' | 'pending_equipments' | 'stops_control'>('dds');
   const [data, setData] = useState<any[]>([]);
   const [forkliftData, setForkliftData] = useState<any[]>([]);
   const [wireReceivingData, setWireReceivingData] = useState<any[]>([]);
@@ -146,6 +209,20 @@ const Reports: React.FC = () => {
   const [isSavingExecutor, setIsSavingExecutor] = useState(false);
   const [executorUpdateSuccess, setExecutorUpdateSuccess] = useState<string | null>(null);
 
+  // Stops Control (Controle de Paradas) states
+  const [stopsData, setStopsData] = useState<StopReport[]>([]);
+  const [filterStopFront, setFilterStopFront] = useState<string>('all');
+  const [filterStopActivity, setFilterStopActivity] = useState<string>('');
+  const [filterStopType, setFilterStopType] = useState<string>('all');
+  const [filterStopDuration, setFilterStopDuration] = useState<string>('all');
+  const [selectedStopModal, setSelectedStopModal] = useState<StopReport | null>(null);
+  const [expandedStopIds, setExpandedStopIds] = useState<Record<string, boolean>>({});
+  const [activePhotoModal, setActivePhotoModal] = useState<{ url: string; caption?: string } | null>(null);
+
+  const toggleStopExpand = (id: string) => {
+    setExpandedStopIds(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
   // Filters State - Initialized to today for ultra-fast load (< 250ms) and Firestore cost reduction
@@ -163,6 +240,19 @@ const Reports: React.FC = () => {
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Dynamic work fronts list (defaults + dynamically collected from stops database)
+  const availableWorkFronts = useMemo(() => {
+    const set = new Set<string>(DEFAULT_WORK_FRONTS);
+    stopsData.forEach(rep => {
+      if (rep.workFronts && Array.isArray(rep.workFronts)) {
+        rep.workFronts.forEach(wf => {
+          if (wf.front && wf.front.trim()) set.add(wf.front.trim());
+        });
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  }, [stopsData]);
 
   // Quick date presets
   const handleSetDatePreset = (preset: 'today' | 'yesterday' | 'week' | 'month' | 'all') => {
@@ -199,6 +289,10 @@ const Reports: React.FC = () => {
     setFilterMood('all');
     setFilterStatus('all');
     setFilterLine('all');
+    setFilterStopFront('all');
+    setFilterStopActivity('');
+    setFilterStopType('all');
+    setFilterStopDuration('all');
     if (!keepDates) {
       setFilterDateStart(todayStr);
       setFilterDateEnd(todayStr);
@@ -286,7 +380,7 @@ const Reports: React.FC = () => {
       const rayXLimit = isPrivileged ? 300 : 100;
 
       // Pre-load reference collections safely from local cache only when needed for active tab
-      if (targetType === 'dds' || targetType === 'pending_equipments' || targetType === 'wire_consumption') {
+      if (targetType === 'dds' || targetType === 'pending_equipments' || targetType === 'wire_consumption' || targetType === 'stops_control') {
         fetchReferenceCollection('production_lines').then(setLines);
       }
       if (targetType === 'wire_receiving' || targetType === 'wire_consumption') {
@@ -570,9 +664,36 @@ const Reports: React.FC = () => {
         } catch (e) {}
       }
 
+      // 8. STOPS CONTROL (CONTROLE DE PARADA / CONSOLIDADO)
+      else if (targetType === 'stops_control') {
+        const stopsLimit = isPrivileged ? 450 : 180;
+        try {
+          const constraints: any[] = [];
+          if (startDateStr) constraints.push(where('date', '>=', startDateStr));
+          if (endDateStr) constraints.push(where('date', '<=', endDateStr));
+          constraints.push(orderBy('date', 'desc'));
+          constraints.push(limit(stopsLimit));
+
+          const stopsSnap = await getDocs(query(collection(db, 'stops_reports'), ...constraints));
+          const stopsList = stopsSnap.docs.map(docSnap => ({
+            id: docSnap.id,
+            ...docSnap.data()
+          } as StopReport));
+          setStopsData(stopsList);
+        } catch (queryErr) {
+          console.warn('Index or filter error on stops_reports, falling back to basic query:', queryErr);
+          const fallbackSnap = await getDocs(query(collection(db, 'stops_reports'), orderBy('date', 'desc'), limit(stopsLimit)));
+          const stopsList = fallbackSnap.docs.map(docSnap => ({
+            id: docSnap.id,
+            ...docSnap.data()
+          } as StopReport));
+          setStopsData(stopsList);
+        }
+      }
+
       setLastRefreshedAt(new Date());
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, targetType === 'dds' ? 'dds_signatures' : targetType);
+      handleFirestoreError(err, OperationType.LIST, targetType === 'dds' ? 'dds_signatures' : (targetType === 'stops_control' ? 'stops_reports' : targetType));
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -653,6 +774,7 @@ const Reports: React.FC = () => {
     else if (reportType === 'wire_receiving') dataSource = wireReceivingData;
     else if (reportType === 'wire_consumption') dataSource = wireConsumptionData;
     else if (reportType === 'quality') dataSource = qualityData;
+    else if (reportType === 'stops_control') dataSource = stopsData;
     else if (reportType === 'pending_equipments') {
       const pendingList: any[] = [];
       routeSubmissionsData.forEach(sub => {
@@ -691,6 +813,81 @@ const Reports: React.FC = () => {
     }
     
     return dataSource.filter(item => {
+      // Specialized filtering for Stops Control (Controle de Paradas)
+      if (reportType === 'stops_control') {
+        const stopItem = item as StopReport;
+        const durationMinutes = getMinutesDiff(stopItem.startTime, stopItem.endTime);
+
+        // 1. Tipo de Parada
+        const matchType = filterStopType === 'all' || stopItem.type === filterStopType;
+
+        // 2. Linha de Produção
+        let matchStopLine = true;
+        if (filterLine !== 'all') {
+          const selectedLineObj = lines.find(l => l.id === filterLine);
+          const targetLineName = selectedLineObj ? selectedLineObj.name.toLowerCase() : filterLine.toLowerCase();
+          const itemLineName = (stopItem.lineName || stopItem.lineId || '').toLowerCase();
+          matchStopLine = itemLineName.includes(targetLineName) || stopItem.lineId === filterLine;
+        }
+
+        // 3. Frentes de Trabalho
+        let matchFront = true;
+        if (filterStopFront !== 'all') {
+          matchFront = Array.isArray(stopItem.workFronts) && stopItem.workFronts.some(
+            wf => (wf.front || '').toLowerCase().trim() === filterStopFront.toLowerCase().trim()
+          );
+        }
+
+        // 4. Atividades que foram realizadas
+        let matchActivity = true;
+        if (filterStopActivity && filterStopActivity.trim()) {
+          const actQuery = filterStopActivity.toLowerCase().trim();
+          matchActivity = (
+            (stopItem.observation || '').toLowerCase().includes(actQuery) ||
+            (Array.isArray(stopItem.workFronts) && stopItem.workFronts.some(
+              wf => (wf.description || '').toLowerCase().includes(actQuery) || (wf.front || '').toLowerCase().includes(actQuery)
+            ))
+          );
+        }
+
+        // 5. Duração
+        let matchDuration = true;
+        if (filterStopDuration === 'up_to_30') {
+          matchDuration = durationMinutes <= 30;
+        } else if (filterStopDuration === '30_to_60') {
+          matchDuration = durationMinutes > 30 && durationMinutes <= 60;
+        } else if (filterStopDuration === '60_to_120') {
+          matchDuration = durationMinutes > 60 && durationMinutes <= 120;
+        } else if (filterStopDuration === '120_to_240') {
+          matchDuration = durationMinutes > 120 && durationMinutes <= 240;
+        } else if (filterStopDuration === 'over_240') {
+          matchDuration = durationMinutes > 240;
+        }
+
+        // 6. Colaborador / Responsável / Busca Geral
+        let matchStopUser = true;
+        if (filterUser && filterUser.trim()) {
+          const uQuery = filterUser.toLowerCase().trim();
+          matchStopUser = (
+            (stopItem.userName || '').toLowerCase().includes(uQuery) ||
+            (stopItem.lineName || stopItem.lineId || '').toLowerCase().includes(uQuery) ||
+            (stopItem.observation || '').toLowerCase().includes(uQuery)
+          );
+        }
+
+        // 7. Dia da Execução
+        let matchDate = true;
+        const itemDateStr = stopItem.date || (stopItem.createdAt ? getLocalDateStrBR(safeToDate(stopItem.createdAt)) : '');
+        if (filterDateStart && itemDateStr && itemDateStr < filterDateStart) {
+          matchDate = false;
+        }
+        if (filterDateEnd && itemDateStr && itemDateStr > filterDateEnd) {
+          matchDate = false;
+        }
+
+        return matchType && matchStopLine && matchFront && matchActivity && matchDuration && matchStopUser && matchDate;
+      }
+
       let matchUser = true;
       if (reportType === 'dds') {
         matchUser = (!filterUser || item.userName.toLowerCase().includes(filterUser.toLowerCase()) || item.executor.toLowerCase().includes(filterUser.toLowerCase()));
@@ -780,7 +977,37 @@ const Reports: React.FC = () => {
 
       return matchUser && matchThemeOrStatus && matchShift && matchGroup && matchLine && matchMood && matchDate;
     });
-  }, [data, forkliftData, wireReceivingData, wireConsumptionData, qualityData, routeSubmissionsData, lines, reportType, filterUser, filterTheme, filterShift, filterGroup, filterLine, filterMood, filterStatus, filterDateStart, filterDateEnd]);
+  }, [data, forkliftData, wireReceivingData, wireConsumptionData, qualityData, routeSubmissionsData, stopsData, lines, reportType, filterUser, filterTheme, filterShift, filterGroup, filterLine, filterMood, filterStatus, filterStopFront, filterStopActivity, filterStopType, filterStopDuration, filterDateStart, filterDateEnd]);
+
+  const stopsStats = useMemo(() => {
+    if (reportType !== 'stops_control') return { total: 0, totalMinutes: 0, totalFronts: 0, predominantType: '-' };
+    const total = filteredData.length;
+    let totalMinutes = 0;
+    let totalFronts = 0;
+    const typeCounts: Record<string, number> = {};
+
+    filteredData.forEach((item: StopReport) => {
+      const mins = getMinutesDiff(item.startTime, item.endTime);
+      totalMinutes += mins;
+      if (item.workFronts && Array.isArray(item.workFronts)) {
+        totalFronts += item.workFronts.length;
+      }
+      if (item.type) {
+        typeCounts[item.type] = (typeCounts[item.type] || 0) + 1;
+      }
+    });
+
+    let predominantType = '-';
+    let maxCount = 0;
+    Object.entries(typeCounts).forEach(([type, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        predominantType = getStopTypeLabel(type);
+      }
+    });
+
+    return { total, totalMinutes, totalFronts, predominantType };
+  }, [filteredData, reportType]);
 
   const selectedUserData = useMemo(() => {
     if (!selectedRayXUser) return null;
@@ -1447,7 +1674,264 @@ const Reports: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  // Export single Stop Report to PDF
+  const handleExportSingleStopPDF = (report: StopReport) => {
+    const docPdf = new jsPDF();
+    const duration = getMinutesDiff(report.startTime, report.endTime);
+
+    // Header styling - Standardized Emerald Theme
+    docPdf.setFillColor(5, 150, 105); // emerald-600
+    docPdf.rect(0, 0, 210, 36, 'F');
+    
+    docPdf.setTextColor(255, 255, 255);
+    docPdf.setFont('helvetica', 'bold');
+    docPdf.setFontSize(16);
+    docPdf.text(sanitizePdfText('RELATÓRIO DE CONTROLE DE PARADA'), 14, 20);
+    
+    docPdf.setFontSize(9);
+    docPdf.setFont('helvetica', 'normal');
+    docPdf.setTextColor(190, 242, 219);
+    docPdf.text(sanitizePdfText(`Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`), 14, 28);
+    docPdf.text(sanitizePdfText(`Tipo: ${getStopTypeLabel(report.type).toUpperCase()}`), 196, 28, { align: 'right' });
+
+    // Section 1: Informações Gerais
+    docPdf.setTextColor(5, 150, 105);
+    docPdf.setFontSize(12);
+    docPdf.setFont('helvetica', 'bold');
+    docPdf.text(sanitizePdfText('1. Informações Gerais da Parada'), 14, 48);
+    
+    const generalData = [
+      [sanitizePdfText('Data de Execução:'), formatDateToBR(report.date), sanitizePdfText('Tipo de Parada:'), sanitizePdfText(getStopTypeLabel(report.type).toUpperCase())],
+      [sanitizePdfText('Local / Linha:'), sanitizePdfText(report.lineName || report.lineId), sanitizePdfText('Tempo de Rejeição:'), `${report.rejectionTime || 0} min`],
+      [sanitizePdfText('Hora de Início:'), report.startTime, sanitizePdfText('Hora de Término:'), report.endTime],
+      [sanitizePdfText('Duração Total:'), formatDurationString(duration), sanitizePdfText('Registrado por:'), sanitizePdfText(report.userName || 'Sistema')]
+    ];
+
+    autoTable(docPdf, {
+      startY: 52,
+      head: [],
+      body: generalData,
+      theme: 'plain',
+      styles: { cellPadding: 2, fontSize: 9, textColor: [51, 65, 85] },
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 35 },
+        1: { cellWidth: 60 },
+        2: { fontStyle: 'bold', cellWidth: 40 },
+        3: { cellWidth: 50 }
+      }
+    });
+
+    // Section 2: Velocidade das Cortadeiras
+    let currentY = (docPdf as any).lastAutoTable.finalY + 6;
+    docPdf.setTextColor(5, 150, 105);
+    docPdf.setFontSize(12);
+    docPdf.setFont('helvetica', 'bold');
+    docPdf.text(sanitizePdfText('2. Velocidade das Cortadeiras'), 14, currentY);
+
+    const speedData = [
+      [sanitizePdfText('Cortadeira Linha MS1:'), `${report.cutterSpeedMS1 || 0} m/min`],
+      [sanitizePdfText('Cortadeira Linha MS2:'), `${report.cutterSpeedMS2 || 0} m/min`]
+    ];
+
+    autoTable(docPdf, {
+      startY: currentY + 3,
+      head: [],
+      body: speedData,
+      theme: 'plain',
+      styles: { cellPadding: 2, fontSize: 9, textColor: [51, 65, 85] },
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 60 },
+        1: { cellWidth: 125 }
+      }
+    });
+
+    // Section 3: Frentes de Trabalho e Atividades Realizadas
+    currentY = (docPdf as any).lastAutoTable.finalY + 6;
+    docPdf.setTextColor(5, 150, 105);
+    docPdf.setFontSize(12);
+    docPdf.setFont('helvetica', 'bold');
+    docPdf.text(sanitizePdfText('3. Frentes de Trabalho & Atividades Realizadas'), 14, currentY);
+
+    if (!report.workFronts || report.workFronts.length === 0) {
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'italic');
+      docPdf.setTextColor(100, 116, 139);
+      docPdf.text(sanitizePdfText('Nenhuma frente de trabalho foi registrada nesta parada.'), 14, currentY + 7);
+      currentY += 12;
+    } else {
+      const frontsHeaders = [[
+        sanitizePdfText('Frente de Trabalho'),
+        sanitizePdfText('Descrição das Atividades Realizadas'),
+        sanitizePdfText('Início'),
+        sanitizePdfText('Fim'),
+        sanitizePdfText('Duração')
+      ]];
+      const frontsBody = report.workFronts.map(wf => {
+        const wfDuration = getMinutesDiff(wf.startTime, wf.endTime);
+        return [
+          sanitizePdfText(wf.front),
+          sanitizePdfText(wf.description || 'Sem detalhes informados.'),
+          wf.startTime,
+          wf.endTime,
+          formatDurationString(wfDuration)
+        ];
+      });
+
+      autoTable(docPdf, {
+        startY: currentY + 3,
+        head: frontsHeaders,
+        body: frontsBody,
+        theme: 'striped',
+        headStyles: { fillColor: [5, 150, 105], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5 },
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        columnStyles: {
+          0: { cellWidth: 35, fontStyle: 'bold' },
+          1: { cellWidth: 95 },
+          2: { cellWidth: 18 },
+          3: { cellWidth: 18 },
+          4: { cellWidth: 20 }
+        }
+      });
+      currentY = (docPdf as any).lastAutoTable.finalY + 6;
+    }
+
+    // Section 4: Observações Gerais
+    if (report.observation && report.observation.trim()) {
+      if (currentY > 240) {
+        docPdf.addPage();
+        currentY = 20;
+      }
+      docPdf.setTextColor(5, 150, 105);
+      docPdf.setFontSize(12);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text(sanitizePdfText('4. Observações Gerais'), 14, currentY);
+
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.setTextColor(51, 65, 85);
+      docPdf.text(sanitizePdfText(report.observation), 14, currentY + 6, { maxWidth: 182 });
+    }
+
+    // Standard SecApp Footer
+    const totalPages = (docPdf as any).internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      docPdf.setPage(i);
+      docPdf.setFontSize(7.5);
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.setTextColor(148, 163, 184);
+      docPdf.setDrawColor(226, 232, 240);
+      docPdf.line(14, 287, 196, 287);
+      docPdf.text('SecApp - Gestão Operacional | Relatório de Controle de Parada', 14, 291);
+      docPdf.text(`Página ${i} de ${totalPages}`, 196, 291, { align: 'right' });
+    }
+
+    docPdf.save(`relatorio_parada_${report.date}_${(report.lineName || report.lineId).replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+  };
+
   const exportPDF = () => {
+    // Consolidated Stops Report in Landscape
+    if (reportType === 'stops_control') {
+      const docPdf = new jsPDF('landscape');
+      const pageW = docPdf.internal.pageSize.width;
+      const pageH = docPdf.internal.pageSize.height;
+
+      // Header styling - Standardized Emerald Theme
+      docPdf.setFillColor(5, 150, 105); // emerald-600
+      docPdf.rect(0, 0, pageW, 35, 'F');
+
+      docPdf.setTextColor(255, 255, 255);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.setFontSize(16);
+      docPdf.text(sanitizePdfText('RELATÓRIO CONSOLIDADO DE CONTROLE DE PARADAS'), 14, 20);
+
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.setTextColor(190, 242, 219);
+      docPdf.text(sanitizePdfText(`Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`), 14, 28);
+      
+      const filterSummary = `Período: ${filterDateStart ? formatDateToBR(filterDateStart) : 'Início'} a ${filterDateEnd ? formatDateToBR(filterDateEnd) : 'Fim'} | Total: ${filteredData.length} parada(s)`;
+      docPdf.text(sanitizePdfText(filterSummary), pageW - 14, 28, { align: 'right' });
+
+      const headers = [[
+        sanitizePdfText('Data'),
+        sanitizePdfText('Tipo'),
+        sanitizePdfText('Local/Linha'),
+        sanitizePdfText('Início'),
+        sanitizePdfText('Fim'),
+        sanitizePdfText('Duração'),
+        sanitizePdfText('Rejeição'),
+        sanitizePdfText('Cortadeiras'),
+        sanitizePdfText('Frentes & Atividades Realizadas'),
+        sanitizePdfText('Responsável')
+      ]];
+
+      const body = filteredData.map((r: StopReport) => {
+        const duration = getMinutesDiff(r.startTime, r.endTime);
+        const activitiesText = (r.workFronts || []).map(wf => {
+          const wfDur = getMinutesDiff(wf.startTime, wf.endTime);
+          const durStr = wfDur > 0 ? ` (${formatDurationString(wfDur)})` : '';
+          return `• [${wf.front}]: ${wf.description || 'Sem detalhes'}${durStr}`;
+        }).join('\n');
+
+        const cutterSpeed = `MS1: ${r.cutterSpeedMS1 || 0} m/min\nMS2: ${r.cutterSpeedMS2 || 0} m/min`;
+
+        return [
+          formatDateToBR(r.date),
+          sanitizePdfText(getStopTypeLabel(r.type).toUpperCase()),
+          sanitizePdfText(r.lineName || r.lineId),
+          r.startTime,
+          r.endTime,
+          formatDurationString(duration),
+          `${r.rejectionTime || 0} min`,
+          sanitizePdfText(cutterSpeed),
+          sanitizePdfText(activitiesText || 'Nenhuma frente registrada'),
+          sanitizePdfText(r.userName || 'Sistema')
+        ];
+      });
+
+      autoTable(docPdf, {
+        startY: 40,
+        head: headers,
+        body: body,
+        theme: 'striped',
+        headStyles: {
+          fillColor: [5, 150, 105],
+          textColor: [255, 255, 255],
+          fontSize: 8.5,
+          fontStyle: 'bold'
+        },
+        styles: { fontSize: 7.5, cellPadding: 2.5, valign: 'top' },
+        columnStyles: {
+          0: { cellWidth: 20 },
+          1: { cellWidth: 24, fontStyle: 'bold' },
+          2: { cellWidth: 28 },
+          3: { cellWidth: 15 },
+          4: { cellWidth: 15 },
+          5: { cellWidth: 20, fontStyle: 'bold' },
+          6: { cellWidth: 18 },
+          7: { cellWidth: 28 },
+          8: { cellWidth: 75 },
+          9: { cellWidth: 26 }
+        }
+      });
+
+      // Add footer to all pages
+      const totalPages = (docPdf as any).internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        docPdf.setPage(i);
+        docPdf.setFontSize(7.5);
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setTextColor(148, 163, 184);
+        docPdf.setDrawColor(226, 232, 240);
+        docPdf.line(14, pageH - 8, pageW - 14, pageH - 8);
+        docPdf.text('SecApp - Gestão Operacional | Relatório Consolidado de Controle de Parada', 14, pageH - 4.5);
+        docPdf.text(`Página ${i} de ${totalPages}`, pageW - 14, pageH - 4.5, { align: 'right' });
+      }
+
+      docPdf.save(`relatorio_consolidado_paradas_${new Date().getTime()}.pdf`);
+      return;
+    }
+
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.width;
     let title = '';
@@ -1614,6 +2098,28 @@ const Reports: React.FC = () => {
           `"${item.status}"`,
           `"${formatLocalDateTimeBR(item.timestamp)}"`
         ]);
+      } else if (reportType === 'stops_control') {
+        headers = ['Data', 'Tipo', 'Linha', 'Início', 'Término', 'Duração (min)', 'Rejeição (min)', 'MS1 (m/min)', 'MS2 (m/min)', 'Frentes de Trabalho', 'Atividades Detalhadas', 'Observação', 'Responsável'];
+        rows = filteredData.map((item: StopReport) => {
+          const duration = getMinutesDiff(item.startTime, item.endTime);
+          const fronts = (item.workFronts || []).map(wf => wf.front).join('; ');
+          const activities = (item.workFronts || []).map(wf => `[${wf.front}] ${wf.description || ''} (${wf.startTime}-${wf.endTime})`).join(' | ');
+          return [
+            `"${formatDateToBR(item.date)}"`,
+            `"${getStopTypeLabel(item.type)}"`,
+            `"${item.lineName || item.lineId}"`,
+            `"${item.startTime}"`,
+            `"${item.endTime}"`,
+            `"${duration}"`,
+            `"${item.rejectionTime || 0}"`,
+            `"${item.cutterSpeedMS1 || 0}"`,
+            `"${item.cutterSpeedMS2 || 0}"`,
+            `"${fronts}"`,
+            `"${activities.replace(/"/g, '""')}"`,
+            `"${(item.observation || '').replace(/"/g, '""')}"`,
+            `"${item.userName || 'Sistema'}"`
+          ];
+        });
       } else if (reportType === 'wire_receiving') {
         headers = ['NF', 'Fornecedor', 'Bobinas', 'Peso Total (kg)', 'Responsável', 'Data'];
         rows = filteredData.map(item => [
@@ -1857,6 +2363,7 @@ const Reports: React.FC = () => {
           >
             {reportType === 'dds' && <><ShieldCheck className="w-5 h-5 text-emerald-600" /> DDS Online</>}
             {reportType === 'forklift' && <><Truck className="w-5 h-5 text-emerald-600" /> Empilhadeiras</>}
+            {reportType === 'stops_control' && <><Clock className="w-5 h-5 text-emerald-600" /> Controle de Parada</>}
             {reportType === 'wire_receiving' && <><FileText className="w-5 h-5 text-emerald-600" /> Recebimento</>}
             {reportType === 'wire_consumption' && <><Factory className="w-5 h-5 text-emerald-600" /> Consumo</>}
             {reportType === 'quality' && <><ClipboardCheck className="w-5 h-5 text-emerald-600" /> Qualidade</>}
@@ -1886,6 +2393,15 @@ const Reports: React.FC = () => {
                     )}
                   >
                     <ShieldCheck className="w-4 h-4" /> DDS Online
+                  </button>
+                  <button
+                    onClick={() => { setReportType('stops_control'); setShowTypeMenu(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-xs font-black uppercase tracking-tight transition-all",
+                      reportType === 'stops_control' ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50"
+                    )}
+                  >
+                    <Clock className="w-4 h-4" /> Controle de Parada
                   </button>
                   <button
                     onClick={() => { setReportType('forklift'); setShowTypeMenu(false); }}
@@ -2053,7 +2569,52 @@ const Reports: React.FC = () => {
       </div>
 
       <AnimatePresence mode="wait">
-        {reportType === 'forklift' ? (
+        {reportType === 'stops_control' ? (
+          <motion.div
+            key="stops-stats"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
+          >
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">
+                <Clock className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total de Paradas</p>
+                <p className="text-2xl font-black text-slate-900">{stopsStats.total}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-sky-100 text-sky-600 rounded-2xl flex items-center justify-center">
+                <Clock className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tempo Total Parado</p>
+                <p className="text-2xl font-black text-slate-900">{formatDurationString(stopsStats.totalMinutes)}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center">
+                <Wrench className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Frentes Acionadas</p>
+                <p className="text-2xl font-black text-slate-900">{stopsStats.totalFronts}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center">
+                <Layers className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo Predominante</p>
+                <p className="text-2xl font-black text-slate-900">{stopsStats.predominantType}</p>
+              </div>
+            </div>
+          </motion.div>
+        ) : reportType === 'forklift' ? (
           <motion.div
             key="forklift-stats"
             initial={{ opacity: 0, scale: 0.95 }}
@@ -2213,7 +2774,8 @@ const Reports: React.FC = () => {
                   {reportType === 'dds' ? 'Colaborador / Executante' : 
                    reportType === 'forklift' ? 'Condutor / Equipamento' :
                    reportType === 'wire_receiving' ? 'NF / Fornecedor' : 
-                   reportType === 'pending_equipments' ? 'Equipamento / Tag' : 'Bobina / Usuário'}
+                   reportType === 'pending_equipments' ? 'Equipamento / Tag' :
+                   reportType === 'stops_control' ? 'Registrado por / Local' : 'Bobina / Usuário'}
                 </label>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
@@ -2225,12 +2787,107 @@ const Reports: React.FC = () => {
                       reportType === 'dds' ? "Buscar nome..." : 
                       reportType === 'forklift' ? "Nome ou Nº Equipamento..." :
                       reportType === 'wire_receiving' ? "NF ou Fornecedor..." : 
-                      reportType === 'pending_equipments' ? "Buscar por tag ou nome..." : "ID Bobina ou Usuário..."
+                      reportType === 'pending_equipments' ? "Buscar por tag ou nome..." :
+                      reportType === 'stops_control' ? "Responsável, local ou obs..." : "ID Bobina ou Usuário..."
                     }
                     className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
                   />
                 </div>
               </div>
+
+              {/* Stops Control Filters: Frentes de Trabalho, Atividade, Tipo de Parada, Duração, Linha */}
+              {reportType === 'stops_control' && (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Frente de Trabalho</label>
+                    <div className="relative">
+                      <Wrench className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                      <select 
+                        value={filterStopFront}
+                        onChange={(e) => setFilterStopFront(e.target.value)}
+                        className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                      >
+                        <option value="all">Todas as Frentes</option>
+                        {availableWorkFronts.map((front) => (
+                          <option key={front} value={front}>{front}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Atividade Realizada</label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                      <input 
+                        type="text" 
+                        value={filterStopActivity}
+                        onChange={(e) => setFilterStopActivity(e.target.value)}
+                        placeholder="Buscar atividade executada..."
+                        className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Tipo de Parada</label>
+                    <div className="relative">
+                      <Layers className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                      <select 
+                        value={filterStopType}
+                        onChange={(e) => setFilterStopType(e.target.value)}
+                        className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                      >
+                        <option value="all">Todos os Tipos</option>
+                        <option value="programada">Programada</option>
+                        <option value="geral">Geral</option>
+                        <option value="emergencia">Emergência</option>
+                        <option value="inspecao">Inspeção</option>
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Duração da Parada</label>
+                    <div className="relative">
+                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                      <select 
+                        value={filterStopDuration}
+                        onChange={(e) => setFilterStopDuration(e.target.value)}
+                        className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                      >
+                        <option value="all">Todas as Durações</option>
+                        <option value="up_to_30">Até 30 minutos</option>
+                        <option value="30_to_60">30 a 60 minutos</option>
+                        <option value="60_to_120">1 a 2 horas</option>
+                        <option value="120_to_240">2 a 4 horas</option>
+                        <option value="over_240">Mais de 4 horas</option>
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Linha de Produção</label>
+                    <div className="relative">
+                      <Factory className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                      <select 
+                        value={filterLine}
+                        onChange={(e) => setFilterLine(e.target.value)}
+                        className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                      >
+                        <option value="all">Todas as Linhas</option>
+                        {lines.map((line, lIdx) => (
+                          <option key={`stop-line-${line.id || lIdx}`} value={line.id}>{line.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+                </>
+              )}
 
               {reportType === 'dds' && (
                 <div className="space-y-2">
@@ -2295,7 +2952,7 @@ const Reports: React.FC = () => {
                 </div>
               )}
 
-              {reportType !== 'wire_receiving' && (
+              {reportType !== 'wire_receiving' && reportType !== 'stops_control' && (
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Turno</label>
                   <div className="relative">
@@ -3374,7 +4031,16 @@ const Reports: React.FC = () => {
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
-                    {reportType === 'dds' ? (
+                    {reportType === 'stops_control' ? (
+                      <>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Data / Tipo</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Local / Linha</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Horários & Duração</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Frentes & Atividades Realizadas</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Cortadeiras</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Responsável</th>
+                      </>
+                    ) : reportType === 'dds' ? (
                       <>
                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Colaborador</th>
                         <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Tema / Turno</th>
@@ -3418,7 +4084,7 @@ const Reports: React.FC = () => {
                     </>
                   )}
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Data/Hora</th>
-                  {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments' || (reportType === 'dds' && (isAdmin || isMaster || isManager))) && (
+                  {(reportType === 'stops_control' || reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments' || (reportType === 'dds' && (isAdmin || isMaster || isManager))) && (
                     <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Ações</th>
                   )}
                 </tr>
@@ -3432,10 +4098,78 @@ const Reports: React.FC = () => {
                       transition={{ delay: Math.min(i * 0.05, 1) }}
                       className={cn(
                         "hover:bg-slate-50/50",
-                        expandedReceivingIds[item.id] && "bg-emerald-50/30"
+                        expandedReceivingIds[item.id] && "bg-emerald-50/30",
+                        expandedStopIds[item.id] && "bg-emerald-50/20"
                       )}
                     >
-                      {reportType === 'dds' ? (
+                      {reportType === 'stops_control' ? (
+                        <>
+                          <td className="px-6 py-4">
+                            <p className="font-bold text-slate-900 leading-tight mb-1">{formatDateToBR(item.date)}</p>
+                            <span className={cn(
+                              "inline-block px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border",
+                              getStopTypeBadgeClass(item.type)
+                            )}>
+                              {getStopTypeLabel(item.type)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <Factory className="w-4 h-4 text-slate-400 shrink-0" />
+                              <span className="font-bold text-slate-800 text-sm">{item.lineName || item.lineId}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="space-y-0.5">
+                              <p className="text-xs font-bold text-slate-800">
+                                {item.startTime} às {item.endTime}
+                              </p>
+                              <p className="text-xs font-black text-emerald-600">
+                                {formatDurationString(getMinutesDiff(item.startTime, item.endTime))}
+                              </p>
+                              {item.rejectionTime ? (
+                                <p className="text-[10px] text-slate-400 font-medium">Rejeição: {item.rejectionTime} min</p>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 max-w-xs">
+                            <div className="space-y-1.5">
+                              <div className="flex flex-wrap gap-1">
+                                {(item.workFronts || []).map((wf: any, wfIdx: number) => (
+                                  <span key={wfIdx} className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded-md">
+                                    {wf.front}
+                                  </span>
+                                ))}
+                                {(!item.workFronts || item.workFronts.length === 0) && (
+                                  <span className="text-xs text-slate-400 italic">Nenhuma frente</span>
+                                )}
+                              </div>
+                              {(item.workFronts && item.workFronts.length > 0) && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleStopExpand(item.id)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 transition-colors cursor-pointer"
+                                >
+                                  {expandedStopIds[item.id] ? 'Ocultar atividades' : `Ver ${item.workFronts.length} atividade(s)`}
+                                  <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", expandedStopIds[item.id] && "rotate-180")} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-xs text-slate-600 whitespace-nowrap">
+                            <p><span className="font-bold text-slate-700">MS1:</span> {item.cutterSpeedMS1 || 0} m/min</p>
+                            <p><span className="font-bold text-slate-700">MS2:</span> {item.cutterSpeedMS2 || 0} m/min</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="font-bold text-slate-900 text-xs">{item.userName || 'Sistema'}</p>
+                            {item.observation && (
+                              <p className="text-[10px] text-slate-400 truncate max-w-[150px]" title={item.observation}>
+                                Obs: {item.observation}
+                              </p>
+                            )}
+                          </td>
+                        </>
+                      ) : reportType === 'dds' ? (
                         <>
                           <td className="px-6 py-4">
                             <p className="font-bold text-slate-900 leading-none mb-1.5">{item.userName}</p>
@@ -3719,9 +4453,28 @@ const Reports: React.FC = () => {
                       <p className="text-sm font-bold text-slate-900">{formatLocalDateBR(item.timestamp)}</p>
                       <p className="text-[10px] text-slate-500 font-semibold">{formatLocalTimeBR(item.timestamp)}</p>
                     </td>
-                    {(reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments' || (reportType === 'dds' && (isAdmin || isMaster || isManager))) && (
+                    {(reportType === 'stops_control' || reportType === 'forklift' || reportType === 'wire_consumption' || reportType === 'quality' || reportType === 'pending_equipments' || (reportType === 'dds' && (isAdmin || isMaster || isManager))) && (
                       <td className="px-6 py-4 text-right">
-                        {reportType === 'dds' ? (
+                        {reportType === 'stops_control' ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <button 
+                              type="button"
+                              onClick={() => setSelectedStopModal(item)}
+                              className="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                              title="Ver Detalhes da Parada"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => handleExportSingleStopPDF(item)}
+                              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                              title="Imprimir / Baixar PDF Individual"
+                            >
+                              <FileDown className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : reportType === 'dds' ? (
                           item.sessionId && !item.isOrphan ? (
                             <button 
                               type="button"
@@ -3778,6 +4531,118 @@ const Reports: React.FC = () => {
                       </td>
                     )}
                   </motion.tr>
+
+                  {/* Expansion for Stops Control */}
+                  {reportType === 'stops_control' && expandedStopIds[item.id] && (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-0 border-b border-emerald-100 bg-emerald-50/20">
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden py-4"
+                        >
+                          <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden mb-2 p-5 space-y-4">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                              <div>
+                                <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                                  <Wrench className="w-4 h-4 text-emerald-600" />
+                                  Frentes de Trabalho e Atividades Realizadas ({formatDateToBR(item.date)} - {item.lineName || item.lineId})
+                                </h4>
+                                <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
+                                  Duração Total: {formatDurationString(getMinutesDiff(item.startTime, item.endTime))} • Rejeição: {item.rejectionTime || 0} min
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleExportSingleStopPDF(item)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer self-start sm:self-auto"
+                              >
+                                <FileDown className="w-3.5 h-3.5" />
+                                Imprimir PDF Desta Parada
+                              </button>
+                            </div>
+
+                            {(!item.workFronts || item.workFronts.length === 0) ? (
+                              <p className="text-xs text-slate-400 italic">Nenhuma frente de trabalho detalhada nesta parada.</p>
+                            ) : (
+                              <div className="overflow-x-auto rounded-xl border border-slate-100">
+                                <table className="w-full text-left text-xs">
+                                  <thead className="bg-slate-50 border-b border-slate-100">
+                                    <tr>
+                                      <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400">Frente de Trabalho</th>
+                                      <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400">Atividades Realizadas</th>
+                                      <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400">Início</th>
+                                      <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400">Término</th>
+                                      <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400 text-right">Duração</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {item.workFronts.map((wf: any, idx: number) => {
+                                      const dur = getMinutesDiff(wf.startTime, wf.endTime);
+                                      return (
+                                        <tr key={idx} className="hover:bg-slate-50/50">
+                                          <td className="px-4 py-3 font-bold text-slate-800">
+                                            <span className="px-2 py-0.5 bg-slate-100 rounded text-slate-700 font-bold">
+                                              {wf.front}
+                                            </span>
+                                          </td>
+                                          <td className="px-4 py-3 text-slate-600">
+                                            {wf.description || 'Sem detalhes informados'}
+                                          </td>
+                                          <td className="px-4 py-3 text-slate-700 font-medium whitespace-nowrap">
+                                            {wf.startTime}
+                                          </td>
+                                          <td className="px-4 py-3 text-slate-700 font-medium whitespace-nowrap">
+                                            {wf.endTime}
+                                          </td>
+                                          <td className="px-4 py-3 text-right font-black text-emerald-600 whitespace-nowrap">
+                                            {formatDurationString(dur)}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+
+                            {item.observation && (
+                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
+                                <span className="font-bold text-slate-700 uppercase text-[10px] tracking-wider block mb-1">
+                                  Observações Gerais:
+                                </span>
+                                <p className="text-slate-600 whitespace-pre-line">{item.observation}</p>
+                              </div>
+                            )}
+
+                            {item.mediaUrls && item.mediaUrls.length > 0 && (
+                              <div className="space-y-1.5">
+                                <span className="font-bold text-slate-700 uppercase text-[10px] tracking-wider block">
+                                  Fotos Anexadas ({item.mediaUrls.length}):
+                                </span>
+                                <div className="flex flex-wrap gap-2">
+                                  {item.mediaUrls.map((url: string, imgIdx: number) => (
+                                    <button
+                                      key={imgIdx}
+                                      type="button"
+                                      onClick={() => setActivePhotoModal({ url, caption: `Parada ${formatDateToBR(item.date)} - Foto ${imgIdx + 1}` })}
+                                      className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-200 group hover:opacity-90 transition-opacity cursor-pointer"
+                                    >
+                                      <img src={url} alt={`Foto ${imgIdx + 1}`} className="w-full h-full object-cover" />
+                                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                        <Camera className="w-4 h-4 text-white" />
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </motion.div>
+                      </td>
+                    </tr>
+                  )}
 
                   {/* Expansion for Wire Receiving */}
                   {reportType === 'wire_receiving' && expandedReceivingIds[item.id] && (
@@ -4366,6 +5231,235 @@ const Reports: React.FC = () => {
               <X className="w-4 h-4" />
             </button>
           </motion.div>
+        )}
+
+        {/* Stop Report Details Modal */}
+        {selectedStopModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedStopModal(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 md:p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-emerald-600 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200 text-white">
+                    <Clock className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">
+                        Controle de Parada
+                      </h3>
+                      <span className={cn(
+                        "px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border",
+                        getStopTypeBadgeClass(selectedStopModal.type)
+                      )}>
+                        {getStopTypeLabel(selectedStopModal.type)}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                      {formatDateToBR(selectedStopModal.date)} • {selectedStopModal.lineName || selectedStopModal.lineId}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedStopModal(null)}
+                  className="p-2.5 hover:bg-slate-200/50 rounded-2xl transition-colors text-slate-400"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
+                {/* 4 Cards Summary */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Início / Fim</p>
+                    <p className="text-sm font-black text-slate-800 mt-0.5">
+                      {selectedStopModal.startTime} - {selectedStopModal.endTime}
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Duração Total</p>
+                    <p className="text-sm font-black text-emerald-600 mt-0.5">
+                      {formatDurationString(getMinutesDiff(selectedStopModal.startTime, selectedStopModal.endTime))}
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rejeição</p>
+                    <p className="text-sm font-black text-slate-800 mt-0.5">
+                      {selectedStopModal.rejectionTime || 0} min
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Registrado por</p>
+                    <p className="text-sm font-black text-slate-800 truncate mt-0.5" title={selectedStopModal.userName || 'Sistema'}>
+                      {selectedStopModal.userName || 'Sistema'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Cortadeiras */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Velocidade das Cortadeiras</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="text-xs font-bold text-slate-600">Cortadeira MS1:</span>
+                      <p className="text-sm font-black text-slate-800">{selectedStopModal.cutterSpeedMS1 || 0} m/min</p>
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-slate-600">Cortadeira MS2:</span>
+                      <p className="text-sm font-black text-slate-800">{selectedStopModal.cutterSpeedMS2 || 0} m/min</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Work Fronts & Activities */}
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-2 mb-3">
+                    <Wrench className="w-4 h-4 text-emerald-600" />
+                    Frentes de Trabalho e Atividades Realizadas
+                  </h4>
+                  {(!selectedStopModal.workFronts || selectedStopModal.workFronts.length === 0) ? (
+                    <div className="p-4 bg-slate-50 rounded-2xl text-center text-xs text-slate-400 italic">
+                      Nenhuma frente de trabalho informada.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-100">
+                          <tr>
+                            <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400">Frente</th>
+                            <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400">Atividades Realizadas</th>
+                            <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400">Horário</th>
+                            <th className="px-4 py-2.5 font-black uppercase text-[10px] text-slate-400 text-right">Duração</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {selectedStopModal.workFronts.map((wf: any, idx: number) => {
+                            const dur = getMinutesDiff(wf.startTime, wf.endTime);
+                            return (
+                              <tr key={idx} className="hover:bg-slate-50/50">
+                                <td className="px-4 py-3 font-bold text-slate-800">
+                                  <span className="px-2 py-0.5 bg-slate-100 rounded text-slate-700 font-bold">
+                                    {wf.front}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-slate-600">
+                                  {wf.description || 'Sem detalhes informados'}
+                                </td>
+                                <td className="px-4 py-3 text-slate-700 font-medium whitespace-nowrap">
+                                  {wf.startTime} às {wf.endTime}
+                                </td>
+                                <td className="px-4 py-3 text-right font-black text-emerald-600 whitespace-nowrap">
+                                  {formatDurationString(dur)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Observations */}
+                {selectedStopModal.observation && (
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs">
+                    <span className="font-bold text-slate-700 uppercase text-[10px] tracking-wider block mb-1">
+                      Observações Gerais:
+                    </span>
+                    <p className="text-slate-600 whitespace-pre-line">{selectedStopModal.observation}</p>
+                  </div>
+                )}
+
+                {/* Photos */}
+                {selectedStopModal.mediaUrls && selectedStopModal.mediaUrls.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="font-bold text-slate-700 uppercase text-[10px] tracking-wider block">
+                      Fotos Anexadas ({selectedStopModal.mediaUrls.length}):
+                    </span>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                      {selectedStopModal.mediaUrls.map((url: string, imgIdx: number) => (
+                        <button
+                          key={imgIdx}
+                          type="button"
+                          onClick={() => setActivePhotoModal({ url, caption: `Parada ${formatDateToBR(selectedStopModal.date)} - Foto ${imgIdx + 1}` })}
+                          className="relative aspect-square rounded-2xl overflow-hidden border border-slate-200 group hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
+                        >
+                          <img src={url} alt={`Foto ${imgIdx + 1}`} className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Camera className="w-5 h-5 text-white" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedStopModal(null)}
+                  className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Fechar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExportSingleStopPDF(selectedStopModal)}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+                >
+                  <FileDown className="w-4 h-4" />
+                  Imprimir Relatório (PDF)
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Photo Preview Modal */}
+        {activePhotoModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setActivePhotoModal(null)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative max-w-3xl w-full bg-slate-900 rounded-3xl overflow-hidden shadow-2xl z-10 flex flex-col"
+            >
+              <div className="p-4 flex items-center justify-between text-white border-b border-slate-800">
+                <span className="text-xs font-bold text-slate-300">{activePhotoModal.caption || 'Foto'}</span>
+                <button
+                  type="button"
+                  onClick={() => setActivePhotoModal(null)}
+                  className="p-1 text-slate-400 hover:text-white rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-2 flex items-center justify-center max-h-[75vh] overflow-hidden">
+                <img src={activePhotoModal.url} alt="Foto Ampliada" className="max-h-[70vh] w-auto object-contain rounded-2xl" />
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

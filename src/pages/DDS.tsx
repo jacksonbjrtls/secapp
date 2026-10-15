@@ -586,70 +586,118 @@ const DDS: React.FC = () => {
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
     
     // Controlled limits to prevent runaway Firestore reads while ensuring managers/admins get full data
-    const sessionsLimit = isMaster || isAdmin || isManager ? 1000 : 250;
-    const sigsLimit = isMaster || isAdmin || isManager ? 5000 : 1500;
+    const sessionsLimit = isMaster || isAdmin || isManager || canViewManagerCharts ? 1000 : 250;
+    const sigsLimit = isMaster || isAdmin || isManager || canViewManagerCharts ? 5000 : 1500;
 
-    // Sessions Query
-    const qSessions = query(
-      collection(db, 'dds_sessions'),
-      where('createdAt', '>=', Timestamp.fromDate(firstDay)),
-      orderBy('createdAt', 'asc'),
-      limit(sessionsLimit)
-    );
+    let unsubSessions: () => void = () => {};
+    let unsubSignatures: () => void = () => {};
 
-    // Signatures Query
-    const qSignatures = query(
-      collection(db, 'dds_signatures'),
-      where('timestamp', '>=', Timestamp.fromDate(firstDay)),
-      orderBy('timestamp', 'asc'),
-      limit(sigsLimit)
-    );
+    const setupSessionsListener = () => {
+      // Primary Sessions Query with range
+      const qSessions = query(
+        collection(db, 'dds_sessions'),
+        where('createdAt', '>=', Timestamp.fromDate(firstDay)),
+        orderBy('createdAt', 'asc'),
+        limit(sessionsLimit)
+      );
 
-    const unsubSessions = onSnapshot(qSessions, (snapshot) => {
-      const allDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAllSessionsList(allDocs);
-      
-      // Global Compliance: (Completed Slots / Total Possible Slots)
-      // We group by day and shift to avoid double counting same shift sessions
-      const uniqueSessions = new Set();
-      allDocs.forEach((s: any) => {
-        const d = safeToDate(s.createdAt || s.date);
-        const date = d ? d.toDateString() : '';
-        if (date) uniqueSessions.add(`${date}_${s.shift}`);
-      });
+      const processSessionsSnapshot = (snapshot: any) => {
+        const allDocs = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+        setAllSessionsList(allDocs);
+        
+        // Global Compliance: (Completed Slots / Total Possible Slots)
+        const uniqueSessions = new Set();
+        allDocs.forEach((s: any) => {
+          const d = safeToDate(s.createdAt || s.date || s.timestamp);
+          const date = d ? d.toDateString() : '';
+          if (date) uniqueSessions.add(`${date}_${s.shift}`);
+        });
 
-      const dayOfMonth = now.getDate();
-      const expectedTotal = Math.max(1, dayOfMonth * 3);
-      const compliance = Math.min(100, Math.round((uniqueSessions.size / expectedTotal) * 100));
-      setGlobalCompliance(compliance);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'dds_sessions');
-    });
+        const dayOfMonth = now.getDate();
+        const expectedTotal = Math.max(1, dayOfMonth * 3);
+        const compliance = Math.min(100, Math.round((uniqueSessions.size / expectedTotal) * 100));
+        setGlobalCompliance(compliance);
+      };
 
-    const unsubSignatures = onSnapshot(qSignatures, async (snapshot) => {
-      const allSigs = await Promise.all(snapshot.docs.map(async (doc) => {
-        const data = doc.data() as any;
-        const decName = await decryptValue(data.userName);
-        return {
-          id: doc.id,
-          ...data,
-          userName: decName
-        };
-      }));
-      setAllSignaturesList(allSigs);
-      setTotalSignaturesMonth(allSigs.length);
-      
-      // Participation rate
-      setParticipationRate(allSigs.length); 
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'dds_signatures');
-    });
+      try {
+        unsubSessions = onSnapshot(qSessions, processSessionsSnapshot, (err) => {
+          console.warn('Primary dds_sessions query error, falling back to ordered query:', err);
+          // Fallback query without range condition in case of missing index or format mismatch
+          const fallbackQSessions = query(
+            collection(db, 'dds_sessions'),
+            orderBy('createdAt', 'desc'),
+            limit(sessionsLimit)
+          );
+          unsubSessions = onSnapshot(fallbackQSessions, processSessionsSnapshot, (fallbackErr) => {
+            handleFirestoreError(fallbackErr, OperationType.LIST, 'dds_sessions');
+          });
+        });
+      } catch (err) {
+        console.warn('Immediate dds_sessions error, using basic query fallback:', err);
+        const fallbackQSessions = query(
+          collection(db, 'dds_sessions'),
+          limit(sessionsLimit)
+        );
+        unsubSessions = onSnapshot(fallbackQSessions, processSessionsSnapshot, () => {});
+      }
+    };
+
+    const setupSignaturesListener = () => {
+      // Primary Signatures Query
+      const qSignatures = query(
+        collection(db, 'dds_signatures'),
+        where('timestamp', '>=', Timestamp.fromDate(firstDay)),
+        orderBy('timestamp', 'asc'),
+        limit(sigsLimit)
+      );
+
+      const processSignaturesSnapshot = async (snapshot: any) => {
+        const allSigs = await Promise.all(snapshot.docs.map(async (doc: any) => {
+          const data = doc.data() as any;
+          const decName = await decryptValue(data.userName);
+          return {
+            id: doc.id,
+            ...data,
+            userName: decName,
+            timestamp: data.timestamp || data.createdAt || new Date()
+          };
+        }));
+        setAllSignaturesList(allSigs);
+        setTotalSignaturesMonth(allSigs.length);
+        setParticipationRate(allSigs.length);
+      };
+
+      try {
+        unsubSignatures = onSnapshot(qSignatures, processSignaturesSnapshot, (err) => {
+          console.warn('Primary dds_signatures query error, falling back to ordered query:', err);
+          // Fallback query without range in case of missing index
+          const fallbackQSignatures = query(
+            collection(db, 'dds_signatures'),
+            orderBy('timestamp', 'desc'),
+            limit(sigsLimit)
+          );
+          unsubSignatures = onSnapshot(fallbackQSignatures, processSignaturesSnapshot, (fallbackErr) => {
+            handleFirestoreError(fallbackErr, OperationType.LIST, 'dds_signatures');
+          });
+        });
+      } catch (err) {
+        console.warn('Immediate dds_signatures error, using basic query fallback:', err);
+        const fallbackQSignatures = query(
+          collection(db, 'dds_signatures'),
+          limit(sigsLimit)
+        );
+        unsubSignatures = onSnapshot(fallbackQSignatures, processSignaturesSnapshot, () => {});
+      }
+    };
+
+    setupSessionsListener();
+    setupSignaturesListener();
 
     return () => {
       unsubSessions();
       unsubSignatures();
     };
-  }, [auth.currentUser, isManager, isAdmin, isMaster]);
+  }, [auth.currentUser, isManager, isAdmin, isMaster, canViewManagerCharts, profile?.role]);
 
   const monthlyData = useMemo(() => {
     const now = new Date();
