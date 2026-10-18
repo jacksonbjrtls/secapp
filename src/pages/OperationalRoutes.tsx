@@ -11,6 +11,7 @@ import {
   serverTimestamp, 
   getDocs,
   query,
+  where,
   orderBy,
   Timestamp,
   limit
@@ -19,7 +20,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { getCurrentShift, getGroupForShift, type Shift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeToDate, formatDateBR } from '../lib/utils';
+import { cn, safeToDate, formatDateBR, getLocalDateStrBR, formatLocalDateBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
 import { subscribeSharedCollection, invalidateReferenceCache } from '../lib/referenceCache';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -521,6 +522,25 @@ const OperationalRoutes: React.FC = () => {
 
   // Filter states for Past Submissions list (Rondas) - Simplified, Professional Date Filter
   const [histSelectedDate, setHistSelectedDate] = useState<string>('');
+  const histDateInputRef = useRef<HTMLInputElement>(null);
+
+  const handleOpenHistDatePicker = () => {
+    if (histDateInputRef.current) {
+      try {
+        if (typeof histDateInputRef.current.showPicker === 'function') {
+          histDateInputRef.current.showPicker();
+        } else {
+          histDateInputRef.current.click();
+        }
+      } catch {
+        try {
+          histDateInputRef.current.click();
+        } catch {
+          histDateInputRef.current.focus();
+        }
+      }
+    }
+  };
 
   const allSubmissionsMerged = useMemo(() => {
     const localSubs = offlineQueue.map((item, idx) => ({
@@ -538,15 +558,12 @@ const OperationalRoutes: React.FC = () => {
     startOfYesterday.setHours(0, 0, 0, 0);
 
     return allSubmissionsMerged.filter(sub => {
-      const dateObj = safeToDate(sub.createdAt);
+      const dateObj = safeToDate(sub.createdAt || (sub as any).date || (sub as any).timestamp);
       if (!dateObj) return false;
 
       if (histSelectedDate) {
-        // Compare targeted date (YYYY-MM-DD)
-        const year = dateObj.getFullYear();
-        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-        const day = String(dateObj.getDate()).padStart(2, '0');
-        const formattedItemDate = `${year}-${month}-${day}`;
+        // Compare targeted date (YYYY-MM-DD) in plant timezone
+        const formattedItemDate = getLocalDateStrBR(dateObj);
         return formattedItemDate === histSelectedDate;
       }
 
@@ -791,20 +808,53 @@ const OperationalRoutes: React.FC = () => {
     return () => unsubTemplates();
   }, []);
 
-  // Subscribe to Route Submissions (controlled limit based on user role)
+  // Subscribe to Route Submissions (supports dynamic date filtering and controlled limits)
   useEffect(() => {
-    const routeLimit = isMaster || isAdmin ? 150 : 30;
-    const unsubSubs = onSnapshot(
-      query(collection(db, 'route_submissions'), orderBy('createdAt', 'desc'), limit(routeLimit)), 
+    let qSubs;
+    if (histSelectedDate) {
+      // Parse the selected date YYYY-MM-DD
+      const [y, m, d] = histSelectedDate.split('-').map(Number);
+      const startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0);
+      const endOfDay = new Date(y, m - 1, d, 23, 59, 59, 999);
+      
+      qSubs = query(
+        collection(db, 'route_submissions'),
+        where('createdAt', '>=', Timestamp.fromDate(startOfDay)),
+        where('createdAt', '<=', Timestamp.fromDate(endOfDay)),
+        orderBy('createdAt', 'desc'),
+        limit(250)
+      );
+    } else {
+      const routeLimit = isMaster || isAdmin || isManager ? 400 : 200;
+      qSubs = query(
+        collection(db, 'route_submissions'), 
+        orderBy('createdAt', 'desc'), 
+        limit(routeLimit)
+      );
+    }
+
+    let unsubSubs = onSnapshot(
+      qSubs, 
       (snap) => {
         setSubmissions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RouteSubmission)));
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'route_submissions');
+      }, 
+      (err) => {
+        console.warn("Primary route_submissions query failed, falling back to ordered query:", err);
+        const fallbackQ = query(
+          collection(db, 'route_submissions'),
+          orderBy('createdAt', 'desc'),
+          limit(500)
+        );
+        unsubSubs = onSnapshot(fallbackQ, (fallbackSnap) => {
+          setSubmissions(fallbackSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RouteSubmission)));
+        }, (fErr) => {
+          handleFirestoreError(fErr, OperationType.LIST, 'route_submissions');
+        });
       }
     );
 
     return () => unsubSubs();
-  }, [isMaster, isAdmin]);
+  }, [isMaster, isAdmin, isManager, histSelectedDate]);
 
   // Subscribe to Production Lines
   useEffect(() => {
@@ -2511,36 +2561,96 @@ const OperationalRoutes: React.FC = () => {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
-                {/* Premium Button Trigger with Hidden Native Date Picker */}
-                <div className="relative overflow-hidden flex items-center justify-center bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/10 rounded-2xl px-4 py-2.5 transition-all shadow-xs group cursor-pointer w-full sm:w-auto min-w-[180px]">
-                  <Calendar className="w-4 h-4 text-emerald-600 mr-2 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-700 tracking-tight select-none">
-                    {histSelectedDate 
-                      ? formatDateBR(histSelectedDate) 
-                      : "Selecionar Data..."}
-                  </span>
-                  
-                  {/* Invisible Datepicker that perfectly overlaps the parent wrapper */}
-                  <input
-                    type="date"
-                    value={histSelectedDate}
-                    onChange={(e) => setHistSelectedDate(e.target.value)}
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                    title="Selecione uma data para filtrar"
-                  />
-                </div>
-
-                {histSelectedDate && (
+              <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 flex-wrap">
+                {/* Preset shortcuts */}
+                <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-xs">
                   <button
                     type="button"
                     onClick={() => setHistSelectedDate('')}
-                    className="p-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-150 text-rose-600 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer"
-                    title="Limpar filtro e voltar para Filtro Automático"
+                    className={cn(
+                      "px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                      !histSelectedDate
+                        ? "bg-emerald-600 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                    )}
                   >
-                    Limpar
+                    Ontem e Hoje
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistSelectedDate(getLocalDateStrBR(new Date()));
+                    }}
+                    className={cn(
+                      "px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                      histSelectedDate === getLocalDateStrBR(new Date())
+                        ? "bg-emerald-600 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                    )}
+                  >
+                    Hoje
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const yesterday = new Date();
+                      yesterday.setDate(yesterday.getDate() - 1);
+                      setHistSelectedDate(getLocalDateStrBR(yesterday));
+                    }}
+                    className={cn(
+                      "px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                      histSelectedDate && histSelectedDate !== getLocalDateStrBR(new Date()) && histSelectedDate === (() => {
+                        const y = new Date();
+                        y.setDate(y.getDate() - 1);
+                        return getLocalDateStrBR(y);
+                      })()
+                        ? "bg-emerald-600 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                    )}
+                  >
+                    Ontem
+                  </button>
+                </div>
+
+                {/* Date Picker Button with universal native click & visual feedback */}
+                <div 
+                  onClick={handleOpenHistDatePicker}
+                  className={cn(
+                    "relative flex items-center bg-white border rounded-2xl px-3.5 py-1.5 transition-all shadow-xs group cursor-pointer",
+                    histSelectedDate ? "border-emerald-500 ring-2 ring-emerald-100 bg-emerald-50/20" : "border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/10"
+                  )}
+                  title="Clique para abrir o calendário e selecionar uma data"
+                >
+                  <Calendar className="w-4 h-4 text-emerald-600 mr-2 shrink-0 group-hover:scale-110 transition-transform pointer-events-none" />
+                  <span className="text-xs font-bold text-slate-800 select-none pointer-events-none">
+                    {histSelectedDate ? formatDateBR(histSelectedDate) : "Selecionar Data"}
+                  </span>
+
+                  {/* Universal full-bleed input allows native OS/browser picker to open reliably on any click */}
+                  <input
+                    ref={histDateInputRef}
+                    type="date"
+                    value={histSelectedDate}
+                    onChange={(e) => setHistSelectedDate(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    title="Selecione uma data para filtrar"
+                  />
+
+                  {histSelectedDate && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setHistSelectedDate('');
+                      }}
+                      className="relative z-20 ml-2 p-1 hover:bg-slate-100 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                      title="Limpar filtro de data e voltar para Ontem e Hoje"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 

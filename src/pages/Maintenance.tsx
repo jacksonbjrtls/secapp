@@ -42,6 +42,7 @@ import {
   AlertTriangle,
   Info,
   Check,
+  User,
   Eye,
   RefreshCw,
   FolderInput,
@@ -206,9 +207,16 @@ export default function Maintenance() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
+  // Users State for mapping creator profiles
+  const [usersList, setUsersList] = useState<any[]>([]);
+
   // Load Firestore collections
   useEffect(() => {
     setLoading(true);
+
+    const unsubUsers = subscribeSharedCollection('users', (list) => {
+      setUsersList(list || []);
+    });
 
     const unsubIssues = onSnapshot(
       query(collection(db, 'maintenance_issues'), orderBy('createdAt', 'desc'), limit(300)),
@@ -268,6 +276,7 @@ export default function Maintenance() {
     }, 'name');
 
     return () => {
+      unsubUsers();
       unsubIssues();
       unsubEquipments();
       unsubInspTypes();
@@ -279,6 +288,44 @@ export default function Maintenance() {
       unsubSectors();
     };
   }, [isMaster]);
+
+  // Map users for fast creator resolution
+  const usersMap = useMemo(() => {
+    const map: Record<string, { displayName?: string; name?: string; email?: string }> = {};
+    usersList.forEach(u => {
+      const key = u.uid || u.id;
+      if (key) {
+        map[key] = {
+          displayName: u.displayName || u.name,
+          name: u.name,
+          email: u.email
+        };
+      }
+    });
+    return map;
+  }, [usersList]);
+
+  // Robust resolver to ensure the creator is always identified without needing to open the pendency
+  const getIssueCreatorName = (issue: MaintenanceIssue): string => {
+    if (issue.createdByName && issue.createdByName !== 'Usuário' && issue.createdByName !== 'Não informado' && issue.createdByName.trim() !== '') {
+      return issue.createdByName;
+    }
+    const anyIssue = issue as any;
+    if (anyIssue.operatorName) return anyIssue.operatorName;
+    if (anyIssue.reportedBy) return anyIssue.reportedBy;
+    if (anyIssue.operator) return anyIssue.operator;
+    if (anyIssue.userName) return anyIssue.userName;
+    if (anyIssue.author) return anyIssue.author;
+    if (issue.createdBy && usersMap[issue.createdBy]) {
+      const u = usersMap[issue.createdBy];
+      return u.displayName || u.name || u.email || issue.createdBy;
+    }
+    if (issue.createdBy && issue.createdBy.includes('@')) {
+      return issue.createdBy;
+    }
+    if (issue.createdByName) return issue.createdByName;
+    return 'Não informado';
+  };
 
   // Compute lists for UI with fallback options if collections are empty (guaranteed unique and sorted)
   const availableInspectionTypes = useMemo(() => {
@@ -424,13 +471,15 @@ export default function Maintenance() {
   // Filtered maintenance issues list
   const filteredIssues = issues.filter(issue => {
     const searchLower = searchTerm.toLowerCase();
+    const creatorName = getIssueCreatorName(issue).toLowerCase();
     const matchesSearch = 
       !searchTerm ||
       issue.equipmentTag?.toLowerCase().includes(searchLower) ||
       issue.equipmentName?.toLowerCase().includes(searchLower) ||
       issue.description?.toLowerCase().includes(searchLower) ||
       issue.sapNote?.toLowerCase().includes(searchLower) ||
-      issue.createdByName?.toLowerCase().includes(searchLower);
+      issue.createdByName?.toLowerCase().includes(searchLower) ||
+      creatorName.includes(searchLower);
 
     const matchesLine = filterLine === 'all' || issue.line === filterLine;
     const matchesSector = filterSector === 'all' || issue.sector === filterSector;
@@ -1213,6 +1262,7 @@ export default function Maintenance() {
       issue.line || '-',
       issue.equipmentTag || '-',
       issue.equipmentName || '-',
+      getIssueCreatorName(issue),
       issue.inspectionType || '-',
       issue.responsibleCenter || '-',
       issue.status || 'Pendente',
@@ -1222,7 +1272,7 @@ export default function Maintenance() {
 
     autoTable(docPdf, {
       startY: 28,
-      head: [['#', 'Data', 'Área / Setor', 'Linha', 'TAG', 'Equipamento', 'Tipo Insp.', 'Centro Resp.', 'Status', 'Nota SAP', 'Descrição']],
+      head: [['#', 'Data', 'Área / Setor', 'Linha', 'TAG', 'Equipamento', 'Criado por', 'Tipo Insp.', 'Centro Resp.', 'Status', 'Nota SAP', 'Descrição']],
       body: tableData,
       theme: 'grid',
       headStyles: {
@@ -1239,16 +1289,17 @@ export default function Maintenance() {
       },
       columnStyles: {
         0: { halign: 'center', cellWidth: 8 },
-        1: { halign: 'center', cellWidth: 20 },
-        2: { cellWidth: 24 },
-        3: { cellWidth: 18 },
-        4: { fontStyle: 'bold', cellWidth: 24 },
-        5: { cellWidth: 36 },
+        1: { halign: 'center', cellWidth: 18 },
+        2: { cellWidth: 22 },
+        3: { cellWidth: 16 },
+        4: { fontStyle: 'bold', cellWidth: 22 },
+        5: { cellWidth: 32 },
         6: { cellWidth: 24 },
-        7: { cellWidth: 30 },
-        8: { halign: 'center', fontStyle: 'bold', cellWidth: 22 },
-        9: { cellWidth: 20 },
-        10: { cellWidth: 50 }
+        7: { cellWidth: 22 },
+        8: { cellWidth: 26 },
+        9: { halign: 'center', fontStyle: 'bold', cellWidth: 20 },
+        10: { cellWidth: 18 },
+        11: { cellWidth: 42 }
       }
     });
 
@@ -1507,7 +1558,147 @@ export default function Maintenance() {
             </div>
           ) : (
             <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
+              {/* RESPONSIVE MOBILE / TABLET CARDS VIEW - Instant creator visibility without needing to open the pendency */}
+              <div className="block lg:hidden divide-y divide-slate-100">
+                {filteredIssues.map((issue) => {
+                  const isDone = issue.status === 'Concluído';
+                  const creatorName = getIssueCreatorName(issue);
+
+                  return (
+                    <div key={`mob-${issue.id}`} className="p-4 sm:p-5 space-y-3.5 hover:bg-slate-50/40 transition-colors">
+                      {/* Top Bar: Status + Date */}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={cn(
+                          "px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border inline-flex items-center gap-1",
+                          isDone
+                            ? "bg-emerald-50 border-emerald-100 text-emerald-800"
+                            : issue.status === 'Aguardando Peça'
+                            ? "bg-amber-50 border-amber-100 text-amber-700"
+                            : "bg-sky-50 border-sky-100 text-sky-800"
+                        )}>
+                          {isDone ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <Clock className="w-3 h-3" />}
+                          {issue.status || 'Pendente'}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500">
+                          {issue.date ? formatLocalDateBR(issue.date) : '-'}
+                        </span>
+                      </div>
+
+                      {/* Equipment TAG & Name */}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-black text-sm text-slate-900 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+                            {issue.equipmentTag}
+                          </span>
+                          <span className="text-xs font-bold text-slate-700">{issue.equipmentName}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 font-semibold mt-1">
+                          {issue.sector || 'Geral'}{issue.line ? ` • ${issue.line}` : ''}
+                        </p>
+                      </div>
+
+                      {/* PROMINENT CREATOR BOX (Visualização Direta de quem criou) */}
+                      <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-2xs">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black text-xs shrink-0 shadow-xs">
+                            <User className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-[9px] uppercase font-black tracking-wider text-emerald-800 block">
+                              Criado por
+                            </span>
+                            <span className="text-xs font-black text-slate-900 truncate block" title={creatorName}>
+                              {creatorName}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-extrabold text-emerald-800 bg-white border border-emerald-200 px-2.5 py-1 rounded-xl shrink-0 shadow-2xs">
+                          {issue.origin === 'Rota Operacional' ? 'Rota Operacional' : 'Manual'}
+                          {(issue.shift || issue.teamLetter) && ` • ${issue.shift || ''}${issue.teamLetter ? ` (${issue.teamLetter})` : ''}`}
+                        </span>
+                      </div>
+
+                      {/* Technical Info */}
+                      <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Tipo Inspeção</span>
+                          <span className="font-semibold text-slate-800 text-[11px]">{issue.inspectionType || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Centro Responsável</span>
+                          <span className="font-semibold text-slate-800 text-[11px]">{issue.responsibleCenter || '-'}</span>
+                        </div>
+                        {issue.sapNote && (
+                          <div className="col-span-2 pt-1 border-t border-slate-200/60 flex items-center gap-2">
+                            <span className="text-[10px] uppercase font-bold text-slate-400">Nota SAP:</span>
+                            <span className="font-mono font-bold text-xs text-slate-900">{issue.sapNote}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Description */}
+                      {issue.description && (
+                        <p className="text-xs text-slate-700 font-medium leading-relaxed bg-white p-2.5 rounded-xl border border-slate-100">
+                          {issue.description}
+                        </p>
+                      )}
+
+                      {/* Footer: Photos & Actions */}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                        <div>
+                          {issue.attachments && issue.attachments.length > 0 ? (
+                            <button
+                              onClick={() => setViewingPhotoUrl(issue.attachments[0])}
+                              className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1"
+                            >
+                              <Camera className="w-3 h-3" />
+                              {issue.attachments.length} foto(s)
+                            </button>
+                          ) : (
+                            <span className="text-slate-300 text-[10px] italic">Sem fotos</span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleToggleCompleteIssue(issue)}
+                            title={isDone ? "Reabrir Pendência" : "Concluir Pendência"}
+                            className={cn(
+                              "p-2 rounded-xl border transition-all cursor-pointer",
+                              isDone
+                                ? "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                            )}
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            onClick={() => handleOpenEditIssueModal(issue)}
+                            title="Editar Pendência"
+                            className="p-2 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 rounded-xl transition-all cursor-pointer"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+
+                          {(isAdmin || isMaster) && (
+                            <button
+                              onClick={() => handleDeleteIssue(issue)}
+                              title="Excluir Pendência"
+                              className="p-2 bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 rounded-xl transition-all cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* DESKTOP TABLE VIEW */}
+              <div className="hidden lg:block overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
@@ -1515,6 +1706,7 @@ export default function Maintenance() {
                       <th className="p-4">Data</th>
                       <th className="p-4">TAG / Equipamento</th>
                       <th className="p-4">Setor / Linha</th>
+                      <th className="p-4">Criado por</th>
                       <th className="p-4">Tipo Inspeção / Centro</th>
                       <th className="p-4">Nota SAP</th>
                       <th className="p-4">Descrição</th>
@@ -1525,6 +1717,7 @@ export default function Maintenance() {
                   <tbody className="divide-y divide-slate-50 text-xs font-medium text-slate-700">
                     {filteredIssues.map((issue) => {
                       const isDone = issue.status === 'Concluído';
+                      const creatorName = getIssueCreatorName(issue);
                       return (
                         <tr key={issue.id} className="hover:bg-slate-50/60 transition-all">
                           <td className="p-4 whitespace-nowrap">
@@ -1555,6 +1748,27 @@ export default function Maintenance() {
                             <span className="text-[10px] text-slate-400 font-semibold">{issue.line || 'Geral'}</span>
                           </td>
 
+                          {/* Dedicated Creator Column */}
+                          <td className="p-4 whitespace-nowrap">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center justify-center shrink-0 shadow-2xs">
+                                <User className="w-4 h-4" />
+                              </div>
+                              <div className="flex flex-col min-w-0">
+                                <span 
+                                  className="font-black text-slate-900 text-xs truncate max-w-[150px] block" 
+                                  title={creatorName}
+                                >
+                                  {creatorName}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-medium">
+                                  {issue.origin === 'Rota Operacional' ? 'Rota Operacional' : 'Manual'}
+                                  {(issue.shift || issue.teamLetter) && ` • ${issue.shift || ''}${issue.teamLetter ? ` (${issue.teamLetter})` : ''}`}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
                           <td className="p-4">
                             <span className="font-bold text-slate-800 block">{issue.inspectionType || '-'}</span>
                             <span className="text-[10px] text-slate-500">{issue.responsibleCenter || '-'}</span>
@@ -1577,7 +1791,7 @@ export default function Maintenance() {
                             {issue.attachments && issue.attachments.length > 0 ? (
                               <button
                                 onClick={() => setViewingPhotoUrl(issue.attachments[0])}
-                                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 mx-auto"
+                                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 mx-auto cursor-pointer"
                               >
                                 <Camera className="w-3 h-3" />
                                 {issue.attachments.length} foto(s)
@@ -1593,7 +1807,7 @@ export default function Maintenance() {
                                 onClick={() => handleToggleCompleteIssue(issue)}
                                 title={isDone ? "Reabrir Pendência" : "Concluir Pendência"}
                                 className={cn(
-                                  "p-1.5 rounded-lg border transition-all",
+                                  "p-1.5 rounded-lg border transition-all cursor-pointer",
                                   isDone
                                     ? "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
                                     : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
@@ -1604,8 +1818,8 @@ export default function Maintenance() {
 
                               <button
                                 onClick={() => handleOpenEditIssueModal(issue)}
-                                title="Editar"
-                                className="p-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 rounded-lg transition-all"
+                                title="Editar Pendência"
+                                className="p-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 rounded-lg transition-all cursor-pointer"
                               >
                                 <Edit3 className="w-4 h-4" />
                               </button>
@@ -1613,8 +1827,8 @@ export default function Maintenance() {
                               {(isAdmin || isMaster) && (
                                 <button
                                   onClick={() => handleDeleteIssue(issue)}
-                                  title="Excluir"
-                                  className="p-1.5 bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 rounded-lg transition-all"
+                                  title="Excluir Pendência"
+                                  className="p-1.5 bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 rounded-lg transition-all cursor-pointer"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -2365,6 +2579,23 @@ export default function Maintenance() {
                   <X className="w-5 h-5" />
                 </button>
               </div>
+
+              {/* Creator Info Banner for Existing Issue */}
+              {editingIssue && (
+                <div className="bg-emerald-50 border-b border-emerald-100 px-6 md:px-8 py-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 text-emerald-950 font-bold">
+                    <User className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Criado por: <strong className="font-black text-emerald-900">{getIssueCreatorName(editingIssue)}</strong></span>
+                  </div>
+                  <div className="flex items-center gap-3 text-emerald-800 text-[11px] font-semibold">
+                    <span>Origem: <strong>{editingIssue.origin || 'Manual'}</strong></span>
+                    {editingIssue.date && <span>Data: <strong>{formatLocalDateBR(editingIssue.date)}</strong></span>}
+                    {(editingIssue.shift || editingIssue.teamLetter) && (
+                      <span>Escala: <strong>{editingIssue.shift || ''}{editingIssue.teamLetter ? ` (${editingIssue.teamLetter})` : ''}</strong></span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Modal Form */}
               <form onSubmit={handleSaveIssue} className="p-6 md:p-8 space-y-6 max-h-[80vh] overflow-y-auto">
