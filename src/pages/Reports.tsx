@@ -50,7 +50,8 @@ import {
   Wrench,
   Camera,
   Eye,
-  Layers
+  Layers,
+  Tag
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -177,6 +178,7 @@ const Reports: React.FC = () => {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [ddsSessionsData, setDdsSessionsData] = useState<any[]>([]);
   const [routeSubmissionsData, setRouteSubmissionsData] = useState<any[]>([]);
+  const [maintenanceIssuesData, setMaintenanceIssuesData] = useState<any[]>([]);
   const [safetyObservationsData, setSafetyObservationsData] = useState<any[]>([]);
   const [userLoginLogsData, setUserLoginLogsData] = useState<any[]>([]);
   const [feedbackSurveysData, setFeedbackSurveysData] = useState<any[]>([]);
@@ -228,6 +230,7 @@ const Reports: React.FC = () => {
   // Filters State - Initialized to today for ultra-fast load (< 250ms) and Firestore cost reduction
   const todayStr = useMemo(() => getLocalDateStrBR(new Date()), []);
   const [filterUser, setFilterUser] = useState('');
+  const [filterEquipment, setFilterEquipment] = useState<string>('all');
   const [filterTheme, setFilterTheme] = useState('');
   const [filterShift, setFilterShift] = useState('all');
   const [filterGroup, setFilterGroup] = useState('all');
@@ -253,6 +256,91 @@ const Reports: React.FC = () => {
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
   }, [stopsData]);
+
+  // Dynamic list of equipments with pendency for the dropdown selector
+  const availablePendingEquipments = useMemo(() => {
+    const map = new Map<string, { tag: string; name: string; line?: string }>();
+    
+    // 1. Scan routeSubmissionsData
+    routeSubmissionsData.forEach(sub => {
+      if (sub.responses && Array.isArray(sub.responses)) {
+        sub.responses.forEach((resp: any) => {
+          if (resp.status === 'not_ok') {
+            const rawTag = (resp.equipmentTag || '').trim();
+            const rawName = (resp.equipmentName || '').trim();
+            // Don't treat random doc IDs as tags
+            const isTagValid = rawTag && rawTag !== 'S/T' && rawTag !== 'N/A' && !rawTag.startsWith('rec_') && rawTag.length < 30;
+            const tag = isTagValid ? rawTag : '';
+            const name = rawName || (tag ? `Equipamento ${tag}` : 'Equipamento');
+            const key = (tag || name).toLowerCase().trim();
+            if (key) {
+              const line = sub.lineName || sub.templateName || '';
+              if (!map.has(key)) {
+                map.set(key, { tag: tag || 'S/T', name, line });
+              } else if (tag && map.get(key)!.tag === 'S/T') {
+                map.set(key, { tag, name, line });
+              }
+            }
+          }
+        });
+      }
+    });
+
+    // 2. Scan maintenanceIssuesData
+    maintenanceIssuesData.forEach(iss => {
+      const rawTag = (iss.equipmentTag || '').trim();
+      const rawName = (iss.equipmentName || '').trim();
+      const isTagValid = rawTag && rawTag !== 'S/T' && rawTag !== 'N/A' && !rawTag.startsWith('rec_') && rawTag.length < 30;
+      const tag = isTagValid ? rawTag : '';
+      const name = rawName || (tag ? `Equipamento ${tag}` : 'Equipamento');
+      const key = (tag || name).toLowerCase().trim();
+      if (key) {
+        const line = iss.line || '';
+        if (!map.has(key)) {
+          map.set(key, { tag: tag || 'S/T', name, line });
+        } else if (tag && map.get(key)!.tag === 'S/T') {
+          map.set(key, { tag, name, line });
+        }
+      }
+    });
+
+    let list = Array.from(map.values());
+
+    // Contextualize by selected line if active
+    if (filterLine !== 'all') {
+      const selectedLineObj = lines.find(l => l.id === filterLine || l.name?.toLowerCase() === filterLine.toLowerCase());
+      const targetLineName = (selectedLineObj ? selectedLineObj.name : filterLine).toLowerCase().trim();
+      const filteredByLine = list.filter(eq => {
+        if (!eq.line) return true;
+        const eqLine = eq.line.toLowerCase().trim();
+        return eqLine.includes(targetLineName) || targetLineName.includes(eqLine);
+      });
+      if (filteredByLine.length > 0) {
+        list = filteredByLine;
+      }
+    }
+
+    return list.sort((a, b) => {
+      if (a.tag !== 'S/T' && b.tag !== 'S/T') {
+        return a.tag.localeCompare(b.tag, 'pt-BR', { sensitivity: 'base' });
+      }
+      return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+    });
+  }, [routeSubmissionsData, maintenanceIssuesData, filterLine, lines]);
+
+  // Dynamic lines for pending equipments
+  const availablePendingLines = useMemo(() => {
+    const set = new Set<string>();
+    lines.forEach(l => { if (l.name) set.add(l.name.trim()); });
+    routeSubmissionsData.forEach(sub => {
+      if (sub.lineName && sub.lineName.trim()) set.add(sub.lineName.trim());
+      if (sub.templateName && sub.templateName.trim()) set.add(sub.templateName.trim());
+    });
+    maintenanceIssuesData.forEach(iss => {
+      if (iss.line && iss.line.trim()) set.add(iss.line.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  }, [lines, routeSubmissionsData, maintenanceIssuesData]);
 
   // Quick date presets
   const handleSetDatePreset = (preset: 'today' | 'yesterday' | 'week' | 'month' | 'all') => {
@@ -293,16 +381,28 @@ const Reports: React.FC = () => {
     setFilterStopActivity('');
     setFilterStopType('all');
     setFilterStopDuration('all');
+    setFilterEquipment('all');
     if (!keepDates) {
-      setFilterDateStart(todayStr);
-      setFilterDateEnd(todayStr);
+      if (reportType === 'pending_equipments') {
+        setFilterDateStart('');
+        setFilterDateEnd('');
+      } else {
+        setFilterDateStart(todayStr);
+        setFilterDateEnd(todayStr);
+      }
     }
   };
 
   useEffect(() => {
-    // When changing tabs, automatically reset the date filter to today so each tab opens lightning fast with only the current day's records
-    setFilterDateStart(todayStr);
-    setFilterDateEnd(todayStr);
+    // When changing tabs, set appropriate date default and reset filters
+    if (reportType === 'pending_equipments') {
+      // For pending equipments, show all recent pendencies across the plant by default
+      setFilterDateStart('');
+      setFilterDateEnd('');
+    } else {
+      setFilterDateStart(todayStr);
+      setFilterDateEnd(todayStr);
+    }
     resetFilters(true);
   }, [reportType, todayStr]);
 
@@ -613,30 +713,195 @@ const Reports: React.FC = () => {
         setQualityData(qualityResults);
       }
 
-      // 6. PENDING EQUIPMENTS / ROUTES
+      // 6. PENDING EQUIPMENTS / ROUTES & MAINTENANCE ISSUES
       else if (targetType === 'pending_equipments') {
-        const constraints: any[] = [];
-        if (tsStart) constraints.push(where('createdAt', '>=', tsStart));
-        if (tsEnd) constraints.push(where('createdAt', '<=', tsEnd));
-        constraints.push(orderBy('createdAt', 'desc'));
-        constraints.push(limit(pendingLimit));
+        const pendingFetchLimit = isPrivileged ? 500 : 300;
+        let routesList: any[] = [];
+        try {
+          const constraints: any[] = [];
+          if (tsStart) constraints.push(where('createdAt', '>=', tsStart));
+          if (tsEnd) constraints.push(where('createdAt', '<=', tsEnd));
+          constraints.push(orderBy('createdAt', 'desc'));
+          constraints.push(limit(pendingFetchLimit));
 
-        const routesSnap = await getDocs(query(collection(db, 'route_submissions'), ...constraints));
-        const routesList = routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const routesSnap = await getDocs(query(collection(db, 'route_submissions'), ...constraints));
+          routesList = routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (rErr) {
+          console.warn("Primary route_submissions query failed, using fallback ordered query:", rErr);
+          try {
+            const fallbackSnap = await getDocs(query(collection(db, 'route_submissions'), orderBy('createdAt', 'desc'), limit(pendingFetchLimit)));
+            routesList = fallbackSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          } catch (fErr) {
+            console.error("Fallback route_submissions query failed:", fErr);
+          }
+        }
         setRouteSubmissionsData(routesList);
+
+        // Also fetch issues from maintenance_issues
+        let issuesList: any[] = [];
+        try {
+          const issuesSnap = await getDocs(query(collection(db, 'maintenance_issues'), orderBy('createdAt', 'desc'), limit(pendingFetchLimit)));
+          issuesList = issuesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (mErr) {
+          try {
+            const fallbackSnap = await getDocs(query(collection(db, 'maintenance_issues'), limit(pendingFetchLimit)));
+            issuesList = fallbackSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          } catch (mErr2) {
+            console.warn("Could not fetch maintenance_issues for pending report:", mErr2);
+          }
+        }
+        setMaintenanceIssuesData(issuesList);
       }
 
       // 7. USER RAY-X (RAIO-X DO USUÁRIO)
-      else if (targetType === 'user_ray_x' && (isAdmin || isMaster)) {
-        const [routesSnap, safetySnap] = await Promise.all([
-          getDocs(query(collection(db, 'route_submissions'), limit(rayXLimit))),
-          getDocs(query(collection(db, 'safety_observations'), limit(rayXLimit)))
-        ]);
-        setRouteSubmissionsData(routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        setSafetyObservationsData(safetySnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      else if (targetType === 'user_ray_x' && (isAdmin || isMaster || isManager)) {
+        const rayLimit = isPrivileged ? 1000 : 500;
 
+        // 1. Force refresh live users to ensure latest accessCount and lastLoginAt
         try {
-          const logsSnap = await getDocs(query(collection(db, 'user_login_logs'), orderBy('timestamp', 'desc'), limit(500)));
+          const freshUsers = await fetchUsersSafely(true);
+          if (freshUsers && freshUsers.length > 0) {
+            const usersList = freshUsers
+              .filter(u => {
+                const uEmail = u.email || '';
+                if (uEmail === 'jacksonbjr@gmail.com') return false;
+                return (!MASTER_EMAILS.includes(uEmail) || isMaster) && u.displayName !== 'Sem nome';
+              })
+              .sort((a, b) => a.displayName.localeCompare(b.displayName));
+            setAllUsers(usersList.map(u => ({ id: u.uid, ...u })));
+          }
+        } catch (uErr) {
+          console.warn('Error refreshing users list for Ray-X:', uErr);
+        }
+
+        // 2. Fetch DDS Signatures and Sessions for participation and creation tracking
+        try {
+          const [sigSnap, sesSnap] = await Promise.all([
+            getDocs(query(collection(db, 'dds_signatures'), orderBy('timestamp', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'dds_signatures'), limit(rayLimit)))),
+            getDocs(query(collection(db, 'dds_sessions'), orderBy('createdAt', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'dds_sessions'), limit(rayLimit))))
+          ]);
+
+          const sessions: Record<string, any> = {};
+          const sessionsList = await Promise.all(sesSnap.docs.map(async (sDoc) => {
+            const sData = sDoc.data();
+            const rawExec = sData.executor || sData.executante || sData.responsavel || sData.facilitador || sData.instrutor || '';
+            const rawCreatedByName = sData.createdByName || sData.creatorName || '';
+            const [decTitle, decExec, decCreatedByName] = await Promise.all([
+              decryptValue(sData.title),
+              rawExec ? decryptValue(rawExec) : Promise.resolve(''),
+              rawCreatedByName ? decryptValue(rawCreatedByName) : Promise.resolve('')
+            ]);
+            const sessionObj = {
+              ...sData,
+              id: sDoc.id,
+              title: decTitle || sData.title,
+              executor: decExec || rawExec || '',
+              createdByName: decCreatedByName || rawCreatedByName || '',
+              createdBy: sData.createdBy || '',
+              shift: sData.shift || '-',
+              group: sData.group || '-',
+              totalPrevisto: Number(sData.totalPrevisto) || 0,
+              createdAt: safeToDate(sData.createdAt) || safeToDate(sData.date) || new Date()
+            };
+            sessions[sDoc.id] = sessionObj;
+            return sessionObj;
+          }));
+          setDdsSessionsData(sessionsList);
+
+          const ddsResults = await Promise.all(sigSnap.docs.map(async (doc) => {
+            const sig = doc.data();
+            const session = sessions[sig.sessionId];
+            const rawSigExec = !session?.executor ? (sig.executor || '') : '';
+            const [decName, decSigExec] = await Promise.all([
+              decryptValue(sig.userName),
+              rawSigExec ? decryptValue(rawSigExec) : Promise.resolve('')
+            ]);
+            return {
+              id: doc.id,
+              sessionId: sig.sessionId,
+              userId: sig.userId || '',
+              userName: decName || 'Desconhecido',
+              registration: sig.registration || '',
+              sessionTitle: sig.sessionTitle || session?.title || 'Sessão',
+              shift: session?.shift || '-',
+              group: session?.group || '-',
+              executor: session?.executor || decSigExec || sig.executor || '-',
+              createdByName: session?.createdByName || '-',
+              createdBy: session?.createdBy || '',
+              mood: sig.mood || '-',
+              timestamp: safeToDate(sig.timestamp) || new Date(),
+              isOrphan: !session
+            };
+          }));
+          setData(ddsResults);
+        } catch (ddsErr) {
+          console.warn('Error loading DDS activities for Ray-X:', ddsErr);
+        }
+
+        // 3. Fetch Quality Inspections
+        try {
+          const qualitySnap = await getDocs(query(collection(db, 'quality_checklist_submissions'), orderBy('createdAt', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'quality_checklist_submissions'), limit(rayLimit))));
+          const qualityResults = await Promise.all(qualitySnap.docs.map(async (doc) => {
+            const sub = doc.data();
+            const decName = await decryptValue(sub.userName);
+            return {
+              id: doc.id,
+              templateId: sub.templateId,
+              templateName: sub.templateName || 'Inspeção de Linha',
+              sectorId: sub.sectorId,
+              lineId: sub.lineId,
+              userId: sub.userId,
+              userName: decName || sub.userName,
+              shift: sub.shift,
+              responses: sub.responses || [],
+              timestamp: safeToDate(sub.createdAt) || new Date()
+            };
+          }));
+          setQualityData(qualityResults);
+        } catch (qErr) {
+          console.warn('Error loading quality activities for Ray-X:', qErr);
+        }
+
+        // 4. Fetch Operational Routes, Forklift Inspections, Safety Observations, Stops, and Maintenance Issues
+        try {
+          const [routesSnap, safetySnap, forkliftSnap, stopsSnap, issuesSnap] = await Promise.all([
+            getDocs(query(collection(db, 'route_submissions'), orderBy('createdAt', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'route_submissions'), limit(rayLimit)))),
+            getDocs(query(collection(db, 'safety_observations'), orderBy('createdAt', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'safety_observations'), limit(rayLimit)))),
+            getDocs(query(collection(db, 'forklift_checklists'), orderBy('timestamp', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'forklift_checklists'), limit(rayLimit)))),
+            getDocs(query(collection(db, 'stops_reports'), orderBy('date', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'stops_reports'), limit(rayLimit)))),
+            getDocs(query(collection(db, 'maintenance_issues'), orderBy('createdAt', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'maintenance_issues'), limit(rayLimit))))
+          ]);
+
+          setRouteSubmissionsData(routesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+          setSafetyObservationsData(safetySnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+          const forkliftResults = await Promise.all(forkliftSnap.docs.map(async (doc) => {
+            const check = doc.data();
+            const decConductor = await decryptValue(check.conductorName);
+            return {
+              id: doc.id,
+              forkliftNumber: check.forkliftNumber,
+              conductorName: decConductor || check.conductorName,
+              conductorId: check.conductorId || check.userId,
+              status: check.status,
+              shift: check.shift,
+              group: check.group,
+              timestamp: safeToDate(check.timestamp) || new Date(),
+              itemResults: check.itemResults || {},
+              notes: check.notes || '',
+              mediaUrl: check.mediaUrl || ''
+            };
+          }));
+          setForkliftData(forkliftResults);
+          setStopsData(stopsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+          setMaintenanceIssuesData(issuesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        } catch (actErr) {
+          console.warn('Error loading operational module activities for Ray-X:', actErr);
+        }
+
+        // 5. Fetch Login Logs
+        try {
+          const logsSnap = await getDocs(query(collection(db, 'user_login_logs'), orderBy('timestamp', 'desc'), limit(rayLimit))).catch(() => getDocs(query(collection(db, 'user_login_logs'), limit(rayLimit))));
           const processedLogs = await Promise.all(
             logsSnap.docs.map(async (docSnap) => {
               const d = docSnap.data();
@@ -658,6 +923,7 @@ const Reports: React.FC = () => {
           console.warn('Error loading user_login_logs:', e);
         }
 
+        // 6. Fetch Feedback Surveys
         try {
           const surveySnap = await getDocs(collection(db, 'app_feedback_surveys'));
           setFeedbackSurveysData(surveySnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -781,13 +1047,19 @@ const Reports: React.FC = () => {
         if (sub.responses && Array.isArray(sub.responses)) {
           sub.responses.forEach((resp: any, respIdx: number) => {
             if (resp.status === 'not_ok') {
+              const rawTag = (resp.equipmentTag || '').trim();
+              const isTagValid = rawTag && rawTag !== 'S/T' && rawTag !== 'N/A' && !rawTag.startsWith('rec_') && rawTag.length < 30;
+              const tag = isTagValid ? rawTag : '';
+              const name = (resp.equipmentName || (tag ? `Equipamento ${tag}` : 'Equipamento')).trim();
               pendingList.push({
                 id: `${sub.id}_${resp.equipmentId || 'noeq'}_${respIdx}`,
                 submissionId: sub.id,
                 date: safeToDate(sub.createdAt) || new Date(),
-                tag: resp.equipmentTag || resp.equipmentId || 'S/T',
-                name: resp.equipmentName || 'Equipamento',
+                tag: tag || 'S/T',
+                name: name,
+                equipmentId: resp.equipmentId || '',
                 line: sub.lineName || sub.templateName || 'Geral',
+                lineId: sub.lineId || '',
                 area: sub.areaName || 'Área',
                 sector: sub.sectorName || 'Setor',
                 operator: sub.operatorName || 'Operador',
@@ -809,6 +1081,52 @@ const Reports: React.FC = () => {
           });
         }
       });
+
+      // Also merge issues from maintenance_issues collection
+      maintenanceIssuesData.forEach(iss => {
+        const issSubId = iss.submissionId || '';
+        const issDate = safeToDate(iss.createdAt) || safeToDate(iss.date) || new Date();
+        const rawTag = (iss.equipmentTag || '').trim();
+        const isTagValid = rawTag && rawTag !== 'S/T' && rawTag !== 'N/A' && !rawTag.startsWith('rec_') && rawTag.length < 30;
+        const issTag = isTagValid ? rawTag : '';
+        const issName = (iss.equipmentName || (issTag ? `Equipamento ${issTag}` : 'Equipamento')).trim();
+
+        // Prevent duplicate if already added from route submissions
+        const isDuplicate = pendingList.some(p => 
+          (issSubId && p.submissionId === issSubId && (p.tag === issTag || p.name === issName))
+        );
+
+        if (!isDuplicate) {
+          pendingList.push({
+            id: iss.id,
+            submissionId: issSubId,
+            date: issDate,
+            tag: issTag || 'S/T',
+            name: issName,
+            equipmentId: iss.equipmentId || '',
+            line: iss.line || 'Geral',
+            lineId: iss.lineId || '',
+            area: iss.area || 'Área',
+            sector: iss.sector || 'Setor',
+            operator: iss.creatorName || iss.createdByName || iss.operatorName || 'Manutenção',
+            diagnostic: iss.diagnostic || '',
+            notes: iss.description || iss.notes || '',
+            reason: iss.diagnostic || iss.description || iss.notes || 'Pendência de Manutenção',
+            schedule: iss.schedule || '',
+            sapNote: iss.sapNote || '',
+            actionTaken: iss.actionTaken || '',
+            responsibleCenter: iss.responsibleCenter || '',
+            inspectionType: iss.inspectionType || '',
+            photoUrl: (iss.attachments && iss.attachments[0]) || iss.photoUrl || '',
+            videoUrl: iss.videoUrl || '',
+            timestamp: issDate,
+            shift: iss.shift || '-',
+            group: iss.teamLetter || iss.group || iss.team || '-',
+            status: iss.status || 'pending',
+          });
+        }
+      });
+
       dataSource = pendingList;
     }
     
@@ -900,11 +1218,41 @@ const Reports: React.FC = () => {
       } else if (reportType === 'wire_consumption') {
         matchUser = (!filterUser || item.coilNumber.toLowerCase().includes(filterUser.toLowerCase()) || (item.consumedBy || '').toLowerCase().includes(filterUser.toLowerCase()));
       } else if (reportType === 'pending_equipments') {
-        matchUser = (!filterUser || 
-                     item.name.toLowerCase().includes(filterUser.toLowerCase()) || 
-                     item.tag.toLowerCase().includes(filterUser.toLowerCase()) ||
-                     item.operator.toLowerCase().includes(filterUser.toLowerCase()) ||
-                     item.reason.toLowerCase().includes(filterUser.toLowerCase()));
+        if (!filterUser || !filterUser.trim()) {
+          matchUser = true;
+        } else {
+          const q = filterUser.toLowerCase().trim();
+          matchUser = (item.name || '').toLowerCase().includes(q) || 
+                      (item.tag || '').toLowerCase().includes(q) ||
+                      (item.operator || '').toLowerCase().includes(q) ||
+                      (item.reason || '').toLowerCase().includes(q) ||
+                      (item.notes || '').toLowerCase().includes(q) ||
+                      (item.diagnostic || '').toLowerCase().includes(q) ||
+                      (item.line || '').toLowerCase().includes(q) ||
+                      (item.area || '').toLowerCase().includes(q) ||
+                      (item.sector || '').toLowerCase().includes(q) ||
+                      (item.sapNote || '').toLowerCase().includes(q) ||
+                      (item.responsibleCenter || '').toLowerCase().includes(q) ||
+                      (item.inspectionType || '').toLowerCase().includes(q) ||
+                      (item.actionTaken || '').toLowerCase().includes(q);
+        }
+      }
+
+      // Filter by specific equipment with pendency from dropdown
+      let matchEquipment = true;
+      if (reportType === 'pending_equipments' && filterEquipment && filterEquipment !== 'all') {
+        const targetEq = filterEquipment.toLowerCase().trim();
+        const itemTag = (item.tag || '').toLowerCase().trim();
+        const itemName = (item.name || '').toLowerCase().trim();
+        const itemId = (item.equipmentId || '').toLowerCase().trim();
+        matchEquipment = (
+          itemTag === targetEq || 
+          itemName === targetEq || 
+          (targetEq !== 's/t' && targetEq !== 'n/a' && itemTag.length > 1 && itemTag.includes(targetEq)) || 
+          (targetEq !== 's/t' && targetEq !== 'n/a' && itemName.length > 1 && itemName.includes(targetEq)) || 
+          (targetEq !== 's/t' && targetEq !== 'n/a' && targetEq.includes(itemName) && itemName.length > 3) ||
+          itemId === targetEq
+        );
       }
       
       let matchThemeOrStatus = true;
@@ -933,12 +1281,14 @@ const Reports: React.FC = () => {
         matchLine = filterLine === 'all' || item.currentLineId === filterLine;
       } else if (reportType === 'pending_equipments') {
         if (filterLine !== 'all') {
-          const selectedLineObj = lines.find(l => l.id === filterLine);
-          if (selectedLineObj) {
-            matchLine = item.line.toLowerCase() === selectedLineObj.name.toLowerCase();
-          } else {
-            matchLine = item.line.toLowerCase().includes(filterLine.toLowerCase());
-          }
+          const selectedLineObj = lines.find(l => l.id === filterLine || l.name?.toLowerCase() === filterLine.toLowerCase());
+          const targetLineName = (selectedLineObj ? selectedLineObj.name : filterLine).toLowerCase().trim();
+          const itemLine = (item.line || '').toLowerCase().trim();
+          const itemLineId = (item.lineId || '').toLowerCase().trim();
+          matchLine = itemLine === targetLineName || 
+                      itemLine.includes(targetLineName) || 
+                      targetLineName.includes(itemLine) ||
+                      (itemLineId && itemLineId === filterLine.toLowerCase().trim());
         }
       } else if (reportType === 'quality') {
         if (filterLine === 'all') {
@@ -975,9 +1325,9 @@ const Reports: React.FC = () => {
         }
       }
 
-      return matchUser && matchThemeOrStatus && matchShift && matchGroup && matchLine && matchMood && matchDate;
+      return matchUser && matchEquipment && matchThemeOrStatus && matchShift && matchGroup && matchLine && matchMood && matchDate;
     });
-  }, [data, forkliftData, wireReceivingData, wireConsumptionData, qualityData, routeSubmissionsData, stopsData, lines, reportType, filterUser, filterTheme, filterShift, filterGroup, filterLine, filterMood, filterStatus, filterStopFront, filterStopActivity, filterStopType, filterStopDuration, filterDateStart, filterDateEnd]);
+  }, [data, forkliftData, wireReceivingData, wireConsumptionData, qualityData, routeSubmissionsData, maintenanceIssuesData, stopsData, lines, reportType, filterUser, filterEquipment, filterTheme, filterShift, filterGroup, filterLine, filterMood, filterStatus, filterStopFront, filterStopActivity, filterStopType, filterStopDuration, filterDateStart, filterDateEnd]);
 
   const stopsStats = useMemo(() => {
     if (reportType !== 'stops_control') return { total: 0, totalMinutes: 0, totalFronts: 0, predominantType: '-' };
@@ -1014,15 +1364,22 @@ const Reports: React.FC = () => {
     const matchedUser = allUsers.find(u => u.uid === selectedRayXUser || u.id === selectedRayXUser);
     if (!matchedUser) return null;
 
-    const uName = matchedUser.displayName || matchedUser.name || '';
-    const uEmail = matchedUser.email || '';
+    const uName = (matchedUser.displayName || matchedUser.name || '').trim().toLowerCase();
+    const uEmail = (matchedUser.email || '').trim().toLowerCase();
     const uId = matchedUser.uid || matchedUser.id;
+    const uReg = (matchedUser.registration || matchedUser.matricula || '').trim();
+
+    const isMatch = (rId?: string, rName?: string, rEmail?: string, rReg?: string) => {
+      if (rId && (rId === uId || (matchedUser.uid && rId === matchedUser.uid))) return true;
+      if (rEmail && uEmail && rEmail.trim().toLowerCase() === uEmail) return true;
+      if (rName && uName && rName.trim().toLowerCase() === uName) return true;
+      if (rReg && uReg && rReg.trim() === uReg) return true;
+      return false;
+    };
 
     // 1. DDS Signatures (Presenças em que o colaborador participou e assinou digitalmente)
     const userDdsSignatures = data.filter(sig => 
-      (sig.userId && sig.userId === uId) ||
-      (sig.userName && sig.userName.toLowerCase().trim() === uName.toLowerCase().trim()) ||
-      (sig.email && uEmail && sig.email.toLowerCase().trim() === uEmail.toLowerCase().trim())
+      isMatch(sig.userId, sig.userName, sig.email, sig.registration)
     ).sort((a, b) => {
       const tA = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
       const tB = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
@@ -1031,9 +1388,7 @@ const Reports: React.FC = () => {
 
     // 2. DDS Created / Facilitated Sessions (Sessões criadas ou ministradas pelo colaborador)
     const userDdsCreated = ddsSessionsData.filter(s => 
-      (s.createdBy && s.createdBy === uId) ||
-      (s.createdByName && s.createdByName.toLowerCase().trim() === uName.toLowerCase().trim()) ||
-      (s.executor && s.executor.toLowerCase().trim() === uName.toLowerCase().trim())
+      isMatch(s.createdBy, s.createdByName) || isMatch(undefined, s.executor)
     ).map(s => {
       const signaturesForSession = data.filter(sig => sig.sessionId === s.id);
       return {
@@ -1046,28 +1401,83 @@ const Reports: React.FC = () => {
       return tB - tA;
     });
 
-    const ddsSignaturesCount = userDdsSignatures.length;
-    const ddsCreatedCount = userDdsCreated.length;
-    const ddsTotalSignaturesReceived = userDdsCreated.reduce((acc: number, s: any) => acc + (s.signaturesCount || 0), 0);
-
-    // Filter quality submissions where user fits
+    // 3. Quality Inspections
     const userQuality = qualityData.filter(qlt => 
-      (qlt.userId && qlt.userId === uId) ||
-      (qlt.userName && qlt.userName.toLowerCase().trim() === uName.toLowerCase().trim())
+      isMatch(qlt.userId, qlt.userName)
     ).sort((a, b) => {
       const tA = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
       const tB = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
       return tB - tA;
     });
 
+    // 4. Operational Routes (Rondas / Rotas Operacionais)
+    const userRoutes = routeSubmissionsData.filter(r => 
+      isMatch(r.operatorId || r.userId, r.operatorName)
+    ).sort((a, b) => {
+      const tA = safeToDate(a.createdAt)?.getTime() || 0;
+      const tB = safeToDate(b.createdAt)?.getTime() || 0;
+      return tB - tA;
+    });
+
+    // 5. Forklift Checklists
+    const userForklifts = forkliftData.filter(f => 
+      isMatch(f.conductorId || f.userId, f.conductorName)
+    ).sort((a, b) => {
+      const tA = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+      const tB = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+      return tB - tA;
+    });
+
+    // 6. Safety Observations (Desvios de Segurança)
+    const userSafety = safetyObservationsData.filter(so => 
+      isMatch(so.userId || so.authorId, so.authorName || so.userName || so.reportedBy)
+    ).sort((a, b) => {
+      const tA = safeToDate(a.createdAt)?.getTime() || 0;
+      const tB = safeToDate(b.createdAt)?.getTime() || 0;
+      return tB - tA;
+    });
+
+    // 7. Stops Control (Paradas de Linha)
+    const userStops = stopsData.filter(st => 
+      isMatch(st.responsibleId || st.userId, st.responsibleName || st.registeredBy)
+    ).sort((a, b) => {
+      const tA = safeToDate(a.date)?.getTime() || 0;
+      const tB = safeToDate(b.date)?.getTime() || 0;
+      return tB - tA;
+    });
+
+    // 8. Maintenance Issues
+    const userMaintenance = maintenanceIssuesData.filter(m => 
+      isMatch(m.createdBy || m.creatorId, m.creatorName || m.createdByName || m.operatorName)
+    ).sort((a, b) => {
+      const tA = safeToDate(a.createdAt || a.date)?.getTime() || 0;
+      const tB = safeToDate(b.createdAt || b.date)?.getTime() || 0;
+      return tB - tA;
+    });
+
+    // 9. Wire Consumption (Consumo de Bobinas de Arame)
+    const userWire = wireConsumptionData.filter(w => 
+      isMatch(w.userId, w.consumedBy)
+    ).sort((a, b) => {
+      const tA = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+      const tB = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+      return tB - tA;
+    });
+
+    const ddsSignaturesCount = userDdsSignatures.length;
+    const ddsCreatedCount = userDdsCreated.length;
+    const ddsTotalSignaturesReceived = userDdsCreated.reduce((acc: number, s: any) => acc + (s.signaturesCount || 0), 0);
     const qualityCount = userQuality.length;
+    const routesCount = userRoutes.length;
+    const forkliftCount = userForklifts.length;
+    const safetyCount = userSafety.length;
+    const stopsCount = userStops.length;
+    const maintenanceCount = userMaintenance.length;
+    const wireCount = userWire.length;
 
     // Login logs for this user
     const userLogs = userLoginLogsData
-      .filter(log =>
-        (log.userId && log.userId === uId) ||
-        (log.email && uEmail && log.email.toLowerCase().trim() === uEmail.toLowerCase().trim())
-      )
+      .filter(log => isMatch(log.userId, log.displayName, log.email))
       .sort((a, b) => {
         const timeA = a.timestamp?.seconds ? a.timestamp.seconds * 1000 : (a.timestamp ? new Date(a.timestamp).getTime() : 0);
         const timeB = b.timestamp?.seconds ? b.timestamp.seconds * 1000 : (b.timestamp ? new Date(b.timestamp).getTime() : 0);
@@ -1087,8 +1497,7 @@ const Reports: React.FC = () => {
 
     // App feedback survey
     const userFeedback = feedbackSurveysData.find(s => 
-      (s.userId && s.userId === uId) ||
-      (s.userEmail && uEmail && s.userEmail.toLowerCase().trim() === uEmail.toLowerCase().trim())
+      isMatch(s.userId, undefined, s.userEmail)
     );
 
     // Mood distribution in DDS
@@ -1097,8 +1506,8 @@ const Reports: React.FC = () => {
       return acc;
     }, {});
 
-    // Total operations: strictly DDS created + DDS signed + inspections performed
-    const totalActions = ddsSignaturesCount + ddsCreatedCount + qualityCount;
+    // Total operations across all operational modules
+    const totalActions = ddsSignaturesCount + ddsCreatedCount + qualityCount + routesCount + forkliftCount + safetyCount + stopsCount + maintenanceCount + wireCount;
 
     return {
       profile: matchedUser,
@@ -1115,37 +1524,76 @@ const Reports: React.FC = () => {
       ddsMoods,
       qualityCount,
       qualityList: userQuality,
+      routesCount,
+      routesList: userRoutes,
+      forkliftCount,
+      forkliftList: userForklifts,
+      safetyCount,
+      safetyList: userSafety,
+      stopsCount,
+      stopsList: userStops,
+      maintenanceCount,
+      maintenanceList: userMaintenance,
+      wireCount,
+      wireList: userWire,
       totalActions
     };
-  }, [selectedRayXUser, allUsers, data, ddsSessionsData, qualityData, userLoginLogsData, feedbackSurveysData]);
+  }, [selectedRayXUser, allUsers, data, ddsSessionsData, qualityData, routeSubmissionsData, forkliftData, safetyObservationsData, stopsData, maintenanceIssuesData, wireConsumptionData, userLoginLogsData, feedbackSurveysData]);
 
   // Aggregated Team Ray-X Summary for All Collaborators
   const teamRayXSummary = useMemo(() => {
     return allUsers.map(u => {
-      const uName = (u.displayName || u.name || '').trim();
+      const uName = (u.displayName || u.name || '').trim().toLowerCase();
       const uEmail = (u.email || '').trim().toLowerCase();
       const uId = u.uid || u.id;
+      const uReg = (u.registration || u.matricula || '').trim();
+
+      const isMatch = (rId?: string, rName?: string, rEmail?: string, rReg?: string) => {
+        if (rId && (rId === uId || (u.uid && rId === u.uid))) return true;
+        if (rEmail && uEmail && rEmail.trim().toLowerCase() === uEmail) return true;
+        if (rName && uName && rName.trim().toLowerCase() === uName) return true;
+        if (rReg && uReg && rReg.trim() === uReg) return true;
+        return false;
+      };
 
       const ddsSignaturesCount = data.filter(sig => 
-        (sig.userId && sig.userId === uId) ||
-        (sig.userName && sig.userName.toLowerCase().trim() === uName.toLowerCase()) ||
-        (sig.email && sig.email.toLowerCase().trim() === uEmail)
+        isMatch(sig.userId, sig.userName, sig.email, sig.registration)
       ).length;
 
       const ddsCreatedCount = ddsSessionsData.filter(s => 
-        (s.createdBy && s.createdBy === uId) ||
-        (s.createdByName && s.createdByName.toLowerCase().trim() === uName.toLowerCase()) ||
-        (s.executor && s.executor.toLowerCase().trim() === uName.toLowerCase())
+        isMatch(s.createdBy, s.createdByName) || isMatch(undefined, s.executor)
       ).length;
 
       const qualityCount = qualityData.filter(qlt => 
-        (qlt.userId && qlt.userId === uId) ||
-        (qlt.userName && qlt.userName.toLowerCase().trim() === uName.toLowerCase())
+        isMatch(qlt.userId, qlt.userName)
+      ).length;
+
+      const routesCount = routeSubmissionsData.filter(r => 
+        isMatch(r.operatorId || r.userId, r.operatorName)
+      ).length;
+
+      const forkliftCount = forkliftData.filter(f => 
+        isMatch(f.conductorId || f.userId, f.conductorName)
+      ).length;
+
+      const safetyCount = safetyObservationsData.filter(so => 
+        isMatch(so.userId || so.authorId, so.authorName || so.userName || so.reportedBy)
+      ).length;
+
+      const stopsCount = stopsData.filter(st => 
+        isMatch(st.responsibleId || st.userId, st.responsibleName || st.registeredBy)
+      ).length;
+
+      const maintenanceCount = maintenanceIssuesData.filter(m => 
+        isMatch(m.createdBy || m.creatorId, m.creatorName || m.createdByName || m.operatorName)
+      ).length;
+
+      const wireCount = wireConsumptionData.filter(w => 
+        isMatch(w.userId, w.consumedBy)
       ).length;
 
       const userLogs = userLoginLogsData.filter(log =>
-        (log.userId && log.userId === uId) ||
-        (log.email && log.email.toLowerCase().trim() === uEmail)
+        isMatch(log.userId, log.displayName, log.email)
       );
 
       const directCount = Number(u.accessCount) || 0;
@@ -1157,13 +1605,13 @@ const Reports: React.FC = () => {
         lastLoginRaw = userLogs[0].timestamp || userLogs[0].createdAt;
       }
 
-      // Total operations: strictly DDS created + DDS signed + inspections performed
-      const totalActions = ddsSignaturesCount + ddsCreatedCount + qualityCount;
+      // Total operations across all factory modules
+      const totalActions = ddsSignaturesCount + ddsCreatedCount + qualityCount + routesCount + forkliftCount + safetyCount + stopsCount + maintenanceCount + wireCount;
 
       return {
         user: u,
         uId,
-        name: uName || 'Sem nome',
+        name: u.displayName || u.name || 'Sem nome',
         email: uEmail,
         cargo: u.cargoName || '-',
         sector: u.sectorName || '-',
@@ -1176,10 +1624,16 @@ const Reports: React.FC = () => {
         totalActions,
         ddsSignaturesCount,
         ddsCreatedCount,
-        qualityCount
+        qualityCount,
+        routesCount,
+        forkliftCount,
+        safetyCount,
+        stopsCount,
+        maintenanceCount,
+        wireCount
       };
     });
-  }, [allUsers, data, ddsSessionsData, qualityData, userLoginLogsData]);
+  }, [allUsers, data, ddsSessionsData, qualityData, routeSubmissionsData, forkliftData, safetyObservationsData, stopsData, maintenanceIssuesData, wireConsumptionData, userLoginLogsData]);
 
   // Filtered list for Team Ray-X Report table
   const filteredTeamRayX = useMemo(() => {
@@ -2722,6 +3176,42 @@ const Reports: React.FC = () => {
               </div>
             </div>
           </motion.div>
+        ) : reportType === 'pending_equipments' ? (
+          <motion.div
+            key="pending-equipments-stats"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"
+          >
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total de Pendências</p>
+                <p className="text-2xl font-black text-rose-600">{filteredData.length}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center">
+                <Wrench className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Equipamentos Afetados</p>
+                <p className="text-2xl font-black text-slate-900">{new Set(filteredData.map(p => p.tag || p.name)).size}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">
+                <Factory className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Linhas c/ Pendência</p>
+                <p className="text-2xl font-black text-slate-900">{new Set(filteredData.map(p => p.line)).size}</p>
+              </div>
+            </div>
+          </motion.div>
         ) : (
           orphanIds.length > 0 && (
             <motion.div
@@ -2774,7 +3264,7 @@ const Reports: React.FC = () => {
                   {reportType === 'dds' ? 'Colaborador / Executante' : 
                    reportType === 'forklift' ? 'Condutor / Equipamento' :
                    reportType === 'wire_receiving' ? 'NF / Fornecedor' : 
-                   reportType === 'pending_equipments' ? 'Equipamento / Tag' :
+                   reportType === 'pending_equipments' ? 'Buscar Geral / Operador' :
                    reportType === 'stops_control' ? 'Registrado por / Local' : 'Bobina / Usuário'}
                 </label>
                 <div className="relative">
@@ -2787,13 +3277,41 @@ const Reports: React.FC = () => {
                       reportType === 'dds' ? "Buscar nome..." : 
                       reportType === 'forklift' ? "Nome ou Nº Equipamento..." :
                       reportType === 'wire_receiving' ? "NF ou Fornecedor..." : 
-                      reportType === 'pending_equipments' ? "Buscar por tag ou nome..." :
+                      reportType === 'pending_equipments' ? "Buscar por TAG, nome, operador, motivo..." :
                       reportType === 'stops_control' ? "Responsável, local ou obs..." : "ID Bobina ou Usuário..."
                     }
                     className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
                   />
                 </div>
               </div>
+
+              {/* Dedicated Equipment with Pendency Dropdown Selector */}
+              {reportType === 'pending_equipments' && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">
+                    Equipamento c/ Pendência ({availablePendingEquipments.length})
+                  </label>
+                  <div className="relative">
+                    <Wrench className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <select 
+                      value={filterEquipment}
+                      onChange={(e) => setFilterEquipment(e.target.value)}
+                      className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
+                    >
+                      <option value="all">Todos os Equipamentos ({availablePendingEquipments.length})</option>
+                      {availablePendingEquipments.map((eq, eqIdx) => {
+                        const val = eq.tag !== 'S/T' && eq.tag ? eq.tag : eq.name;
+                        return (
+                          <option key={`pending-eq-${eq.tag}-${eq.name}-${eqIdx}`} value={val}>
+                            {eq.tag !== 'S/T' && eq.tag ? `[TAG: ${eq.tag}] ` : ''}{eq.name}{eq.line ? ` • ${eq.line}` : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
 
               {/* Stops Control Filters: Frentes de Trabalho, Atividade, Tipo de Parada, Duração, Linha */}
               {reportType === 'stops_control' && (
@@ -3004,9 +3522,15 @@ const Reports: React.FC = () => {
                       className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none appearance-none transition-all"
                     >
                       <option value="all">Todas as Linhas</option>
-                      {lines.map((line, lIdx) => (
-                        <option key={`line-opt-cons-${line.id || lIdx}`} value={line.id}>{line.name}</option>
-                      ))}
+                      {reportType === 'pending_equipments' && availablePendingLines.length > 0 ? (
+                        availablePendingLines.map((lName, lIdx) => (
+                          <option key={`pending-line-${lName || lIdx}`} value={lName}>{lName}</option>
+                        ))
+                      ) : (
+                        lines.map((line, lIdx) => (
+                          <option key={`line-opt-cons-${line.id || lIdx}`} value={line.id}>{line.name}</option>
+                        ))
+                      )}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                   </div>
@@ -3179,12 +3703,18 @@ const Reports: React.FC = () => {
                     onChange={(e) => setSelectedRayXUser(e.target.value)}
                     className="w-full pl-10 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-emerald-500 appearance-none text-slate-800"
                   >
-                    <option value="">-- Selecionar Colaborador --</option>
-                    {allUsers.map((u, uIdx) => (
-                      <option key={`usr-ray-${u.uid || u.id || uIdx}`} value={u.uid || u.id}>
-                        {u.displayName || u.name || 'Sem nome'} ({u.email})
-                      </option>
-                    ))}
+                    <option value="">-- Selecionar Colaborador ({allUsers.length}) --</option>
+                    {allUsers.map((u, uIdx) => {
+                      const summary = teamRayXSummary.find(s => s.uId === (u.uid || u.id));
+                      const ops = summary ? summary.totalActions : 0;
+                      const logins = summary ? summary.accessCount : (Number(u.accessCount) || 0);
+                      const usageBadge = logins > 0 ? `${ops} ops • ${logins} logins` : 'Nunca acessou';
+                      return (
+                        <option key={`usr-ray-${u.uid || u.id || uIdx}`} value={u.uid || u.id}>
+                          {u.displayName || u.name || 'Sem nome'} [{usageBadge}] ({u.email || 'sem email'})
+                        </option>
+                      );
+                    })}
                   </select>
                   <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                 </div>
@@ -3443,7 +3973,11 @@ const Reports: React.FC = () => {
                                   <div className="flex flex-wrap gap-1 mt-1 text-[9px] font-bold text-slate-500">
                                     {item.ddsSignaturesCount > 0 && <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-100">DDS Assinados: {item.ddsSignaturesCount}</span>}
                                     {item.ddsCreatedCount > 0 && <span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded border border-teal-100">DDS Criados: {item.ddsCreatedCount}</span>}
-                                    {item.qualityCount > 0 && <span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-100">Inspeções: {item.qualityCount}</span>}
+                                    {item.qualityCount > 0 && <span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-100">Qualidade: {item.qualityCount}</span>}
+                                    {item.routesCount > 0 && <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">Rotas: {item.routesCount}</span>}
+                                    {item.forkliftCount > 0 && <span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded border border-amber-100">Empilhadeiras: {item.forkliftCount}</span>}
+                                    {item.safetyCount > 0 && <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100">Segurança: {item.safetyCount}</span>}
+                                    {(item.stopsCount > 0 || item.maintenanceCount > 0) && <span className="bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded border border-rose-100">Paradas/Manut: {item.stopsCount + item.maintenanceCount}</span>}
                                     {item.totalActions === 0 && <span className="text-slate-300">Sem operações</span>}
                                   </div>
                                 </div>
@@ -3561,26 +4095,42 @@ const Reports: React.FC = () => {
                           <span className="text-xs font-bold text-slate-400">operações registradas</span>
                         </div>
                         <p className="text-[11px] text-slate-400 mt-1 leading-normal">
-                          Métrica direta e simplificada baseada exclusivamente em: acessos ao sistema, DDS assinados, DDS criados e inspeções de qualidade realizadas.
+                          Métrica consolidada baseada em acessos ao sistema e operações em todos os módulos (DDS, Qualidade, Rotas Operacionais, Empilhadeiras, Segurança, Paradas e Manutenção).
                         </p>
                       </div>
 
-                      <div className="mt-3 pt-3 border-t border-slate-50 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-bold">
+                      <div className="mt-3 pt-3 border-t border-slate-50 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-[11px] font-bold">
                         <div className="bg-slate-50 p-2 rounded-lg border border-slate-100/80">
                           <span className="text-[9px] text-slate-400 uppercase font-black block">Acessos</span>
                           <span className="text-slate-800 text-xs font-black">{selectedUserData.accessCount} logins</span>
                         </div>
                         <div className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-100/60">
                           <span className="text-[9px] text-emerald-700 uppercase font-black block">DDS Assinados</span>
-                          <span className="text-emerald-900 text-xs font-black">{selectedUserData.ddsSignaturesCount} presenças</span>
+                          <span className="text-emerald-900 text-xs font-black">{selectedUserData.ddsSignaturesCount}</span>
                         </div>
                         <div className="bg-teal-50/60 p-2 rounded-lg border border-teal-100/60">
                           <span className="text-[9px] text-teal-700 uppercase font-black block">DDS Criados</span>
-                          <span className="text-teal-900 text-xs font-black">{selectedUserData.ddsCreatedCount} sessões</span>
+                          <span className="text-teal-900 text-xs font-black">{selectedUserData.ddsCreatedCount}</span>
                         </div>
                         <div className="bg-purple-50/60 p-2 rounded-lg border border-purple-100/60">
-                          <span className="text-[9px] text-purple-700 uppercase font-black block">Inspeções</span>
-                          <span className="text-purple-900 text-xs font-black">{selectedUserData.qualityCount} feitas</span>
+                          <span className="text-[9px] text-purple-700 uppercase font-black block">Qualidade</span>
+                          <span className="text-purple-900 text-xs font-black">{selectedUserData.qualityCount}</span>
+                        </div>
+                        <div className="bg-blue-50/60 p-2 rounded-lg border border-blue-100/60">
+                          <span className="text-[9px] text-blue-700 uppercase font-black block">Rotas</span>
+                          <span className="text-blue-900 text-xs font-black">{selectedUserData.routesCount}</span>
+                        </div>
+                        <div className="bg-amber-50/60 p-2 rounded-lg border border-amber-100/60">
+                          <span className="text-[9px] text-amber-700 uppercase font-black block">Empilhadeiras</span>
+                          <span className="text-amber-900 text-xs font-black">{selectedUserData.forkliftCount}</span>
+                        </div>
+                        <div className="bg-indigo-50/60 p-2 rounded-lg border border-indigo-100/60">
+                          <span className="text-[9px] text-indigo-700 uppercase font-black block">Segurança</span>
+                          <span className="text-indigo-900 text-xs font-black">{selectedUserData.safetyCount}</span>
+                        </div>
+                        <div className="bg-rose-50/60 p-2 rounded-lg border border-rose-100/60">
+                          <span className="text-[9px] text-rose-700 uppercase font-black block">Paradas/Manut</span>
+                          <span className="text-rose-900 text-xs font-black">{selectedUserData.stopsCount + selectedUserData.maintenanceCount}</span>
                         </div>
                       </div>
                     </div>
@@ -3931,11 +4481,11 @@ const Reports: React.FC = () => {
                     <div>
                       <h6 className="text-[11px] font-black text-emerald-950 uppercase tracking-widest mb-1">PARECER DE USABILIDADE E ENGAJAMENTO</h6>
                       <p className="text-[11px] text-emerald-800 leading-normal">
-                        Este colaborador possui <strong>{selectedUserData.accessCount} acessos ao sistema</strong> e <strong>{selectedUserData.totalActions} operações ativas registradas</strong> (DDS assinados: {selectedUserData.ddsSignaturesCount}, DDS criados: {selectedUserData.ddsCreatedCount}, Inspeções: {selectedUserData.qualityCount}).
+                        Este colaborador possui <strong>{selectedUserData.accessCount} acessos ao sistema</strong> e <strong>{selectedUserData.totalActions} operações ativas registradas</strong> (DDS assinados: {selectedUserData.ddsSignaturesCount}, DDS criados: {selectedUserData.ddsCreatedCount}, Qualidade: {selectedUserData.qualityCount}, Rotas: {selectedUserData.routesCount}, Empilhadeiras: {selectedUserData.forkliftCount}, Segurança: {selectedUserData.safetyCount}, Paradas: {selectedUserData.stopsCount}, Manutenção: {selectedUserData.maintenanceCount}).
                         {!selectedUserData.hasAccessed && ' Atenção: O colaborador ainda não realizou logins no aplicativo. Recomenda-se orientação de acesso junto à liderança de turno.'}
                         {selectedUserData.hasAccessed && selectedUserData.totalActions > 25 && ' Seu altíssimo volume de interações indica engajamento exemplar, liderança ativa e conformidade excepcional no uso das rotinas digitais.'}
                         {selectedUserData.hasAccessed && selectedUserData.totalActions <= 25 && selectedUserData.totalActions >= 8 && ' Perfil dinâmico e participativo com boa consistência de registros cotidianos no sistema.'}
-                        {selectedUserData.hasAccessed && selectedUserData.totalActions < 8 && ' Volume inicial ou moderado de interações no sistema. Recomenda-se incentivar maior participação ativa nos Diálogos de Segurança e preenchimento de inspeções.'}
+                        {selectedUserData.hasAccessed && selectedUserData.totalActions < 8 && ' Volume inicial ou moderado de interações no sistema. Recomenda-se incentivar maior participação ativa nas rotinas digitais da fábrica.'}
                       </p>
                     </div>
                   </div>
@@ -3951,7 +4501,7 @@ const Reports: React.FC = () => {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* 4 Pilares Objetivos */}
+                      {/* Pilares Objetivos */}
                       <div className="space-y-2">
                         <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Métricas Computadas</span>
                         <ul className="space-y-2 text-xs font-semibold text-slate-600">
@@ -3961,15 +4511,19 @@ const Reports: React.FC = () => {
                           </li>
                           <li className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                            <span><strong>DDS Assinados:</strong> Presenças registradas em Diálogos Diários</span>
-                          </li>
-                          <li className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-teal-500 shrink-0" />
-                            <span><strong>DDS Criados:</strong> Sessões de diálogo elaboradas ou facilitadas</span>
+                            <span><strong>DDS:</strong> Presenças assinadas e sessões elaboradas</span>
                           </li>
                           <li className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0" />
-                            <span><strong>Inspeções Realizadas:</strong> Vistorias de qualidade de processo</span>
+                            <span><strong>Qualidade:</strong> Checklists e auditorias de processo</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                            <span><strong>Rotas & Empilhadeiras:</strong> Rondas operacionais e inspeções veiculares</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                            <span><strong>Segurança & Paradas:</strong> Desvios, apontamentos e paradas registradas</span>
                           </li>
                         </ul>
                       </div>

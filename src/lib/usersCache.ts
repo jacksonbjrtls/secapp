@@ -20,6 +20,8 @@ export interface CachedUserItem {
   registration?: string;
   isMaster?: boolean;
   mustChangePassword?: boolean;
+  accessCount?: number;
+  lastLoginAt?: any;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -225,6 +227,8 @@ export async function fetchUsersSafely(force = false): Promise<CachedUserItem[]>
             registration: data.registration || '',
             isMaster: !!data.isMaster,
             mustChangePassword: !!data.mustChangePassword,
+            accessCount: Number(data.accessCount) || 0,
+            lastLoginAt: data.lastLoginAt || null,
             createdAt: data.createdAt,
             updatedAt: data.updatedAt,
           };
