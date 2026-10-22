@@ -88,6 +88,34 @@ const calculateTotalHours = (start: string, end: string): number => {
   return Number((diffMin / 60).toFixed(2));
 };
 
+// Helper to extract operational function name from user profile with fallbacks
+const getUserRoleFromProfile = (userObj: any, workFuncList: any[] = []): string => {
+  if (!userObj) return '';
+  if (userObj.cargoName) return userObj.cargoName;
+  if (userObj.workFunction) return userObj.workFunction;
+  if (userObj.operationalRole) return userObj.operationalRole;
+  if (userObj.cargo) return userObj.cargo;
+  if (userObj.funcao) return userObj.funcao;
+  if (userObj.cargoId) {
+    const matched = workFuncList.find(f => f.id === userObj.cargoId);
+    if (matched?.name) return matched.name;
+    const defaultMap: Record<string, string> = {
+      op_area_1: 'Operador de Área 1',
+      op_area_2: 'Operador de Área 2',
+      op_area_3: 'Operador de Área 3',
+      op_painel: 'Operador de Painel',
+      op_assistente: 'Operador Assistente',
+      especialista: 'Especialista',
+      lider_area: 'Líder de Área',
+      op_enfardamento: 'Operador de Enfardamento',
+      lider_enfardamento: 'Líder de Enfardamento',
+      aux_enfardamento: 'Auxiliar de Enfardamento'
+    };
+    if (defaultMap[userObj.cargoId]) return defaultMap[userObj.cargoId];
+  }
+  return '';
+};
+
 export default function Overtime() {
   const { user, profile, isManager, isAdmin, isMaster } = useAuth();
   
@@ -101,6 +129,7 @@ export default function Overtime() {
   const [justifications, setJustifications] = useState<OvertimeJustification[]>([]);
   const [functions, setFunctions] = useState<OvertimeFunction[]>([]);
   const [areas, setAreas] = useState<OvertimeArea[]>([]);
+  const [workFunctions, setWorkFunctions] = useState<any[]>([]);
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
 
   // Search & Filter state for History
@@ -158,23 +187,44 @@ export default function Overtime() {
   useEffect(() => {
     // 1. Listen for Functions
     const unsubFuncs = subscribeSharedCollection('overtime_functions', (list) => {
-      setFunctions(list as OvertimeFunction[]);
-      const firstActive = (list as OvertimeFunction[]).find(f => f.active);
-      if (firstActive && !formRoleName) {
-        setFormRoleName(firstActive.name);
+      const funcList = list as OvertimeFunction[];
+      setFunctions(funcList);
+      
+      const userRole = getUserRoleFromProfile(profile, workFunctions);
+      if (!launchForOther && userRole) {
+        const matched = funcList.find(f => f.active && f.name.toLowerCase().trim() === userRole.toLowerCase().trim());
+        setFormRoleName(matched ? matched.name : userRole);
+      } else if (!formRoleName) {
+        const firstActive = funcList.find(f => f.active);
+        if (firstActive) {
+          setFormRoleName(firstActive.name);
+        }
       }
     }, 'name');
 
     // 2. Listen for Areas
     const unsubAreas = subscribeSharedCollection('overtime_areas', (list) => {
-      setAreas(list as OvertimeArea[]);
-      const firstActive = (list as OvertimeArea[]).find(a => a.active);
-      if (firstActive && !formArea) {
-        setFormArea(firstActive.name);
+      const areaList = list as OvertimeArea[];
+      setAreas(areaList);
+      
+      const userArea = profile?.sectorName || (profile as any)?.sector || (profile as any)?.area || '';
+      if (!launchForOther && userArea) {
+        const matched = areaList.find(a => a.active && a.name.toLowerCase().trim() === userArea.toLowerCase().trim());
+        setFormArea(matched ? matched.name : userArea);
+      } else if (!formArea) {
+        const firstActive = areaList.find(a => a.active);
+        if (firstActive) {
+          setFormArea(firstActive.name);
+        }
       }
     }, 'name');
 
-    // 3. Listen for users if admin/master from shared decrypted cache
+    // 3. Listen for general work_functions for role name resolution
+    const unsubWorkFuncs = subscribeSharedCollection('work_functions', (list) => {
+      setWorkFunctions(list as any[]);
+    }, 'name');
+
+    // 4. Listen for users if admin/master from shared decrypted cache
     let unsubUsers = () => {};
     if (isAdmin || isMaster) {
       // Immediate cached render
@@ -197,6 +247,7 @@ export default function Overtime() {
     return () => {
       unsubFuncs();
       unsubAreas();
+      unsubWorkFuncs();
       unsubUsers();
     };
   }, [isAdmin, isMaster]);
@@ -251,16 +302,54 @@ export default function Overtime() {
   // Prefill default form values from current profile when not launching for other
   useEffect(() => {
     if (!launchForOther && profile) {
-      setFormGroup(profile.group || 'A');
+      if (profile.group) {
+        setFormGroup(profile.group);
+      }
+
+      // Pre-fill operational function from user profile if filled
+      const userRole = getUserRoleFromProfile(profile, workFunctions);
+      if (userRole) {
+        const matched = functions.find(f => f.active && f.name.toLowerCase().trim() === userRole.toLowerCase().trim());
+        setFormRoleName(matched ? matched.name : userRole);
+      } else if (!formRoleName && functions.length > 0) {
+        const firstActive = functions.find(f => f.active);
+        if (firstActive) {
+          setFormRoleName(firstActive.name);
+        }
+      }
+
+      // Pre-fill area/sector from user profile if filled
+      const userArea = profile.sectorName || (profile as any).sector || (profile as any).area || '';
+      if (userArea) {
+        const matchedArea = areas.find(a => a.active && a.name.toLowerCase().trim() === userArea.toLowerCase().trim());
+        setFormArea(matchedArea ? matchedArea.name : userArea);
+      } else if (!formArea && areas.length > 0) {
+        const firstActive = areas.find(a => a.active);
+        if (firstActive) {
+          setFormArea(firstActive.name);
+        }
+      }
     }
-  }, [profile, launchForOther]);
+  }, [profile, launchForOther, functions, areas, workFunctions]);
 
   // When launchForOther is toggled or other collaborator is selected, update fields
   const handleCollabChange = (uid: string) => {
     setSelectedCollabId(uid);
     const selectedUser = usersList.find(u => u.uid === uid);
     if (selectedUser) {
-      setFormGroup(selectedUser.group || 'A');
+      if (selectedUser.group) {
+        setFormGroup(selectedUser.group);
+      }
+      const collabRole = getUserRoleFromProfile(selectedUser, workFunctions);
+      if (collabRole) {
+        const matched = functions.find(f => f.active && f.name.toLowerCase().trim() === collabRole.toLowerCase().trim());
+        setFormRoleName(matched ? matched.name : collabRole);
+      }
+      const collabArea = selectedUser.sectorName || (selectedUser as any).sector || (selectedUser as any).area || '';
+      if (collabArea) {
+        const matchedArea = areas.find(a => a.active && a.name.toLowerCase().trim() === collabArea.toLowerCase().trim());
+        setFormArea(matchedArea ? matchedArea.name : collabArea);
+      }
     }
   };
 
@@ -932,10 +1021,17 @@ export default function Overtime() {
 
                   {/* Function Select */}
                   <div>
-                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">
-                      Função operacional
-                    </label>
-                    {functions.length > 0 ? (
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-xs font-black text-slate-400 uppercase tracking-widest">
+                        Função operacional
+                      </label>
+                      {formRoleName && !launchForOther && (profile?.cargoName || (profile as any)?.workFunction || (profile as any)?.cargoId) && (
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          Preenchido pelo Perfil
+                        </span>
+                      )}
+                    </div>
+                    {functions.length > 0 || formRoleName ? (
                       <select
                         required
                         value={formRoleName}
@@ -943,6 +1039,9 @@ export default function Overtime() {
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800"
                       >
                         <option value="">Selecione...</option>
+                        {formRoleName && !functions.some(f => f.active && f.name.toLowerCase().trim() === formRoleName.toLowerCase().trim()) && (
+                          <option value={formRoleName}>{formRoleName}</option>
+                        )}
                         {functions.filter(f => f.active).map(f => (
                           <option key={f.id} value={f.name}>{f.name}</option>
                         ))}
@@ -950,17 +1049,24 @@ export default function Overtime() {
                     ) : (
                       <div className="text-xs text-amber-600 bg-amber-50 rounded-xl p-3 border border-amber-100 flex items-start gap-2">
                         <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                        <span>Nenhuma função ativa cadastrada no sistema. Cadastre novas funções na aba de "Parâmetros".</span>
+                        <span>Nenhuma função ativa cadastrada no sistema. Cadastre novas funções na aba de "Parâmetros" ou preencha em "Meu Perfil".</span>
                       </div>
                     )}
                   </div>
 
                   {/* Area Select */}
                   <div>
-                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">
-                      Área de Trabalho / Setor
-                    </label>
-                    {areas.length > 0 ? (
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-xs font-black text-slate-400 uppercase tracking-widest">
+                        Área de Trabalho / Setor
+                      </label>
+                      {formArea && !launchForOther && profile?.sectorName && (
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          Preenchido pelo Perfil
+                        </span>
+                      )}
+                    </div>
+                    {areas.length > 0 || formArea ? (
                       <select
                         required
                         value={formArea}
@@ -968,6 +1074,9 @@ export default function Overtime() {
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800"
                       >
                         <option value="">Selecione...</option>
+                        {formArea && !areas.some(a => a.active && a.name.toLowerCase().trim() === formArea.toLowerCase().trim()) && (
+                          <option value={formArea}>{formArea}</option>
+                        )}
                         {areas.filter(a => a.active).map(a => (
                           <option key={a.id} value={a.name}>{a.name}</option>
                         ))}

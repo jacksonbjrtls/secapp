@@ -18,7 +18,7 @@ import { getCurrentShift, getGroupForShift, Shift } from '../lib/scaleUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatLocalDateBR, getLocalDateStrBR } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
-import { subscribeSharedCollection } from '../lib/referenceCache';
+import { subscribeSharedCollection, invalidateReferenceCache, setCachedReference } from '../lib/referenceCache';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -166,6 +166,7 @@ export default function Maintenance() {
     title: string;
     subtitle?: string;
   } | null>(null);
+  const [isDeletingTarget, setIsDeletingTarget] = useState(false);
 
   // Settings Sub-tab State (Admin)
   const [settingsSection, setSettingsSection] = useState<'equipments' | 'sectors' | 'lines' | 'inspections' | 'centers' | 'programming' | 'statuses'>('equipments');
@@ -242,38 +243,94 @@ export default function Maintenance() {
       }
     );
 
-    const unsubEquipments = subscribeSharedCollection('maintenance_equipments', (list) => {
-      const sorted = [...(list as MaintenanceEquipment[])].sort((a, b) => a.tag.localeCompare(b.tag));
-      setEquipments(sorted);
-    }, 'tag');
+    // Real-time onSnapshot listeners for Cadastros & TAGs to allow immediate sync on add/delete/edit
+    const unsubEquipments = onSnapshot(
+      query(collection(db, 'maintenance_equipments')),
+      (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as MaintenanceEquipment[];
+        const sorted = [...list].sort((a, b) => (a.tag || '').localeCompare(b.tag || ''));
+        setEquipments(sorted);
+        setCachedReference('maintenance_equipments', sorted);
+      },
+      (err) => console.warn('Error listening to maintenance_equipments:', err)
+    );
 
-    const unsubInspTypes = subscribeSharedCollection('maintenance_inspection_types', (list) => {
-      setInspectionTypes(list as MaintenanceInspectionType[]);
-    }, 'name');
+    const unsubInspTypes = onSnapshot(
+      query(collection(db, 'maintenance_inspection_types')),
+      (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as MaintenanceInspectionType[];
+        const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setInspectionTypes(sorted);
+        setCachedReference('maintenance_inspection_types', sorted);
+      },
+      (err) => console.warn('Error listening to maintenance_inspection_types:', err)
+    );
 
-    const unsubInspNames = subscribeSharedCollection('maintenance_inspection_names', (list) => {
-      setInspectionNames(list as MaintenanceInspectionName[]);
-    }, 'name');
+    const unsubInspNames = onSnapshot(
+      query(collection(db, 'maintenance_inspection_names')),
+      (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as MaintenanceInspectionName[];
+        const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setInspectionNames(sorted);
+        setCachedReference('maintenance_inspection_names', sorted);
+      },
+      (err) => console.warn('Error listening to maintenance_inspection_names:', err)
+    );
 
-    const unsubCenters = subscribeSharedCollection('maintenance_responsible_centers', (list) => {
-      setResponsibleCenters(list as MaintenanceResponsibleCenter[]);
-    }, 'name');
+    const unsubCenters = onSnapshot(
+      query(collection(db, 'maintenance_responsible_centers')),
+      (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as MaintenanceResponsibleCenter[];
+        const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setResponsibleCenters(sorted);
+        setCachedReference('maintenance_responsible_centers', sorted);
+      },
+      (err) => console.warn('Error listening to maintenance_responsible_centers:', err)
+    );
 
-    const unsubProgTypes = subscribeSharedCollection('maintenance_programming_types', (list) => {
-      setProgrammingTypes(list as MaintenanceProgrammingType[]);
-    }, 'name');
+    const unsubProgTypes = onSnapshot(
+      query(collection(db, 'maintenance_programming_types')),
+      (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as MaintenanceProgrammingType[];
+        const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setProgrammingTypes(sorted);
+        setCachedReference('maintenance_programming_types', sorted);
+      },
+      (err) => console.warn('Error listening to maintenance_programming_types:', err)
+    );
 
-    const unsubStatuses = subscribeSharedCollection('maintenance_statuses', (list) => {
-      setStatuses(list as MaintenanceStatus[]);
-    }, 'name');
+    const unsubStatuses = onSnapshot(
+      query(collection(db, 'maintenance_statuses')),
+      (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as MaintenanceStatus[];
+        const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setStatuses(sorted);
+        setCachedReference('maintenance_statuses', sorted);
+      },
+      (err) => console.warn('Error listening to maintenance_statuses:', err)
+    );
 
-    const unsubLines = subscribeSharedCollection('maintenance_lines', (list) => {
-      setLines((list as ProductionLine[]).filter(d => d.active !== false));
-    }, 'name');
+    const unsubLines = onSnapshot(
+      query(collection(db, 'maintenance_lines')),
+      (snap) => {
+        const list = (snap.docs.map(d => ({ id: d.id, ...d.data() })) as ProductionLine[]).filter(d => d.active !== false);
+        const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setLines(sorted);
+        setCachedReference('maintenance_lines', sorted);
+      },
+      (err) => console.warn('Error listening to maintenance_lines:', err)
+    );
 
-    const unsubSectors = subscribeSharedCollection('work_sectors', (list) => {
-      setSectors((list as WorkSector[]).filter(d => d.active !== false));
-    }, 'name');
+    const unsubSectors = onSnapshot(
+      query(collection(db, 'work_sectors')),
+      (snap) => {
+        const list = (snap.docs.map(d => ({ id: d.id, ...d.data() })) as WorkSector[]).filter(d => d.active !== false);
+        const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setSectors(sorted);
+        setCachedReference('work_sectors', sorted);
+      },
+      (err) => console.warn('Error listening to work_sectors:', err)
+    );
 
     return () => {
       unsubUsers();
@@ -723,11 +780,41 @@ export default function Maintenance() {
   const executeDeleteTarget = async () => {
     if (!deleteTarget) return;
     const { colName, id } = deleteTarget;
+    setIsDeletingTarget(true);
+
+    // 1. Optimistic removal from state so UI updates immediately
+    if (colName === 'maintenance_programming_types') {
+      setProgrammingTypes(prev => prev.filter(item => item.id !== id));
+    } else if (colName === 'maintenance_inspection_types') {
+      setInspectionTypes(prev => prev.filter(item => item.id !== id));
+    } else if (colName === 'maintenance_inspection_names') {
+      setInspectionNames(prev => prev.filter(item => item.id !== id));
+    } else if (colName === 'maintenance_responsible_centers') {
+      setResponsibleCenters(prev => prev.filter(item => item.id !== id));
+    } else if (colName === 'maintenance_statuses') {
+      setStatuses(prev => prev.filter(item => item.id !== id));
+    } else if (colName === 'maintenance_equipments') {
+      setEquipments(prev => prev.filter(item => item.id !== id));
+    } else if (colName === 'work_sectors') {
+      setSectors(prev => prev.filter(item => item.id !== id));
+    } else if (colName === 'maintenance_lines') {
+      setLines(prev => prev.filter(item => item.id !== id));
+    } else if (colName === 'maintenance_issues') {
+      setIssues(prev => prev.filter(item => item.id !== id));
+    }
+
+    // 2. Invalidate cache in memory & localStorage
+    invalidateReferenceCache(colName);
     setDeleteTarget(null);
+
+    // 3. Persist deletion in Firestore
     try {
       await deleteDoc(doc(db, colName, id));
     } catch (err) {
+      console.error(`Erro ao excluir item de ${colName}:`, err);
       handleFirestoreError(err, OperationType.DELETE, colName);
+    } finally {
+      setIsDeletingTarget(false);
     }
   };
 
@@ -919,6 +1006,9 @@ export default function Maintenance() {
         }
       }
 
+      invalidateReferenceCache('maintenance_equipments');
+      invalidateReferenceCache('work_sectors');
+      invalidateReferenceCache('maintenance_lines');
       alert(`${count} equipamento(s) importado(s)/atualizado(s) com sucesso!`);
       setIsImportModalOpen(false);
       setImportCsvText('');
@@ -935,14 +1025,26 @@ export default function Maintenance() {
     e.preventDefault();
     if (!newTagInput.trim()) return;
     try {
-      await addDoc(collection(db, 'maintenance_equipments'), {
-        tag: newTagInput.trim().toUpperCase(),
-        name: newEquipmentNameInput.trim() || newTagInput.trim().toUpperCase(),
-        sector: newEquipmentSectorInput || '',
-        line: newEquipmentLineInput || '',
+      const tag = newTagInput.trim().toUpperCase();
+      const name = newEquipmentNameInput.trim() || tag;
+      const sector = newEquipmentSectorInput || '';
+      const line = newEquipmentLineInput || '';
+
+      const docRef = await addDoc(collection(db, 'maintenance_equipments'), {
+        tag,
+        name,
+        sector,
+        line,
         active: true,
         createdAt: serverTimestamp()
       });
+
+      setEquipments(prev => {
+        const next = [...prev.filter(eq => eq.id !== docRef.id), { id: docRef.id, tag, name, sector, line, active: true } as MaintenanceEquipment];
+        return next.sort((a, b) => (a.tag || '').localeCompare(b.tag || ''));
+      });
+      invalidateReferenceCache('maintenance_equipments');
+
       setNewTagInput('');
       setNewEquipmentNameInput('');
       setNewEquipmentSectorInput('');
@@ -957,13 +1059,21 @@ export default function Maintenance() {
     e.preventDefault();
     if (!editingEquipment || !editingEquipment.tag.trim()) return;
     try {
+      const tag = editingEquipment.tag.trim().toUpperCase();
+      const name = editingEquipment.name.trim() || tag;
+      const sector = editingEquipment.sector || '';
+      const line = editingEquipment.line || '';
+
       await updateDoc(doc(db, 'maintenance_equipments', editingEquipment.id), {
-        tag: editingEquipment.tag.trim().toUpperCase(),
-        name: editingEquipment.name.trim() || editingEquipment.tag.trim().toUpperCase(),
-        sector: editingEquipment.sector || '',
-        line: editingEquipment.line || '',
+        tag,
+        name,
+        sector,
+        line,
         updatedAt: serverTimestamp()
       });
+
+      setEquipments(prev => prev.map(eq => eq.id === editingEquipment.id ? { ...eq, tag, name, sector, line } : eq));
+      invalidateReferenceCache('maintenance_equipments');
       setEditingEquipment(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, 'maintenance_equipments');
@@ -988,11 +1098,13 @@ export default function Maintenance() {
       return;
     }
     try {
-      await addDoc(collection(db, 'maintenance_inspection_types'), {
+      const docRef = await addDoc(collection(db, 'maintenance_inspection_types'), {
         name: val,
         active: true,
         createdAt: serverTimestamp()
       });
+      setInspectionTypes(prev => [...prev.filter(t => t.id !== docRef.id), { id: docRef.id, name: val, active: true }].sort((a, b) => a.name.localeCompare(b.name)));
+      invalidateReferenceCache('maintenance_inspection_types');
       setNewInspTypeInput('');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'maintenance_inspection_types');
@@ -1009,12 +1121,14 @@ export default function Maintenance() {
       return;
     }
     try {
-      await addDoc(collection(db, 'maintenance_inspection_names'), {
+      const docRef = await addDoc(collection(db, 'maintenance_inspection_names'), {
         inspectionTypeName: newInspNameTypeSel,
         name: val,
         active: true,
         createdAt: serverTimestamp()
       });
+      setInspectionNames(prev => [...prev.filter(n => n.id !== docRef.id), { id: docRef.id, inspectionTypeName: newInspNameTypeSel, name: val, active: true }].sort((a, b) => a.name.localeCompare(b.name)));
+      invalidateReferenceCache('maintenance_inspection_names');
       setNewInspNameInput('');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'maintenance_inspection_names');
@@ -1031,11 +1145,13 @@ export default function Maintenance() {
       return;
     }
     try {
-      await addDoc(collection(db, 'maintenance_responsible_centers'), {
+      const docRef = await addDoc(collection(db, 'maintenance_responsible_centers'), {
         name: val,
         active: true,
         createdAt: serverTimestamp()
       });
+      setResponsibleCenters(prev => [...prev.filter(c => c.id !== docRef.id), { id: docRef.id, name: val, active: true }].sort((a, b) => a.name.localeCompare(b.name)));
+      invalidateReferenceCache('maintenance_responsible_centers');
       setNewCenterInput('');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'maintenance_responsible_centers');
@@ -1052,11 +1168,13 @@ export default function Maintenance() {
       return;
     }
     try {
-      await addDoc(collection(db, 'maintenance_programming_types'), {
+      const docRef = await addDoc(collection(db, 'maintenance_programming_types'), {
         name: val,
         active: true,
         createdAt: serverTimestamp()
       });
+      setProgrammingTypes(prev => [...prev.filter(p => p.id !== docRef.id), { id: docRef.id, name: val, active: true }].sort((a, b) => a.name.localeCompare(b.name)));
+      invalidateReferenceCache('maintenance_programming_types');
       setNewProgTypeInput('');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'maintenance_programming_types');
@@ -1073,11 +1191,13 @@ export default function Maintenance() {
       return;
     }
     try {
-      await addDoc(collection(db, 'work_sectors'), {
+      const docRef = await addDoc(collection(db, 'work_sectors'), {
         name: val,
         active: true,
         createdAt: serverTimestamp()
       });
+      setSectors(prev => [...prev.filter(s => s.id !== docRef.id), { id: docRef.id, name: val, active: true }].sort((a, b) => a.name.localeCompare(b.name)));
+      invalidateReferenceCache('work_sectors');
       setNewSectorInput('');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'work_sectors');
@@ -1089,10 +1209,13 @@ export default function Maintenance() {
     e.preventDefault();
     if (!editingSector || !editingSector.name.trim()) return;
     try {
+      const name = editingSector.name.trim();
       await updateDoc(doc(db, 'work_sectors', editingSector.id), {
-        name: editingSector.name.trim(),
+        name,
         updatedAt: serverTimestamp()
       });
+      setSectors(prev => prev.map(s => s.id === editingSector.id ? { ...s, name } : s));
+      invalidateReferenceCache('work_sectors');
       setEditingSector(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, 'work_sectors');
@@ -1110,12 +1233,14 @@ export default function Maintenance() {
       return;
     }
     try {
-      await addDoc(collection(db, 'maintenance_lines'), {
+      const docRef = await addDoc(collection(db, 'maintenance_lines'), {
         name: val,
         sector: sec,
         active: true,
         createdAt: serverTimestamp()
       });
+      setLines(prev => [...prev.filter(l => l.id !== docRef.id), { id: docRef.id, name: val, sector: sec, active: true }].sort((a, b) => a.name.localeCompare(b.name)));
+      invalidateReferenceCache('maintenance_lines');
       setNewLineNameInput('');
       setNewLineSectorInput('');
     } catch (err) {
@@ -1128,11 +1253,15 @@ export default function Maintenance() {
     e.preventDefault();
     if (!editingLine || !editingLine.name.trim()) return;
     try {
+      const name = editingLine.name.trim();
+      const sector = editingLine.sector ? editingLine.sector.trim() : '';
       await updateDoc(doc(db, 'maintenance_lines', editingLine.id), {
-        name: editingLine.name.trim(),
-        sector: editingLine.sector ? editingLine.sector.trim() : '',
+        name,
+        sector,
         updatedAt: serverTimestamp()
       });
+      setLines(prev => prev.map(l => l.id === editingLine.id ? { ...l, name, sector } : l));
+      invalidateReferenceCache('maintenance_lines');
       setEditingLine(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, 'maintenance_lines');
@@ -1149,11 +1278,13 @@ export default function Maintenance() {
       return;
     }
     try {
-      await addDoc(collection(db, 'maintenance_statuses'), {
+      const docRef = await addDoc(collection(db, 'maintenance_statuses'), {
         name: val,
         active: true,
         createdAt: serverTimestamp()
       });
+      setStatuses(prev => [...prev.filter(s => s.id !== docRef.id), { id: docRef.id, name: val, active: true }].sort((a, b) => a.name.localeCompare(b.name)));
+      invalidateReferenceCache('maintenance_statuses');
       setNewStatusInput('');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'maintenance_statuses');
@@ -1346,10 +1477,10 @@ export default function Maintenance() {
           </div>
 
           <div className="flex items-center gap-3">
-            {isMaster && (
+            {(isAdmin || isMaster) && (
               <button
                 onClick={() => setIsBulkImportModalOpen(true)}
-                className="px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30"
+                className="px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 cursor-pointer"
                 title="Importar Pendências em Massa (Excel / CSV)"
               >
                 <UploadCloud className="w-4 h-4 text-emerald-400" />
@@ -1442,11 +1573,11 @@ export default function Maintenance() {
                   Imprimir / Exportar PDF
                 </button>
 
-                {isMaster && (
+                {(isAdmin || isMaster) && (
                   <button
                     type="button"
                     onClick={() => setIsBulkImportModalOpen(true)}
-                    className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 border border-emerald-200 shadow-sm"
+                    className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 border border-emerald-200 shadow-sm cursor-pointer"
                     title="Importar Pendências em Massa via Excel (.xlsx) ou CSV"
                   >
                     <UploadCloud className="w-4 h-4 text-emerald-600" />
@@ -1954,21 +2085,21 @@ export default function Maintenance() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {isMaster && (
+                    {(isAdmin || isMaster) && (
                       <button
                         type="button"
                         onClick={handleDownloadTemplate}
-                        className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl transition-all flex items-center gap-2 border border-emerald-200/80"
+                        className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl transition-all flex items-center gap-2 border border-emerald-200/80 cursor-pointer"
                       >
                         <FileDown className="w-4 h-4 text-emerald-600" />
                         Baixar Modelo (.CSV)
                       </button>
                     )}
-                    {isMaster && (
+                    {(isAdmin || isMaster) && (
                       <button
                         type="button"
                         onClick={() => setIsImportModalOpen(true)}
-                        className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-lg transition-all flex items-center gap-2"
+                        className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-lg transition-all flex items-center gap-2 cursor-pointer"
                       >
                         <FolderInput className="w-4 h-4 text-emerald-400" />
                         Importar Lista (CSV / Texto)
@@ -2098,7 +2229,7 @@ export default function Maintenance() {
                             <button
                               type="button"
                               onClick={() => setEditingEquipment(eq)}
-                              className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                              className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
                               title="Editar Equipamento"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
@@ -2106,7 +2237,7 @@ export default function Maintenance() {
                             <button
                               type="button"
                               onClick={() => handleDeleteAdminItem('maintenance_equipments', eq.id, `TAG ${eq.tag}${eq.name ? ' - ' + eq.name : ''}`)}
-                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                               title="Excluir Equipamento"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2188,7 +2319,7 @@ export default function Maintenance() {
                           <button
                             type="button"
                             onClick={() => setEditingSector({ id: sec.id, name: sec.name, area: '' })}
-                            className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
                             title="Editar Setor"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
@@ -2196,7 +2327,7 @@ export default function Maintenance() {
                           <button
                             type="button"
                             onClick={() => handleDeleteAdminItem('work_sectors', sec.id, `Setor ${sec.name}`)}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                             title="Excluir Setor"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -2293,7 +2424,7 @@ export default function Maintenance() {
                           <button
                             type="button"
                             onClick={() => setEditingLine({ id: l.id, name: l.name, sector: l.sector || '', area: '' })}
-                            className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
                             title="Editar Linha"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
@@ -2301,7 +2432,7 @@ export default function Maintenance() {
                           <button
                             type="button"
                             onClick={() => handleDeleteAdminItem('maintenance_lines', l.id, `Linha ${l.name}`)}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                             title="Excluir Linha"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -2349,7 +2480,7 @@ export default function Maintenance() {
                         <button
                           type="button"
                           onClick={() => handleDeleteAdminItem('maintenance_inspection_types', it.id, it.name)}
-                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                           title="Excluir Tipo de Inspeção"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2405,7 +2536,7 @@ export default function Maintenance() {
                         <button
                           type="button"
                           onClick={() => handleDeleteAdminItem('maintenance_inspection_names', iname.id, iname.name)}
-                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                           title="Excluir Nome de Inspeção"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2452,7 +2583,7 @@ export default function Maintenance() {
                         <button
                           type="button"
                           onClick={() => handleDeleteAdminItem('maintenance_responsible_centers', rc.id, rc.name)}
-                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                           title="Excluir Centro Responsável"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2496,7 +2627,7 @@ export default function Maintenance() {
                       <button
                         type="button"
                         onClick={() => handleDeleteAdminItem('maintenance_programming_types', pt.id, pt.name)}
-                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                         title="Excluir Tipo de Programação"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -2540,7 +2671,7 @@ export default function Maintenance() {
                       <button
                         type="button"
                         onClick={() => handleDeleteAdminItem('maintenance_statuses', st.id, st.name)}
-                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                         title="Excluir Status"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -2994,7 +3125,7 @@ export default function Maintenance() {
 
       {/* ADMIN TAG IMPORT CSV MODAL */}
       <AnimatePresence>
-        {isImportModalOpen && isMaster && (
+        {isImportModalOpen && (isAdmin || isMaster) && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -3360,16 +3491,18 @@ export default function Maintenance() {
                 <button
                   type="button"
                   onClick={() => setDeleteTarget(null)}
-                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all"
+                  disabled={isDeletingTarget}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
+                  disabled={isDeletingTarget}
                   onClick={executeDeleteTarget}
-                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-rose-600/20 flex items-center justify-center gap-2"
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-rose-600/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  <Trash2 className="w-4 h-4" /> Sim, Excluir
+                  <Trash2 className="w-4 h-4" /> {isDeletingTarget ? 'Excluindo...' : 'Sim, Excluir'}
                 </button>
               </div>
             </motion.div>
@@ -3377,8 +3510,8 @@ export default function Maintenance() {
         )}
       </AnimatePresence>
 
-      {/* BULK IMPORT MODAL FOR MAINTENANCE ISSUES - MASTER ONLY */}
-      {isMaster && (
+      {/* BULK IMPORT MODAL FOR MAINTENANCE ISSUES - ADMIN & MASTER */}
+      {(isAdmin || isMaster) && (
         <MaintenanceBulkImportModal
           isOpen={isBulkImportModalOpen}
           onClose={() => setIsBulkImportModalOpen(false)}
