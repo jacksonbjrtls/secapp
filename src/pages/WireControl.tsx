@@ -25,6 +25,7 @@ import {
   WireStorageBay
 } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/errorHandler';
+import { DEFAULT_BUDGETED_PRODUCTION, DEFAULT_REAL_PRODUCTION } from '../constants';
 import { 
   LayoutDashboard, 
   PackagePlus, 
@@ -454,47 +455,65 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
   const [prodYear, setProdYear] = useState(new Date().getFullYear());
   const [prodMonth, setProdMonth] = useState(new Date().getMonth() + 1);
   const [prodTons, setProdTons] = useState<string>('');
+  const [budgetedTons, setBudgetedTons] = useState<string>('');
   const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, 'monthly_production'), orderBy('year', 'desc'), orderBy('month', 'desc'), limit(12));
+    const q = query(collection(db, 'monthly_production'), orderBy('year', 'desc'), orderBy('month', 'desc'), limit(24));
     const unsub = onSnapshot(q, (snap) => {
       setProductionHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'monthly_production'));
     return unsub;
   }, []);
 
-  // Check if current selection has data
+  // Check if current selection has data or prefill with factory budget
   useEffect(() => {
     const existing = productionHistory.find(h => h.year === prodYear && h.month === prodMonth);
     if (existing && !isEditing) {
-      setProdTons(existing.productionTons.toString());
+      setProdTons(existing.productionTons !== undefined && existing.productionTons !== null ? existing.productionTons.toString() : (DEFAULT_REAL_PRODUCTION[prodMonth]?.toString() || ''));
+      setBudgetedTons(
+        existing.budgetedTons !== undefined && existing.budgetedTons !== null
+          ? existing.budgetedTons.toString()
+          : (DEFAULT_BUDGETED_PRODUCTION[prodMonth]?.toString() || '')
+      );
     } else if (!existing && !isEditing) {
-      setProdTons('');
+      const defaultBudget = DEFAULT_BUDGETED_PRODUCTION[prodMonth]?.toString() || '';
+      const defaultReal = DEFAULT_REAL_PRODUCTION[prodMonth] ? DEFAULT_REAL_PRODUCTION[prodMonth].toString() : '';
+      setProdTons(defaultReal);
+      setBudgetedTons(defaultBudget);
     }
   }, [prodYear, prodMonth, productionHistory, isEditing]);
 
   const handleSaveProduction = async () => {
-    if (!prodTons || isNaN(parseFloat(prodTons))) return;
+    if ((!prodTons || isNaN(parseFloat(prodTons))) && (!budgetedTons || isNaN(parseFloat(budgetedTons)))) return;
     
     const id = `${prodYear}-${prodMonth}`;
-    await setDoc(doc(db, 'monthly_production', id), {
+    const dataToSave: any = {
       year: prodYear,
       month: prodMonth,
-      productionTons: parseFloat(prodTons),
       updatedAt: serverTimestamp(),
       updatedBy: profile?.displayName || profile?.email || 'Sistema'
-    });
+    };
+
+    if (prodTons && !isNaN(parseFloat(prodTons))) {
+      dataToSave.productionTons = parseFloat(prodTons);
+    }
+    if (budgetedTons && !isNaN(parseFloat(budgetedTons))) {
+      dataToSave.budgetedTons = parseFloat(budgetedTons);
+    }
+
+    await setDoc(doc(db, 'monthly_production', id), dataToSave, { merge: true });
     setProdTons('');
+    setBudgetedTons('');
     setIsEditing(false);
   };
 
   const handleEditClick = (entry: any) => {
     setProdYear(entry.year);
     setProdMonth(entry.month);
-    setProdTons(entry.productionTons.toString());
+    setProdTons(entry.productionTons !== undefined && entry.productionTons !== null ? entry.productionTons.toString() : '');
+    setBudgetedTons(entry.budgetedTons !== undefined && entry.budgetedTons !== null ? entry.budgetedTons.toString() : '');
     setIsEditing(true);
-    // Scroll to form or just let the user see the change
   };
 
   const deleteProduction = async (id: string) => {
@@ -567,10 +586,18 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
       {/* Monthly Production Input - Main Focus */}
       <div className="lg:col-span-12 xl:col-span-4 space-y-6">
         <div className="bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
-          <h3 className="text-xl font-black text-slate-900 mb-6 flex items-center gap-2">
-            <FileInput className="w-5 h-5 text-emerald-600" />
-            Produção de Pregos (Tons)
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+              <FileInput className="w-5 h-5 text-emerald-600" />
+              Produção de Celulose (Tons)
+            </h3>
+            <span className="text-[10px] font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full uppercase">
+              Real vs Orçado
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 font-medium mb-6">
+            Lançamento mensal de fechamento de produção realizada e orçada para alimentação dos indicadores de consumo e do painel Gestão À Vista.
+          </p>
 
           <div className="space-y-4 mb-6 p-5 bg-slate-50/50 rounded-2xl border border-slate-100">
              <div className="grid grid-cols-2 gap-3">
@@ -579,7 +606,7 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
                   <select 
                     value={prodMonth}
                     onChange={(e) => setProdMonth(parseInt(e.target.value))}
-                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all"
+                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all cursor-pointer"
                   >
                     {Array.from({ length: 12 }, (_, i) => (
                       <option key={`wire-ctrl-month-${i + 1}`} value={i + 1}>
@@ -593,37 +620,62 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
                   <select 
                     value={prodYear}
                     onChange={(e) => setProdYear(parseInt(e.target.value))}
-                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all"
+                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all cursor-pointer"
                   >
-                    {[2024, 2025, 2026].map((y, yIdx) => (
-                      <option key={`wire-ctrl-year-${y}-${yIdx}`} value={y}>{y}</option>
+                    {Array.from({ length: 30 }, (_, i) => new Date().getFullYear() - 10 + i).map((y) => (
+                      <option key={`wire-ctrl-year-${y}`} value={y}>{y}</option>
                     ))}
                   </select>
                 </div>
              </div>
              
-             <div className="space-y-1">
-               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Produção Total</span>
-               <div className="flex gap-2">
-                 <div className="relative flex-1">
+             {/* Dual Inputs: Realizada & Orçada */}
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+               <div className="space-y-1">
+                 <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest ml-1 flex items-center gap-1">
+                   <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block"></span>
+                   Produção Realizada
+                 </span>
+                 <div className="relative">
                    <input
                      type="number"
-                     step="0.1"
+                     step="0.001"
                      value={prodTons}
                      onChange={(e) => setProdTons(e.target.value)}
-                     placeholder="Ex: 1250.5"
-                     className="w-full px-4 py-3.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold pr-12 shadow-sm transition-all"
+                     placeholder="Ex: 157546"
+                     className="w-full px-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold pr-12 shadow-sm text-sm"
                    />
-                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400 uppercase">Tons</span>
+                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-black text-slate-400 uppercase">Tons</span>
                  </div>
-                 <button
-                   onClick={handleSaveProduction}
-                   className="p-3 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all font-bold shadow-lg shadow-emerald-100 flex items-center gap-2 active:scale-95"
-                 >
-                   <Save className="w-5 h-5" />
-                   <span className="text-xs uppercase tracking-widest hidden sm:inline">{isEditing ? 'Atualizar' : 'Salvar'}</span>
-                 </button>
                </div>
+
+               <div className="space-y-1">
+                 <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest ml-1 flex items-center gap-1">
+                   <span className="w-2 h-2 rounded-full bg-blue-600 inline-block"></span>
+                   Produção Orçada (Meta)
+                 </span>
+                 <div className="relative">
+                   <input
+                     type="number"
+                     step="0.001"
+                     value={budgetedTons}
+                     onChange={(e) => setBudgetedTons(e.target.value)}
+                     placeholder="Ex: 156665"
+                     className="w-full px-3.5 py-2.5 bg-white border border-blue-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold pr-12 shadow-sm text-sm"
+                   />
+                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-black text-slate-400 uppercase">Tons</span>
+                 </div>
+               </div>
+             </div>
+
+             <div className="pt-2">
+               <button
+                 onClick={handleSaveProduction}
+                 className="w-full py-3 bg-emerald-700 text-white rounded-xl hover:bg-emerald-800 transition-all font-bold shadow-lg shadow-emerald-950/20 flex items-center justify-center gap-2 active:scale-95 cursor-pointer text-xs uppercase tracking-wider"
+               >
+                 <Save className="w-4 h-4" />
+                 <span>{isEditing ? 'Atualizar Produção (Real e Orçado)' : 'Salvar Fechamento de Produção'}</span>
+               </button>
              </div>
           </div>
 
@@ -634,7 +686,16 @@ const ConfigTab: React.FC<{ lines: ProductionLine[], suppliers: WireSupplier[], 
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       {new Date(0, entry.month - 1).toLocaleString('pt-BR', { month: 'short' })} / {entry.year}
                     </p>
-                    <p className="font-black text-slate-900 tracking-tight">{entry.productionTons.toLocaleString()} toneladas</p>
+                    <div className="flex flex-wrap items-center gap-2 mt-1">
+                      <span className="text-xs font-black text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                        Real: {entry.productionTons !== undefined && entry.productionTons !== null ? Number(entry.productionTons).toLocaleString('pt-BR') : '-'} t
+                      </span>
+                      {entry.budgetedTons !== undefined && entry.budgetedTons !== null && (
+                        <span className="text-xs font-black text-blue-800 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                          Orçado: {Number(entry.budgetedTons).toLocaleString('pt-BR')} t
+                        </span>
+                      )}
+                    </div>
                  </div>
                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
                    <button

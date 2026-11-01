@@ -27,6 +27,7 @@ import Overtime from './pages/Overtime';
 import Vacations from './pages/Vacations';
 import Maintenance from './pages/Maintenance';
 import SafetyIncidents from './pages/SafetyIncidents';
+import GestaoAVista from './pages/GestaoAVista';
 import { handleFirestoreError, OperationType } from './lib/errorHandler';
 import { getProfileCompletionStatus } from './lib/profileCompletion';
 import { Loader2, Ban, MailCheck, KeyRound, Eye, EyeOff, AlertCircle } from 'lucide-react';
@@ -596,6 +597,15 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <Profile />
+              </ProtectedRoute>
+            } 
+          />
+
+          <Route 
+            path="/gestao-a-vista" 
+            element={
+              <ProtectedRoute>
+                <GestaoAVista />
               </ProtectedRoute>
             } 
           />

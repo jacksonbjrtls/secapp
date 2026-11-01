@@ -357,18 +357,25 @@ service cloud.firestore {
       allow update, delete: if isMaster() || (isAdmin() && isValidId(logId));
     }
 
-    // Monthly Production (Manual Inputs)
+    // Monthly Production (Manual Inputs and Budgeted Targets)
     match /monthly_production/{id} {
       function isValidProduction(data) {
-        return data.year is int && data.year >= 2024 &&
+        return data.year is int && data.year >= 2020 &&
                data.month is int && data.month >= 1 && data.month <= 12 &&
-               data.productionTons is number && data.productionTons >= 0 &&
-               data.updatedAt is timestamp;
+               (!('productionTons' in data) || data.productionTons is number) &&
+               (!('budgetedTons' in data) || data.budgetedTons is number);
       }
 
-      allow read: if isApproved();
-      allow create, update: if isManager() && isValidId(id) && isValidProduction(request.resource.data);
-      allow delete: if isMaster() || (isManager() && isValidId(id));
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && (isMaster() || isAdmin() || isManager()) && isValidId(id) && isValidProduction(request.resource.data);
+      allow delete: if isMaster() || isAdmin() || isManager();
+    }
+
+    // Gestão À Vista Visual Boards
+    match /gestao_a_vista_boards/{boardId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && (isMaster() || isAdmin() || isManager());
+      allow delete: if isSignedIn() && (isMaster() || isAdmin());
     }
 
     // Quality Checklist Templates

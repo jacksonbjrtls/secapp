@@ -1049,6 +1049,10 @@
     "/app_feedback_surveys/{surveyId}": {
       "schema": "AppFeedbackSurvey",
       "description": "Feedback surveys evaluated by users who accessed at least 10 times."
+    },
+    "/gestao_a_vista_boards/{boardId}": {
+      "schema": "GestaoBoard",
+      "description": "Visual management boards and KPI monthly closures."
     }
   }
 }

@@ -30,7 +30,8 @@ import {
   Gift,
   Wrench,
   BookOpen,
-  Lock
+  Lock,
+  Presentation
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { auth, db } from '../../lib/firebase';
@@ -284,6 +285,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     overtime: true,
     vacations: true,
     safety_incidents: true,
+    gestao_a_vista: true,
   });
 
   useEffect(() => {
@@ -386,6 +388,7 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       { id: 'maintenance', name: 'Manutenção', href: '/maintenance', icon: Wrench, show: activeModules.maintenance !== false },
       { id: 'overtime', name: 'Justificativa HE', href: '/overtime', icon: Clock, show: activeModules.overtime !== false },
       { id: 'vacations', name: 'Controle de Férias', href: '/vacations', icon: CalendarDays, show: activeModules.vacations !== false },
+      { id: 'gestao_a_vista', name: 'Gestão À Vista', href: '/gestao-a-vista', icon: Presentation, show: activeModules.gestao_a_vista !== false },
       { id: 'admin', name: 'Painel Administrativo', href: '/admin', icon: Users, show: !!isAdmin },
       { id: 'reports', name: 'Relatórios', href: '/reports', icon: FileDown, show: !!isManager },
       { id: 'manual', name: 'Manual do Sistema', href: '/Manual_do_Usuario_SecApp.pdf', icon: BookOpen, show: true, isExternal: true },

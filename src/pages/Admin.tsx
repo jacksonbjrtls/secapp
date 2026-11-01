@@ -137,6 +137,7 @@ const Admin: React.FC = () => {
     maintenance: true,
     overtime: true,
     vacations: true,
+    gestao_a_vista: true,
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [filterGroup, setFilterGroup] = useState('all');
