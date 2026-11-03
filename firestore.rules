@@ -592,6 +592,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Manual Gift Recipients (Colaboradores avulsos para brindes e uniformes)
+    match /manual_gift_recipients/{recipientId} {
+      allow read, write: if true;
+    }
+
     // Vacation Requests
     match /vacation_requests/{requestId} {
       allow read: if isApproved();

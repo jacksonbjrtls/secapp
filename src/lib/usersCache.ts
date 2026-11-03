@@ -30,6 +30,13 @@ const STORAGE_KEY = 'app_cached_users_list_v1';
 const STORAGE_TIME_KEY = 'app_cached_users_time_v1';
 const USERS_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes TTL
 
+// Apenas o usuário jacksonbjr@gmail.com é invisível a tudo e todos nas listagens
+// O colaborador institucional jackson.junior@eldoradobrasil.com.br DEVE FICAR VISÍVEL normalmente
+export const isHiddenMaster = (u: { email?: string; isMaster?: boolean }): boolean => {
+  const email = (u.email || '').toLowerCase().trim();
+  return email === 'jacksonbjr@gmail.com';
+};
+
 let inMemoryUsersCache: CachedUserItem[] | null = null;
 let lastFetchPromise: Promise<CachedUserItem[]> | null = null;
 let lastFetchTime = 0;
@@ -66,15 +73,16 @@ export function isUsersCacheFresh(): boolean {
 
 export function getLocalCachedUsers(): CachedUserItem[] {
   if (inMemoryUsersCache && inMemoryUsersCache.length > 0) {
-    return inMemoryUsersCache;
+    return inMemoryUsersCache.filter(u => !isHiddenMaster(u));
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        inMemoryUsersCache = parsed;
-        return parsed;
+        const filtered = parsed.filter(u => !isHiddenMaster(u));
+        inMemoryUsersCache = filtered;
+        return filtered;
       }
     }
   } catch (e) {
@@ -84,15 +92,16 @@ export function getLocalCachedUsers(): CachedUserItem[] {
 }
 
 export function setLocalCachedUsers(users: CachedUserItem[]) {
-  inMemoryUsersCache = users;
+  const filtered = users.filter(u => !isHiddenMaster(u));
+  inMemoryUsersCache = filtered;
   lastFetchTime = Date.now();
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
     localStorage.setItem(STORAGE_TIME_KEY, String(lastFetchTime));
   } catch (e) {
     console.warn('Failed to write cached users to localStorage', e);
   }
-  notifySubscribers(users);
+  notifySubscribers(filtered);
 }
 
 /**
@@ -235,7 +244,7 @@ export async function fetchUsersSafely(force = false): Promise<CachedUserItem[]>
         })
       );
 
-      const validList = decryptedUsersList.filter(u => u.displayName !== 'Sem nome');
+      const validList = decryptedUsersList.filter(u => !isHiddenMaster(u) && u.displayName !== 'Sem nome');
       setLocalCachedUsers(validList);
       return validList;
     } catch (err: any) {

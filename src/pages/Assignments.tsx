@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
   Settings, 
@@ -13,7 +13,15 @@ import {
   Download,
   Briefcase,
   Layers,
-  Sparkles
+  Sparkles,
+  UserPlus,
+  Trash2,
+  RefreshCw,
+  X,
+  UserCheck,
+  UserMinus,
+  Edit2,
+  UserX
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -36,6 +44,20 @@ import { subscribeSharedCollection } from '../lib/referenceCache';
 import { decryptValue } from '../lib/crypto';
 import { WorkSector, WorkFunction, UserProfile } from '../types';
 
+export interface ManualRecipient {
+  id: string;
+  displayName: string;
+  email?: string;
+  sectorName?: string;
+  cargoName?: string;
+  group?: string;
+  birthDate?: string;
+  tshirtSize?: string;
+  notes?: string;
+  isManual: true;
+  createdAt?: any;
+}
+
 export default function Assignments() {
   const { profile, user, isAdmin, isManager, isMaster } = useAuth();
   const isElevated = isAdmin || isManager || isMaster || profile?.role === 'manager' || profile?.role === 'master' || profile?.role === 'admin';
@@ -45,9 +67,33 @@ export default function Assignments() {
   const [functions, setFunctions] = useState<WorkFunction[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   
-  // Loading & Feedback
+  // Manual Recipients State (Colaboradores que não usam o SecApp)
+  const [manualRecipients, setManualRecipients] = useState<ManualRecipient[]>(() => {
+    try {
+      const raw = localStorage.getItem('secapp_manual_gift_recipients');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Modal de Adicionar/Editar Colaborador Avulso
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [manualName, setManualName] = useState('');
+  const [manualSector, setManualSector] = useState('');
+  const [manualCargo, setManualCargo] = useState('');
+  const [manualGroup, setManualGroup] = useState('');
+  const [manualBirth, setManualBirth] = useState('');
+  const [manualSize, setManualSize] = useState('');
+  const [manualEmail, setManualEmail] = useState('');
+  const [manualNotes, setManualNotes] = useState('');
+  const [editingManualId, setEditingManualId] = useState<string | null>(null);
+  const [deleteRecipientTarget, setDeleteRecipientTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeletingRecipient, setIsDeletingRecipient] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string>('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -62,13 +108,18 @@ export default function Assignments() {
   const [colabFilterCargo, setColabFilterCargo] = useState('all');
   const [colabFilterGroup, setColabFilterGroup] = useState('all');
   const [colabFilterSize, setColabFilterSize] = useState('all');
+  const [colabFilterStatus, setColabFilterStatus] = useState<'active' | 'all' | 'blocked'>('active');
+  const [colabSourceTab, setColabSourceTab] = useState<'all' | 'secapp' | 'manual'>('all');
 
-  // PDF Export Customization States
+  // PDF Export Customization States (com seleção individual de quem entra no PDF)
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfScope, setPdfScope] = useState<'all' | 'filtered'>('all');
   const [pdfIncludeSummary, setPdfIncludeSummary] = useState(true);
   const [pdfIncludeDateTime, setPdfIncludeDateTime] = useState(true);
   const [pdfSortOrder, setPdfSortOrder] = useState<'name' | 'size' | 'sector'>('name');
+  const [pdfSelectedIds, setPdfSelectedIds] = useState<Set<string>>(new Set());
+  const [pdfModalSearch, setPdfModalSearch] = useState('');
+  const [showQuickAddInPdfModal, setShowQuickAddInPdfModal] = useState(false);
   const [pdfCols, setPdfCols] = useState({
     name: true,
     email: true,
@@ -117,10 +168,27 @@ export default function Assignments() {
     { id: 'aux_enfardamento', name: 'Auxiliar de Enfardamento', sectorId: 'enfardamento', active: true }
   ];
 
+  // Apenas o usuário jacksonbjr@gmail.com é invisível nas listagens
+  // O colaborador institucional jackson.junior@eldoradobrasil.com.br DEVE FICAR VISÍVEL normalmente!
+  const isMasterUser = (u: any) => {
+    const email = (u?.email || '').toLowerCase().trim();
+    return email === 'jacksonbjr@gmail.com';
+  };
+
+  // Helper to verify active users (não bloqueados ou desativados)
+  const isActiveUser = (u: UserProfile) => {
+    if (isMasterUser(u)) return false;
+    if (u.disabled === true) return false;
+    if (u.status === 'blocked') return false;
+    if (!u.displayName || u.displayName.trim() === '' || u.displayName === 'Sem nome') return false;
+    return true;
+  };
+
   // Fetch all assignments data
   const fetchData = async (force = false, silent = false) => {
     try {
       if (!silent) setLoading(true);
+      if (force) setIsRefreshing(true);
       
       // 1. Fetch Sectors
       const sectorSnap = await getDocs(collection(db, 'work_sectors'));
@@ -144,14 +212,15 @@ export default function Assignments() {
 
       // 3. Fetch Users safely
       const freshUsers = await fetchUsersSafely(force);
-      const usersList = freshUsers.filter(u => u.displayName !== 'Sem nome');
-      setAllUsers(usersList as any[]);
+      setAllUsers((freshUsers as any[]).filter(u => !isMasterUser(u)));
+      setLastSyncTime(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
 
     } catch (err: any) {
       console.error('Error fetching assignments data:', err);
       setError('Falha ao carregar as atribuições e cadastros.');
     } finally {
       if (!silent) setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -180,14 +249,27 @@ export default function Assignments() {
 
     // 3. Listen in real-time to user updates from shared decrypted cache
     const unsubUsers = subscribeToUsers((cachedUsers) => {
-      const validList = cachedUsers.filter(u => u.displayName !== 'Sem nome');
-      setAllUsers(validList as any[]);
+      setAllUsers((cachedUsers as any[]).filter(u => !isMasterUser(u)));
+      setLastSyncTime(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+    });
+
+    // 4. Listen in real-time to manual recipients (colaboradores avulsos para brindes)
+    const unsubManual = onSnapshot(collection(db, 'manual_gift_recipients'), (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data(), isManual: true } as ManualRecipient));
+      list.sort((a, b) => a.displayName.localeCompare(b.displayName, 'pt-BR'));
+      setManualRecipients(list);
+      try {
+        localStorage.setItem('secapp_manual_gift_recipients', JSON.stringify(list));
+      } catch {}
+    }, (err) => {
+      console.warn('Manual recipients subscription notice:', err);
     });
 
     return () => {
       unsubSectors();
       unsubFunctions();
       unsubUsers();
+      unsubManual();
     };
   }, [user]);
 
@@ -498,37 +580,334 @@ export default function Assignments() {
     }
   };
 
-  // Generate T-Shirt Sizes Report PDF with Custom Settings
-  const handleGenerateTshirtPdf = () => {
-    const doc = new jsPDF();
-    
-    let targetUsers = [...allUsers];
-    if (pdfScope === 'filtered') {
-      targetUsers = allUsers.filter(u => {
-        const matchesSearch = !colabSearch || 
-          (u.displayName && u.displayName.toLowerCase().includes(colabSearch.toLowerCase())) ||
-          (u.email && u.email.toLowerCase().includes(colabSearch.toLowerCase()));
-        const matchesSector = colabFilterSector === 'all' || 
-          (colabFilterSector === 'none' && !u.sectorId) ||
-          (u.sectorId === colabFilterSector);
-        const matchesCargo = colabFilterCargo === 'all' || 
-          (colabFilterCargo === 'none' && !u.cargoId) ||
-          (u.cargoId === colabFilterCargo);
-        const matchesSize = colabFilterSize === 'all' || 
-          (colabFilterSize === 'none' && !u.tshirtSize) ||
-          (u.tshirtSize === colabFilterSize);
-        return matchesSearch && matchesSector && matchesCargo && matchesSize;
+  // Manual Recipients CRUD (Funcionários que não usam o SecApp)
+  const handleSaveManualRecipient = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!manualName.trim()) {
+      alert('Preencha o nome do colaborador.');
+      return;
+    }
+    try {
+      setSaving(true);
+      const id = editingManualId || `manual_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const payload: ManualRecipient = {
+        id,
+        displayName: manualName.trim(),
+        email: manualEmail.trim() || '',
+        sectorName: manualSector.trim() || 'Outro Setor',
+        cargoName: manualCargo.trim() || 'Colaborador',
+        group: manualGroup || '',
+        birthDate: manualBirth || '',
+        tshirtSize: manualSize || '',
+        notes: manualNotes.trim() || '',
+        isManual: true,
+        createdAt: serverTimestamp()
+      };
+
+      await setDoc(doc(db, 'manual_gift_recipients', id), payload, { merge: true });
+      
+      setManualRecipients(prev => {
+        const without = prev.filter(m => m.id !== id);
+        const updated = [...without, payload].sort((a, b) => a.displayName.localeCompare(b.displayName, 'pt-BR'));
+        try { localStorage.setItem('secapp_manual_gift_recipients', JSON.stringify(updated)); } catch {}
+        return updated;
       });
+
+      // Automatically include in PDF selection
+      setPdfSelectedIds(prev => new Set(prev).add(id));
+
+      setSuccess(`Colaborador avulso "${payload.displayName}" ${editingManualId ? 'atualizado' : 'adicionado'} com sucesso!`);
+      // Reset form
+      setManualName('');
+      setManualSector('');
+      setManualCargo('');
+      setManualGroup('');
+      setManualBirth('');
+      setManualSize('');
+      setManualEmail('');
+      setManualNotes('');
+      setEditingManualId(null);
+      setIsManualModalOpen(false);
+      setShowQuickAddInPdfModal(false);
+    } catch (err: any) {
+      console.error('Error saving manual recipient:', err);
+      setError('Erro ao salvar colaborador avulso.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteManualRecipient = (id: string, name: string) => {
+    setDeleteRecipientTarget({ id, name });
+  };
+
+  const confirmDeleteManualRecipient = async () => {
+    if (!deleteRecipientTarget) return;
+    const { id, name } = deleteRecipientTarget;
+    try {
+      setIsDeletingRecipient(true);
+      // 1. Optimistic removal from local state & cache
+      setManualRecipients(prev => {
+        const updated = prev.filter(m => m.id !== id);
+        try { localStorage.setItem('secapp_manual_gift_recipients', JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+      setPdfSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+
+      // 2. Remove from Firestore
+      try {
+        await deleteDoc(doc(db, 'manual_gift_recipients', id));
+      } catch (fErr: any) {
+        console.warn('Firestore deletion sync notice:', fErr);
+      }
+
+      setSuccess(`Colaborador avulso "${name}" removido com sucesso.`);
+      setDeleteRecipientTarget(null);
+      if (editingManualId === id) {
+        setIsManualModalOpen(false);
+        setEditingManualId(null);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError('Erro ao remover colaborador avulso.');
+    } finally {
+      setIsDeletingRecipient(false);
+    }
+  };
+
+  const handleEditManualRecipient = (m: ManualRecipient) => {
+    setEditingManualId(m.id);
+    setManualName(m.displayName);
+    setManualSector(m.sectorName || '');
+    setManualCargo(m.cargoName || '');
+    setManualGroup(m.group || '');
+    setManualBirth(m.birthDate || '');
+    setManualSize(m.tshirtSize || '');
+    setManualEmail(m.email || '');
+    setManualNotes(m.notes || '');
+    setIsManualModalOpen(true);
+  };
+
+  // Filtered SecApp users (com suporte para status ativo/inativo)
+  const filteredSecAppUsers = useMemo(() => {
+    return allUsers.filter(colab => {
+      // O usuário jacksonbjr@gmail.com é master e não aparece em nenhuma lista
+      if (isMasterUser(colab)) return false;
+
+      // 1. Status Filter (Ativo / Bloqueado / Todos)
+      if (colabFilterStatus === 'active' && !isActiveUser(colab)) return false;
+      if (colabFilterStatus === 'blocked' && isActiveUser(colab)) return false;
+
+      // 2. Search Filter
+      const matchesSearch = !colabSearch || 
+        (colab.displayName && colab.displayName.toLowerCase().includes(colabSearch.toLowerCase())) ||
+        (colab.email && colab.email.toLowerCase().includes(colabSearch.toLowerCase()));
+
+      // 3. Sector Filter
+      const matchesSector = colabFilterSector === 'all' || 
+        (colabFilterSector === 'none' && !colab.sectorId) ||
+        (colab.sectorId === colabFilterSector);
+
+      // 4. Cargo Filter
+      const matchesCargo = colabFilterCargo === 'all' || 
+        (colabFilterCargo === 'none' && !colab.cargoId) ||
+        (colab.cargoId === colabFilterCargo);
+
+      // 5. Group Filter
+      const matchesGroup = colabFilterGroup === 'all' || 
+        (colabFilterGroup === 'none' && !colab.group) ||
+        (colab.group === colabFilterGroup) ||
+        (colabFilterGroup === 'ADM' && (colab.group || '').toUpperCase().startsWith('ADM'));
+
+      // 6. Size Filter
+      const matchesSize = colabFilterSize === 'all' || 
+        (colabFilterSize === 'none' && !colab.tshirtSize) ||
+        (colab.tshirtSize === colabFilterSize);
+
+      return matchesSearch && matchesSector && matchesCargo && matchesGroup && matchesSize;
+    }).sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '', 'pt-BR'));
+  }, [allUsers, colabFilterStatus, colabSearch, colabFilterSector, colabFilterCargo, colabFilterGroup, colabFilterSize]);
+
+  // Filtered Manual Recipients
+  const filteredManualRecipients = useMemo(() => {
+    return manualRecipients.filter(m => {
+      const s = colabSearch.toLowerCase();
+      const matchesSearch = !colabSearch || 
+        m.displayName.toLowerCase().includes(s) ||
+        (m.email && m.email.toLowerCase().includes(s)) ||
+        (m.sectorName && m.sectorName.toLowerCase().includes(s));
+      const matchesSector = colabFilterSector === 'all' || 
+        (m.sectorName && m.sectorName.toLowerCase().includes(colabFilterSector.toLowerCase()));
+      const matchesCargo = colabFilterCargo === 'all' || 
+        (m.cargoName && m.cargoName.toLowerCase().includes(colabFilterCargo.toLowerCase()));
+      const matchesGroup = colabFilterGroup === 'all' || 
+        (colabFilterGroup === 'none' && !m.group) ||
+        (m.group === colabFilterGroup) ||
+        (colabFilterGroup === 'ADM' && (m.group || '').toUpperCase().startsWith('ADM'));
+      const matchesSize = colabFilterSize === 'all' || 
+        (colabFilterSize === 'none' && !m.tshirtSize) ||
+        (m.tshirtSize === colabFilterSize);
+      return matchesSearch && matchesSector && matchesCargo && matchesGroup && matchesSize;
+    }).sort((a, b) => a.displayName.localeCompare(b.displayName, 'pt-BR'));
+  }, [manualRecipients, colabSearch, colabFilterSector, colabFilterCargo, colabFilterGroup, colabFilterSize]);
+
+  // Combined active list for displays
+  const activeSecAppUsersCount = useMemo(() => allUsers.filter(isActiveUser).length, [allUsers]);
+
+  const pdfModalCandidates = useMemo(() => {
+    const secAppList = (pdfScope === 'filtered' ? filteredSecAppUsers : allUsers.filter(isActiveUser)).map(u => ({
+      id: u.uid,
+      displayName: u.displayName || 'Sem Nome',
+      sectorName: u.sectorName || 'Sem Setor',
+      cargoName: u.cargoName || 'Sem Cargo',
+      tshirtSize: u.tshirtSize || 'Sem Camisa',
+      group: u.group || '',
+      isManual: false
+    }));
+
+    const manualList = (pdfScope === 'filtered' ? filteredManualRecipients : manualRecipients).map(m => ({
+      id: m.id,
+      displayName: m.displayName,
+      sectorName: m.sectorName || 'Outro Setor',
+      cargoName: m.cargoName || 'Externo / Avulso',
+      tshirtSize: m.tshirtSize || 'Sem Camisa',
+      group: m.group || '',
+      isManual: true
+    }));
+
+    const combined = [...secAppList, ...manualList];
+    if (!pdfModalSearch.trim()) return combined;
+    const s = pdfModalSearch.toLowerCase();
+    return combined.filter(c => 
+      c.displayName.toLowerCase().includes(s) || 
+      c.sectorName.toLowerCase().includes(s) || 
+      c.cargoName.toLowerCase().includes(s) ||
+      c.tshirtSize.toLowerCase().includes(s)
+    );
+  }, [pdfScope, filteredSecAppUsers, allUsers, filteredManualRecipients, manualRecipients, pdfModalSearch]);
+
+  const totalGiftCounts = useMemo(() => {
+    const list = [
+      ...allUsers.filter(isActiveUser),
+      ...manualRecipients
+    ];
+    const counts: Record<string, number> = {
+      PP: 0, P: 0, M: 0, G: 0, GG: 0, XG: 0, XXG: 0, XXXG: 0, Nenhum: 0
+    };
+    list.forEach(item => {
+      const sz = item.tshirtSize;
+      if (sz && counts[sz] !== undefined) {
+        counts[sz]++;
+      } else {
+        counts['Nenhum']++;
+      }
+    });
+    return counts;
+  }, [allUsers, manualRecipients]);
+
+  const handleQuickSaveManualRecipient = async (id: string, group: string, tshirtSize: string) => {
+    try {
+      await updateDoc(doc(db, 'manual_gift_recipients', id), {
+        group: group || null,
+        tshirtSize: tshirtSize || null,
+        updatedAt: serverTimestamp()
+      });
+      setManualRecipients(prev => prev.map(m => m.id === id ? { ...m, group, tshirtSize } : m));
+      setSuccess('Colaborador avulso atualizado com sucesso.');
+    } catch (err) {
+      console.error(err);
+      setError('Erro ao salvar alterações.');
+    }
+  };
+
+  // Open PDF Modal initializing selection
+  const handleOpenPdfModal = () => {
+    const ids = new Set<string>();
+    filteredSecAppUsers.forEach(u => ids.add(u.uid));
+    filteredManualRecipients.forEach(m => ids.add(m.id));
+    setPdfSelectedIds(ids);
+    setPdfModalSearch('');
+    setShowQuickAddInPdfModal(false);
+    setIsPdfModalOpen(true);
+  };
+
+  // Toggle selection in PDF
+  const togglePdfCollaborator = (id: string) => {
+    setPdfSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllPdf = (items: Array<{ id: string }>) => {
+    setPdfSelectedIds(prev => {
+      const next = new Set(prev);
+      items.forEach(item => next.add(item.id));
+      return next;
+    });
+  };
+
+  const handleDeselectAllPdf = () => {
+    setPdfSelectedIds(new Set());
+  };
+
+  // Generate T-Shirt Sizes Report PDF with Individual Participant Control
+  const handleGenerateTshirtPdf = () => {
+    // 1. Gather all checked SecApp users
+    const selectedSecApp = allUsers
+      .filter(u => pdfSelectedIds.has(u.uid))
+      .map(u => ({
+        id: u.uid,
+        displayName: u.displayName || 'Sem Nome',
+        email: u.email || '',
+        sectorName: u.sectorName || 'Nao Definido',
+        cargoName: u.cargoName || 'Nao Definido',
+        birthDate: u.birthDate || '',
+        tshirtSize: u.tshirtSize || 'Nao Definido',
+        group: u.group || '',
+        isManual: false
+      }));
+
+    // 2. Gather all checked Manual recipients
+    const selectedManual = manualRecipients
+      .filter(m => pdfSelectedIds.has(m.id))
+      .map(m => ({
+        id: m.id,
+        displayName: `${m.displayName} (Avulso)`,
+        email: m.email || m.notes || '-',
+        sectorName: m.sectorName || 'Outro Setor',
+        cargoName: m.cargoName || 'Externo / Avulso',
+        birthDate: m.birthDate || '',
+        tshirtSize: m.tshirtSize || 'Nao Definido',
+        group: m.group || '',
+        isManual: true
+      }));
+
+    let targetParticipants = [...selectedSecApp, ...selectedManual];
+
+    if (targetParticipants.length === 0) {
+      alert('Nenhum colaborador foi selecionado para o PDF. Marque ao menos um colaborador na lista.');
+      return;
     }
 
     if (pdfSortOrder === 'name') {
-      targetUsers.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '', 'pt-BR'));
+      targetParticipants.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '', 'pt-BR'));
     } else if (pdfSortOrder === 'size') {
-      targetUsers.sort((a, b) => (a.tshirtSize || 'ZZZ').localeCompare(b.tshirtSize || 'ZZZ'));
+      targetParticipants.sort((a, b) => (a.tshirtSize || 'ZZZ').localeCompare(b.tshirtSize || 'ZZZ'));
     } else if (pdfSortOrder === 'sector') {
-      targetUsers.sort((a, b) => (a.sectorName || 'ZZZ').localeCompare(b.sectorName || 'ZZZ'));
+      targetParticipants.sort((a, b) => (a.sectorName || 'ZZZ').localeCompare(b.sectorName || 'ZZZ'));
     }
 
+    const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
     doc.setFillColor(15, 23, 42);
     doc.rect(0, 0, pageWidth, 26, 'F');
@@ -541,7 +920,7 @@ export default function Assignments() {
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(203, 213, 225);
-    doc.text(sanitizePdfText('SecAPP - Eldorado Brasil Celulose | Controle Administrativo'), 14, 20);
+    doc.text(sanitizePdfText(`SecAPP - Eldorado Brasil Celulose | Controle Administrativo (${targetParticipants.length} Colaboradores)`), 14, 20);
 
     let startY = 32;
 
@@ -557,7 +936,7 @@ export default function Assignments() {
         'PP': 0, 'P': 0, 'M': 0, 'G': 0, 'GG': 0, 'XG': 0, 'XXG': 0, 'XXXG': 0, 'Nao Informado': 0
       };
       
-      targetUsers.forEach(u => {
+      targetParticipants.forEach(u => {
         const sz = u.tshirtSize || 'Nao Informado';
         if (sizeCounts[sz] !== undefined) {
           sizeCounts[sz]++;
@@ -573,7 +952,7 @@ export default function Assignments() {
       doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(51, 65, 85);
-      doc.text(sanitizePdfText('RESUMO TOTAL DE UNIDADES A PRODUZIR:'), 18, startY + 6);
+      doc.text(sanitizePdfText(`RESUMO TOTAL DE UNIDADES A PRODUZIR (${targetParticipants.length} PEÇAS):`), 18, startY + 6);
 
       let summaryX = 18;
       const summaryY = startY + 12;
@@ -592,19 +971,19 @@ export default function Assignments() {
     }
 
     const columnsConfig = [
-      { id: 'index', header: '#', getValue: (u: UserProfile, idx: number) => String(idx + 1) },
-      { id: 'name', header: 'Colaborador', getValue: (u: UserProfile) => u.displayName || 'Sem Nome', enabled: pdfCols.name },
-      { id: 'email', header: 'E-mail', getValue: (u: UserProfile) => u.email || '', enabled: pdfCols.email },
-      { id: 'sector', header: 'Setor', getValue: (u: UserProfile) => u.sectorName || 'Nao Definido', enabled: pdfCols.sector },
-      { id: 'cargo', header: 'Cargo / Funcao', getValue: (u: UserProfile) => u.cargoName || 'Nao Definido', enabled: pdfCols.cargo },
-      { id: 'birthDate', header: 'Data Nasc.', getValue: (u: UserProfile) => u.birthDate ? u.birthDate.split('-').reverse().join('/') : 'Nao Definido', enabled: pdfCols.birthDate },
-      { id: 'size', header: 'Tam. Camisa', getValue: (u: UserProfile) => u.tshirtSize || 'Nao Definido', enabled: pdfCols.size }
+      { id: 'index', header: '#', getValue: (u: any, idx: number) => String(idx + 1) },
+      { id: 'name', header: 'Colaborador', getValue: (u: any) => u.displayName || 'Sem Nome', enabled: pdfCols.name },
+      { id: 'email', header: 'E-mail / Obs', getValue: (u: any) => u.email || '', enabled: pdfCols.email },
+      { id: 'sector', header: 'Setor', getValue: (u: any) => u.sectorName || 'Nao Definido', enabled: pdfCols.sector },
+      { id: 'cargo', header: 'Cargo / Funcao', getValue: (u: any) => u.cargoName || 'Nao Definido', enabled: pdfCols.cargo },
+      { id: 'birthDate', header: 'Data Nasc.', getValue: (u: any) => u.birthDate ? u.birthDate.split('-').reverse().join('/') : 'Nao Definido', enabled: pdfCols.birthDate },
+      { id: 'size', header: 'Tam. Camisa', getValue: (u: any) => u.tshirtSize || 'Nao Definido', enabled: pdfCols.size }
     ];
 
     const activeCols = columnsConfig.filter(c => c.id === 'index' || c.enabled);
     const headers = activeCols.map(c => sanitizePdfText(c.header));
     
-    const tableBody = targetUsers.map((u, idx) => {
+    const tableBody = targetParticipants.map((u, idx) => {
       return activeCols.map(col => sanitizePdfText(col.getValue(u, idx)));
     });
 
@@ -634,25 +1013,7 @@ export default function Assignments() {
     setIsPdfModalOpen(false);
   };
 
-  const filteredUsers = allUsers.filter(colab => {
-    const matchesSearch = !colabSearch || 
-      (colab.displayName && colab.displayName.toLowerCase().includes(colabSearch.toLowerCase())) ||
-      (colab.email && colab.email.toLowerCase().includes(colabSearch.toLowerCase()));
-    const matchesSector = colabFilterSector === 'all' || 
-      (colabFilterSector === 'none' && !colab.sectorId) ||
-      (colab.sectorId === colabFilterSector);
-    const matchesCargo = colabFilterCargo === 'all' || 
-      (colabFilterCargo === 'none' && !colab.cargoId) ||
-      (colab.cargoId === colabFilterCargo);
-    const matchesGroup = colabFilterGroup === 'all' || 
-      (colabFilterGroup === 'none' && !colab.group) ||
-      (colab.group === colabFilterGroup) ||
-      (colabFilterGroup === 'ADM' && (colab.group || '').toUpperCase().startsWith('ADM'));
-    const matchesSize = colabFilterSize === 'all' || 
-      (colabFilterSize === 'none' && !colab.tshirtSize) ||
-      (colab.tshirtSize === colabFilterSize);
-    return matchesSearch && matchesSector && matchesCargo && matchesGroup && matchesSize;
-  }).sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '', 'pt-BR'));
+  const filteredUsers = filteredSecAppUsers;
 
   if (!isElevated) {
     return (
@@ -779,30 +1140,72 @@ export default function Assignments() {
 
       {/* Main Collaborators Table & Brindes (Camisas) Assignment */}
       <div className="bg-white rounded-[2rem] border border-slate-200 p-6 sm:p-8 shadow-sm space-y-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-slate-100 pb-4">
           <div>
-            <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-              <Users className="w-4 h-4 text-emerald-600" />
-              Atribuição Geral de Colaboradores
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">Gerencie setores, escalas, datas de nascimento e tamanhos de camisa para brindes com edição em lote e exportação personalizada.</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
+                <Users className="w-4 h-4 text-emerald-600" />
+                Atribuição Geral de Colaboradores & Brindes
+              </h3>
+              {lastSyncTime && (
+                <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                  Sincronizado: {lastSyncTime}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              Lista sempre atualizada com usuários ativos do SecApp e colaboradores avulsos de outros setores (caldeira, manutenção, almoxarifado, etc.).
+            </p>
           </div>
-          <div className="flex gap-2 self-stretch md:self-auto w-full md:w-auto">
+
+          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+            <button
+              type="button"
+              onClick={() => fetchData(true)}
+              disabled={isRefreshing}
+              title="Recarregar usuários ativos e atualizações do servidor"
+              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border border-slate-200"
+            >
+              <RefreshCw className={cn("w-3.5 h-3.5 text-slate-500", isRefreshing && "animate-spin text-emerald-600")} />
+              <span>{isRefreshing ? 'Atualizando...' : 'Atualizar Lista'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setEditingManualId(null);
+                setManualName('');
+                setManualSector('');
+                setManualCargo('');
+                setManualGroup('');
+                setManualBirth('');
+                setManualSize('');
+                setManualEmail('');
+                setManualNotes('');
+                setIsManualModalOpen(true);
+              }}
+              className="px-3.5 py-2 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <UserPlus className="w-3.5 h-3.5 text-sky-600" />
+              <span>+ Colaborador Avulso</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setShowBulkEdit(!showBulkEdit)}
-              className="flex-1 md:flex-none px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer border border-slate-200 justify-center shadow-xs"
+              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer border border-slate-200 shadow-xs"
             >
-              <Settings className="w-4 h-4 text-slate-500" />
-              Edição Geral
+              <Settings className="w-3.5 h-3.5 text-slate-500" />
+              <span>Edição Geral</span>
             </button>
+
             <button
               type="button"
-              onClick={() => setIsPdfModalOpen(true)}
-              className="flex-1 md:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-sm justify-center"
+              onClick={handleOpenPdfModal}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-sm ml-auto lg:ml-0"
             >
               <FileText className="w-4 h-4" />
-              Gerar PDF de Camisas
+              <span>Gerar PDF de Camisas</span>
             </button>
           </div>
         </div>
@@ -914,23 +1317,93 @@ export default function Assignments() {
           </div>
         )}
 
+        {/* Source Switcher Tabs */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setColabSourceTab('all')}
+              className={cn(
+                "px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5",
+                colabSourceTab === 'all'
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+              )}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Todos ({filteredSecAppUsers.length + filteredManualRecipients.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setColabSourceTab('secapp')}
+              className={cn(
+                "px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5",
+                colabSourceTab === 'secapp'
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+              )}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Usuários SecApp ({filteredSecAppUsers.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setColabSourceTab('manual')}
+              className={cn(
+                "px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5",
+                colabSourceTab === 'manual'
+                  ? "bg-sky-600 text-white shadow-xs"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+              )}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Avulsos / Outros Setores ({filteredManualRecipients.length})</span>
+            </button>
+          </div>
+
+          <div className="text-[11px] font-bold text-slate-400">
+            {colabFilterStatus === 'active' ? (
+              <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 flex items-center gap-1 inline-flex">
+                <Check className="w-3 h-3 text-emerald-600" />
+                Filtrando apenas colaboradores ativos
+              </span>
+            ) : colabFilterStatus === 'blocked' ? (
+              <span className="text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200 inline-flex items-center gap-1">
+                <UserX className="w-3 h-3 text-rose-600" />
+                Exibindo inativos / bloqueados
+              </span>
+            ) : (
+              <span className="text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg inline-flex items-center gap-1">
+                Exibindo todos os registros
+              </span>
+            )}
+          </div>
+        </div>
+
         {/* T-Shirt Size Distribution Dashboard */}
         <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-            <Gift className="w-3.5 h-3.5 text-slate-400" />
-            Distribuição de Tamanhos de Camisas (Brindes)
-          </p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+              <Gift className="w-3.5 h-3.5 text-slate-400" />
+              Distribuição de Camisas (Ativos SecApp + Colaboradores Avulsos)
+            </p>
+            <span className="text-[10px] font-extrabold text-slate-500">
+              Total Geral: {Object.values(totalGiftCounts).reduce((a: number, b: number) => a + b, 0)} pessoas
+            </span>
+          </div>
           <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-2">
             {[
-              { label: 'PP', count: allUsers.filter(u => u.tshirtSize === 'PP').length },
-              { label: 'P', count: allUsers.filter(u => u.tshirtSize === 'P').length },
-              { label: 'M', count: allUsers.filter(u => u.tshirtSize === 'M').length },
-              { label: 'G', count: allUsers.filter(u => u.tshirtSize === 'G').length },
-              { label: 'GG', count: allUsers.filter(u => u.tshirtSize === 'GG').length },
-              { label: 'XG', count: allUsers.filter(u => u.tshirtSize === 'XG').length },
-              { label: 'XXG', count: allUsers.filter(u => u.tshirtSize === 'XXG').length },
-              { label: 'XXXG', count: allUsers.filter(u => u.tshirtSize === 'XXXG').length },
-              { label: 'Nenhum', count: allUsers.filter(u => !u.tshirtSize).length },
+              { label: 'PP', count: totalGiftCounts['PP'] || 0 },
+              { label: 'P', count: totalGiftCounts['P'] || 0 },
+              { label: 'M', count: totalGiftCounts['M'] || 0 },
+              { label: 'G', count: totalGiftCounts['G'] || 0 },
+              { label: 'GG', count: totalGiftCounts['GG'] || 0 },
+              { label: 'XG', count: totalGiftCounts['XG'] || 0 },
+              { label: 'XXG', count: totalGiftCounts['XXG'] || 0 },
+              { label: 'XXXG', count: totalGiftCounts['XXXG'] || 0 },
+              { label: 'Nenhum', count: totalGiftCounts['Nenhum'] || 0 },
             ].map((size) => (
               <div key={size.label} className="bg-white border border-slate-150 rounded-xl p-2.5 text-center shadow-xs">
                 <p className="text-[10px] font-extrabold text-slate-400">{size.label}</p>
@@ -941,7 +1414,7 @@ export default function Assignments() {
         </div>
 
         {/* Dynamic Filtering & Search for Quick Editing */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 bg-slate-50/50 border border-slate-150 rounded-2xl p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 bg-slate-50/50 border border-slate-150 rounded-2xl p-4">
           <div>
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Buscar Colaborador</label>
             <input
@@ -954,6 +1427,19 @@ export default function Assignments() {
           </div>
 
           <div>
+            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Status no SecApp</label>
+            <select
+              value={colabFilterStatus}
+              onChange={(e) => setColabFilterStatus(e.target.value as any)}
+              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+            >
+              <option value="active">Apenas Ativos (Padrão)</option>
+              <option value="all">Todos os Cadastros</option>
+              <option value="blocked">Apenas Inativos/Bloqueados</option>
+            </select>
+          </div>
+
+          <div>
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Filtrar por Setor</label>
             <select
               value={colabFilterSector}
@@ -961,7 +1447,7 @@ export default function Assignments() {
                 setColabFilterSector(e.target.value);
                 setColabFilterCargo('all');
               }}
-              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-emerald-500"
+              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
             >
               <option value="all">Todos os Setores</option>
               <option value="none">Sem Setor Atribuído</option>
@@ -975,7 +1461,7 @@ export default function Assignments() {
               value={colabFilterCargo}
               onChange={(e) => setColabFilterCargo(e.target.value)}
               disabled={colabFilterSector === 'none'}
-              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60"
+              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60 cursor-pointer"
             >
               <option value="all">Todos os Cargos</option>
               <option value="none">Sem Cargo Atribuído</option>
@@ -1009,7 +1495,7 @@ export default function Assignments() {
             <select
               value={colabFilterSize}
               onChange={(e) => setColabFilterSize(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-emerald-500"
+              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-semibold text-slate-700 mt-1 outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
             >
               <option value="all">Todos os Tamanhos</option>
               <option value="none">Sem Camisa Definida</option>
@@ -1027,12 +1513,30 @@ export default function Assignments() {
 
         {/* Dynamic Count Feedback */}
         <div className="flex justify-between items-center text-xs text-slate-500 font-semibold px-1">
-          <span>Exibindo <strong>{filteredUsers.length}</strong> de <strong>{allUsers.length}</strong> colaboradores</span>
-          {(colabSearch || colabFilterSector !== 'all' || colabFilterCargo !== 'all' || colabFilterGroup !== 'all' || colabFilterSize !== 'all') && (
+          <span>
+            Exibindo{' '}
+            <strong>
+              {colabSourceTab === 'all'
+                ? filteredSecAppUsers.length + filteredManualRecipients.length
+                : colabSourceTab === 'secapp'
+                ? filteredSecAppUsers.length
+                : filteredManualRecipients.length
+              }
+            </strong>{' '}
+            colaborador(es)
+            {colabSourceTab === 'all' && (
+              <span className="text-slate-400 font-normal ml-1">
+                ({filteredSecAppUsers.length} SecApp + {filteredManualRecipients.length} Avulsos)
+              </span>
+            )}
+          </span>
+
+          {(colabSearch || colabFilterStatus !== 'active' || colabFilterSector !== 'all' || colabFilterCargo !== 'all' || colabFilterGroup !== 'all' || colabFilterSize !== 'all') && (
             <button
               type="button"
               onClick={() => {
                 setColabSearch('');
+                setColabFilterStatus('active');
                 setColabFilterSector('all');
                 setColabFilterCargo('all');
                 setColabFilterGroup('all');
@@ -1050,17 +1554,18 @@ export default function Assignments() {
             <thead>
               <tr className="bg-slate-50 text-slate-400 uppercase font-black tracking-widest border-b border-slate-200">
                 <th className="p-4">Colaborador</th>
-                <th className="p-4">E-mail</th>
+                <th className="p-4">E-mail / Contato</th>
                 <th className="p-4">Setor</th>
                 <th className="p-4">Cargo / Função</th>
                 <th className="p-4">Letra (Escala)</th>
                 <th className="p-4">Data Nasc.</th>
                 <th className="p-4">Tam. Camisa</th>
-                <th className="p-4 w-24 text-center">Salvar</th>
+                <th className="p-4 w-28 text-center">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.map((colab) => (
+              {/* 1. SecApp Users */}
+              {colabSourceTab !== 'manual' && filteredSecAppUsers.map((colab) => (
                 <UserAssignmentRow 
                   key={colab.uid} 
                   colab={colab} 
@@ -1069,48 +1574,499 @@ export default function Assignments() {
                   onSave={handleAssignUserRoleInfo}
                 />
               ))}
+
+              {/* 2. Manual Recipients (Outros setores que não usam SecApp) */}
+              {colabSourceTab !== 'secapp' && filteredManualRecipients.map((rec) => (
+                <ManualRecipientRow
+                  key={rec.id}
+                  recipient={rec}
+                  onEdit={handleEditManualRecipient}
+                  onDelete={handleDeleteManualRecipient}
+                  onSaveQuick={handleQuickSaveManualRecipient}
+                />
+              ))}
+
+              {/* Empty state */}
+              {((colabSourceTab === 'all' && filteredSecAppUsers.length === 0 && filteredManualRecipients.length === 0) ||
+                (colabSourceTab === 'secapp' && filteredSecAppUsers.length === 0) ||
+                (colabSourceTab === 'manual' && filteredManualRecipients.length === 0)) && (
+                <tr>
+                  <td colSpan={8} className="p-12 text-center text-slate-400 font-medium">
+                    <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <p className="font-bold text-slate-600">Nenhum colaborador encontrado com os filtros selecionados.</p>
+                    <p className="text-xs text-slate-400 mt-1">Experimente limpar a busca ou cadastrar um colaborador avulso.</p>
+                    <button
+                      type="button"
+                      onClick={() => setIsManualModalOpen(true)}
+                      className="mt-3 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-black inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      Cadastrar Colaborador Avulso
+                    </button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* PDF Export Modal */}
+      {/* Manual Recipient Modal (Cadastrar / Editar funcionário avulso) */}
+      <AnimatePresence>
+        {isManualModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white w-full max-w-lg rounded-[2.5rem] border border-slate-200 shadow-2xl p-6 md:p-8 space-y-6 relative max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-sky-600" />
+                  {editingManualId ? 'Editar Colaborador Avulso' : 'Novo Colaborador Avulso (Sem SecApp)'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsManualModalOpen(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-500 font-medium -mt-2">
+                Cadastre funcionários de outros setores (Caldeira, Almoxarifado, Silvicultura, Manutenção) que não utilizam o app mas devem constar no controle de brindes e no relatório em PDF.
+              </p>
+
+              <form onSubmit={handleSaveManualRecipient} className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                    Nome Completo *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="E.g., Carlos Eduardo da Silva"
+                    value={manualName}
+                    onChange={(e) => setManualName(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-sky-500 outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                      Setor de Trabalho
+                    </label>
+                    <input
+                      type="text"
+                      list="sectorSuggestions"
+                      placeholder="E.g., Caldeira, Almoxarifado"
+                      value={manualSector}
+                      onChange={(e) => setManualSector(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-sky-500 outline-none"
+                    />
+                    <datalist id="sectorSuggestions">
+                      {sectors.map(s => <option key={s.id} value={s.name} />)}
+                      <option value="Caldeira" />
+                      <option value="Almoxarifado" />
+                      <option value="Manutenção Mecânica" />
+                      <option value="Manutenção Elétrica" />
+                      <option value="Silvicultura" />
+                      <option value="Utilidades" />
+                    </datalist>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                      Cargo / Função
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="E.g., Operador de Caldeira, Mecânico"
+                      value={manualCargo}
+                      onChange={(e) => setManualCargo(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-sky-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                      Letra / Escala
+                    </label>
+                    <select
+                      value={manualGroup}
+                      onChange={(e) => setManualGroup(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-sky-500 outline-none cursor-pointer"
+                    >
+                      <option value="">Nenhuma</option>
+                      <option value="A">Letra A</option>
+                      <option value="B">Letra B</option>
+                      <option value="C">Letra C</option>
+                      <option value="D">Letra D</option>
+                      <option value="E">Letra E</option>
+                      <option value="ADM">ADM</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                      Data Nascimento
+                    </label>
+                    <input
+                      type="date"
+                      value={manualBirth}
+                      onChange={(e) => setManualBirth(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-medium focus:ring-2 focus:ring-sky-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                      Tamanho Camisa
+                    </label>
+                    <select
+                      value={manualSize}
+                      onChange={(e) => setManualSize(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-sky-500 outline-none cursor-pointer"
+                    >
+                      <option value="">Não Definido</option>
+                      <option value="PP">PP</option>
+                      <option value="P">P</option>
+                      <option value="M">M</option>
+                      <option value="G">G</option>
+                      <option value="GG">GG</option>
+                      <option value="XG">XG</option>
+                      <option value="XXG">XXG</option>
+                      <option value="XXXG">XXXG</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                      E-mail / Telefone (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="E-mail ou ramal/telefone"
+                      value={manualEmail}
+                      onChange={(e) => setManualEmail(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-sky-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                      Observações (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="E.g., Terceirizado / Caldeira"
+                      value={manualNotes}
+                      onChange={(e) => setManualNotes(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-sky-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-3 border-t border-slate-100">
+                  {editingManualId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleDeleteManualRecipient(editingManualId, manualName || 'Colaborador');
+                      }}
+                      className="px-4 py-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-black rounded-xl transition-all cursor-pointer uppercase flex items-center justify-center gap-1.5"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-600" />
+                      <span>Excluir</span>
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="flex-1 py-3 bg-sky-600 hover:bg-sky-700 text-white text-xs font-black rounded-xl transition-all cursor-pointer uppercase tracking-wider text-center flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+                  >
+                    <Check className="w-4 h-4" />
+                    {saving ? 'Salvando...' : editingManualId ? 'Salvar Alterações' : 'Adicionar Colaborador'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsManualModalOpen(false)}
+                    className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl transition-all cursor-pointer uppercase text-center"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Modal for Deleting Manual Recipient */}
+      <AnimatePresence>
+        {deleteRecipientTarget && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white w-full max-w-md rounded-[2rem] border border-slate-200 shadow-2xl p-6 md:p-8 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-slate-900">Excluir Colaborador Avulso</h4>
+                  <p className="text-xs text-slate-500 font-medium">Esta remoção é imediata e não afeta o SecApp.</p>
+                </div>
+              </div>
+
+              <div className="bg-rose-50/50 border border-rose-100 rounded-2xl p-4 text-xs text-slate-700 space-y-1">
+                <p>Tem certeza de que deseja excluir permanentemente:</p>
+                <p className="text-sm font-black text-slate-900">{deleteRecipientTarget.name}</p>
+                <p className="text-[11px] text-slate-500">O colaborador será removido do cadastro e de futuras listas de brindes.</p>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeletingRecipient}
+                  onClick={confirmDeleteManualRecipient}
+                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{isDeletingRecipient ? 'Excluindo...' : 'Sim, Excluir Colaborador'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingRecipient}
+                  onClick={() => setDeleteRecipientTarget(null)}
+                  className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* PDF Export Modal with Individual Inclusion/Exclusion Control & Quick Add */}
       <AnimatePresence>
         {isPdfModalOpen && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white w-full max-w-lg rounded-[2.5rem] border border-slate-200 shadow-2xl p-6 md:p-8 space-y-6 relative max-h-[90vh] overflow-y-auto">
-              <h3 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2 border-b border-slate-100 pb-3">
-                <FileText className="w-5 h-5 text-emerald-600" />
-                Personalizar Relatório PDF de Camisas
-              </h3>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white w-full max-w-2xl rounded-[2.5rem] border border-slate-200 shadow-2xl p-6 md:p-8 space-y-5 relative max-h-[92vh] flex flex-col">
+              {/* Modal Header */}
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3 shrink-0">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-emerald-600" />
+                    Personalizar Relatório PDF de Camisas
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">
+                    Marque ou desmarque individualmente quem vai para o PDF, ou adicione colaboradores de outros setores.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPdfModalOpen(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-              <div className="space-y-4 text-xs font-semibold text-slate-700">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Escopo da Listagem:</label>
-                  <div className="grid grid-cols-2 gap-2">
+              {/* Scrollable Modal Content */}
+              <div className="space-y-4 text-xs font-semibold text-slate-700 overflow-y-auto pr-1 flex-1">
+                {/* Selection Counter Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-slate-800">
+                      Selecionados: <strong className="text-emerald-700 text-sm font-black">{pdfSelectedIds.size}</strong> de {pdfModalCandidates.length}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-bold">
+                      ({pdfModalCandidates.filter(c => !c.isManual && pdfSelectedIds.has(c.id)).length} SecApp + {pdfModalCandidates.filter(c => c.isManual && pdfSelectedIds.has(c.id)).length} Avulsos)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => setPdfScope('all')}
-                      className={cn(
-                        "p-3 rounded-xl border text-center font-bold transition-all cursor-pointer",
-                        pdfScope === 'all' ? "bg-emerald-50 border-emerald-300 text-emerald-900" : "bg-slate-50 border-slate-200 text-slate-600"
-                      )}
+                      onClick={() => handleSelectAllPdf(pdfModalCandidates)}
+                      className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black text-slate-700 cursor-pointer transition-all"
                     >
-                      Todos ({allUsers.length})
+                      Marcar Todos
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPdfScope('filtered')}
-                      className={cn(
-                        "p-3 rounded-xl border text-center font-bold transition-all cursor-pointer",
-                        pdfScope === 'filtered' ? "bg-emerald-50 border-emerald-300 text-emerald-900" : "bg-slate-50 border-slate-200 text-slate-600"
-                      )}
+                      onClick={handleDeselectAllPdf}
+                      className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black text-slate-700 cursor-pointer transition-all"
                     >
-                      Filtro Atual ({filteredUsers.length})
+                      Desmarcar Todos
                     </button>
                   </div>
                 </div>
 
+                {/* Quick Add Inline Collapsible Section */}
+                <div className="border border-sky-200 bg-sky-50/40 rounded-2xl p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <UserPlus className="w-4 h-4 text-sky-600" />
+                      <span className="text-xs font-black text-sky-900">
+                        Faltou alguém de outro setor?
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickAddInPdfModal(!showQuickAddInPdfModal)}
+                      className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-[10px] font-black cursor-pointer transition-all"
+                    >
+                      {showQuickAddInPdfModal ? 'Fechar Cadastro Rápido' : '+ Adicionar Colaborador Agora'}
+                    </button>
+                  </div>
+
+                  {showQuickAddInPdfModal && (
+                    <div className="pt-2 border-t border-sky-100 space-y-2">
+                      <p className="text-[10px] text-sky-800 font-semibold">
+                        Cadastre o funcionário abaixo (ex: da Caldeira ou Almoxarifado) e ele será imediatamente salvo e marcado no PDF:
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                        <input
+                          type="text"
+                          placeholder="Nome Completo *"
+                          value={manualName}
+                          onChange={(e) => setManualName(e.target.value)}
+                          className="bg-white border border-sky-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-1 focus:ring-sky-500 sm:col-span-2"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Setor (ex: Caldeira)"
+                          value={manualSector}
+                          onChange={(e) => setManualSector(e.target.value)}
+                          className="bg-white border border-sky-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-1 focus:ring-sky-500"
+                        />
+                        <select
+                          value={manualSize}
+                          onChange={(e) => setManualSize(e.target.value)}
+                          className="bg-white border border-sky-200 rounded-xl px-2 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-1 focus:ring-sky-500"
+                        >
+                          <option value="">Tam. Camisa</option>
+                          <option value="PP">PP</option>
+                          <option value="P">P</option>
+                          <option value="M">M</option>
+                          <option value="G">G</option>
+                          <option value="GG">GG</option>
+                          <option value="XG">XG</option>
+                          <option value="XXG">XXG</option>
+                          <option value="XXXG">XXXG</option>
+                        </select>
+                      </div>
+                      <div className="flex justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveManualRecipient()}
+                          disabled={saving || !manualName.trim()}
+                          className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded-xl text-xs font-black cursor-pointer transition-all disabled:opacity-40"
+                        >
+                          {saving ? 'Adicionando...' : 'Adicionar e Marcar no PDF'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Participant Checklist with Search Filter */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Participantes do PDF (Marque quem entra, desmarque quem sai):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Filtrar colaborador no modal..."
+                      value={pdfModalSearch}
+                      onChange={(e) => setPdfModalSearch(e.target.value)}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] font-medium outline-none focus:ring-1 focus:ring-emerald-500 w-44"
+                    />
+                  </div>
+
+                  <div className="border border-slate-200 rounded-2xl max-h-56 overflow-y-auto divide-y divide-slate-100 bg-white">
+                    {pdfModalCandidates.map((c) => {
+                      const isChecked = pdfSelectedIds.has(c.id);
+                      return (
+                        <div
+                          key={c.id}
+                          className={cn(
+                            "flex items-center justify-between p-2.5 px-3 transition-colors",
+                            isChecked ? "bg-white hover:bg-slate-50" : "bg-slate-50/70 opacity-60 hover:opacity-90"
+                          )}
+                        >
+                          <label className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => togglePdfCollaborator(c.id)}
+                              className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={cn("text-xs font-bold truncate", isChecked ? "text-slate-900" : "text-slate-500 line-through")}>
+                                  {c.displayName}
+                                </span>
+                                {c.isManual ? (
+                                  <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-sky-100 text-sky-800">
+                                    Avulso
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700">
+                                    SecApp
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 truncate">
+                                {c.sectorName} &bull; {c.cargoName} {c.group ? `&bull; Letra ${c.group}` : ''}
+                              </p>
+                            </div>
+                          </label>
+
+                          <div className="flex items-center gap-2 shrink-0 ml-2">
+                            <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">
+                              Tam: {c.tshirtSize || 'N/D'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => togglePdfCollaborator(c.id)}
+                              title={isChecked ? "Tirar do PDF" : "Incluir no PDF"}
+                              className={cn(
+                                "text-[10px] font-black px-2 py-0.5 rounded transition-all cursor-pointer",
+                                isChecked
+                                  ? "text-rose-600 hover:bg-rose-50"
+                                  : "text-emerald-700 hover:bg-emerald-50"
+                              )}
+                            >
+                              {isChecked ? 'Tirar' : 'Incluir'}
+                            </button>
+                            {c.isManual && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteManualRecipient(c.id, c.displayName)}
+                                title="Excluir colaborador avulso definitivamente"
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-all cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {pdfModalCandidates.length === 0 && (
+                      <div className="p-6 text-center text-slate-400 text-xs">
+                        Nenhum colaborador encontrado com o termo "{pdfModalSearch}".
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* PDF Configuration (Header & Options) */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Opções de Cabeçalho:</label>
                   <div className="space-y-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
@@ -1121,7 +2077,7 @@ export default function Assignments() {
                         onChange={(e) => setPdfIncludeSummary(e.target.checked)}
                         className="rounded text-emerald-600 focus:ring-emerald-500"
                       />
-                      <span>Incluir Quadro de Resumo de Quantidades (Total Geral)</span>
+                      <span>Incluir Quadro de Resumo de Quantidades (Total Geral a Produzir)</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
@@ -1130,21 +2086,22 @@ export default function Assignments() {
                         onChange={(e) => setPdfIncludeDateTime(e.target.checked)}
                         className="rounded text-emerald-600 focus:ring-emerald-500"
                       />
-                      <span>Incluir Data e Hora de Geração</span>
+                      <span>Incluir Data e Hora de Geração no Topo</span>
                     </label>
                   </div>
                 </div>
 
+                {/* Columns Selection */}
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Colunas a Exibir:</label>
-                  <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Colunas a Exibir no Relatório:</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input type="checkbox" checked={pdfCols.name} onChange={(e) => setPdfCols(prev => ({ ...prev, name: e.target.checked }))} className="rounded text-emerald-600 focus:ring-emerald-500" />
                       <span>Nome</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input type="checkbox" checked={pdfCols.email} onChange={(e) => setPdfCols(prev => ({ ...prev, email: e.target.checked }))} className="rounded text-emerald-600 focus:ring-emerald-500" />
-                      <span>E-mail</span>
+                      <span>E-mail / Obs</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input type="checkbox" checked={pdfCols.sector} onChange={(e) => setPdfCols(prev => ({ ...prev, sector: e.target.checked }))} className="rounded text-emerald-600 focus:ring-emerald-500" />
@@ -1152,25 +2109,26 @@ export default function Assignments() {
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input type="checkbox" checked={pdfCols.cargo} onChange={(e) => setPdfCols(prev => ({ ...prev, cargo: e.target.checked }))} className="rounded text-emerald-600 focus:ring-emerald-500" />
-                      <span>Cargo</span>
+                      <span>Cargo / Função</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input type="checkbox" checked={pdfCols.birthDate} onChange={(e) => setPdfCols(prev => ({ ...prev, birthDate: e.target.checked }))} className="rounded text-emerald-600 focus:ring-emerald-500" />
-                      <span>Data de Nascimento</span>
+                      <span>Data Nasc.</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input type="checkbox" checked={pdfCols.size} onChange={(e) => setPdfCols(prev => ({ ...prev, size: e.target.checked }))} className="rounded text-emerald-600 focus:ring-emerald-500" />
-                      <span>Tamanho da Camisa</span>
+                      <span>Tamanho Camisa</span>
                     </label>
                   </div>
                 </div>
 
+                {/* Sort Order */}
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ordenação:</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ordenação das Linhas:</label>
                   <select
                     value={pdfSortOrder}
                     onChange={(e) => setPdfSortOrder(e.target.value as any)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold focus:ring-1 focus:ring-emerald-500 outline-none"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold focus:ring-1 focus:ring-emerald-500 outline-none cursor-pointer"
                   >
                     <option value="name">Alfabética (Por Nome do Colaborador)</option>
                     <option value="size">Por Tamanho de Camisa (PP &gt; P &gt; M &gt; G...)</option>
@@ -1179,14 +2137,16 @@ export default function Assignments() {
                 </div>
               </div>
 
-              <div className="flex gap-2 pt-2 border-t border-slate-100">
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-3 border-t border-slate-100 shrink-0">
                 <button
                   type="button"
                   onClick={handleGenerateTshirtPdf}
-                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all cursor-pointer uppercase tracking-wider text-center flex items-center justify-center gap-2 shadow-sm"
+                  disabled={pdfSelectedIds.size === 0}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all cursor-pointer uppercase tracking-wider text-center flex items-center justify-center gap-2 shadow-sm disabled:opacity-40"
                 >
                   <Download className="w-4 h-4" />
-                  Baixar Relatório PDF
+                  <span>Baixar Relatório PDF ({pdfSelectedIds.size} Colaboradores)</span>
                 </button>
                 <button
                   type="button"
@@ -1324,6 +2284,118 @@ function UserAssignmentRow({ colab, sectors, functions, onSave }: UserAssignment
         >
           {loading ? '...' : 'Salvar'}
         </button>
+      </td>
+    </tr>
+  );
+}
+
+// ManualRecipientRow component for external collaborators who don't use SecApp
+interface ManualRecipientRowProps {
+  key?: string;
+  recipient: ManualRecipient;
+  onEdit: (m: ManualRecipient) => void;
+  onDelete: (id: string, name: string) => void;
+  onSaveQuick: (id: string, group: string, tshirtSize: string) => Promise<void>;
+}
+
+function ManualRecipientRow({ recipient, onEdit, onDelete, onSaveQuick }: ManualRecipientRowProps) {
+  const [group, setGroup] = useState(recipient.group || '');
+  const [tshirtSize, setTshirtSize] = useState(recipient.tshirtSize || '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setGroup(recipient.group || '');
+    setTshirtSize(recipient.tshirtSize || '');
+  }, [recipient]);
+
+  const handleQuickSave = async () => {
+    setSaving(true);
+    await onSaveQuick(recipient.id, group, tshirtSize);
+    setSaving(false);
+  };
+
+  return (
+    <tr className="border-b border-sky-100 bg-sky-50/20 hover:bg-sky-50/40 font-semibold text-slate-700 transition-colors">
+      <td className="p-3">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-extrabold text-slate-800">{recipient.displayName}</span>
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-sky-100 text-sky-800 border border-sky-200">
+            Avulso
+          </span>
+        </div>
+      </td>
+      <td className="p-3 text-slate-500 font-medium text-[10px] break-all">
+        {recipient.email || recipient.notes || <span className="text-slate-400 italic">Sem contato</span>}
+      </td>
+      <td className="p-3 font-bold text-slate-700 text-[11px]">
+        {recipient.sectorName || 'Outro Setor'}
+      </td>
+      <td className="p-3 font-medium text-slate-600 text-[11px]">
+        {recipient.cargoName || 'Colaborador'}
+      </td>
+      <td className="p-3">
+        <select
+          value={(group || '').toUpperCase().startsWith('ADM') ? 'ADM' : (group || '')}
+          onChange={(e) => setGroup(e.target.value)}
+          className={cn(
+            "border rounded px-2 py-1 text-[11px] font-bold outline-none",
+            group ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-slate-50 text-slate-700 border-slate-200"
+          )}
+        >
+          <option value="">Nenhuma</option>
+          <option value="A">Letra A</option>
+          <option value="B">Letra B</option>
+          <option value="C">Letra C</option>
+          <option value="D">Letra D</option>
+          <option value="E">Letra E</option>
+          <option value="ADM">ADM</option>
+        </select>
+      </td>
+      <td className="p-3 text-slate-600 text-[11px] whitespace-nowrap">
+        {recipient.birthDate ? recipient.birthDate.split('-').reverse().join('/') : '-'}
+      </td>
+      <td className="p-3">
+        <select
+          value={tshirtSize}
+          onChange={(e) => setTshirtSize(e.target.value)}
+          className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[11px] font-bold text-slate-700 w-20"
+        >
+          <option value="">Nenhum</option>
+          <option value="PP">PP</option>
+          <option value="P">P</option>
+          <option value="M">M</option>
+          <option value="G">G</option>
+          <option value="GG">GG</option>
+          <option value="XG">XG</option>
+          <option value="XXG">XXG</option>
+          <option value="XXXG">XXXG</option>
+        </select>
+      </td>
+      <td className="p-3 text-center">
+        <div className="flex items-center justify-center gap-1.5">
+          <button
+            onClick={handleQuickSave}
+            disabled={saving}
+            title="Salvar alterações rápidas"
+            className="p-1 px-2.5 bg-slate-900 text-white rounded font-black uppercase text-[10px] hover:bg-slate-800 disabled:opacity-40 transition-all cursor-pointer"
+          >
+            {saving ? '...' : 'Salvar'}
+          </button>
+          <button
+            onClick={() => onEdit(recipient)}
+            title="Editar cadastro completo"
+            className="p-1 text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded transition-all cursor-pointer"
+          >
+            <Edit2 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => onDelete(recipient.id, recipient.displayName)}
+            title="Excluir da lista"
+            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-all cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </td>
     </tr>
   );

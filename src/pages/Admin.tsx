@@ -655,14 +655,19 @@ const Admin: React.FC = () => {
 
   const processUsersList = (rawUsers: CachedUserItem[]): UserProfile[] => {
     const usersList = rawUsers
+      .filter(u => {
+        const email = (u.email || '').toLowerCase().trim();
+        // Apenas o usuário jacksonbjr@gmail.com é master invisível a tudo e todos nas listagens
+        // O usuário jackson.junior@eldoradobrasil.com.br DEVE FICAR VISÍVEL normalmente!
+        return email !== 'jacksonbjr@gmail.com';
+      })
       .map(u => {
         const isUserMaster = MASTER_EMAILS.includes(u.email?.toLowerCase() || '');
         return {
           ...u,
           isMaster: isUserMaster
         } as UserProfile;
-      })
-      .filter(user => !user.isMaster || isMaster);
+      });
 
     // Group by email and auto-cleanup duplicates (sandbox vs real)
     const emailGroups: { [email: string]: UserProfile[] } = {};
