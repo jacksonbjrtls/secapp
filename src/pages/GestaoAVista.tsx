@@ -339,7 +339,11 @@ export const GestaoAVista: React.FC = () => {
       const list: any[] = [];
       snap.forEach(d => {
         const data = d.data();
-        const dateVal = safeToDate(data.date || data.createdAt || data.timestamp);
+        let dateVal = safeToDate(data.date || data.createdAt || data.timestamp);
+        if (!dateVal && typeof d.id === 'string' && d.id.startsWith('dds_')) {
+          const parts = d.id.split('_');
+          if (parts[1]) dateVal = safeToDate(parts[1]);
+        }
         if (dateVal && dateVal.getFullYear() === selectedYear) {
           list.push({ id: d.id, ...data, resolvedDate: dateVal });
         }
@@ -354,6 +358,9 @@ export const GestaoAVista: React.FC = () => {
         const dateVal = safeToDate(data.timestamp || data.createdAt || data.date);
         if (dateVal && dateVal.getFullYear() === selectedYear) {
           sigs.push({ id: d.id, ...data, resolvedDate: dateVal });
+        } else if (!dateVal && data.sessionId) {
+          // If signature date is missing, it will still match via its parent session
+          sigs.push({ id: d.id, ...data, resolvedDate: null });
         }
       });
       setDdsSignatures(sigs);
@@ -415,6 +422,7 @@ export const GestaoAVista: React.FC = () => {
       monthIndex: number;
       cumprimento: number | null;
       participacao: number | null;
+      hasData?: boolean;
       sessionsCount: number;
       completedCount: number;
       signaturesCount: number;
@@ -432,25 +440,22 @@ export const GestaoAVista: React.FC = () => {
 
       const daysInMonth = new Date(selectedYear, m + 1, 0).getDate();
 
-      // Determine how many days should be evaluated for compliance
-      let evaluatedDays = 0;
-      if (selectedYear < currentYear || (selectedYear === currentYear && m < currentMonth)) {
-        evaluatedDays = daysInMonth;
-      } else if (selectedYear === currentYear && m === currentMonth) {
-        evaluatedDays = currentDay;
-      } else {
-        const hasForwardSessions = ddsSessions.some(s => s.resolvedDate && s.resolvedDate.getMonth() === m);
-        if (hasForwardSessions) {
-          const maxDay = Math.max(...ddsSessions.filter(s => s.resolvedDate && s.resolvedDate.getMonth() === m).map(s => s.resolvedDate.getDate()));
-          evaluatedDays = Math.min(daysInMonth, maxDay);
-        } else {
-          evaluatedDays = 0;
-        }
-      }
-
       // Filter sessions and signatures in this month
-      let monthSessions = ddsSessions.filter(s => s.resolvedDate && s.resolvedDate.getMonth() === m);
-      let monthSignatures = ddsSignatures.filter(sig => sig.resolvedDate && sig.resolvedDate.getMonth() === m);
+      let monthSessions = ddsSessions.filter(s => {
+        if (!s.resolvedDate) return false;
+        return s.resolvedDate.getFullYear() === selectedYear && s.resolvedDate.getMonth() === m;
+      });
+      
+      let monthSignatures = ddsSignatures.filter(sig => {
+        if (sig.resolvedDate && sig.resolvedDate.getFullYear() === selectedYear && sig.resolvedDate.getMonth() === m) {
+          return true;
+        }
+        const parentSession = sessionMap.get(sig.sessionId);
+        if (parentSession?.resolvedDate && parentSession.resolvedDate.getFullYear() === selectedYear && parentSession.resolvedDate.getMonth() === m) {
+          return true;
+        }
+        return false;
+      });
 
       if (selectedDdsLetter !== 'all') {
         monthSessions = monthSessions.filter(s => (s.group || '').trim().toUpperCase() === selectedDdsLetter.toUpperCase());
@@ -460,6 +465,21 @@ export const GestaoAVista: React.FC = () => {
           const parentSession = sessionMap.get(sig.sessionId);
           return (parentSession?.group || '').trim().toUpperCase() === selectedDdsLetter.toUpperCase();
         });
+      }
+
+      const hasMonthData = monthSessions.length > 0 || monthSignatures.length > 0;
+
+      // Determine how many days should be evaluated for compliance
+      let evaluatedDays = 0;
+      if (hasMonthData) {
+        if (selectedYear < currentYear || (selectedYear === currentYear && m < currentMonth)) {
+          evaluatedDays = daysInMonth;
+        } else if (selectedYear === currentYear && m === currentMonth) {
+          evaluatedDays = currentDay;
+        } else {
+          const maxDay = Math.max(...monthSessions.map(s => s.resolvedDate.getDate()));
+          evaluatedDays = Math.min(daysInMonth, maxDay);
+        }
       }
 
       let monthExpectedShifts = 0;
@@ -481,15 +501,23 @@ export const GestaoAVista: React.FC = () => {
 
           // Check if a session was executed for this shift / duty group on this date
           const matchingSession = daySessions.find(s => {
+            const sGroup = (s.group || '').trim().toUpperCase();
             const sShift = (s.shift || '').trim().toLowerCase();
             const targetShift = shift.toLowerCase();
-            const sGroup = (s.group || '').trim().toUpperCase();
-            return (sShift === targetShift || sShift.includes(targetShift)) || sGroup === dutyGroup;
+            if (sGroup && sGroup === dutyGroup) return true;
+            if (!sGroup && (sShift === targetShift || sShift.includes(targetShift))) return true;
+            return false;
           });
 
           const isRealized = Boolean(
             matchingSession && 
-            (matchingSession.status === 'completed' || matchingSession.isCompleted || (matchingSession.signaturesCount && matchingSession.signaturesCount > 0) || matchingSession.id)
+            (
+              matchingSession.status === 'completed' || 
+              matchingSession.isCompleted || 
+              (matchingSession.signaturesCount && matchingSession.signaturesCount > 0) || 
+              ddsSignatures.some(sig => sig.sessionId === matchingSession.id) ||
+              matchingSession.id
+            )
           );
 
           // Track for each individual letter
@@ -517,24 +545,30 @@ export const GestaoAVista: React.FC = () => {
         lData.rate = lData.expected > 0 ? Math.min(100, Math.round((lData.realized / lData.expected) * 100)) : null;
       });
 
-      const cumprimento = evaluatedDays > 0 && monthExpectedShifts > 0
+      const cumprimento = hasMonthData && evaluatedDays > 0 && monthExpectedShifts > 0
         ? Math.min(100, Math.round((monthRealizedShifts / monthExpectedShifts) * 100))
-        : null;
+        : (hasMonthData && monthRealizedShifts > 0 ? 100 : null);
 
-      const totalExpectedParticipants = monthSessions.reduce((acc, s) => acc + (s.totalPrevisto || 9), 0);
-      const totalSignatures = monthSignatures.length;
+      const totalExpectedParticipants = monthSessions.reduce((acc, s) => acc + (Number(s.totalPrevisto) || 9), 0);
+      const sessionSigsCount = monthSessions.reduce((acc, s) => {
+        const directSigs = ddsSignatures.filter(sig => sig.sessionId === s.id).length;
+        const storedCount = Number(s.signaturesCount) || Number(s.presentesCount) || 0;
+        return acc + Math.max(directSigs, storedCount);
+      }, 0);
+      const effectiveSignatures = Math.max(monthSignatures.length, sessionSigsCount);
 
-      const participacao = totalExpectedParticipants > 0 
-        ? Math.min(100, Math.round((totalSignatures / totalExpectedParticipants) * 100))
-        : (monthRealizedShifts > 0 ? 100 : null);
+      const participacao = hasMonthData && totalExpectedParticipants > 0 
+        ? Math.min(100, Math.round((effectiveSignatures / totalExpectedParticipants) * 100))
+        : (hasMonthData && monthRealizedShifts > 0 ? 100 : null);
 
       monthlyStats.push({
         monthIndex: m,
         cumprimento,
         participacao,
+        hasData: hasMonthData,
         sessionsCount: monthExpectedShifts,
         completedCount: monthRealizedShifts,
-        signaturesCount: totalSignatures,
+        signaturesCount: effectiveSignatures,
         expectedCount: totalExpectedParticipants
       });
     }
@@ -589,18 +623,19 @@ export const GestaoAVista: React.FC = () => {
     if (activeBoard.type === 'dds_matrix') {
       return activeBoard.monthlyData.map((m, idx) => {
         const realMonth = ddsRealStats.monthlyStats[idx];
+        const monthHasRealData = Boolean(realMonth && realMonth.hasData);
 
         // Cumprimento:
         let cVal: number | null = null;
-        if (m.manualOverrides?.['cumprimento'] === false) {
-          // Explicitly reset by user to use automatic online calculation
-          cVal = realMonth?.cumprimento !== null && realMonth?.cumprimento !== undefined ? realMonth.cumprimento : 100;
-        } else if (m.values['cumprimento'] !== null && m.values['cumprimento'] !== undefined && m.values['cumprimento'] !== '') {
-          // Explicit value entered or saved by user
+        if (m.manualOverrides?.['cumprimento'] === true && m.values['cumprimento'] !== null && m.values['cumprimento'] !== undefined && m.values['cumprimento'] !== '') {
+          // Explicit manual override by user
           cVal = Number(m.values['cumprimento']);
-        } else if (realMonth?.cumprimento !== null && realMonth?.cumprimento !== undefined) {
-          // Live calculation from DDS sessions
+        } else if (monthHasRealData && realMonth?.cumprimento !== null && realMonth?.cumprimento !== undefined) {
+          // Live calculation from DDS Online for months that possess real data
           cVal = realMonth.cumprimento;
+        } else if (m.values['cumprimento'] !== null && m.values['cumprimento'] !== undefined && m.values['cumprimento'] !== '') {
+          // Stored value
+          cVal = Number(m.values['cumprimento']);
         } else {
           // Default 100% for months without data
           cVal = 100;
@@ -608,15 +643,15 @@ export const GestaoAVista: React.FC = () => {
 
         // Participação:
         let pVal: number | null = null;
-        if (m.manualOverrides?.['participacao'] === false) {
-          // Explicitly reset by user to use automatic online calculation
-          pVal = realMonth?.participacao !== null && realMonth?.participacao !== undefined ? realMonth.participacao : 100;
-        } else if (m.values['participacao'] !== null && m.values['participacao'] !== undefined && m.values['participacao'] !== '') {
-          // Explicit value entered or saved by user
+        if (m.manualOverrides?.['participacao'] === true && m.values['participacao'] !== null && m.values['participacao'] !== undefined && m.values['participacao'] !== '') {
+          // Explicit manual override by user
           pVal = Number(m.values['participacao']);
-        } else if (realMonth?.participacao !== null && realMonth?.participacao !== undefined) {
-          // Live calculation from DDS signatures
+        } else if (monthHasRealData && realMonth?.participacao !== null && realMonth?.participacao !== undefined) {
+          // Live calculation from DDS signatures for months that possess real data
           pVal = realMonth.participacao;
+        } else if (m.values['participacao'] !== null && m.values['participacao'] !== undefined && m.values['participacao'] !== '') {
+          // Stored value
+          pVal = Number(m.values['participacao']);
         } else {
           // Default 100% for months without data
           pVal = 100;
@@ -1540,41 +1575,41 @@ export const GestaoAVista: React.FC = () => {
           {(activeBoard.type !== 'dds_matrix' || ddsDetailTab === 'board') && (
             <div 
               ref={boardPrintRef}
-              className="bg-white rounded-3xl border-4 border-slate-300/80 shadow-2xl p-6 md:p-8 relative overflow-hidden transition-all print:p-0 print:border-none print:shadow-none"
+              className="bg-white rounded-2xl sm:rounded-3xl border-2 sm:border-4 border-slate-300/80 shadow-xl sm:shadow-2xl p-3 sm:p-6 md:p-8 relative overflow-hidden transition-all print:p-0 print:border-none print:shadow-none"
               style={{
                 boxShadow: '0 20px 40px -15px rgba(0, 0, 0, 0.15), inset 0 0 0 2px rgba(255, 255, 255, 0.8)'
               }}
             >
               {/* Acrylic Mounting Hardware (Corner Bolts Simulation) */}
-              <div className="absolute top-4 left-4 w-4 h-4 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 border border-slate-400 shadow-inner flex items-center justify-center opacity-70">
+              <div className="absolute top-2 sm:top-4 left-2 sm:left-4 w-3.5 sm:w-4 h-3.5 sm:h-4 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 border border-slate-400 shadow-inner flex items-center justify-center opacity-70">
                 <div className="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
               </div>
-              <div className="absolute top-4 right-4 w-4 h-4 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 border border-slate-400 shadow-inner flex items-center justify-center opacity-70">
+              <div className="absolute top-2 sm:top-4 right-2 sm:right-4 w-3.5 sm:w-4 h-3.5 sm:h-4 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 border border-slate-400 shadow-inner flex items-center justify-center opacity-70">
                 <div className="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
               </div>
-              <div className="absolute bottom-4 left-4 w-4 h-4 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 border border-slate-400 shadow-inner flex items-center justify-center opacity-70">
+              <div className="absolute bottom-2 sm:bottom-4 left-2 sm:left-4 w-3.5 sm:w-4 h-3.5 sm:h-4 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 border border-slate-400 shadow-inner flex items-center justify-center opacity-70">
                 <div className="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
               </div>
-              <div className="absolute bottom-4 right-4 w-4 h-4 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 border border-slate-400 shadow-inner flex items-center justify-center opacity-70">
+              <div className="absolute bottom-2 sm:bottom-4 right-2 sm:right-4 w-3.5 sm:w-4 h-3.5 sm:h-4 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 border border-slate-400 shadow-inner flex items-center justify-center opacity-70">
                 <div className="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
               </div>
 
               {/* HEADER CAPSULE REPLICATING PHYSICAL BOARD EXACTLY */}
-              <div className="flex items-center mb-6 pt-1">
+              <div className="flex items-center mb-4 sm:mb-6 pt-1">
                 <div className="w-full flex items-center bg-[#004d2c] rounded-full p-1 shadow-md border border-[#003920]">
-                  <div className="bg-gradient-to-r from-slate-300 via-slate-200 to-slate-300 text-slate-800 font-black text-xs sm:text-sm px-6 py-2 rounded-full uppercase tracking-wider shadow-inner flex items-center justify-center border border-slate-400/50">
+                  <div className="bg-gradient-to-r from-slate-300 via-slate-200 to-slate-300 text-slate-800 font-black text-[10px] sm:text-xs md:text-sm px-3 sm:px-6 py-1.5 sm:py-2 rounded-full uppercase tracking-wider shadow-inner flex items-center justify-center border border-slate-400/50 shrink-0">
                     INDICADORES
                   </div>
 
-                  <div className="flex-1 px-4 sm:px-6 flex items-center justify-center text-white font-black text-sm sm:text-base md:text-lg tracking-wide uppercase truncate">
+                  <div className="flex-1 px-2 sm:px-4 md:px-6 flex items-center justify-center text-white font-black text-xs sm:text-base md:text-lg tracking-wide uppercase truncate">
                     {activeBoard.title} {activeBoard.type === 'dds_matrix' && selectedDdsLetter !== 'all' ? `• TURMA ${selectedDdsLetter}` : ''}
                   </div>
 
-                  <div className="flex items-center gap-3 pr-3">
+                  <div className="flex items-center gap-2 sm:gap-3 pr-2 sm:pr-3 shrink-0">
                     <div className="w-2.5 h-2.5 rounded-full bg-white shadow-sm hidden sm:block"></div>
                     
-                    <div className="flex items-center px-4 py-1.5 bg-white/15 rounded-xl border border-white/25 backdrop-blur-xs shadow-xs">
-                      <span className="font-black text-xs sm:text-sm tracking-widest text-white">
+                    <div className="flex items-center px-2.5 sm:px-4 py-1 sm:py-1.5 bg-white/15 rounded-xl border border-white/25 backdrop-blur-xs shadow-xs">
+                      <span className="font-black text-[10px] sm:text-xs md:text-sm tracking-widest text-white">
                         SECAPP
                       </span>
                     </div>
@@ -1585,119 +1620,133 @@ export const GestaoAVista: React.FC = () => {
               {/* ================= 1. DDS INDICADOR VIEW (PHOTO 2 REPLICATION) ================= */}
               {activeBoard.type === 'dds_matrix' && (
                 <div className="space-y-0">
-                  <div className="h-[310px] sm:h-[340px] w-full pt-8 pb-2 px-2 flex items-end justify-between border-b-2 border-slate-700">
-                    {displayedMonthlyData.map((m) => {
-                      const cumpVal = m.values['cumprimento'];
-                      const partVal = m.values['participacao'];
-                      const hasCump = typeof cumpVal === 'number' && cumpVal > 0;
-                      const hasPart = typeof partVal === 'number' && partVal > 0;
-
-                      const cumpHeightPct = hasCump ? Math.min(100, Math.max(5, (cumpVal! / 105) * 100)) : 0;
-                      const partHeightPct = hasPart ? Math.min(100, Math.max(5, (partVal! / 105) * 100)) : 0;
-
-                      return (
-                        <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-1 sm:px-2 group">
-                          <div className="text-[8px] sm:text-[10px] font-black text-slate-800 tracking-tighter mb-1 text-center leading-tight whitespace-nowrap">
-                            {hasCump && <div className="text-[#008744]">{cumpVal}%</div>}
-                            {hasPart && <div className="text-[#0057b7]">{partVal}%</div>}
-                          </div>
-
-                          <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1 h-[220px]">
-                            <div 
-                              className="w-2.5 sm:w-4 bg-[#008744] rounded-t-sm transition-all duration-500"
-                              style={{ height: `${cumpHeightPct}%` }}
-                              title={`Cumprimento (${m.label}): ${cumpVal ?? 'Sem dados'}%`}
-                            />
-                            <div 
-                              className="w-2.5 sm:w-4 bg-[#0057b7] rounded-t-sm transition-all duration-500"
-                              style={{ height: `${partHeightPct}%` }}
-                              title={`Participação (${m.label}): ${partVal ?? 'Sem dados'}%`}
-                            />
-                          </div>
-
-                          <div className="text-[10px] sm:text-xs font-black text-slate-800 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
-                            {m.label}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    <div className="flex-1 flex flex-col items-center justify-end h-full px-1 sm:px-2 border-l border-slate-300/80 pl-2">
-                      <div className="text-[8px] sm:text-[10px] font-black text-slate-800 tracking-tighter mb-1 text-center leading-tight whitespace-nowrap">
-                        <div className="text-[#008744]">95%</div>
-                        <div className="text-[#0057b7]">100%</div>
-                      </div>
-                      <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1 h-[220px]">
-                        <div 
-                          className="w-2.5 sm:w-4 bg-[#008744] rounded-t-sm"
-                          style={{ height: `${(95 / 105) * 100}%` }}
-                          title="Meta Cumprimento: 95%"
-                        />
-                        <div 
-                          className="w-2.5 sm:w-4 bg-[#0057b7] rounded-t-sm"
-                          style={{ height: `${(100 / 105) * 100}%` }}
-                          title="Meta Participação: 100%"
-                        />
-                      </div>
-                      <div className="text-[10px] sm:text-xs font-black text-emerald-900 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
-                        Meta
-                      </div>
-                    </div>
+                  {/* Mobile Swipe Hint */}
+                  <div className="flex md:hidden items-center justify-between px-2.5 py-1.5 mb-3 bg-emerald-50/80 border border-emerald-200/70 rounded-xl text-[11px] font-bold text-slate-700 shadow-xs">
+                    <span className="flex items-center gap-1.5 text-emerald-900">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      <span>Gráfico Responsivo (12 Meses)</span>
+                    </span>
+                    <span className="text-emerald-800 font-black flex items-center gap-1 text-[10px]">
+                      <span>Deslize na horizontal</span>
+                      <ChevronRight className="w-3.5 h-3.5 animate-pulse" />
+                    </span>
                   </div>
 
-                  <div className="w-full overflow-x-auto">
-                    <table className="w-full text-center border-collapse border border-slate-700 text-xs sm:text-sm font-bold">
-                      <thead>
-                        <tr className="bg-slate-100/90 text-slate-700 divide-x divide-slate-400">
-                          <th className="py-1 px-2 border-b border-slate-400 text-left w-32 sm:w-40 font-black"></th>
-                          {displayedMonthlyData.map(m => (
-                            <th key={m.month} className="py-1 px-1 border-b border-slate-400 font-bold text-[11px] sm:text-xs">
-                              {m.label}
-                            </th>
-                          ))}
-                          <th className="py-1 px-2 border-b border-slate-400 font-black text-[11px] sm:text-xs bg-slate-200 text-slate-900">
-                            Meta
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-400">
-                        <tr className="hover:bg-slate-50 transition-colors divide-x divide-slate-400">
-                          <td className="py-1.5 px-2 text-left flex items-center gap-2 font-black text-slate-800 text-[11px] sm:text-xs">
-                            <span className="w-3 h-3 bg-[#008744] rounded-xs inline-block shadow-xs flex-shrink-0"></span>
-                            <span>Cumprimento</span>
-                          </td>
-                          {displayedMonthlyData.map(m => {
-                            const val = m.values['cumprimento'];
-                            return (
-                              <td key={m.month} className="py-1.5 px-0.5 text-[11px] sm:text-xs font-bold text-slate-900">
-                                {val !== null && val !== undefined ? val : ''}
-                              </td>
-                            );
-                          })}
-                          <td className="py-1.5 px-2 font-black text-emerald-800 bg-emerald-50 text-[11px] sm:text-xs">
-                            {activeBoard.targets?.['cumprimento'] || 95}
-                          </td>
-                        </tr>
+                  <div className="w-full overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-300 -mx-1 sm:mx-0 px-1 sm:px-0">
+                    <div className="min-w-[720px] sm:min-w-[760px] md:min-w-full">
+                      <div className="h-[310px] sm:h-[340px] w-full pt-8 pb-2 px-2 flex items-end justify-between border-b-2 border-slate-700">
+                        {displayedMonthlyData.map((m) => {
+                          const cumpVal = m.values['cumprimento'];
+                          const partVal = m.values['participacao'];
+                          const hasCump = typeof cumpVal === 'number' && cumpVal > 0;
+                          const hasPart = typeof partVal === 'number' && partVal > 0;
 
-                        <tr className="hover:bg-slate-50 transition-colors divide-x divide-slate-400">
-                          <td className="py-1.5 px-2 text-left flex items-center gap-2 font-black text-slate-800 text-[11px] sm:text-xs">
-                            <span className="w-3 h-3 bg-[#0057b7] rounded-xs inline-block shadow-xs flex-shrink-0"></span>
-                            <span>Participação</span>
-                          </td>
-                          {displayedMonthlyData.map(m => {
-                            const val = m.values['participacao'];
-                            return (
-                              <td key={m.month} className="py-1.5 px-0.5 text-[11px] sm:text-xs font-bold text-slate-900">
-                                {val !== null && val !== undefined ? val : ''}
-                              </td>
-                            );
-                          })}
-                          <td className="py-1.5 px-2 font-black text-blue-800 bg-blue-50 text-[11px] sm:text-xs">
-                            {activeBoard.targets?.['participacao'] || 100}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
+                          const cumpHeightPct = hasCump ? Math.min(100, Math.max(5, (cumpVal! / 105) * 100)) : 0;
+                          const partHeightPct = hasPart ? Math.min(100, Math.max(5, (partVal! / 105) * 100)) : 0;
+
+                          return (
+                            <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-1 sm:px-2 group">
+                              <div className="text-[8px] sm:text-[10px] font-black text-slate-800 tracking-tighter mb-1 text-center leading-tight whitespace-nowrap">
+                                {hasCump && <div className="text-[#008744]">{cumpVal}%</div>}
+                                {hasPart && <div className="text-[#0057b7]">{partVal}%</div>}
+                              </div>
+
+                              <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1 h-[220px]">
+                                <div 
+                                  className="w-2.5 sm:w-4 bg-[#008744] rounded-t-sm transition-all duration-500"
+                                  style={{ height: `${cumpHeightPct}%` }}
+                                  title={`Cumprimento (${m.label}): ${cumpVal ?? 'Sem dados'}%`}
+                                />
+                                <div 
+                                  className="w-2.5 sm:w-4 bg-[#0057b7] rounded-t-sm transition-all duration-500"
+                                  style={{ height: `${partHeightPct}%` }}
+                                  title={`Participação (${m.label}): ${partVal ?? 'Sem dados'}%`}
+                                />
+                              </div>
+
+                              <div className="text-[10px] sm:text-xs font-black text-slate-800 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
+                                {m.label}
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        <div className="flex-1 flex flex-col items-center justify-end h-full px-1 sm:px-2 border-l border-slate-300/80 pl-2">
+                          <div className="text-[8px] sm:text-[10px] font-black text-slate-800 tracking-tighter mb-1 text-center leading-tight whitespace-nowrap">
+                            <div className="text-[#008744]">95%</div>
+                            <div className="text-[#0057b7]">100%</div>
+                          </div>
+                          <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1 h-[220px]">
+                            <div 
+                              className="w-2.5 sm:w-4 bg-[#008744] rounded-t-sm"
+                              style={{ height: `${(95 / 105) * 100}%` }}
+                              title="Meta Cumprimento: 95%"
+                            />
+                            <div 
+                              className="w-2.5 sm:w-4 bg-[#0057b7] rounded-t-sm"
+                              style={{ height: `${(100 / 105) * 100}%` }}
+                              title="Meta Participação: 100%"
+                            />
+                          </div>
+                          <div className="text-[10px] sm:text-xs font-black text-emerald-900 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
+                            Meta
+                          </div>
+                        </div>
+                      </div>
+
+                      <table className="w-full text-center border-collapse border border-slate-700 text-xs sm:text-sm font-bold">
+                        <thead>
+                          <tr className="bg-slate-100/90 text-slate-700 divide-x divide-slate-400">
+                            <th className="py-1 px-2 border-b border-slate-400 text-left w-32 sm:w-40 font-black"></th>
+                            {displayedMonthlyData.map(m => (
+                              <th key={m.month} className="py-1 px-1 border-b border-slate-400 font-bold text-[11px] sm:text-xs">
+                                {m.label}
+                              </th>
+                            ))}
+                            <th className="py-1 px-2 border-b border-slate-400 font-black text-[11px] sm:text-xs bg-slate-200 text-slate-900">
+                              Meta
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-400">
+                          <tr className="hover:bg-slate-50 transition-colors divide-x divide-slate-400">
+                            <td className="py-1.5 px-2 text-left flex items-center gap-2 font-black text-slate-800 text-[11px] sm:text-xs">
+                              <span className="w-3 h-3 bg-[#008744] rounded-xs inline-block shadow-xs flex-shrink-0"></span>
+                              <span>Cumprimento</span>
+                            </td>
+                            {displayedMonthlyData.map(m => {
+                              const val = m.values['cumprimento'];
+                              return (
+                                <td key={m.month} className="py-1.5 px-0.5 text-[11px] sm:text-xs font-bold text-slate-900">
+                                  {val !== null && val !== undefined ? val : ''}
+                                </td>
+                              );
+                            })}
+                            <td className="py-1.5 px-2 font-black text-emerald-800 bg-emerald-50 text-[11px] sm:text-xs">
+                              {activeBoard.targets?.['cumprimento'] || 95}
+                            </td>
+                          </tr>
+
+                          <tr className="hover:bg-slate-50 transition-colors divide-x divide-slate-400">
+                            <td className="py-1.5 px-2 text-left flex items-center gap-2 font-black text-slate-800 text-[11px] sm:text-xs">
+                              <span className="w-3 h-3 bg-[#0057b7] rounded-xs inline-block shadow-xs flex-shrink-0"></span>
+                              <span>Participação</span>
+                            </td>
+                            {displayedMonthlyData.map(m => {
+                              const val = m.values['participacao'];
+                              return (
+                                <td key={m.month} className="py-1.5 px-0.5 text-[11px] sm:text-xs font-bold text-slate-900">
+                                  {val !== null && val !== undefined ? val : ''}
+                                </td>
+                              );
+                            })}
+                            <td className="py-1.5 px-2 font-black text-blue-800 bg-blue-50 text-[11px] sm:text-xs">
+                              {activeBoard.targets?.['participacao'] || 100}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1705,90 +1754,104 @@ export const GestaoAVista: React.FC = () => {
               {/* ================= 2. PRODUÇÃO DE CELULOSE VIEW (PHOTO 3 REPLICATION) ================= */}
               {activeBoard.type === 'production_matrix' && (
                 <div className="space-y-0">
-                  <div className="h-[310px] sm:h-[340px] w-full pt-8 pb-2 px-2 flex items-end justify-between border-b-2 border-slate-700">
-                    {displayedMonthlyData.map((m) => {
-                      const realVal = m.values['real'];
-                      const orcadoVal = m.values['orcado'];
-                      const hasReal = typeof realVal === 'number' && realVal > 0;
-                      const hasOrcado = typeof orcadoVal === 'number' && orcadoVal > 0;
-
-                      const realHeightPct = hasReal ? Math.min(100, Math.max(5, (realVal! / maxChartValue) * 100)) : 0;
-                      const orcadoHeightPct = hasOrcado ? Math.min(100, Math.max(5, (orcadoVal! / maxChartValue) * 100)) : 0;
-
-                      const formatVal = (v: number) => Math.round(v).toLocaleString('pt-BR');
-
-                      return (
-                        <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-0.5 sm:px-1.5 group">
-                          <div className="text-[8px] sm:text-[10px] font-black text-slate-800 tracking-tighter mb-1 text-center leading-tight whitespace-nowrap">
-                            {hasReal && <div className="text-[#008744]">{formatVal(realVal!)}</div>}
-                            {hasOrcado && <div className="text-[#0057b7] font-bold">{formatVal(orcadoVal!)}</div>}
-                          </div>
-
-                          <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1.5 h-[220px]">
-                            <div 
-                              className="w-2.5 sm:w-4 bg-[#008744] rounded-t-sm transition-all duration-500"
-                              style={{ height: `${realHeightPct}%` }}
-                              title={`Real (${m.label}): ${hasReal ? formatVal(realVal!) : 'Sem dados'} t`}
-                            />
-                            <div 
-                              className="w-2.5 sm:w-4 bg-[#0057b7] rounded-t-sm transition-all duration-500"
-                              style={{ height: `${orcadoHeightPct}%` }}
-                              title={`Orçado (${m.label}): ${hasOrcado ? formatVal(orcadoVal!) : 'Sem dados'} t`}
-                            />
-                          </div>
-
-                          <div className="text-[10px] sm:text-xs font-black text-slate-800 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
-                            {m.label}
-                          </div>
-                        </div>
-                      );
-                    })}
+                  {/* Mobile Swipe Hint */}
+                  <div className="flex md:hidden items-center justify-between px-2.5 py-1.5 mb-3 bg-emerald-50/80 border border-emerald-200/70 rounded-xl text-[11px] font-bold text-slate-700 shadow-xs">
+                    <span className="flex items-center gap-1.5 text-emerald-900">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      <span>Gráfico Responsivo (12 Meses)</span>
+                    </span>
+                    <span className="text-emerald-800 font-black flex items-center gap-1 text-[10px]">
+                      <span>Deslize na horizontal</span>
+                      <ChevronRight className="w-3.5 h-3.5 animate-pulse" />
+                    </span>
                   </div>
 
-                  <div className="w-full overflow-x-auto">
-                    <table className="w-full text-center border-collapse border border-slate-700 text-xs sm:text-sm font-bold">
-                      <thead>
-                        <tr className="bg-slate-100/90 text-slate-700 divide-x divide-slate-400">
-                          <th className="py-1 px-2 border-b border-slate-400 text-left w-28 sm:w-36 font-black"></th>
-                          {displayedMonthlyData.map(m => (
-                            <th key={m.month} className="py-1 px-1 border-b border-slate-400 font-bold text-[11px] sm:text-xs">
-                              {m.label}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-400">
-                        <tr className="hover:bg-slate-50 transition-colors divide-x divide-slate-400">
-                          <td className="py-1.5 px-2 text-left flex items-center gap-2 font-black text-slate-800 text-[11px] sm:text-xs">
-                            <span className="w-3 h-3 bg-[#008744] rounded-xs inline-block shadow-xs flex-shrink-0"></span>
-                            <span>Real</span>
-                          </td>
-                          {displayedMonthlyData.map(m => {
-                            const val = m.values['real'];
-                            return (
-                              <td key={m.month} className="py-1.5 px-0.5 text-[10px] sm:text-xs font-bold text-slate-900">
-                                {val !== null && val !== undefined && val > 0 ? Math.round(val).toLocaleString('pt-BR') : ''}
-                              </td>
-                            );
-                          })}
-                        </tr>
+                  <div className="w-full overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-300 -mx-1 sm:mx-0 px-1 sm:px-0">
+                    <div className="min-w-[720px] sm:min-w-[760px] md:min-w-full">
+                      <div className="h-[310px] sm:h-[340px] w-full pt-8 pb-2 px-2 flex items-end justify-between border-b-2 border-slate-700">
+                        {displayedMonthlyData.map((m) => {
+                          const realVal = m.values['real'];
+                          const orcadoVal = m.values['orcado'];
+                          const hasReal = typeof realVal === 'number' && realVal > 0;
+                          const hasOrcado = typeof orcadoVal === 'number' && orcadoVal > 0;
 
-                        <tr className="hover:bg-slate-50 transition-colors divide-x divide-slate-400">
-                          <td className="py-1.5 px-2 text-left flex items-center gap-2 font-black text-slate-800 text-[11px] sm:text-xs">
-                            <span className="w-3 h-3 bg-[#0057b7] rounded-xs inline-block shadow-xs flex-shrink-0"></span>
-                            <span>Orçado</span>
-                          </td>
-                          {displayedMonthlyData.map(m => {
-                            const val = m.values['orcado'];
-                            return (
-                              <td key={m.month} className="py-1.5 px-0.5 text-[10px] sm:text-xs font-bold text-slate-900">
-                                {val !== null && val !== undefined && val > 0 ? Math.round(val).toLocaleString('pt-BR') : ''}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      </tbody>
-                    </table>
+                          const realHeightPct = hasReal ? Math.min(100, Math.max(5, (realVal! / maxChartValue) * 100)) : 0;
+                          const orcadoHeightPct = hasOrcado ? Math.min(100, Math.max(5, (orcadoVal! / maxChartValue) * 100)) : 0;
+
+                          const formatVal = (v: number) => Math.round(v).toLocaleString('pt-BR');
+
+                          return (
+                            <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-0.5 sm:px-1.5 group">
+                              <div className="text-[8px] sm:text-[10px] font-black text-slate-800 tracking-tighter mb-1 text-center leading-tight whitespace-nowrap">
+                                {hasReal && <div className="text-[#008744]">{formatVal(realVal!)}</div>}
+                                {hasOrcado && <div className="text-[#0057b7] font-bold">{formatVal(orcadoVal!)}</div>}
+                              </div>
+
+                              <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1.5 h-[220px]">
+                                <div 
+                                  className="w-2.5 sm:w-4 bg-[#008744] rounded-t-sm transition-all duration-500"
+                                  style={{ height: `${realHeightPct}%` }}
+                                  title={`Real (${m.label}): ${hasReal ? formatVal(realVal!) : 'Sem dados'} t`}
+                                />
+                                <div 
+                                  className="w-2.5 sm:w-4 bg-[#0057b7] rounded-t-sm transition-all duration-500"
+                                  style={{ height: `${orcadoHeightPct}%` }}
+                                  title={`Orçado (${m.label}): ${hasOrcado ? formatVal(orcadoVal!) : 'Sem dados'} t`}
+                                />
+                              </div>
+
+                              <div className="text-[10px] sm:text-xs font-black text-slate-800 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
+                                {m.label}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <table className="w-full text-center border-collapse border border-slate-700 text-xs sm:text-sm font-bold">
+                        <thead>
+                          <tr className="bg-slate-100/90 text-slate-700 divide-x divide-slate-400">
+                            <th className="py-1 px-2 border-b border-slate-400 text-left w-28 sm:w-36 font-black"></th>
+                            {displayedMonthlyData.map(m => (
+                              <th key={m.month} className="py-1 px-1 border-b border-slate-400 font-bold text-[11px] sm:text-xs">
+                                {m.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-400">
+                          <tr className="hover:bg-slate-50 transition-colors divide-x divide-slate-400">
+                            <td className="py-1.5 px-2 text-left flex items-center gap-2 font-black text-slate-800 text-[11px] sm:text-xs">
+                              <span className="w-3 h-3 bg-[#008744] rounded-xs inline-block shadow-xs flex-shrink-0"></span>
+                              <span>Real</span>
+                            </td>
+                            {displayedMonthlyData.map(m => {
+                              const val = m.values['real'];
+                              return (
+                                <td key={m.month} className="py-1.5 px-0.5 text-[10px] sm:text-xs font-bold text-slate-900">
+                                  {val !== null && val !== undefined && val > 0 ? Math.round(val).toLocaleString('pt-BR') : ''}
+                                </td>
+                              );
+                            })}
+                          </tr>
+
+                          <tr className="hover:bg-slate-50 transition-colors divide-x divide-slate-400">
+                            <td className="py-1.5 px-2 text-left flex items-center gap-2 font-black text-slate-800 text-[11px] sm:text-xs">
+                              <span className="w-3 h-3 bg-[#0057b7] rounded-xs inline-block shadow-xs flex-shrink-0"></span>
+                              <span>Orçado</span>
+                            </td>
+                            {displayedMonthlyData.map(m => {
+                              const val = m.values['orcado'];
+                              return (
+                                <td key={m.month} className="py-1.5 px-0.5 text-[10px] sm:text-xs font-bold text-slate-900">
+                                  {val !== null && val !== undefined && val > 0 ? Math.round(val).toLocaleString('pt-BR') : ''}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1796,47 +1859,63 @@ export const GestaoAVista: React.FC = () => {
               {/* ================= 3. CONSUMÍVEIS VIEW (PHOTO 1 REPLICATION) ================= */}
               {activeBoard.type === 'grouped_bars' && (
                 <div className="space-y-4">
-                  <div className="h-[300px] sm:h-[350px] w-full pt-8 pb-2 px-2 flex items-end justify-between border-b border-slate-700">
-                    {displayedMonthlyData.map((m) => {
-                      return (
-                        <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-0.5 sm:px-1">
-                          <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1 h-[260px]">
-                            {activeBoard.series.map((s) => {
-                              const val = m.values[s.id];
-                              const hasVal = typeof val === 'number';
-                              const numVal = hasVal ? val : 0;
-                              const heightPct = numVal > 0 ? Math.min(100, Math.max(4, (numVal / maxChartValue) * 100)) : 0;
+                  {/* Mobile Swipe Hint */}
+                  <div className="flex md:hidden items-center justify-between px-2.5 py-1.5 mb-3 bg-emerald-50/80 border border-emerald-200/70 rounded-xl text-[11px] font-bold text-slate-700 shadow-xs">
+                    <span className="flex items-center gap-1.5 text-emerald-900">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      <span>Gráfico Responsivo (12 Meses)</span>
+                    </span>
+                    <span className="text-emerald-800 font-black flex items-center gap-1 text-[10px]">
+                      <span>Deslize na horizontal</span>
+                      <ChevronRight className="w-3.5 h-3.5 animate-pulse" />
+                    </span>
+                  </div>
 
-                              const displayVal = hasVal ? (
-                                Number.isInteger(numVal) ? String(numVal) : numVal.toFixed(2).replace('.', ',')
-                              ) : '';
+                  <div className="w-full overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-300 -mx-1 sm:mx-0 px-1 sm:px-0">
+                    <div className="min-w-[820px] sm:min-w-[880px] md:min-w-full">
+                      <div className="h-[300px] sm:h-[350px] w-full pt-8 pb-2 px-2 flex items-end justify-between border-b border-slate-700">
+                        {displayedMonthlyData.map((m) => {
+                          return (
+                            <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-0.5 sm:px-1">
+                              <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1 h-[260px]">
+                                {activeBoard.series.map((s) => {
+                                  const val = m.values[s.id];
+                                  const hasVal = typeof val === 'number';
+                                  const numVal = hasVal ? val : 0;
+                                  const heightPct = numVal > 0 ? Math.min(100, Math.max(4, (numVal / maxChartValue) * 100)) : 0;
 
-                              return (
-                                <div key={s.id} className="flex flex-col items-center justify-end h-full flex-1 max-w-[14px]">
-                                  {numVal > 0 && (
-                                    <span className="text-[8px] sm:text-[9px] font-bold text-slate-800 mb-0.5 leading-none transform -rotate-45 sm:rotate-0 origin-bottom">
-                                      {displayVal}
-                                    </span>
-                                  )}
-                                  <div
-                                    className="w-full rounded-t-xs transition-all duration-300"
-                                    style={{
-                                      height: `${heightPct}%`,
-                                      backgroundColor: s.color
-                                    }}
-                                    title={`${s.name} (${m.label}): ${displayVal}`}
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
+                                  const displayVal = hasVal ? (
+                                    Number.isInteger(numVal) ? String(numVal) : numVal.toFixed(2).replace('.', ',')
+                                  ) : '';
 
-                          <div className="text-[10px] sm:text-xs font-bold text-slate-800 mt-2 text-center whitespace-nowrap">
-                            {m.label}
-                          </div>
-                        </div>
-                      );
-                    })}
+                                  return (
+                                    <div key={s.id} className="flex flex-col items-center justify-end h-full flex-1 max-w-[14px]">
+                                      {numVal > 0 && (
+                                        <span className="text-[8px] sm:text-[9px] font-bold text-slate-800 mb-0.5 leading-none transform -rotate-45 sm:rotate-0 origin-bottom">
+                                          {displayVal}
+                                        </span>
+                                      )}
+                                      <div
+                                        className="w-full rounded-t-xs transition-all duration-300"
+                                        style={{
+                                          height: `${heightPct}%`,
+                                          backgroundColor: s.color
+                                        }}
+                                        title={`${s.name} (${m.label}): ${displayVal}`}
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="text-[10px] sm:text-xs font-bold text-slate-800 mt-2 text-center whitespace-nowrap">
+                                {m.label}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 pt-2">
@@ -2698,139 +2777,147 @@ export const GestaoAVista: React.FC = () => {
 
               {/* Chart presentation in kiosk */}
               {activeBoard?.type === 'dds_matrix' ? (
-                <div>
-                  <div className="h-[310px] w-full flex items-end justify-between border-b-2 border-slate-700 pb-2 px-2">
-                    {displayedMonthlyData.map(m => {
-                      const cVal = m.values['cumprimento'];
-                      const pVal = m.values['participacao'];
-                      const hasC = typeof cVal === 'number' && cVal > 0;
-                      const hasP = typeof pVal === 'number' && pVal > 0;
-                      return (
-                        <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-1">
-                          <div className="text-[10px] sm:text-xs font-black text-slate-800 mb-1 leading-tight text-center">
-                            {hasC && <div className="text-[#008744]">{cVal}%</div>}
-                            {hasP && <div className="text-[#0057b7]">{pVal}%</div>}
+                <div className="w-full overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-300">
+                  <div className="min-w-[720px] md:min-w-full">
+                    <div className="h-[310px] w-full flex items-end justify-between border-b-2 border-slate-700 pb-2 px-2">
+                      {displayedMonthlyData.map(m => {
+                        const cVal = m.values['cumprimento'];
+                        const pVal = m.values['participacao'];
+                        const hasC = typeof cVal === 'number' && cVal > 0;
+                        const hasP = typeof pVal === 'number' && pVal > 0;
+                        return (
+                          <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-1">
+                            <div className="text-[10px] sm:text-xs font-black text-slate-800 mb-1 leading-tight text-center">
+                              {hasC && <div className="text-[#008744]">{cVal}%</div>}
+                              {hasP && <div className="text-[#0057b7]">{pVal}%</div>}
+                            </div>
+                            <div className="w-full flex items-end justify-center gap-1 h-[220px]">
+                              <div className="w-3 sm:w-5 bg-[#008744] rounded-t-sm" style={{ height: `${hasC ? (cVal! / 105) * 100 : 0}%` }} />
+                              <div className="w-3 sm:w-5 bg-[#0057b7] rounded-t-sm" style={{ height: `${hasP ? (pVal! / 105) * 100 : 0}%` }} />
+                            </div>
+                            <div className="text-[10px] sm:text-xs font-black text-slate-800 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
+                              {m.label}
+                            </div>
                           </div>
-                          <div className="w-full flex items-end justify-center gap-1 h-[220px]">
-                            <div className="w-3 sm:w-5 bg-[#008744] rounded-t-sm" style={{ height: `${hasC ? (cVal! / 105) * 100 : 0}%` }} />
-                            <div className="w-3 sm:w-5 bg-[#0057b7] rounded-t-sm" style={{ height: `${hasP ? (pVal! / 105) * 100 : 0}%` }} />
-                          </div>
-                          <div className="text-[10px] sm:text-xs font-black text-slate-800 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
-                            {m.label}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
 
-                  <table className="w-full text-center border-collapse border border-slate-700 text-xs sm:text-sm font-bold mt-2">
-                    <thead>
-                      <tr className="bg-slate-100 text-slate-700 divide-x divide-slate-400">
-                        <th className="py-1 px-2 border-b border-slate-400 text-left w-32 font-black"></th>
-                        {displayedMonthlyData.map(m => (
-                          <th key={m.month} className="py-1 px-1 border-b border-slate-400 font-bold text-xs">{m.label}</th>
-                        ))}
-                        <th className="py-1 px-2 border-b border-slate-400 font-black text-xs bg-slate-200">Meta</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-400">
-                      <tr className="divide-x divide-slate-400">
-                        <td className="py-1.5 px-2 text-left font-black text-slate-800">■ Cumprimento</td>
-                        {displayedMonthlyData.map(m => (
-                          <td key={m.month} className="py-1.5 text-xs font-bold text-slate-900">{m.values['cumprimento'] ?? ''}</td>
-                        ))}
-                        <td className="py-1.5 font-black text-emerald-800 bg-emerald-50">95</td>
-                      </tr>
-                      <tr className="divide-x divide-slate-400">
-                        <td className="py-1.5 px-2 text-left font-black text-slate-800">■ Participação</td>
-                        {displayedMonthlyData.map(m => (
-                          <td key={m.month} className="py-1.5 text-xs font-bold text-slate-900">{m.values['participacao'] ?? ''}</td>
-                        ))}
-                        <td className="py-1.5 font-black text-blue-800 bg-blue-50">100</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                    <table className="w-full text-center border-collapse border border-slate-700 text-xs sm:text-sm font-bold mt-2">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 divide-x divide-slate-400">
+                          <th className="py-1 px-2 border-b border-slate-400 text-left w-32 font-black"></th>
+                          {displayedMonthlyData.map(m => (
+                            <th key={m.month} className="py-1 px-1 border-b border-slate-400 font-bold text-xs">{m.label}</th>
+                          ))}
+                          <th className="py-1 px-2 border-b border-slate-400 font-black text-xs bg-slate-200">Meta</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-400">
+                        <tr className="divide-x divide-slate-400">
+                          <td className="py-1.5 px-2 text-left font-black text-slate-800">■ Cumprimento</td>
+                          {displayedMonthlyData.map(m => (
+                            <td key={m.month} className="py-1.5 text-xs font-bold text-slate-900">{m.values['cumprimento'] ?? ''}</td>
+                          ))}
+                          <td className="py-1.5 font-black text-emerald-800 bg-emerald-50">95</td>
+                        </tr>
+                        <tr className="divide-x divide-slate-400">
+                          <td className="py-1.5 px-2 text-left font-black text-slate-800">■ Participação</td>
+                          {displayedMonthlyData.map(m => (
+                            <td key={m.month} className="py-1.5 text-xs font-bold text-slate-900">{m.values['participacao'] ?? ''}</td>
+                          ))}
+                          <td className="py-1.5 font-black text-blue-800 bg-blue-50">100</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               ) : activeBoard?.type === 'production_matrix' ? (
-                <div>
-                  <div className="h-[310px] w-full flex items-end justify-between border-b-2 border-slate-700 pb-2 px-2">
-                    {displayedMonthlyData.map(m => {
-                      const rVal = m.values['real'];
-                      const oVal = m.values['orcado'];
-                      const hasR = typeof rVal === 'number' && rVal > 0;
-                      const hasO = typeof oVal === 'number' && oVal > 0;
-                      return (
-                        <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-1">
-                          <div className="text-[10px] font-black text-slate-800 mb-1 leading-tight text-center">
-                            {hasR && <div className="text-[#008744]">{Math.round(rVal!).toLocaleString('pt-BR')}</div>}
-                            {hasO && <div className="text-[#0057b7] font-bold">{Math.round(oVal!).toLocaleString('pt-BR')}</div>}
+                <div className="w-full overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-300">
+                  <div className="min-w-[720px] md:min-w-full">
+                    <div className="h-[310px] w-full flex items-end justify-between border-b-2 border-slate-700 pb-2 px-2">
+                      {displayedMonthlyData.map(m => {
+                        const rVal = m.values['real'];
+                        const oVal = m.values['orcado'];
+                        const hasR = typeof rVal === 'number' && rVal > 0;
+                        const hasO = typeof oVal === 'number' && oVal > 0;
+                        return (
+                          <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-1">
+                            <div className="text-[10px] font-black text-slate-800 mb-1 leading-tight text-center">
+                              {hasR && <div className="text-[#008744]">{Math.round(rVal!).toLocaleString('pt-BR')}</div>}
+                              {hasO && <div className="text-[#0057b7] font-bold">{Math.round(oVal!).toLocaleString('pt-BR')}</div>}
+                            </div>
+                            <div className="w-full flex items-end justify-center gap-1 h-[220px]">
+                              <div className="w-3 sm:w-5 bg-[#008744] rounded-t-sm" style={{ height: `${hasR ? (rVal! / maxChartValue) * 100 : 0}%` }} />
+                              <div className="w-3 sm:w-5 bg-[#0057b7] rounded-t-sm" style={{ height: `${hasO ? (oVal! / maxChartValue) * 100 : 0}%` }} />
+                            </div>
+                            <div className="text-[10px] sm:text-xs font-black text-slate-800 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
+                              {m.label}
+                            </div>
                           </div>
-                          <div className="w-full flex items-end justify-center gap-1 h-[220px]">
-                            <div className="w-3 sm:w-5 bg-[#008744] rounded-t-sm" style={{ height: `${hasR ? (rVal! / maxChartValue) * 100 : 0}%` }} />
-                            <div className="w-3 sm:w-5 bg-[#0057b7] rounded-t-sm" style={{ height: `${hasO ? (oVal! / maxChartValue) * 100 : 0}%` }} />
-                          </div>
-                          <div className="text-[10px] sm:text-xs font-black text-slate-800 mt-2 text-center uppercase tracking-tight whitespace-nowrap">
-                            {m.label}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
 
-                  <table className="w-full text-center border-collapse border border-slate-700 text-xs sm:text-sm font-bold mt-2">
-                    <thead>
-                      <tr className="bg-slate-100 text-slate-700 divide-x divide-slate-400">
-                        <th className="py-1 px-2 border-b border-slate-400 text-left w-32 font-black"></th>
-                        {displayedMonthlyData.map(m => (
-                          <th key={m.month} className="py-1 px-1 border-b border-slate-400 font-bold text-xs">{m.label}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-400">
-                      <tr className="divide-x divide-slate-400">
-                        <td className="py-1.5 px-2 text-left font-black text-slate-800">■ Real</td>
-                        {displayedMonthlyData.map(m => (
-                          <td key={m.month} className="py-1.5 text-xs font-bold text-slate-900">
-                            {m.values['real'] ? Math.round(m.values['real']!).toLocaleString('pt-BR') : ''}
-                          </td>
-                        ))}
-                      </tr>
-                      <tr className="divide-x divide-slate-400">
-                        <td className="py-1.5 px-2 text-left font-black text-slate-800">■ Orçado</td>
-                        {displayedMonthlyData.map(m => (
-                          <td key={m.month} className="py-1.5 text-xs font-bold text-slate-900">
-                            {m.values['orcado'] ? Math.round(m.values['orcado']!).toLocaleString('pt-BR') : ''}
-                          </td>
-                        ))}
-                      </tr>
-                    </tbody>
-                  </table>
+                    <table className="w-full text-center border-collapse border border-slate-700 text-xs sm:text-sm font-bold mt-2">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 divide-x divide-slate-400">
+                          <th className="py-1 px-2 border-b border-slate-400 text-left w-32 font-black"></th>
+                          {displayedMonthlyData.map(m => (
+                            <th key={m.month} className="py-1 px-1 border-b border-slate-400 font-bold text-xs">{m.label}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-400">
+                        <tr className="divide-x divide-slate-400">
+                          <td className="py-1.5 px-2 text-left font-black text-slate-800">■ Real</td>
+                          {displayedMonthlyData.map(m => (
+                            <td key={m.month} className="py-1.5 text-xs font-bold text-slate-900">
+                              {m.values['real'] ? Math.round(m.values['real']!).toLocaleString('pt-BR') : ''}
+                            </td>
+                          ))}
+                        </tr>
+                        <tr className="divide-x divide-slate-400">
+                          <td className="py-1.5 px-2 text-left font-black text-slate-800">■ Orçado</td>
+                          {displayedMonthlyData.map(m => (
+                            <td key={m.month} className="py-1.5 text-xs font-bold text-slate-900">
+                              {m.values['orcado'] ? Math.round(m.values['orcado']!).toLocaleString('pt-BR') : ''}
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               ) : (
                 <div>
-                  <div className="h-[320px] w-full flex items-end justify-between border-b border-slate-700 pb-2 px-2">
-                    {displayedMonthlyData.map(m => (
-                      <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-1">
-                        <div className="w-full flex items-end justify-center gap-1 h-[260px]">
-                          {activeBoard.series.map(s => {
-                            const val = m.values[s.id];
-                            const num = typeof val === 'number' ? val : 0;
-                            const hPct = num > 0 ? (num / maxChartValue) * 100 : 0;
-                            return (
-                              <div key={s.id} className="flex flex-col items-center justify-end h-full flex-1 max-w-[16px]">
-                                {num > 0 && (
-                                  <span className="text-[9px] font-bold text-slate-800 mb-0.5 leading-none">
-                                    {Number.isInteger(num) ? num : num.toFixed(2).replace('.', ',')}
-                                  </span>
-                                )}
-                                <div className="w-full rounded-t-xs" style={{ height: `${hPct}%`, backgroundColor: s.color }} />
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div className="text-xs font-bold text-slate-800 mt-2 text-center">{m.label}</div>
+                  <div className="w-full overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-300">
+                    <div className="min-w-[800px] md:min-w-full">
+                      <div className="h-[320px] w-full flex items-end justify-between border-b border-slate-700 pb-2 px-2">
+                        {displayedMonthlyData.map(m => (
+                          <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full px-1">
+                            <div className="w-full flex items-end justify-center gap-1 h-[260px]">
+                              {activeBoard.series.map(s => {
+                                const val = m.values[s.id];
+                                const num = typeof val === 'number' ? val : 0;
+                                const hPct = num > 0 ? (num / maxChartValue) * 100 : 0;
+                                return (
+                                  <div key={s.id} className="flex flex-col items-center justify-end h-full flex-1 max-w-[16px]">
+                                    {num > 0 && (
+                                      <span className="text-[9px] font-bold text-slate-800 mb-0.5 leading-none">
+                                        {Number.isInteger(num) ? num : num.toFixed(2).replace('.', ',')}
+                                      </span>
+                                    )}
+                                    <div className="w-full rounded-t-xs" style={{ height: `${hPct}%`, backgroundColor: s.color }} />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div className="text-xs font-bold text-slate-800 mt-2 text-center">{m.label}</div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-center gap-6 pt-3">

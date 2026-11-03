@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { 
+  ComposedChart,
   BarChart, 
   Bar, 
   XAxis, 
@@ -16,6 +17,7 @@ import {
   LabelList
 } from 'recharts';
 import { WireBatch, WireCoil, WireSupplier, ProductionLine } from '../../types';
+import { DEFAULT_BUDGETED_PRODUCTION, DEFAULT_REAL_PRODUCTION } from '../../constants';
 import { 
   TrendingUp, 
   Package, 
@@ -78,12 +80,43 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
 
   const [filterSupplier, setFilterSupplier] = useState('');
   const [filterDiameter, setFilterDiameter] = useState<string>('');
+  const [filterLine, setFilterLine] = useState('');
+  const [kpiChartView, setKpiChartView] = useState<'monthly' | 'period'>('monthly');
 
   // Local lists states for available vs consumed
   const [coilSearch, setCoilSearch] = useState('');
   const [coilListTab, setCoilListTab] = useState<'available' | 'consumed'>('available');
   const [listFilterDiameter, setListFilterDiameter] = useState('');
   const [listFilterSupplier, setListFilterSupplier] = useState('');
+
+  // Date parsing helper that gracefully handles Firestore Timestamps, ISO strings and Date objects
+  const parseCoilDate = (dateVal: any): Date | null => {
+    if (!dateVal) return null;
+    if (typeof dateVal === 'object' && 'seconds' in dateVal) {
+      return new Date(dateVal.seconds * 1000);
+    }
+    if (dateVal instanceof Date) return isNaN(dateVal.getTime()) ? null : dateVal;
+    if (typeof dateVal === 'string' || typeof dateVal === 'number') {
+      const d = new Date(dateVal);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+  };
+
+  // Safe local date range matching to avoid timezone UTC drift
+  const isDateInRange = (d: Date, start?: string, end?: string): boolean => {
+    if (start) {
+      const [sY, sM, sD] = start.split('-').map(Number);
+      const startDateObj = new Date(sY, sM - 1, sD, 0, 0, 0, 0);
+      if (d < startDateObj) return false;
+    }
+    if (end) {
+      const [eY, eM, eD] = end.split('-').map(Number);
+      const endDateObj = new Date(eY, eM - 1, eD, 23, 59, 59, 999);
+      if (d > endDateObj) return false;
+    }
+    return true;
+  };
 
   // 1. Dynamic list of available (in-stock) coils filtered by search term, diameter, and supplier
   const filteredAvailableList = useMemo(() => {
@@ -99,7 +132,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
     }
     
     if (listFilterDiameter) {
-      list = list.filter(c => c.diameter.toFixed(2) === Number(listFilterDiameter).toFixed(2));
+      list = list.filter(c => Math.abs(c.diameter - Number(listFilterDiameter)) < 0.01);
     }
     
     if (listFilterSupplier) {
@@ -124,7 +157,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
     }
     
     if (listFilterDiameter) {
-      list = list.filter(c => c.diameter.toFixed(2) === Number(listFilterDiameter).toFixed(2));
+      list = list.filter(c => Math.abs(c.diameter - Number(listFilterDiameter)) < 0.01);
     }
     
     if (listFilterSupplier) {
@@ -152,25 +185,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   const filteredReceived = useMemo(() => {
     let filtered = [...coils];
     if (filterSupplier) filtered = filtered.filter(c => c.supplierId === filterSupplier);
-    if (filterDiameter) filtered = filtered.filter(c => c.diameter.toString() === filterDiameter);
+    if (filterDiameter) filtered = filtered.filter(c => Math.abs(c.diameter - Number(filterDiameter)) < 0.01);
     
     if (startDate || endDate) {
       filtered = filtered.filter(c => {
-        const receivedTimestamp = c.receivedAt?.seconds ? c.receivedAt.seconds * 1000 : c.receivedAt;
-        if (!receivedTimestamp) return false;
-        const receivedDate = new Date(receivedTimestamp);
-        
-        if (startDate) {
-          const start = new Date(startDate);
-          start.setHours(0, 0, 0, 0);
-          if (receivedDate < start) return false;
-        }
-        if (endDate) {
-          const end = new Date(endDate);
-          end.setHours(23, 59, 59, 999);
-          if (receivedDate > end) return false;
-        }
-        return true;
+        const receivedDate = parseCoilDate(c.receivedAt);
+        if (!receivedDate) return false;
+        return isDateInRange(receivedDate, startDate, endDate);
       });
     }
     return filtered;
@@ -179,42 +200,33 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   const filteredConsumed = useMemo(() => {
     let filtered = coils.filter(c => c.status === 'consumed');
     if (filterSupplier) filtered = filtered.filter(c => c.supplierId === filterSupplier);
-    if (filterDiameter) filtered = filtered.filter(c => c.diameter.toString() === filterDiameter);
+    if (filterDiameter) filtered = filtered.filter(c => Math.abs(c.diameter - Number(filterDiameter)) < 0.01);
+    if (filterLine) filtered = filtered.filter(c => c.currentLineId === filterLine);
     
     if (startDate || endDate) {
       filtered = filtered.filter(c => {
-        const consumedTimestamp = c.consumedAt?.seconds ? c.consumedAt.seconds * 1000 : c.consumedAt;
-        if (!consumedTimestamp) return false;
-        const consumedDate = new Date(consumedTimestamp);
-        
-        if (startDate) {
-          const start = new Date(startDate);
-          start.setHours(0, 0, 0, 0);
-          if (consumedDate < start) return false;
-        }
-        if (endDate) {
-          const end = new Date(endDate);
-          end.setHours(23, 59, 59, 999);
-          if (consumedDate > end) return false;
-        }
-        return true;
+        const consumedDate = parseCoilDate(c.consumedAt);
+        if (!consumedDate) return false;
+        return isDateInRange(consumedDate, startDate, endDate);
       });
     } else {
       // Default to last 30 days if no filter
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
       filtered = filtered.filter(c => {
-        const consumedTimestamp = c.consumedAt?.seconds ? c.consumedAt.seconds * 1000 : c.consumedAt;
-        return consumedTimestamp && new Date(consumedTimestamp) >= thirtyDaysAgo;
+        const consumedDate = parseCoilDate(c.consumedAt);
+        return consumedDate && consumedDate >= thirtyDaysAgo;
       });
     }
     return filtered;
-  }, [coils, filterSupplier, filterDiameter, startDate, endDate]);
+  }, [coils, filterSupplier, filterDiameter, filterLine, startDate, endDate]);
 
   const stats = useMemo(() => {
     const totalReceived = filteredReceived.length;
     const totalWeight = filteredReceived.reduce((acc, c) => acc + (c.weight || 0), 0);
     const totalConsumed = filteredConsumed.length;
+    const consumedWeight = filteredConsumed.reduce((acc, c) => acc + (c.weight || 0), 0);
     const currentStock = coils.filter(c => c.status !== 'consumed').length;
     const stockWeight = coils.filter(c => c.status !== 'consumed').reduce((acc, c) => acc + (c.weight || 0), 0);
 
@@ -258,6 +270,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
       totalReceived,
       totalWeight,
       totalConsumed,
+      consumedWeight,
       currentStock,
       stockWeight,
       bySupplier,
@@ -266,146 +279,235 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
     };
   }, [coils, filteredReceived, filteredConsumed, suppliers, lines]);
 
+  // Industrial Efficiency KPI Engine (Consumo Real de Arames vs Produção de Celulose)
   const performanceStats = useMemo(() => {
-    // Generate map of recorded production
-    const prodMap = new Map();
-    productionData.forEach(p => {
-      prodMap.set(`${p.year}-${p.month}`, p.productionTons);
-    });
+    // Helper to get monthly production with fallbacks
+    const getProductionTonsForMonth = (y: number, m: number): number => {
+      const match = productionData.find(p => Number(p.year) === y && Number(p.month) === m);
+      if (match && typeof match.productionTons === 'number' && match.productionTons > 0) {
+        return match.productionTons;
+      }
+      return DEFAULT_REAL_PRODUCTION[m] || 150000;
+    };
 
-    // Group coil consumption by month (last 6 months)
-    const monthsData = [];
+    const getBudgetedTonsForMonth = (y: number, m: number): number => {
+      const match = productionData.find(p => Number(p.year) === y && Number(p.month) === m);
+      if (match && typeof match.budgetedTons === 'number' && match.budgetedTons > 0) {
+        return match.budgetedTons;
+      }
+      return DEFAULT_BUDGETED_PRODUCTION[m] || 150000;
+    };
+
+    // Calculate cellulose production for selected period (pro-rata daily)
+    let periodProductionTons = 0;
+    let periodBudgetedTons = 0;
+    let periodDaysCount = 0;
+    let periodLabel = 'Últimos 30 dias';
+
+    if (startDate || endDate) {
+      const sStr = startDate || endDate;
+      const eStr = endDate || startDate;
+      const [sY, sM, sD] = sStr.split('-').map(Number);
+      const [eY, eM, eD] = eStr.split('-').map(Number);
+
+      const cur = new Date(sY, sM - 1, sD);
+      const last = new Date(eY, eM - 1, eD);
+
+      if (cur <= last) {
+        while (cur <= last) {
+          const y = cur.getFullYear();
+          const m = cur.getMonth() + 1;
+          const daysInMonth = new Date(y, m, 0).getDate();
+          
+          periodProductionTons += getProductionTonsForMonth(y, m) / daysInMonth;
+          periodBudgetedTons += getBudgetedTonsForMonth(y, m) / daysInMonth;
+          periodDaysCount++;
+          
+          cur.setDate(cur.getDate() + 1);
+        }
+      }
+      periodLabel = startDate && endDate 
+        ? `${formatDateBR(startDate)} a ${formatDateBR(endDate)} (${periodDaysCount} ${periodDaysCount === 1 ? 'dia' : 'dias'})`
+        : formatDateBR(startDate || endDate);
+    } else {
+      // Default to last 30 days pro-rata
+      const today = new Date();
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+        const daysInMonth = new Date(y, m, 0).getDate();
+        periodProductionTons += getProductionTonsForMonth(y, m) / daysInMonth;
+        periodBudgetedTons += getBudgetedTonsForMonth(y, m) / daysInMonth;
+        periodDaysCount++;
+      }
+      periodLabel = 'Últimos 30 dias';
+    }
+
+    // Total consumed wire in filtered period
+    const totalConsumedKg = filteredConsumed.reduce((acc, c) => acc + (c.weight || 0), 0);
+    const totalConsumedCoils = filteredConsumed.length;
+
+    // Specific consumption (kg of wire per ton of cellulose)
+    const currentSpecific = periodProductionTons > 0 ? (totalConsumedKg / periodProductionTons) : 0;
+    // Meta operacional média (~1.93 kg/ton conforme mix histórico de consumíveis da fábrica)
+    const defaultMeta = 1.93;
+    const budgetSpecific = periodBudgetedTons > 0 && periodProductionTons > 0
+      ? defaultMeta
+      : defaultMeta;
+    const deltaVsBudget = budgetSpecific > 0 ? ((currentSpecific - budgetSpecific) / budgetSpecific) * 100 : 0;
+
+    // 1. Monthly Trend (last 6 months) respecting active filters (supplier, diameter, line)
+    const monthsTrend = [];
     const now = new Date();
-    
-    // Sort suppliers for consistent indexing
-    const sortedSuppliers = [...suppliers].sort((a, b) => a.name.localeCompare(b.name));
 
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const year = d.getFullYear();
       const month = d.getMonth() + 1;
-      const key = `${year}-${month}`;
-      
-      const consumedInMonth = coils.filter(c => {
+
+      // Coils consumed in this specific month matching current filters
+      const monthCoils = coils.filter(c => {
         if (c.status !== 'consumed') return false;
-        const cDate = c.consumedAt?.seconds 
-          ? new Date(c.consumedAt.seconds * 1000) 
-          : c.consumedAt ? new Date(c.consumedAt) : null;
-        const matchesDate = cDate && cDate.getFullYear() === year && (cDate.getMonth() + 1) === month;
-        const matchesDiameter = !filterDiameter || c.diameter.toString() === filterDiameter;
-        return matchesDate && matchesDiameter;
+        const cDate = parseCoilDate(c.consumedAt);
+        if (!cDate || cDate.getFullYear() !== year || (cDate.getMonth() + 1) !== month) return false;
+        if (filterSupplier && c.supplierId !== filterSupplier) return false;
+        if (filterDiameter && Math.abs(c.diameter - Number(filterDiameter)) >= 0.01) return false;
+        if (filterLine && c.currentLineId !== filterLine) return false;
+        return true;
       });
 
-      const totalKg = consumedInMonth.reduce((acc, c) => acc + (c.weight || 0), 0);
-      const productionTons = prodMap.get(key) || 0;
-      const specificCons = productionTons > 0 ? (totalKg / productionTons) : 0;
+      const monthKg = monthCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
+      const monthTons = getProductionTonsForMonth(year, month);
+      const monthSpecific = monthTons > 0 ? Number((monthKg / monthTons).toFixed(2)) : 0;
 
-      // Breakdowns for this month
-      const supplierBreakdown = sortedSuppliers.map(s => {
-        const weight = consumedInMonth.filter(c => c.supplierId === s.id).reduce((acc, c) => acc + (c.weight || 0), 0);
-        return {
-          name: s.name,
-          kg: weight,
-          specific: productionTons > 0 ? (weight / productionTons) : 0
-        };
-      }).filter(s => s.kg > 0);
-
-      const uniqueDiameters = Array.from(new Set(consumedInMonth.map(c => c.diameter))).sort((a, b) => Number(a) - Number(b));
-      const diameterBreakdown = uniqueDiameters.map(dia => {
-        const weight = consumedInMonth.filter(c => c.diameter === dia).reduce((acc, c) => acc + (c.weight || 0), 0);
-        return {
-          name: `${dia} mm`,
-          kg: weight,
-          specific: productionTons > 0 ? (weight / productionTons) : 0
-        };
-      });
-
-      monthsData.push({
-        label: d.toLocaleString('pt-BR', { month: 'short', year: '2-digit' }),
-        kg: totalKg,
-        tons: productionTons,
-        specific: specificCons,
-        suppliers: supplierBreakdown,
-        diameters: diameterBreakdown,
+      monthsTrend.push({
+        label: d.toLocaleString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', ''),
+        kg: monthKg,
+        tons: Math.round(monthTons),
+        specific: monthSpecific,
         year,
         month
       });
     }
 
-    // Calculate current breakdown based on filter if available
-    let currentBreakdownData;
-    if (startDate || endDate) {
-      // Aggregate specific consumption over the filtered period
-      const filteredConsumedForStats = coils.filter(c => {
-        if (c.status !== 'consumed') return false;
-        const cDate = c.consumedAt?.seconds ? new Date(c.consumedAt.seconds * 1000) : new Date(c.consumedAt);
-        if (startDate && cDate < new Date(startDate)) return false;
-        if (endDate) {
-          const end = new Date(endDate);
-          end.setHours(23,59,59,999);
-          if (cDate > end) return false;
-        }
-        if (filterDiameter && c.diameter.toString() !== filterDiameter) return false;
-        return true;
-      });
+    // 2. Daily evolution for the selected period (if <= 45 days)
+    let periodTrend: Array<{ label: string; kg: number; tons: number; specific: number }> = [];
+    if ((startDate || endDate) && periodDaysCount <= 45 && periodDaysCount > 1) {
+      const sStr = startDate || endDate;
+      const [sY, sM, sD] = sStr.split('-').map(Number);
+      const cur = new Date(sY, sM - 1, sD);
+      const eStr = endDate || startDate;
+      const [eY, eM, eD] = eStr.split('-').map(Number);
+      const last = new Date(eY, eM - 1, eD);
 
-      const totalWeight = filteredConsumedForStats.reduce((acc, c) => acc + (c.weight || 0), 0);
-      
-      // Attempt to estimate production tons based on months in filter
-      // (Simplified: sum tons for any month touched by filter)
-      const monthsInRange = new Set();
-      if (startDate && endDate) {
-          let curr = new Date(startDate);
-          const end = new Date(endDate);
-          while (curr <= end) {
-              monthsInRange.add(`${curr.getFullYear()}-${curr.getMonth() + 1}`);
-              curr.setMonth(curr.getMonth() + 1);
-          }
-      } else if (startDate) {
-          monthsInRange.add(`${new Date(startDate).getFullYear()}-${new Date(startDate).getMonth() + 1}`);
+      while (cur <= last) {
+        const y = cur.getFullYear();
+        const m = cur.getMonth() + 1;
+        const dayNum = cur.getDate();
+        const daysInMonth = new Date(y, m, 0).getDate();
+        const dailyTons = getProductionTonsForMonth(y, m) / daysInMonth;
+
+        const dayCoils = filteredConsumed.filter(c => {
+          const cDate = parseCoilDate(c.consumedAt);
+          return cDate && cDate.getFullYear() === y && (cDate.getMonth() + 1) === m && cDate.getDate() === dayNum;
+        });
+
+        const dayKg = dayCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
+        const daySpecific = dailyTons > 0 ? Number((dayKg / dailyTons).toFixed(2)) : 0;
+
+        periodTrend.push({
+          label: `${String(dayNum).padStart(2, '0')}/${String(m).padStart(2, '0')}`,
+          kg: dayKg,
+          tons: Math.round(dailyTons),
+          specific: daySpecific
+        });
+
+        cur.setDate(cur.getDate() + 1);
       }
-      
-      let productionTonsInRange = 0;
-      monthsInRange.forEach(key => {
-          productionTonsInRange += prodMap.get(key) || 0;
-      });
-
-      const avgSpecific = productionTonsInRange > 0 ? (totalWeight / productionTonsInRange) : 0;
-
-      const supplierBreakdown = sortedSuppliers.map(s => {
-        const weight = filteredConsumedForStats.filter(c => c.supplierId === s.id).reduce((acc, c) => acc + (c.weight || 0), 0);
-        return {
-          name: s.name,
-          kg: weight,
-          specific: productionTonsInRange > 0 ? (weight / productionTonsInRange) : 0
-        };
-      }).filter(s => s.kg > 0);
-
-      const uniqueDiameters = Array.from(new Set(filteredConsumedForStats.map(c => c.diameter))).sort((a, b) => Number(a) - Number(b));
-      const diameterBreakdown = uniqueDiameters.map(dia => {
-        const weight = filteredConsumedForStats.filter(c => c.diameter === dia).reduce((acc, c) => acc + (c.weight || 0), 0);
-        return {
-          name: `${dia} mm`,
-          kg: weight,
-          specific: productionTonsInRange > 0 ? (weight / productionTonsInRange) : 0
-        };
-      });
-
-      currentBreakdownData = {
-          specific: avgSpecific,
-          suppliers: supplierBreakdown,
-          diameters: diameterBreakdown,
-          label: 'Período Filtrado'
-      };
-    } else {
-      currentBreakdownData = monthsData[monthsData.length - 1];
     }
 
+    // 3. Breakdown by Supplier in the filtered period
+    const sortedSuppliers = [...suppliers].sort((a, b) => a.name.localeCompare(b.name));
+    const suppliersBreakdown = sortedSuppliers.map(s => {
+      const sCoils = filteredConsumed.filter(c => c.supplierId === s.id);
+      const kg = sCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
+      const specific = periodProductionTons > 0 ? Number((kg / periodProductionTons).toFixed(2)) : 0;
+      const share = totalConsumedKg > 0 ? Number(((kg / totalConsumedKg) * 100).toFixed(1)) : 0;
+      return {
+        id: s.id,
+        name: s.name,
+        kg,
+        count: sCoils.length,
+        specific,
+        share
+      };
+    }).filter(s => s.kg > 0);
+
+    // Unrecorded supplier check
+    const knownSupplierIds = new Set(suppliers.map(s => s.id));
+    const unrecordedCoils = filteredConsumed.filter(c => !c.supplierId || !knownSupplierIds.has(c.supplierId));
+    if (unrecordedCoils.length > 0) {
+      const kg = unrecordedCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
+      suppliersBreakdown.push({
+        id: 'unrecorded',
+        name: 'Não Identificado',
+        kg,
+        count: unrecordedCoils.length,
+        specific: periodProductionTons > 0 ? Number((kg / periodProductionTons).toFixed(2)) : 0,
+        share: totalConsumedKg > 0 ? Number(((kg / totalConsumedKg) * 100).toFixed(1)) : 0
+      });
+    }
+
+    // 4. Breakdown by Diameter in the filtered period
+    const uniqueConsumedDiameters = Array.from(new Set(filteredConsumed.map(c => c.diameter))).sort((a, b) => Number(a) - Number(b));
+    const diametersBreakdown = uniqueConsumedDiameters.map(dia => {
+      const dCoils = filteredConsumed.filter(c => Math.abs(c.diameter - Number(dia)) < 0.01);
+      const kg = dCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
+      const specific = periodProductionTons > 0 ? Number((kg / periodProductionTons).toFixed(2)) : 0;
+      const share = totalConsumedKg > 0 ? Number(((kg / totalConsumedKg) * 100).toFixed(1)) : 0;
+      return {
+        name: `${Number(dia).toFixed(2)} mm`,
+        kg,
+        count: dCoils.length,
+        specific,
+        share
+      };
+    });
+
+    // 5. Breakdown by Line / Machine in the filtered period
+    const linesBreakdown = lines.map(l => {
+      const lCoils = filteredConsumed.filter(c => c.currentLineId === l.id);
+      const kg = lCoils.reduce((acc, c) => acc + (c.weight || 0), 0);
+      const specific = periodProductionTons > 0 ? Number((kg / periodProductionTons).toFixed(2)) : 0;
+      const share = totalConsumedKg > 0 ? Number(((kg / totalConsumedKg) * 100).toFixed(1)) : 0;
+      return {
+        id: l.id,
+        name: l.name,
+        kg,
+        count: lCoils.length,
+        specific,
+        share
+      };
+    }).filter(l => l.kg > 0);
+
     return {
-        trend: monthsData,
-        current: currentBreakdownData
+      periodProductionTons,
+      periodBudgetedTons,
+      periodDaysCount,
+      totalConsumedKg,
+      totalConsumedCoils,
+      currentSpecific,
+      budgetSpecific,
+      deltaVsBudget,
+      trend: monthsTrend,
+      periodTrend,
+      suppliers: suppliersBreakdown,
+      diameters: diametersBreakdown,
+      lines: linesBreakdown,
+      label: periodLabel
     };
-  }, [coils, productionData, suppliers, startDate, endDate, filterDiameter]);
+  }, [coils, filteredConsumed, productionData, suppliers, lines, startDate, endDate, filterSupplier, filterDiameter, filterLine]);
 
   const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -415,7 +517,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
 
   return (
     <div className="space-y-8">
-      {/* Filters (Supplier & Diameter) */}
+      {/* Filters (Supplier, Diameter & Line) */}
       <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100 w-full sm:w-auto">
           <Filter className="w-4 h-4 text-slate-400" />
@@ -444,9 +546,20 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           ))}
         </select>
 
-        {(filterSupplier || filterDiameter) && (
+        <select
+          value={filterLine}
+          onChange={(e) => setFilterLine(e.target.value)}
+          className="flex-1 sm:flex-none px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          <option value="">Todas as Linhas / Máquinas</option>
+          {lines.map(l => (
+            <option key={l.id} value={l.id}>{l.name}</option>
+          ))}
+        </select>
+
+        {(filterSupplier || filterDiameter || filterLine) && (
           <button
-            onClick={() => { setFilterSupplier(''); setFilterDiameter(''); }}
+            onClick={() => { setFilterSupplier(''); setFilterDiameter(''); setFilterLine(''); }}
             className="flex items-center gap-2 px-4 py-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-all text-sm font-black w-full sm:w-auto justify-center"
           >
             <X className="w-4 h-4" />
@@ -673,57 +786,209 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
              
              <div className="relative z-10">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                  <h3 className="text-xl lg:text-2xl font-black text-slate-900 flex items-center gap-3">
-                    <TrendingUp className="w-6 h-6 text-emerald-600" />
-                    KPI de Eficiência Industrial
-                  </h3>
-                  <div className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 text-white text-[10px] font-black uppercase rounded-full shadow-lg shadow-emerald-200 tracking-widest">
-                     <ShieldAlert className="w-3.5 h-3.5" />
-                     Tempo Real
+                  <div>
+                    <h3 className="text-xl lg:text-2xl font-black text-slate-900 flex items-center gap-3">
+                      <TrendingUp className="w-6 h-6 text-emerald-600" />
+                      KPI de Eficiência Industrial de Arames
+                    </h3>
+                    <p className="text-slate-500 text-xs sm:text-sm font-medium mt-1">
+                      Relação direta de consumo de arame (kg) por tonelada de celulose produzida ({performanceStats.label}).
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {performanceStats.periodTrend && performanceStats.periodTrend.length > 0 && (
+                      <div className="flex bg-slate-100 p-1 rounded-xl text-[10px] font-black uppercase">
+                        <button
+                          type="button"
+                          onClick={() => setKpiChartView('monthly')}
+                          className={cn(
+                            "px-3 py-1 rounded-lg transition-all",
+                            kpiChartView === 'monthly' ? "bg-white text-emerald-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                          )}
+                        >
+                          6 Meses
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setKpiChartView('period')}
+                          className={cn(
+                            "px-3 py-1 rounded-lg transition-all",
+                            kpiChartView === 'period' ? "bg-white text-emerald-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                          )}
+                        >
+                          Evolução Período
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 text-white text-[10px] font-black uppercase rounded-full shadow-md shadow-emerald-200 tracking-wider">
+                       <ShieldAlert className="w-3.5 h-3.5" />
+                       Tempo Real
+                    </div>
                   </div>
                 </div>
-                <p className="text-slate-500 font-medium mb-10 max-w-lg">Relação de consumo de arame (kg) por tonelada de produto acabado.</p>
+
+                {/* Filter info badges */}
+                {(filterSupplier || filterDiameter || filterLine || startDate || endDate) && (
+                  <div className="flex flex-wrap items-center gap-2 mb-6">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Filtros Ativos:</span>
+                    {filterSupplier && (
+                      <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg border border-emerald-100">
+                        {suppliers.find(s => s.id === filterSupplier)?.name || 'Fornecedor'}
+                      </span>
+                    )}
+                    {filterDiameter && (
+                      <span className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg border border-blue-100">
+                        Bitola {filterDiameter} mm
+                      </span>
+                    )}
+                    {filterLine && (
+                      <span className="px-2.5 py-1 bg-purple-50 text-purple-700 text-xs font-bold rounded-lg border border-purple-100">
+                        {lines.find(l => l.id === filterLine)?.name || 'Linha'}
+                      </span>
+                    )}
+                    {(startDate || endDate) && (
+                      <span className="px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded-lg border border-slate-200">
+                        {performanceStats.label}
+                      </span>
+                    )}
+                  </div>
+                )}
                 
-                <div className="h-64 mb-10">
+                {/* Composed Chart combining Bar (kg and tons) + Line (kg/ton) */}
+                <div className="h-72 mb-8">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={performanceStats.trend} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                    <ComposedChart 
+                      data={kpiChartView === 'period' && performanceStats.periodTrend && performanceStats.periodTrend.length > 0
+                        ? performanceStats.periodTrend 
+                        : performanceStats.trend} 
+                      margin={{ top: 20, right: 30, left: 10, bottom: 0 }}
+                    >
                       <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 900 }} />
-                      <YAxis yAxisId="left" hide />
-                      <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#10b981', fontSize: 10, fontWeight: 900 }} />
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '1.25rem', border: 'none', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}
+                      <XAxis 
+                        dataKey="label" 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 800 }} 
                       />
-                      <Legend verticalAlign="top" align="right" wrapperStyle={{ paddingBottom: '20px' }} />
-                      <Bar yAxisId="left" dataKey="kg" name="Arame Consumido" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={24} />
-                      <Bar yAxisId="left" dataKey="tons" name="Prod. Final" fill="#cbd5e1" radius={[6, 6, 0, 0]} barSize={24} />
-                      <Line yAxisId="right" type="monotone" dataKey="specific" name="kg/ton" stroke="#10b981" strokeWidth={4} dot={{ r: 6, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} />
-                    </BarChart>
+                      <YAxis 
+                        yAxisId="left" 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }}
+                        tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
+                      />
+                      <YAxis 
+                        yAxisId="right" 
+                        orientation="right" 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fill: '#10b981', fontSize: 11, fontWeight: 900 }}
+                        unit=" kg/t"
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          borderRadius: '1.25rem', 
+                          border: 'none', 
+                          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                          padding: '12px 16px',
+                          fontWeight: 700
+                        }}
+                        formatter={(value: any, name: string) => {
+                          const val = Number(value) || 0;
+                          if (name.includes('kg/ton') || name.includes('Consumo Específico')) {
+                            return [`${val.toFixed(2)} kg/ton`, 'Consumo Específico'];
+                          }
+                          if (name.includes('Arame') || name.includes('Consumido')) {
+                            return [`${val.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} kg`, 'Arame Consumido'];
+                          }
+                          if (name.includes('Produção') || name.includes('Prod.')) {
+                            return [`${Math.round(val).toLocaleString('pt-BR')} ton`, 'Produção de Celulose'];
+                          }
+                          return [value, name];
+                        }}
+                      />
+                      <Legend verticalAlign="top" align="right" wrapperStyle={{ paddingBottom: '16px', fontSize: '12px', fontWeight: 700 }} />
+                      <Bar yAxisId="left" dataKey="kg" name="Arame Consumido (kg)" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={20} />
+                      <Bar yAxisId="left" dataKey="tons" name="Produção Celulose (ton)" fill="#94a3b8" radius={[6, 6, 0, 0]} barSize={20} />
+                      <Line 
+                        yAxisId="right" 
+                        type="monotone" 
+                        dataKey="specific" 
+                        name="Consumo Específico (kg/ton)" 
+                        stroke="#10b981" 
+                        strokeWidth={3.5} 
+                        dot={{ r: 5, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }}
+                        activeDot={{ r: 7 }}
+                      />
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </div>
 
-                <div className="mt-12 p-6 bg-slate-900 rounded-[2rem] border border-slate-700 flex flex-col sm:flex-row items-center gap-8">
-                   <div className="text-center sm:text-left">
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Indicador de Performance</p>
-                      <div className="flex items-baseline gap-2 justify-center sm:justify-start">
-                        <p className="text-4xl font-black text-white">{performanceStats.current.specific.toFixed(1)}</p>
-                        <span className="text-xs text-emerald-400 font-black uppercase tracking-widest">kg por Tonelada</span>
+                {/* Key Metrics Cards in dark banner */}
+                <div className="p-6 bg-slate-900 rounded-[2rem] border border-slate-700 flex flex-col gap-6">
+                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pb-6 border-b border-slate-800">
+                      <div>
+                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Consumo Específico</p>
+                         <div className="flex items-baseline gap-1.5">
+                            <p className="text-3xl font-black text-emerald-400">{performanceStats.currentSpecific.toFixed(2)}</p>
+                            <span className="text-[10px] text-emerald-300 font-bold uppercase">kg/ton</span>
+                         </div>
+                      </div>
+
+                      <div>
+                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Arame Consumido</p>
+                         <div className="flex items-baseline gap-1.5">
+                            <p className="text-xl sm:text-2xl font-black text-white">{performanceStats.totalConsumedKg.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</p>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">kg ({performanceStats.totalConsumedCoils} bob.)</span>
+                         </div>
+                      </div>
+
+                      <div>
+                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Produção Celulose</p>
+                         <div className="flex items-baseline gap-1.5">
+                            <p className="text-xl sm:text-2xl font-black text-white">{Math.round(performanceStats.periodProductionTons).toLocaleString('pt-BR')}</p>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">ton ({performanceStats.periodDaysCount}d)</span>
+                         </div>
+                      </div>
+
+                      <div>
+                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta Referência</p>
+                         <div className="flex items-baseline gap-2">
+                            <p className="text-xl sm:text-2xl font-black text-slate-300">{performanceStats.budgetSpecific.toFixed(2)}</p>
+                            <span className={cn(
+                              "text-xs font-black px-2 py-0.5 rounded-md",
+                              performanceStats.deltaVsBudget <= 5 
+                                ? "bg-emerald-500/20 text-emerald-400" 
+                                : performanceStats.deltaVsBudget <= 15 
+                                ? "bg-amber-500/20 text-amber-400" 
+                                : "bg-rose-500/20 text-rose-400"
+                            )}>
+                              {performanceStats.deltaVsBudget > 0 ? `+${performanceStats.deltaVsBudget.toFixed(1)}%` : `${performanceStats.deltaVsBudget.toFixed(1)}%`}
+                            </span>
+                         </div>
                       </div>
                    </div>
-                   <div className="hidden sm:block w-px h-12 bg-slate-800" />
-                   <div className="flex-1">
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 text-center sm:text-left">Análise do Sistema</p>
-                      <div className="flex items-center gap-3">
-                         <div className={cn(
-                           "w-3 h-3 rounded-full shrink-0",
-                           performanceStats.current.specific > 100 ? "bg-rose-500 shadow-lg shadow-rose-500/20" : "bg-emerald-500 shadow-lg shadow-emerald-500/20"
-                         )} />
-                         <p className="text-xs font-bold text-slate-400 leading-relaxed italic">
-                           {performanceStats.current.specific > 100 
-                            ? "Alerta: O consumo está acima da meta operacional. Recomendado auditoria de perdas na trefila."
-                            : "Meta batida: A eficiência produtiva está otimizada para o mix de produtos atual."}
-                         </p>
-                      </div>
+
+                   <div className="flex items-start sm:items-center gap-3">
+                      <div className={cn(
+                        "w-3.5 h-3.5 rounded-full shrink-0 mt-0.5 sm:mt-0 shadow-lg",
+                        performanceStats.currentSpecific === 0 
+                          ? "bg-slate-500" 
+                          : performanceStats.currentSpecific <= 1.95 
+                          ? "bg-emerald-500 shadow-emerald-500/30" 
+                          : performanceStats.currentSpecific <= 2.20 
+                          ? "bg-amber-500 shadow-amber-500/30" 
+                          : "bg-rose-500 shadow-rose-500/30 animate-pulse"
+                      )} />
+                      <p className="text-xs font-medium text-slate-300 leading-relaxed italic">
+                        {performanceStats.currentSpecific === 0 
+                          ? "Nenhum consumo de arame registrado para os filtros ativos no período."
+                          : performanceStats.currentSpecific <= 1.95 
+                          ? "Eficiência Operacional Excelente: O consumo de arame está rigorosamente alinhado à meta de enfardamento (1,93 kg/ton)."
+                          : performanceStats.currentSpecific <= 2.20 
+                          ? "Atenção Operacional: O consumo específico está ligeiramente superior à meta de referência (1,93 kg/ton). Acompanhe o consumo e possíveis sobras."
+                          : "Alerta de Consumo Elevado: Consumo específico acima dos parâmetros recomendados. Verifique se ocorreram rompimentos ou desvios na amarradeira."}
+                      </p>
                    </div>
                 </div>
              </div>
@@ -733,96 +998,152 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         {/* Breakdown of Efficiency Standalone Card */}
         <div className="lg:col-span-12 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-              <h3 className="text-lg lg:text-xl font-black text-slate-900 flex items-center gap-2">
-                 <TrendingUp className="w-5 h-5 text-emerald-600 animate-pulse" />
-                 Detalhamento de Eficiência de Consumo
-              </h3>
-              <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 border border-slate-100 rounded-lg text-slate-400 text-[10px] uppercase font-black tracking-widest">
-                 <Calendar className="w-3.5 h-3.5" />
-                 {performanceStats.current.label}
+              <div>
+                <h3 className="text-lg lg:text-xl font-black text-slate-900 flex items-center gap-2">
+                   <TrendingUp className="w-5 h-5 text-emerald-600 animate-pulse" />
+                   Detalhamento de Eficiência de Consumo
+                </h3>
+                <p className="text-xs text-slate-400 font-bold mt-1">
+                  Distribuição da eficiência (kg por tonelada) por Fornecedor, Bitola e Linha de Enfardamento.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-slate-600 text-xs font-black uppercase tracking-wider">
+                 <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                 {performanceStats.label}
               </div>
            </div>
            
-           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {/* Breakdown by Supplier */}
-              <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100/50">
+              <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100/50 flex flex-col">
                  <div className="flex items-center justify-between mb-4">
                     <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
                        <Truck className="w-4 h-4 text-emerald-600" />
-                       Eficiência por Fornecedor (kg/ton)
+                       Por Fornecedor (kg/ton)
                     </h4>
+                    <span className="text-[10px] font-bold text-slate-400">Total: {performanceStats.suppliers.length}</span>
                  </div>
-                 <div className="space-y-3">
-                    {performanceStats.current.suppliers.map((s: any, idx: number) => (
+                 <div className="space-y-3 flex-1">
+                    {performanceStats.suppliers.map((s: any, idx: number) => (
                        <div key={`${s.name}-${idx}`} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
-                          <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase mb-1">
-                             <span className="truncate text-slate-800" title={s.name}>{s.name}</span>
-                             <span className="text-emerald-600 shrink-0">{s.specific.toFixed(1)} kg/ton</span>
+                          <div className="flex justify-between items-center text-xs font-black text-slate-800 mb-1">
+                             <span className="truncate" title={s.name}>{s.name}</span>
+                             <span className="text-emerald-600 shrink-0 font-black">{s.specific.toFixed(2)} kg/ton</span>
+                          </div>
+                          <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-1.5">
+                             <span>{s.kg.toLocaleString('pt-BR')} kg ({s.count} bobinas)</span>
+                             <span>{s.share}% do total</span>
                           </div>
                           <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                              <div 
-                                className="h-full bg-emerald-500 rounded-full"
-                                style={{ width: `${Math.min(100, (s.specific / (performanceStats.current.specific || 1)) * 100)}%` }}
+                                className="h-full bg-emerald-500 rounded-full transition-all"
+                                style={{ width: `${Math.min(100, (s.specific / (performanceStats.currentSpecific || 1)) * 100)}%` }}
                              />
                           </div>
                        </div>
                     ))}
-                    {(!performanceStats.current.suppliers || performanceStats.current.suppliers.length === 0) && (
-                       <p className="text-xs italic text-slate-400 py-4 text-center">Sem dados de consumo para este período.</p>
+                    {(!performanceStats.suppliers || performanceStats.suppliers.length === 0) && (
+                       <p className="text-xs italic text-slate-400 py-6 text-center">Nenhum consumo de fornecedor no período filtrado.</p>
                     )}
                  </div>
               </div>
 
               {/* Breakdown by Diameter */}
-              <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100/50">
+              <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100/50 flex flex-col">
                  <div className="flex items-center justify-between mb-4">
                     <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
                        <Weight className="w-4 h-4 text-blue-600" />
-                       Eficiência por Bitola (kg/ton)
+                       Por Bitola (kg/ton)
                     </h4>
+                    <span className="text-[10px] font-bold text-slate-400">Total: {performanceStats.diameters.length}</span>
                  </div>
-                 <div className="space-y-3">
-                    {performanceStats.current.diameters.map((d: any, idx: number) => (
+                 <div className="space-y-3 flex-1">
+                    {performanceStats.diameters.map((d: any, idx: number) => (
                        <div key={`${d.name}-${idx}`} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
-                          <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase mb-1">
-                             <span className="truncate text-slate-800" title={d.name}>{d.name} mm</span>
-                             <span className="text-blue-600 shrink-0">{d.specific.toFixed(1)} kg/ton</span>
+                          <div className="flex justify-between items-center text-xs font-black text-slate-800 mb-1">
+                             <span className="truncate" title={d.name}>{d.name}</span>
+                             <span className="text-blue-600 shrink-0 font-black">{d.specific.toFixed(2)} kg/ton</span>
+                          </div>
+                          <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-1.5">
+                             <span>{d.kg.toLocaleString('pt-BR')} kg ({d.count} bobinas)</span>
+                             <span>{d.share}% do total</span>
                           </div>
                           <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                              <div 
-                                className="h-full bg-blue-500 rounded-full"
-                                style={{ width: `${Math.min(100, (d.specific / (performanceStats.current.specific || 1)) * 100)}%` }}
+                                className="h-full bg-blue-500 rounded-full transition-all"
+                                style={{ width: `${Math.min(100, (d.specific / (performanceStats.currentSpecific || 1)) * 100)}%` }}
                              />
                           </div>
                        </div>
                     ))}
-                    {(!performanceStats.current.diameters || performanceStats.current.diameters.length === 0) && (
-                       <p className="text-xs italic text-slate-400 py-4 text-center">Sem dados de consumo para este período.</p>
+                    {(!performanceStats.diameters || performanceStats.diameters.length === 0) && (
+                       <p className="text-xs italic text-slate-400 py-6 text-center">Nenhum consumo de bitola no período filtrado.</p>
+                    )}
+                 </div>
+              </div>
+
+              {/* Breakdown by Production Line */}
+              <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100/50 flex flex-col">
+                 <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
+                       <TrendingUp className="w-4 h-4 text-purple-600" />
+                       Por Linha / Máquina (kg/ton)
+                    </h4>
+                    <span className="text-[10px] font-bold text-slate-400">Total: {performanceStats.lines.length}</span>
+                 </div>
+                 <div className="space-y-3 flex-1">
+                    {performanceStats.lines.map((l: any, idx: number) => (
+                       <div key={`${l.name}-${idx}`} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+                          <div className="flex justify-between items-center text-xs font-black text-slate-800 mb-1">
+                             <span className="truncate" title={l.name}>Linha {l.name}</span>
+                             <span className="text-purple-600 shrink-0 font-black">{l.specific.toFixed(2)} kg/ton</span>
+                          </div>
+                          <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-1.5">
+                             <span>{l.kg.toLocaleString('pt-BR')} kg ({l.count} bobinas)</span>
+                             <span>{l.share}% do total</span>
+                          </div>
+                          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                             <div 
+                                className="h-full bg-purple-500 rounded-full transition-all"
+                                style={{ width: `${Math.min(100, (l.specific / (performanceStats.currentSpecific || 1)) * 100)}%` }}
+                             />
+                          </div>
+                       </div>
+                    ))}
+                    {(!performanceStats.lines || performanceStats.lines.length === 0) && (
+                       <p className="text-xs italic text-slate-400 py-6 text-center">Nenhum consumo associado a linha no período filtrado.</p>
                     )}
                  </div>
               </div>
            </div>
 
-           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8 pt-6 border-t border-slate-100 bg-slate-50/20 p-6 rounded-2xl border border-slate-100">
+           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8 pt-6 border-t border-slate-100 bg-slate-50/40 p-6 rounded-2xl border border-slate-100">
               <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
-                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 font-sans">Status {startDate || endDate ? 'do Filtro' : 'Atual'}</p>
-                 <p className="text-xl font-black text-slate-900 leading-none">
-                   {performanceStats.current.specific.toFixed(1)} <span className="text-xs text-slate-400 font-bold uppercase tracking-normal">kg/ton</span>
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Consumo Total</p>
+                 <p className="text-lg font-black text-slate-900 leading-none">
+                   {performanceStats.totalConsumedKg.toLocaleString('pt-BR')} <span className="text-xs text-slate-400 font-bold">kg</span>
                  </p>
               </div>
-              <div className="lg:col-span-2 bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3">
-                 <div className={cn(
-                    "w-2.5 h-2.5 rounded-full mt-1 shrink-0",
-                    performanceStats.current.specific > 100 ? "bg-rose-500 animate-pulse" : "bg-emerald-500"
-                 )} />
-                 <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 font-sans">Dica de Eficiência</p>
-                    <p className="text-xs font-bold text-slate-600 leading-relaxed italic">
-                      {performanceStats.current.specific > 100 
-                       ? "O consumo está acima da média histórica. Verifique possíveis perdas ou sucatas no processo."
-                       : "A eficiência de consumo está dentro dos padrões esperados de produção atual."}
-                    </p>
-                 </div>
+
+              <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Produção Celulose</p>
+                 <p className="text-lg font-black text-slate-900 leading-none">
+                   {Math.round(performanceStats.periodProductionTons).toLocaleString('pt-BR')} <span className="text-xs text-slate-400 font-bold">ton</span>
+                 </p>
+              </div>
+
+              <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Consumo Específico Real</p>
+                 <p className="text-lg font-black text-emerald-600 leading-none">
+                   {performanceStats.currentSpecific.toFixed(2)} <span className="text-xs text-emerald-500 font-bold">kg/ton</span>
+                 </p>
+              </div>
+
+              <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta Orçada</p>
+                 <p className="text-lg font-black text-slate-700 leading-none">
+                   {performanceStats.budgetSpecific.toFixed(2)} <span className="text-xs text-slate-400 font-bold">kg/ton</span>
+                 </p>
               </div>
            </div>
         </div>
