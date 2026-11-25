@@ -3,7 +3,7 @@ import {
   collection, 
   doc,
   setDoc,
-  deleteDoc,
+  getDocFromServer,
   onSnapshot,
   query,
   getDocs,
@@ -48,6 +48,7 @@ import {
   Radio,
   Check,
   RefreshCw,
+  RotateCcw,
   LogOut,
   FileDown
 } from 'lucide-react';
@@ -108,15 +109,38 @@ interface StoredDraft {
 export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager, storageBays }) => {
   const { profile, user } = useAuth();
   
-  // Active draft doc ID in Firestore
+  // Helper to read initial cached draft safely once
+  const initialStoredDraftRef = useRef<StoredDraft | null | undefined>(undefined);
+  if (initialStoredDraftRef.current === undefined) {
+    try {
+      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
+      if (saved) {
+        const parsed: StoredDraft = JSON.parse(saved);
+        if (parsed.currentBatch && Object.keys(parsed.currentBatch).length > 0) {
+          initialStoredDraftRef.current = parsed;
+        } else {
+          initialStoredDraftRef.current = null;
+        }
+      } else {
+        initialStoredDraftRef.current = null;
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar rascunho local de recebimento:', e);
+      initialStoredDraftRef.current = null;
+    }
+  }
+
+  // Active draft doc ID in Firestore (only populated when there is an active batch)
   const [activeDraftId, setActiveDraftId] = useState<string>(() => {
+    const initialDraft = initialStoredDraftRef.current;
+    if (!initialDraft) return '';
     try {
       const savedId = localStorage.getItem(WIRE_RECEIVING_ACTIVE_ID_KEY);
       if (savedId) return savedId;
     } catch (e) {
       // ignore
     }
-    return `draft_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    return initialDraft.draftId || `draft_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   });
 
   // Active Cloud Drafts from Firestore
@@ -125,62 +149,34 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
   const [lastSyncMessage, setLastSyncMessage] = useState<string>('Conectado ao servidor');
   const [discardTargetDraftId, setDiscardTargetDraftId] = useState<string | null>(null);
   const [showSyncSuccessToast, setShowSyncSuccessToast] = useState(false);
+  const [showClearCacheModal, setShowClearCacheModal] = useState(false);
+  const [remoteCompletionNotice, setRemoteCompletionNotice] = useState<{
+    title: string;
+    message: string;
+    tone: 'success' | 'info';
+  } | null>(null);
 
   // Initialize batch state from localStorage if available
   const [currentBatch, setCurrentBatch] = useState<Partial<WireBatch> | null>(() => {
-    try {
-      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
-      if (saved) {
-        const parsed: StoredDraft = JSON.parse(saved);
-        if (parsed.currentBatch && Object.keys(parsed.currentBatch).length > 0) {
-          return parsed.currentBatch;
-        }
-      }
-    } catch (e) {
-      console.warn('Erro ao carregar rascunho local de recebimento:', e);
-    }
-    return null;
+    return initialStoredDraftRef.current?.currentBatch || null;
   });
 
   const [scannedCoils, setScannedCoils] = useState<Partial<WireCoil>[]>(() => {
-    try {
-      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
-      if (saved) {
-        const parsed: StoredDraft = JSON.parse(saved);
-        if (Array.isArray(parsed.scannedCoils)) {
-          return parsed.scannedCoils;
-        }
-      }
-    } catch (e) {
-      console.warn('Erro ao carregar bobinas do rascunho local:', e);
+    const initialDraft = initialStoredDraftRef.current;
+    if (initialDraft && Array.isArray(initialDraft.scannedCoils)) {
+      return initialDraft.scannedCoils;
     }
     return [];
   });
 
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(() => {
-    try {
-      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
-      if (saved) {
-        const parsed: StoredDraft = JSON.parse(saved);
-        return parsed.lastSavedAt ? new Date(parsed.lastSavedAt).toLocaleTimeString('pt-BR') : null;
-      }
-    } catch (e) {
-      // ignore
-    }
-    return null;
+    const initialDraft = initialStoredDraftRef.current;
+    return initialDraft?.lastSavedAt ? new Date(initialDraft.lastSavedAt).toLocaleTimeString('pt-BR') : null;
   });
 
   const [draftRestoredBanner, setDraftRestoredBanner] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem(WIRE_RECEIVING_DRAFT_KEY);
-      if (saved) {
-        const parsed: StoredDraft = JSON.parse(saved);
-        return Boolean(parsed.currentBatch || (parsed.scannedCoils && parsed.scannedCoils.length > 0));
-      }
-    } catch (e) {
-      // ignore
-    }
-    return false;
+    const initialDraft = initialStoredDraftRef.current;
+    return Boolean(initialDraft?.currentBatch || (initialDraft?.scannedCoils && initialDraft.scannedCoils.length > 0));
   });
 
   const [showDiscardModal, setShowDiscardModal] = useState(false);
@@ -206,6 +202,62 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
 
   const isLocalUpdateRef = useRef<boolean>(false);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const scannedCoilsRef = useRef<Partial<WireCoil>[]>(scannedCoils);
+  const currentBatchRef = useRef<Partial<WireBatch> | null>(currentBatch);
+  const activeDraftIdRef = useRef<string>(activeDraftId);
+  const wasRestoredFromStorageRef = useRef<boolean>(Boolean(initialStoredDraftRef.current));
+  const draftConfirmedInCloudRef = useRef<boolean>(false);
+  const lastServerValidationRef = useRef<number>(0);
+
+  useEffect(() => {
+    scannedCoilsRef.current = scannedCoils;
+  }, [scannedCoils]);
+
+  useEffect(() => {
+    currentBatchRef.current = currentBatch;
+  }, [currentBatch]);
+
+  useEffect(() => {
+    activeDraftIdRef.current = activeDraftId;
+  }, [activeDraftId]);
+
+  // Centralized helper to wipe local cache and reset screen ready for a new receiving
+  const clearLocalReceivingCache = useCallback((notice?: {
+    title: string;
+    message: string;
+    tone: 'success' | 'info';
+  }) => {
+    try {
+      localStorage.removeItem(WIRE_RECEIVING_DRAFT_KEY);
+      localStorage.removeItem(WIRE_RECEIVING_ACTIVE_ID_KEY);
+    } catch (e) {
+      console.warn('Erro ao limpar cache local de recebimento:', e);
+    }
+
+    wasRestoredFromStorageRef.current = false;
+    draftConfirmedInCloudRef.current = false;
+    isLocalUpdateRef.current = false;
+
+    setCurrentBatch(null);
+    setScannedCoils([]);
+    setActiveDraftId('');
+    setLastSavedTime(null);
+    setDraftRestoredBanner(false);
+    setShowManagerSecurityModal(false);
+    setShowDiscardModal(false);
+    setShowClearCacheModal(false);
+    setShowManualModal(false);
+    setIsCameraOpen(false);
+    setDuplicateCoilsFound([]);
+    setManagerNotes('');
+    setError('');
+    setCloudSyncStatus('idle');
+    setLastSyncMessage('Conectado ao servidor');
+
+    if (notice) {
+      setRemoteCompletionNotice(notice);
+    }
+  }, []);
 
   // Core Function: Instant Cloud Persistence (Called on every scan, edit, or field change)
   const persistDraftToCloud = useCallback(async (
@@ -213,7 +265,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     coilsData: Partial<WireCoil>[], 
     draftIdToSave: string
   ) => {
-    if (!batchData && coilsData.length === 0) return;
+    if (!draftIdToSave || (!batchData && coilsData.length === 0)) return;
 
     try {
       setCloudSyncStatus('saving');
@@ -262,6 +314,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       };
 
       await setDoc(draftDocRef, payload, { merge: true });
+      draftConfirmedInCloudRef.current = true;
 
       setCloudSyncStatus('saved');
       setLastSavedTime(timeStr);
@@ -276,6 +329,135 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       setLastSyncMessage('Tentando reconectar ao servidor...');
     }
   }, [profile]);
+
+  // Verify whether a cached/open draft was already finalized or discarded on another device
+  const verifyCachedDraftStillValid = useCallback(async (forceCheck = false) => {
+    const draftId = activeDraftIdRef.current;
+    const batch = currentBatchRef.current;
+    const coils = scannedCoilsRef.current;
+
+    if (!batch || !draftId) return;
+
+    const nowMs = Date.now();
+    if (!forceCheck && nowMs - lastServerValidationRef.current < 15000) {
+      return;
+    }
+    lastServerValidationRef.current = nowMs;
+
+    // Step 1: Check the draft document directly on the Firestore server
+    try {
+      const draftDocRef = doc(db, 'wire_receiving_drafts', draftId);
+      const serverSnap = await getDocFromServer(draftDocRef);
+
+      if (serverSnap.exists()) {
+        const data = serverSnap.data();
+        if (data.status === 'completed') {
+          const finisher = data.completedByName ? ` por ${data.completedByName}` : '';
+          clearLocalReceivingCache({
+            title: 'Carregamento concluído em outro celular',
+            message: `Este carregamento já foi finalizado${finisher}. O cache deste aparelho foi limpo automaticamente e o sistema está pronto para iniciar um novo carregamento.`,
+            tone: 'success'
+          });
+          return;
+        }
+        if (data.status === 'discarded') {
+          clearLocalReceivingCache({
+            title: 'Rascunho encerrado em outro celular',
+            message: 'Este carregamento em andamento foi cancelado em outro aparelho. O cache deste celular foi limpo e está pronto para começar novamente.',
+            tone: 'info'
+          });
+          return;
+        }
+        draftConfirmedInCloudRef.current = true;
+      } else if (wasRestoredFromStorageRef.current || draftConfirmedInCloudRef.current) {
+        // The draft previously existed or was restored from local cache, and the server confirms it is gone
+        clearLocalReceivingCache({
+          title: 'Cache limpo automaticamente',
+          message: 'O carregamento salvo anteriormente neste celular já foi concluído ou encerrado em outro aparelho. O sistema está pronto para um novo carregamento.',
+          tone: 'success'
+        });
+        return;
+      }
+    } catch (serverErr) {
+      // Offline or unreachable — skip destructive cleanup and wait until back online
+      console.warn('Não foi possível validar o rascunho no servidor agora (modo offline):', serverErr);
+      return;
+    }
+
+    // Step 2: Cross-check scanned coils against permanent stock (catches loads finalized under a DIFFERENT draft ID)
+    try {
+      const uniqueCoilNumbers = Array.from(
+        new Set(coils.map(c => (c.coilNumber || '').trim()).filter(Boolean))
+      );
+
+      if (uniqueCoilNumbers.length > 0) {
+        const alreadySavedSet = new Set<string>();
+        const chunkSize = 30;
+        for (let i = 0; i < uniqueCoilNumbers.length; i += chunkSize) {
+          const chunk = uniqueCoilNumbers.slice(i, i + chunkSize);
+          if (chunk.length === 0) continue;
+          const q = query(
+            collection(db, 'wire_coils'),
+            where('coilNumber', 'in', chunk)
+          );
+          const snap = await getDocs(q);
+          snap.forEach(docSnap => {
+            const coilData = docSnap.data();
+            if (coilData.status !== 'discarded' && coilData.coilNumber) {
+              alreadySavedSet.add(String(coilData.coilNumber).trim());
+            }
+          });
+        }
+
+        // If EVERY scanned coil in this cached draft is already in permanent stock, this load is done
+        if (alreadySavedSet.size === uniqueCoilNumbers.length) {
+          setDoc(doc(db, 'wire_receiving_drafts', draftId), {
+            status: 'completed',
+            completedAt: new Date().toISOString(),
+            updatedAt: serverTimestamp()
+          }, { merge: true }).catch(() => {});
+
+          clearLocalReceivingCache({
+            title: 'Carregamento já finalizado no sistema',
+            message: `Todas as ${uniqueCoilNumbers.length} bobina(s) salvas no cache deste celular já foram concluídas no estoque por outro aparelho. O cache foi limpo e você já pode iniciar um novo carregamento.`,
+            tone: 'success'
+          });
+          return;
+        }
+      } else if (wasRestoredFromStorageRef.current && batch.nfNumber?.trim() && batch.supplierId) {
+        // Empty cached draft restored from localStorage with NF + supplier filled: check if that exact NF/supplier/date was already closed
+        const qBatch = query(
+          collection(db, 'wire_batches'),
+          where('nfNumber', '==', batch.nfNumber.trim()),
+          where('supplierId', '==', batch.supplierId),
+          limit(5)
+        );
+        const batchSnap = await getDocs(qBatch);
+        const matchingClosed = batchSnap.docs.find(d => {
+          const bData = d.data();
+          return bData.status === 'closed' && (!batch.date || bData.date === batch.date);
+        });
+        if (matchingClosed) {
+          const finisher = matchingClosed.data().responsibleName ? ` por ${matchingClosed.data().responsibleName}` : '';
+          setDoc(doc(db, 'wire_receiving_drafts', draftId), {
+            status: 'completed',
+            completedAt: new Date().toISOString(),
+            completedByName: matchingClosed.data().responsibleName || '',
+            completedBatchId: matchingClosed.id,
+            updatedAt: serverTimestamp()
+          }, { merge: true }).catch(() => {});
+
+          clearLocalReceivingCache({
+            title: 'Nota Fiscal já recebida em outro celular',
+            message: `A NF ${batch.nfNumber.trim()} já foi concluída no estoque${finisher}. O cache deste aparelho foi limpo automaticamente para você iniciar um novo carregamento.`,
+            tone: 'success'
+          });
+        }
+      }
+    } catch (checkErr) {
+      console.warn('Erro ao verificar bobinas/lotes finalizados para o rascunho em cache:', checkErr);
+    }
+  }, [clearLocalReceivingCache]);
 
   // Real-time listener for all open cloud drafts across the company
   useEffect(() => {
@@ -310,31 +492,100 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     return () => unsubscribe();
   }, []);
 
-  // Real-time listener for the currently active draft (allows another phone or manager to see live stream)
+  const hasActiveBatch = Boolean(currentBatch);
+
+  // Real-time listener for the currently active draft (syncs live edits AND auto-clears cache if completed/discarded on another phone)
   useEffect(() => {
-    if (!activeDraftId || !currentBatch) return;
+    if (!activeDraftId || !hasActiveBatch) return;
 
     const draftDocRef = doc(db, 'wire_receiving_drafts', activeDraftId);
-    const unsubscribe = onSnapshot(draftDocRef, (docSnap) => {
-      if (isLocalUpdateRef.current) {
-        isLocalUpdateRef.current = false;
-        return;
-      }
+    const unsubscribe = onSnapshot(draftDocRef, { includeMetadataChanges: true }, (docSnap) => {
+      const isFromCache = docSnap.metadata.fromCache;
 
       if (docSnap.exists()) {
         const data = docSnap.data();
+
+        if (data.status === 'completed') {
+          const finisher = data.completedByName ? ` por ${data.completedByName}` : '';
+          clearLocalReceivingCache({
+            title: 'Carregamento concluído em outro celular',
+            message: `Este carregamento foi finalizado${finisher}. O cache deste aparelho foi limpo automaticamente e o sistema está pronto para iniciar um novo carregamento.`,
+            tone: 'success'
+          });
+          return;
+        }
+
+        if (data.status === 'discarded') {
+          clearLocalReceivingCache({
+            title: 'Rascunho encerrado em outro celular',
+            message: 'Este carregamento em andamento foi descartado em outro aparelho. O cache deste celular foi limpo e está pronto para começar novamente.',
+            tone: 'info'
+          });
+          return;
+        }
+
+        if (!isFromCache) {
+          draftConfirmedInCloudRef.current = true;
+        }
+
+        if (isLocalUpdateRef.current) {
+          isLocalUpdateRef.current = false;
+          return;
+        }
+
         if (data.status === 'in_progress') {
-          // If remote has different coils count or updated data from another device, merge smoothly
-          const remoteCoils = data.scannedCoils || [];
-          if (remoteCoils.length !== scannedCoils.length) {
+          const remoteCoils: Partial<WireCoil>[] = Array.isArray(data.scannedCoils) ? data.scannedCoils : [];
+          const currentCoils = scannedCoilsRef.current;
+
+          const coilsChanged =
+            remoteCoils.length !== currentCoils.length ||
+            remoteCoils.some((rc, idx) => {
+              const lc = currentCoils[idx];
+              return !lc || lc.coilNumber !== rc.coilNumber || lc.weight !== rc.weight || lc.diameter !== rc.diameter;
+            });
+
+          if (coilsChanged) {
             setScannedCoils(remoteCoils);
-            if (data.currentBatch) {
-              setCurrentBatch(prev => ({ ...prev, ...data.currentBatch }));
-            }
-            if (data.lastSavedAt) {
-              setLastSavedTime(new Date(data.lastSavedAt).toLocaleTimeString('pt-BR'));
+          }
+
+          if (data.currentBatch) {
+            const curr = currentBatchRef.current || {};
+            const remoteB = data.currentBatch;
+            const headerChanged =
+              (remoteB.nfNumber || '') !== (curr.nfNumber || '') ||
+              (remoteB.supplierId || '') !== (curr.supplierId || '') ||
+              (remoteB.storageBayId || '') !== (curr.storageBayId || '') ||
+              (remoteB.date || '') !== (curr.date || '');
+
+            if (headerChanged) {
+              setCurrentBatch(prev => (prev ? { ...prev, ...remoteB } : remoteB));
             }
           }
+
+          if (data.lastSavedAt) {
+            setLastSavedTime(new Date(data.lastSavedAt).toLocaleTimeString('pt-BR'));
+          }
+
+          // Keep local cache in sync with remote updates while active
+          try {
+            localStorage.setItem(WIRE_RECEIVING_DRAFT_KEY, JSON.stringify({
+              draftId: activeDraftId,
+              currentBatch: data.currentBatch || currentBatchRef.current || {},
+              scannedCoils: remoteCoils,
+              lastSavedAt: data.lastSavedAt || new Date().toISOString()
+            }));
+          } catch (e) {
+            // ignore
+          }
+        }
+      } else if (!isFromCache) {
+        // Server explicitly confirmed the draft document no longer exists (e.g., finalized/deleted on another phone)
+        if (wasRestoredFromStorageRef.current || draftConfirmedInCloudRef.current) {
+          clearLocalReceivingCache({
+            title: 'Carregamento já finalizado em outro celular',
+            message: 'Este carregamento não está mais em andamento no servidor porque foi concluído ou encerrado em outro aparelho. O cache deste celular foi limpo e está pronto para começar novamente.',
+            tone: 'success'
+          });
         }
       }
     }, (err) => {
@@ -342,22 +593,55 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
     });
 
     return () => unsubscribe();
-  }, [activeDraftId, currentBatch, scannedCoils.length]);
+  }, [activeDraftId, hasActiveBatch, clearLocalReceivingCache]);
 
-  // Synchronize Active Draft ID to localStorage
+  // Run server/stock validation on initial load (if restored from localStorage) and whenever the device regains connectivity or focus
+  useEffect(() => {
+    if (!hasActiveBatch || !activeDraftId) return;
+
+    // Validate immediately when a restored draft mounts
+    if (wasRestoredFromStorageRef.current) {
+      verifyCachedDraftStillValid(true);
+    }
+
+    const handleReconnectOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        verifyCachedDraftStillValid(false);
+      }
+    };
+
+    const handleOnline = () => {
+      verifyCachedDraftStillValid(true);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('focus', handleReconnectOrFocus);
+    document.addEventListener('visibilitychange', handleReconnectOrFocus);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('focus', handleReconnectOrFocus);
+      document.removeEventListener('visibilitychange', handleReconnectOrFocus);
+    };
+  }, [hasActiveBatch, activeDraftId, verifyCachedDraftStillValid]);
+
+  // Synchronize Active Draft ID to localStorage only when a batch is active
   useEffect(() => {
     try {
-      if (activeDraftId) {
+      if (activeDraftId && hasActiveBatch) {
         localStorage.setItem(WIRE_RECEIVING_ACTIVE_ID_KEY, activeDraftId);
       }
     } catch (e) {
       // ignore
     }
-  }, [activeDraftId]);
+  }, [activeDraftId, hasActiveBatch]);
 
   // Start a fresh new receiving batch
   const startNewBatch = () => {
     const newId = `draft_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    wasRestoredFromStorageRef.current = false;
+    draftConfirmedInCloudRef.current = false;
+    setRemoteCompletionNotice(null);
     setActiveDraftId(newId);
     const initialBatch: Partial<WireBatch> = {
       nfNumber: '',
@@ -381,6 +665,9 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
 
   // Resume a draft from the cloud on this device
   const resumeCloudDraft = (draft: WireReceivingDraft) => {
+    wasRestoredFromStorageRef.current = false;
+    draftConfirmedInCloudRef.current = true;
+    setRemoteCompletionNotice(null);
     setActiveDraftId(draft.id);
     setCurrentBatch(draft.currentBatch || {});
     setScannedCoils(draft.scannedCoils || []);
@@ -403,40 +690,71 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
   };
 
   // Safely pause receiving on this phone to switch devices or continue later
-  const handlePauseToSwitchDevice = () => {
-    // Make sure latest state is 100% saved
-    if (currentBatch) {
-      persistDraftToCloud(currentBatch, scannedCoils, activeDraftId);
+  const handlePauseToSwitchDevice = async () => {
+    const batchSnapshot = currentBatch;
+    const coilsSnapshot = scannedCoils;
+    const draftIdSnapshot = activeDraftId;
+
+    // Before saving, verify the draft wasn't already completed/discarded on another device so we never resurrect it
+    if (batchSnapshot && draftIdSnapshot) {
+      let alreadyFinishedOnServer = false;
+      try {
+        const serverSnap = await getDocFromServer(doc(db, 'wire_receiving_drafts', draftIdSnapshot));
+        if (serverSnap.exists()) {
+          const st = serverSnap.data().status;
+          if (st === 'completed' || st === 'discarded') {
+            alreadyFinishedOnServer = true;
+            const finisher = serverSnap.data().completedByName ? ` por ${serverSnap.data().completedByName}` : '';
+            clearLocalReceivingCache({
+              title: st === 'completed' ? 'Carregamento concluído em outro celular' : 'Rascunho encerrado em outro celular',
+              message: st === 'completed'
+                ? `Este carregamento já foi finalizado${finisher}. O cache deste celular foi limpo automaticamente.`
+                : 'Este carregamento já foi encerrado em outro aparelho. O cache deste celular foi limpo.',
+              tone: st === 'completed' ? 'success' : 'info'
+            });
+            return;
+          }
+        }
+      } catch (e) {
+        // Offline — proceed with local cleanup safely
+      }
+
+      if (!alreadyFinishedOnServer) {
+        await persistDraftToCloud(batchSnapshot, coilsSnapshot, draftIdSnapshot);
+      }
     }
-    // Clear current local active view so user sees the drafts overview
-    setCurrentBatch(null);
-    setDraftRestoredBanner(false);
+
+    // Clear local cache on this device so it stays clean and shows the drafts overview
+    clearLocalReceivingCache();
+  };
+
+  // Manually clear only this device's local cache without deleting finalized stock or cloud records
+  const handleManualClearLocalCache = () => {
+    clearLocalReceivingCache({
+      title: 'Cache local limpo',
+      message: 'Os dados temporários deste celular foram limpos com sucesso. O sistema está pronto para iniciar um novo carregamento.',
+      tone: 'info'
+    });
   };
 
   const handleDiscardDraft = async () => {
     const targetId = discardTargetDraftId || activeDraftId;
     
-    // Delete from Firestore Cloud
+    // Mark as discarded in Firestore Cloud so any other phone holding this draft auto-clears its cache immediately
     try {
-      if (targetId) {
-        await deleteDoc(doc(db, 'wire_receiving_drafts', targetId));
+      if (targetId && /^[a-zA-Z0-9_@.-]+$/.test(targetId)) {
+        await setDoc(doc(db, 'wire_receiving_drafts', targetId), {
+          status: 'discarded',
+          updatedAt: serverTimestamp()
+        }, { merge: true });
       }
     } catch (e) {
-      console.warn('Erro ao apagar rascunho na nuvem:', e);
+      console.warn('Erro ao encerrar rascunho na nuvem:', e);
     }
 
     // Clean LocalStorage if discarding the active draft
     if (!discardTargetDraftId || discardTargetDraftId === activeDraftId) {
-      try {
-        localStorage.removeItem(WIRE_RECEIVING_DRAFT_KEY);
-        localStorage.removeItem(WIRE_RECEIVING_ACTIVE_ID_KEY);
-      } catch (e) {
-        console.warn(e);
-      }
-      setCurrentBatch(null);
-      setScannedCoils([]);
-      setLastSavedTime(null);
-      setDraftRestoredBanner(false);
+      clearLocalReceivingCache();
     }
 
     setDiscardTargetDraftId(null);
@@ -650,6 +968,26 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       }
 
       if (duplicatesFound.length > 0) {
+        const uniqueDuplicatesCount = new Set(duplicatesFound.map(d => String(d).trim())).size;
+
+        // If ALL coils in this cached draft already exist in permanent stock, another phone already finished this load
+        if (coilNumbersToCheck.length > 0 && uniqueDuplicatesCount >= coilNumbersToCheck.length) {
+          if (activeDraftId && /^[a-zA-Z0-9_@.-]+$/.test(activeDraftId)) {
+            setDoc(doc(db, 'wire_receiving_drafts', activeDraftId), {
+              status: 'completed',
+              completedAt: new Date().toISOString(),
+              updatedAt: serverTimestamp()
+            }, { merge: true }).catch(() => {});
+          }
+          clearLocalReceivingCache({
+            title: 'Carregamento já finalizado em outro celular',
+            message: `Todas as ${coilNumbersToCheck.length} bobina(s) desta carga já estavam registradas no estoque. O cache deste celular foi limpo automaticamente para você iniciar um novo carregamento.`,
+            tone: 'success'
+          });
+          setValidatingSecurity(false);
+          return;
+        }
+
         setDuplicateCoilsFound(duplicatesFound);
         setError(`Atenção: ${duplicatesFound.length} bobina(s) já existem no estoque do sistema (${duplicatesFound.join(', ')}). Remova-as ou confira as numerações antes de salvar.`);
         setValidatingSecurity(false);
@@ -781,12 +1119,51 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         await subBatch.commit();
       }
 
-      // 5. Asynchronously clean up the cloud draft (decoupled so failure never blocks real stock)
+      // 5. Mark active draft AND any other matching in-progress cloud drafts as 'completed'
+      // so other devices holding this load in cache immediately detect completion and auto-clear!
+      const completionMeta = {
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+        completedByName: responsibleName,
+        completedBatchId: batchId,
+        updatedAt: serverTimestamp()
+      };
+
+      const savedCoilSet = new Set(
+        scannedCoils.map(c => (c.coilNumber || '').trim()).filter(Boolean)
+      );
+      const savedNf = (currentBatch.nfNumber || '').trim();
+      const savedSupplierId = currentBatch.supplierId || '';
+
+      const draftIdsToComplete = new Set<string>();
       if (activeDraftId && /^[a-zA-Z0-9_@.-]+$/.test(activeDraftId)) {
-        deleteDoc(doc(db, 'wire_receiving_drafts', activeDraftId)).catch((err) => {
-          console.warn('Rascunho na nuvem não precisou ser excluído:', err);
-        });
+        draftIdsToComplete.add(activeDraftId);
       }
+
+      // Also auto-complete any other in-progress cloud drafts that correspond to this same load
+      for (const otherDraft of cloudDrafts) {
+        if (!otherDraft.id || draftIdsToComplete.has(otherDraft.id)) continue;
+        const otherCoils = (otherDraft.scannedCoils || [])
+          .map(c => (c.coilNumber || '').trim())
+          .filter(Boolean);
+        const allOtherCoilsFinalized =
+          otherCoils.length > 0 && otherCoils.every(num => savedCoilSet.has(num));
+        const sameNfAndSupplier =
+          Boolean(savedNf) &&
+          Boolean(savedSupplierId) &&
+          (otherDraft.currentBatch?.nfNumber || '').trim() === savedNf &&
+          (otherDraft.currentBatch?.supplierId || '') === savedSupplierId;
+
+        if (allOtherCoilsFinalized || sameNfAndSupplier) {
+          draftIdsToComplete.add(otherDraft.id);
+        }
+      }
+
+      draftIdsToComplete.forEach((draftIdToClose) => {
+        setDoc(doc(db, 'wire_receiving_drafts', draftIdToClose), completionMeta, { merge: true }).catch((err) => {
+          console.warn(`Rascunho na nuvem (${draftIdToClose}) não precisou ser encerrado:`, err);
+        });
+      });
 
       // 6. Clear local storage
       try {
@@ -795,6 +1172,8 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       } catch (e) {
         console.warn('Erro ao limpar rascunho local:', e);
       }
+      wasRestoredFromStorageRef.current = false;
+      draftConfirmedInCloudRef.current = false;
 
       // 7. Store saved batch and coils snapshot for PDF generation
       const createdBatchRecord: WireBatch = {
@@ -839,6 +1218,7 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       setShowManagerSecurityModal(false);
       setCurrentBatch(null);
       setScannedCoils([]);
+      setActiveDraftId('');
       setLastSavedTime(null);
       setDraftRestoredBanner(false);
       setManagerNotes('');
@@ -996,8 +1376,20 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
         title="Descartar Recebimento em Andamento?"
         message="Deseja realmente cancelar este recebimento? O rascunho salvo na nuvem e todas as bobinas registradas serão excluídos permanentemente."
         confirmText="Sim, Descartar"
-        cancelText="Voltar ao Recebimento"
-        type="danger"
+        showConfirmButton={true}
+        type="error"
+      />
+
+      {/* Clear Local Cache Only Modal */}
+      <ConfirmationModal
+        isOpen={showClearCacheModal}
+        onClose={() => setShowClearCacheModal(false)}
+        onConfirm={handleManualClearLocalCache}
+        title="Limpar Cache deste Celular?"
+        message="Isso limpa apenas o cache temporário salvo neste aparelho e deixa o sistema pronto para iniciar um novo carregamento. Carregamentos já concluídos no estoque ou em andamento no servidor não serão apagados."
+        confirmText="Sim, Limpar Cache"
+        showConfirmButton={true}
+        type="warning"
       />
 
       {/* Manager High-Security Confirmation Modal */}
@@ -1304,6 +1696,56 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
       {/* Main Receiving State: Not in Active Batch */}
       {!currentBatch ? (
         <div className="space-y-8">
+          {/* Remote Completion / Cache Cleared Notice Banner */}
+          <AnimatePresence>
+            {remoteCompletionNotice && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className={cn(
+                  "p-5 rounded-3xl border shadow-sm flex items-start justify-between gap-4",
+                  remoteCompletionNotice.tone === 'success'
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-950"
+                    : "bg-blue-50 border-blue-200 text-blue-950"
+                )}
+              >
+                <div className="flex items-start gap-3.5">
+                  <div className={cn(
+                    "w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 mt-0.5",
+                    remoteCompletionNotice.tone === 'success'
+                      ? "bg-emerald-600 text-white"
+                      : "bg-blue-600 text-white"
+                  )}>
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black tracking-tight">{remoteCompletionNotice.title}</h4>
+                    <p className={cn(
+                      "text-xs font-medium mt-1 leading-relaxed",
+                      remoteCompletionNotice.tone === 'success' ? "text-emerald-800" : "text-blue-800"
+                    )}>
+                      {remoteCompletionNotice.message}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRemoteCompletionNotice(null)}
+                  className={cn(
+                    "p-2 rounded-xl transition-colors shrink-0 cursor-pointer",
+                    remoteCompletionNotice.tone === 'success'
+                      ? "text-emerald-600 hover:bg-emerald-100"
+                      : "text-blue-600 hover:bg-blue-100"
+                  )}
+                  title="Fechar aviso"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Start New Receiving Hero Box */}
           <div className="flex flex-col items-center justify-center p-8 sm:p-12 bg-white rounded-[3rem] border-2 border-dashed border-slate-200 shadow-sm">
             <div className="w-20 h-20 bg-emerald-50 rounded-3xl flex items-center justify-center mb-5 text-emerald-600 shadow-inner">
@@ -1471,15 +1913,24 @@ export const ReceivingTab: React.FC<ReceivingTabProps> = ({ suppliers, isManager
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 self-end sm:self-center shrink-0">
+            <div className="flex flex-wrap items-center justify-end gap-2 self-end sm:self-center shrink-0">
               <button
                 type="button"
                 onClick={handlePauseToSwitchDevice}
-                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-black uppercase tracking-wider rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
-                title="Pausa este aparelho e volta para a tela de cargas salvas para continuar em outro dispositivo"
+                className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-black uppercase tracking-wider rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                title="Salva no servidor, limpa este celular e volta para a tela inicial para continuar em outro aparelho"
               >
                 <Smartphone className="w-4 h-4 text-emerald-400" />
                 Trocar de Celular
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowClearCacheModal(true)}
+                className="px-3.5 py-2.5 bg-amber-500/15 hover:bg-amber-500/25 active:scale-95 text-amber-300 text-xs font-black uppercase tracking-wider rounded-xl transition-all border border-amber-500/30 flex items-center gap-1.5 cursor-pointer"
+                title="Limpa apenas o cache local deste celular para iniciar um novo carregamento"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Limpar Cache
               </button>
               <button 
                 type="button"

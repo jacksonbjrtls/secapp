@@ -219,6 +219,9 @@ export interface WireReceivingDraft {
   scannedCoils: Partial<WireCoil>[];
   lastSavedAt: string;
   status?: 'in_progress' | 'completed' | 'discarded';
+  completedAt?: string;
+  completedByName?: string;
+  completedBatchId?: string;
   updatedAt?: any;
 }
 
